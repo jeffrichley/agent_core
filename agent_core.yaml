@@ -1,0 +1,20 @@
+# agent_core.yaml — Pipeline configuration
+#
+# Maps Claude Code lifecycle events to ordered lists of tools.
+# Each tool is a Python class implementing the HookTool protocol.
+# Tools execute in declared order. The same tool can appear in
+# multiple events with different params.
+#
+# Supported events (those with additionalContext injection):
+#   - SessionStart: Session begins or resumes
+#   - PreToolUse: Before a tool call executes
+#   - PostToolUse: After a tool call succeeds
+#   - PostToolUseFailure: After a tool call fails
+#   - SubagentStart: When a subagent is spawned
+#   - UserPromptSubmit: When user submits a prompt
+
+pipelines:
+  SessionStart:
+    - tool: agent_core.hooks.tools.time_injector.TimeInjector
+      params:
+        format: "%A, %B %d, %Y %I:%M %p %Z"
