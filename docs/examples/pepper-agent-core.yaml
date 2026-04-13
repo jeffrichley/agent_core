@@ -1,0 +1,47 @@
+# Pepper — agent_core.yaml
+#
+# Pipeline configuration for Pepper (Jeff Richley's EA / Second Brain).
+# Place this file at the root of Pepper's project directory.
+#
+# How it works:
+#   1. SessionStart: TimeInjector tells Pepper what time it is,
+#      IdentityInjector loads her personality + preferences + last handoff note.
+#   2. PreCompact: Before context is compressed, HandoffWriter captures
+#      what was happening so the next session (or post-compaction) has continuity.
+#   3. SessionEnd: Same HandoffWriter runs again as a safety net —
+#      deduplication prevents writing twice if PreCompact already fired.
+#
+# .claude/settings.json hooks should point to:
+#   "command": "uv run agent-core hooks run SessionStart"
+#   "command": "uv run agent-core hooks run PreCompact"
+#   "command": "uv run agent-core hooks run SessionEnd"
+
+pipelines:
+  SessionStart:
+    - tool: agent_core.hooks.tools.time_injector.TimeInjector
+      params:
+        format: "%A, %B %d, %Y %I:%M %p %Z"
+
+    - tool: agent_core.hooks.tools.identity_injector.IdentityInjector
+      params:
+        base_path: "C:\\Users\\jeffr\\.pepper\\Memory"
+        files:
+          - "SOUL.md"
+          - "pepper/preferences.md"
+          - "pepper/handoff.md"
+
+  PreCompact:
+    - tool: agent_core.hooks.tools.handoff_writer.HandoffWriter
+      params:
+        output_path: "C:\\Users\\jeffr\\.pepper\\Memory\\pepper\\handoff.md"
+        transcript_tail_lines: 200
+        timezone: "US/Eastern"
+        agent_name: "Pepper"
+
+  SessionEnd:
+    - tool: agent_core.hooks.tools.handoff_writer.HandoffWriter
+      params:
+        output_path: "C:\\Users\\jeffr\\.pepper\\Memory\\pepper\\handoff.md"
+        transcript_tail_lines: 200
+        timezone: "US/Eastern"
+        agent_name: "Pepper"
