@@ -186,7 +186,7 @@ class HandoffWriter:
    - Decisions made this session
    - Emotional temperature (how was the conversation going)
    - Open threads (unfinished work, unanswered questions)
-   - Notes to self (observations, hunches)
+   - Observations (patterns noticed, hunches worth remembering)
 
 3. **Write handoff file:** Write the LLM's response to `output_path` with a header:
    ```markdown
@@ -203,8 +203,9 @@ class HandoffWriter:
 ### LLM Prompt
 
 ```
-You are writing a handoff note for continuity between sessions. Based on the
-conversation transcript below, write a brief note covering:
+You are writing a handoff note for {agent_name} for continuity between sessions.
+Write from {agent_name}'s perspective. Based on the conversation transcript
+below, write a brief note covering:
 
 ## What We Were Working On
 [Topics and tasks in progress — a few bullet points]
@@ -218,8 +219,8 @@ conversation transcript below, write a brief note covering:
 ## Open Threads
 [Things started but not finished, unanswered questions — bullet points]
 
-## Notes To Self
-[Observations, thoughts, hunches worth remembering — bullet points]
+## Observations
+[Patterns noticed, hunches worth remembering — bullet points]
 
 Keep each section to 2-5 bullet points. Skip sections with nothing to report.
 If the transcript is too short or trivial, respond with: HANDOFF_EMPTY
