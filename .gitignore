@@ -8,6 +8,9 @@ memory-compiler/scripts/compile.log
 memory-compiler/scripts/session-flush-*.md
 memory-compiler/scripts/flush-context-*.md
 
+# Handoff writer state
+handoff-state.json
+
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[codz]
