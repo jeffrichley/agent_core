@@ -6,3 +6,6 @@
 | [[concepts/pipeline-system]] | Pipeline class — loads YAML config, imports tools, runs them in order, renders markdown output | docs/superpowers/specs/2026-04-13-pluggable-hook-tools-design.md | 2026-04-13 |
 | [[concepts/agent-core-cli]] | Typer CLI entrypoint — agent-core hooks run command wired to Claude Code hooks | docs/superpowers/specs/2026-04-13-pluggable-hook-tools-design.md | 2026-04-13 |
 | [[concepts/agent-core-yaml-config]] | agent_core.yaml config format — maps lifecycle events to ordered tool lists with params | docs/superpowers/specs/2026-04-13-pluggable-hook-tools-design.md | 2026-04-13 |
+| [[concepts/file-injector]] | FileInjector + IdentityInjector — generic file reader with identity subclass | docs/superpowers/specs/2026-04-13-file-injector-handoff-writer-design.md | 2026-04-13 |
+| [[concepts/handoff-writer]] | HandoffWriter — LLM-powered continuity notes written before context loss | docs/superpowers/specs/2026-04-13-file-injector-handoff-writer-design.md | 2026-04-13 |
+| [[concepts/transcript-reader]] | Shared JSONL transcript reader utility for extracting conversation turns | docs/superpowers/specs/2026-04-13-file-injector-handoff-writer-design.md | 2026-04-13 |
