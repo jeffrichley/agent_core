@@ -6,7 +6,7 @@ import pytest
 import yaml
 
 from agent_core.hooks.pipeline import Pipeline
-from agent_core.models import PipelineConfig, ToolConfig, ToolResult
+from agent_core.models import ToolResult
 
 
 @pytest.fixture

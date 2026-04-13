@@ -49,23 +49,28 @@ from agent_core.transcript import read_transcript
 
 logger = logging.getLogger("agent_core.hooks.tools.handoff_writer")
 
-# Deduplication state file location — next to the package
-_STATE_DIR = Path(__file__).resolve().parent.parent.parent.parent.parent
-_STATE_FILE = _STATE_DIR / "handoff-state.json"
+
+def _state_file_for(output_path: Path) -> Path:
+    """Derive the deduplication state file path from the output path.
+
+    Places handoff-state.json alongside the handoff file so it works
+    regardless of whether the package is installed or run from the repo.
+    """
+    return output_path.parent / "handoff-state.json"
 
 
-def _load_state() -> dict:
-    if _STATE_FILE.exists():
+def _load_state(state_file: Path) -> dict:
+    if state_file.exists():
         try:
-            return json.loads(_STATE_FILE.read_text(encoding="utf-8"))
+            return json.loads(state_file.read_text(encoding="utf-8"))
         except (json.JSONDecodeError, OSError):
             pass
     return {}
 
 
-def _save_state(state: dict) -> None:
-    _STATE_FILE.parent.mkdir(parents=True, exist_ok=True)
-    _STATE_FILE.write_text(json.dumps(state), encoding="utf-8")
+def _save_state(state_file: Path, state: dict) -> None:
+    state_file.parent.mkdir(parents=True, exist_ok=True)
+    state_file.write_text(json.dumps(state), encoding="utf-8")
 
 
 def extract_handoff(transcript_context: str, agent_name: str) -> str:
@@ -83,7 +88,6 @@ def extract_handoff(transcript_context: str, agent_name: str) -> str:
     from claude_agent_sdk import (
         AssistantMessage,
         ClaudeAgentOptions,
-        ResultMessage,
         TextBlock,
         query,
     )
@@ -140,6 +144,16 @@ If the transcript is too short or trivial, respond with: HANDOFF_EMPTY
     return response
 
 
+def _build_header(timestamp: str, session_id: str, event: str) -> str:
+    """Build the standard handoff note header."""
+    return (
+        f"# Handoff Note\n"
+        f"**Written:** {timestamp}\n"
+        f"**Session:** {session_id}\n"
+        f"**Event:** {event}\n\n"
+    )
+
+
 class HandoffWriter:
     """Writes a structured continuity note before context is lost."""
 
@@ -169,7 +183,8 @@ class HandoffWriter:
         transcript_path_str = hook_input.get("transcript_path", "")
 
         # Deduplication
-        state = _load_state()
+        state_file = _state_file_for(output_path)
+        state = _load_state(state_file)
         if (
             state.get("session_id") == session_id
             and time.time() - state.get("timestamp", 0) < 60
@@ -187,6 +202,7 @@ class HandoffWriter:
             tz = ZoneInfo("US/Eastern")
         now = datetime.now(timezone.utc).astimezone(tz)
         timestamp = now.strftime("%A, %B %d, %Y %I:%M %p %Z")
+        header = _build_header(timestamp, session_id, event)
 
         # Read transcript
         if transcript_path_str and Path(transcript_path_str).exists():
@@ -199,16 +215,10 @@ class HandoffWriter:
 
         # Handle missing/empty transcript
         if not transcript_context.strip():
-            header = (
-                f"# Handoff Note\n"
-                f"**Written:** {timestamp}\n"
-                f"**Session:** {session_id}\n"
-                f"**Event:** {event}\n\n"
-                f"No transcript available — session ended without accessible transcript.\n"
-            )
+            content = header + "No transcript available — session ended without accessible transcript.\n"
             output_path.parent.mkdir(parents=True, exist_ok=True)
-            output_path.write_text(header, encoding="utf-8")
-            _save_state({"session_id": session_id, "timestamp": time.time()})
+            output_path.write_text(content, encoding="utf-8")
+            _save_state(state_file, {"session_id": session_id, "timestamp": time.time()})
             return ToolResult(
                 heading="Handoff Note Written",
                 content="No transcript available — wrote empty handoff note.",
@@ -220,32 +230,32 @@ class HandoffWriter:
 
         # Handle HANDOFF_EMPTY
         if "HANDOFF_EMPTY" in llm_response:
-            header = (
-                f"# Handoff Note\n"
-                f"**Written:** {timestamp}\n"
-                f"**Session:** {session_id}\n"
-                f"**Event:** {event}\n\n"
-                f"No significant content to hand off.\n"
-            )
+            content = header + "No significant content to hand off.\n"
             output_path.parent.mkdir(parents=True, exist_ok=True)
-            output_path.write_text(header, encoding="utf-8")
-            _save_state({"session_id": session_id, "timestamp": time.time()})
+            output_path.write_text(content, encoding="utf-8")
+            _save_state(state_file, {"session_id": session_id, "timestamp": time.time()})
             return ToolResult(
                 heading="Handoff Note Written",
                 content="No significant content to hand off.",
             )
 
+        # Handle HANDOFF_ERROR — don't write raw error text to identity vault
+        if "HANDOFF_ERROR" in llm_response:
+            logger.warning("Handoff extraction failed: %s", llm_response)
+            content = header + "Handoff extraction failed — no continuity note available.\n"
+            output_path.parent.mkdir(parents=True, exist_ok=True)
+            output_path.write_text(content, encoding="utf-8")
+            _save_state(state_file, {"session_id": session_id, "timestamp": time.time()})
+            return ToolResult(
+                heading="Handoff Note Written",
+                content="Handoff extraction failed — wrote fallback note.",
+            )
+
         # Write handoff note
-        handoff_content = (
-            f"# Handoff Note\n"
-            f"**Written:** {timestamp}\n"
-            f"**Session:** {session_id}\n"
-            f"**Event:** {event}\n\n"
-            f"{llm_response}\n"
-        )
+        handoff_content = header + f"{llm_response}\n"
         output_path.parent.mkdir(parents=True, exist_ok=True)
         output_path.write_text(handoff_content, encoding="utf-8")
-        _save_state({"session_id": session_id, "timestamp": time.time()})
+        _save_state(state_file, {"session_id": session_id, "timestamp": time.time()})
 
         logger.info("Handoff note written to %s", output_path)
         return ToolResult(

@@ -60,6 +60,13 @@ class FileInjector:
         heading = params.get("heading", self.DEFAULT_HEADING)
         missing_behavior = params.get("missing_file_behavior", self.DEFAULT_MISSING_BEHAVIOR)
 
+        valid_behaviors = ("skip", "warn", "error")
+        if missing_behavior not in valid_behaviors:
+            raise ValueError(
+                f"Invalid missing_file_behavior '{missing_behavior}', "
+                f"must be one of: {', '.join(valid_behaviors)}"
+            )
+
         base_path = Path(base_path_str)
         sections: list[str] = []
 
