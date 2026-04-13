@@ -6,6 +6,7 @@ import pytest
 
 from agent_core.hooks.protocol import HookTool
 from agent_core.hooks.tools.file_injector import FileInjector
+from agent_core.hooks.tools.identity_injector import IdentityInjector
 from agent_core.models import ToolResult
 
 
@@ -153,3 +154,49 @@ class TestFileInjector:
                 hook_input={},
                 params={"base_path": str(tmp_path)},
             )
+
+
+class TestIdentityInjector:
+    def test_implements_hook_tool_protocol(self):
+        assert isinstance(IdentityInjector(), HookTool)
+
+    def test_is_subclass_of_file_injector(self):
+        assert issubclass(IdentityInjector, FileInjector)
+
+    def test_default_heading_is_identity(self, tmp_path: Path):
+        base = make_files(tmp_path, {"soul.md": "I am me"})
+        tool = IdentityInjector()
+        result = tool.execute(
+            event="SessionStart",
+            hook_input={},
+            params={"base_path": str(base), "files": ["soul.md"]},
+        )
+        assert result.heading == "Identity"
+
+    def test_default_missing_behavior_is_skip(self, tmp_path: Path):
+        base = make_files(tmp_path, {"soul.md": "I am me"})
+        tool = IdentityInjector()
+        result = tool.execute(
+            event="SessionStart",
+            hook_input={},
+            params={
+                "base_path": str(base),
+                "files": ["soul.md", "nonexistent.md"],
+            },
+        )
+        assert "I am me" in result.content
+        assert "nonexistent" not in result.content
+
+    def test_heading_can_be_overridden_via_params(self, tmp_path: Path):
+        base = make_files(tmp_path, {"soul.md": "I am me"})
+        tool = IdentityInjector()
+        result = tool.execute(
+            event="SessionStart",
+            hook_input={},
+            params={
+                "base_path": str(base),
+                "files": ["soul.md"],
+                "heading": "Pepper Identity",
+            },
+        )
+        assert result.heading == "Pepper Identity"
