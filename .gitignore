@@ -1,3 +1,13 @@
+# Memory compiler runtime state
+memory-compiler/daily/
+memory-compiler/reports/
+memory-compiler/scripts/state.json
+memory-compiler/scripts/last-flush.json
+memory-compiler/scripts/flush.log
+memory-compiler/scripts/compile.log
+memory-compiler/scripts/session-flush-*.md
+memory-compiler/scripts/flush-context-*.md
+
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[codz]
