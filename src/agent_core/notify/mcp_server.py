@@ -6,8 +6,10 @@ with reply fields and action buttons.
 
 Tools:
     send_notification: Fire-and-forget toast notification.
-    ask_user: Interactive notification with reply field — blocks until user replies or timeout.
-    notify_with_buttons: Notification with action buttons — blocks until user clicks one.
+    ask_user: Send notification with reply field, return immediately with ID.
+    notify_with_buttons: Send notification with action buttons, return immediately with ID.
+    get_reply: Check if the user has replied to a notification.
+    clear_notifications: Clear all active notifications.
 
 Launch:
     agent-core-notify           # stdio transport (for .mcp.json)
@@ -28,6 +30,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import sys
+import uuid
 from pathlib import Path
 
 from mcp.server.fastmcp import FastMCP
@@ -53,8 +56,13 @@ logger = logging.getLogger("agent_core.notify")
 
 mcp = FastMCP("agent-core-notify")
 
-# Shared notifier instance — reused across tool calls
+# Shared notifier instance
 _notifier = DesktopNotifier(app_name="Agent Core")
+
+# Store for pending interactive notifications (id -> reply/button result)
+_pending: dict[str, dict] = {}
+# Reference to the running event loop for thread-safe callback signaling
+_loop: asyncio.AbstractEventLoop | None = None
 
 URGENCY_MAP = {
     "low": Urgency.Low,
@@ -70,6 +78,30 @@ def _make_sound(sound: str | None) -> Sound | None:
     if Path(sound).suffix in (".wav", ".mp3", ".ogg", ".flac", ".aac", ".wma"):
         return Sound(path=Path(sound))
     return Sound(name=sound)
+
+
+def _resolve_reply(notification_id: str, reply: str) -> None:
+    """Thread-safe callback for reply fields."""
+    if notification_id in _pending:
+        _pending[notification_id]["reply"] = reply
+        _pending[notification_id]["status"] = "replied"
+        logger.info("Reply received for %s: %s", notification_id, reply)
+
+
+def _resolve_button(notification_id: str, button: str) -> None:
+    """Thread-safe callback for button presses."""
+    if notification_id in _pending:
+        _pending[notification_id]["reply"] = button
+        _pending[notification_id]["status"] = "clicked"
+        logger.info("Button clicked for %s: %s", notification_id, button)
+
+
+def _resolve_dismissed(notification_id: str) -> None:
+    """Thread-safe callback for dismissed notifications."""
+    if notification_id in _pending:
+        _pending[notification_id]["reply"] = ""
+        _pending[notification_id]["status"] = "dismissed"
+        logger.info("Notification dismissed: %s", notification_id)
 
 
 @mcp.tool()
@@ -117,33 +149,27 @@ async def ask_user(
     title: str,
     message: str,
     reply_button_title: str = "Reply",
-    timeout_seconds: int = 120,
     urgency: str = "normal",
     icon: str | None = None,
     sound: str | None = None,
     thread: str | None = None,
 ) -> dict[str, str]:
-    """Send a notification with a reply field and wait for the user's response.
+    """Send a notification with a reply field. Returns immediately with a notification_id.
 
-    Blocks until the user replies or the timeout expires. The user's reply
-    text is returned in the response.
+    Use get_reply(notification_id) to check if the user has replied.
+    This does NOT block — the agent can continue working while waiting.
 
     Args:
         title: Notification title.
         message: The question or prompt to show.
         reply_button_title: Label for the reply button. Default: "Reply".
-        timeout_seconds: How long to wait for a reply. Default: 120.
         urgency: "low", "normal", or "critical". Default: "normal".
         icon: Path to an icon image file. Optional.
         sound: Name of a system sound, or path to a sound file. Optional.
         thread: Thread ID to group related notifications. Optional.
     """
-    reply_event = asyncio.Event()
-    reply_text: list[str] = []
-
-    def on_replied(text: str) -> None:
-        reply_text.append(text)
-        reply_event.set()
+    notification_id = str(uuid.uuid4())[:8]
+    _pending[notification_id] = {"status": "pending", "reply": ""}
 
     urg = URGENCY_MAP.get(urgency, Urgency.Normal)
     icon_obj = Icon(path=Path(icon)) if icon else None
@@ -159,20 +185,13 @@ async def ask_user(
         reply_field=ReplyField(
             title="Type your reply",
             button_title=reply_button_title,
-            on_replied=on_replied,
+            on_replied=lambda text: _resolve_reply(notification_id, text),
         ),
+        on_dismissed=lambda: _resolve_dismissed(notification_id),
     )
 
-    logger.info("Ask sent: %s — %s (waiting %ds for reply)", title, message, timeout_seconds)
-
-    try:
-        await asyncio.wait_for(reply_event.wait(), timeout=timeout_seconds)
-        user_reply = reply_text[0] if reply_text else ""
-        logger.info("Reply received: %s", user_reply)
-        return {"status": "replied", "reply": user_reply}
-    except asyncio.TimeoutError:
-        logger.info("Reply timed out after %ds", timeout_seconds)
-        return {"status": "timeout", "reply": ""}
+    logger.info("Ask sent [%s]: %s — %s", notification_id, title, message)
+    return {"status": "pending", "notification_id": notification_id}
 
 
 @mcp.tool()
@@ -180,42 +199,33 @@ async def notify_with_buttons(
     title: str,
     message: str,
     buttons: list[str],
-    timeout_seconds: int = 120,
     urgency: str = "normal",
     icon: str | None = None,
     sound: str | None = None,
     thread: str | None = None,
 ) -> dict[str, str]:
-    """Send a notification with action buttons and wait for the user's choice.
+    """Send a notification with action buttons. Returns immediately with a notification_id.
 
-    Blocks until the user clicks a button, dismisses the notification,
-    or the timeout expires.
+    Use get_reply(notification_id) to check which button the user clicked.
+    This does NOT block — the agent can continue working while waiting.
 
     Args:
         title: Notification title.
         message: Notification body text.
         buttons: List of button labels (e.g., ["Approve", "Deny", "Snooze"]).
-        timeout_seconds: How long to wait for a click. Default: 120.
         urgency: "low", "normal", or "critical". Default: "normal".
         icon: Path to an icon image file. Optional.
         sound: Name of a system sound, or path to a sound file. Optional.
         thread: Thread ID to group related notifications. Optional.
     """
-    choice_event = asyncio.Event()
-    chosen: list[str] = []
-
-    def make_handler(label: str):
-        def handler() -> None:
-            chosen.append(label)
-            choice_event.set()
-        return handler
-
-    def on_dismissed() -> None:
-        chosen.append("dismissed")
-        choice_event.set()
+    notification_id = str(uuid.uuid4())[:8]
+    _pending[notification_id] = {"status": "pending", "reply": ""}
 
     button_objs = [
-        Button(title=label, on_pressed=make_handler(label))
+        Button(
+            title=label,
+            on_pressed=lambda lbl=label: _resolve_button(notification_id, lbl),
+        )
         for label in buttons
     ]
 
@@ -231,25 +241,50 @@ async def notify_with_buttons(
         sound=sound_obj,
         thread=thread,
         buttons=button_objs,
-        on_dismissed=on_dismissed,
+        on_dismissed=lambda: _resolve_dismissed(notification_id),
     )
 
-    logger.info("Buttons sent: %s — %s [%s] (waiting %ds)", title, message, ", ".join(buttons), timeout_seconds)
+    logger.info("Buttons sent [%s]: %s — %s [%s]", notification_id, title, message, ", ".join(buttons))
+    return {"status": "pending", "notification_id": notification_id}
 
-    try:
-        await asyncio.wait_for(choice_event.wait(), timeout=timeout_seconds)
-        choice = chosen[0] if chosen else "unknown"
-        logger.info("Button clicked: %s", choice)
-        return {"status": "clicked", "button": choice}
-    except asyncio.TimeoutError:
-        logger.info("Button choice timed out after %ds", timeout_seconds)
-        return {"status": "timeout", "button": ""}
+
+@mcp.tool()
+async def get_reply(notification_id: str) -> dict[str, str]:
+    """Check if the user has replied to or interacted with a notification.
+
+    Returns the current status:
+    - {"status": "pending"} — user hasn't responded yet
+    - {"status": "replied", "reply": "user's text"} — user typed a reply
+    - {"status": "clicked", "button": "Approve"} — user clicked a button
+    - {"status": "dismissed"} — user dismissed the notification
+    - {"status": "not_found"} — unknown notification_id
+
+    Args:
+        notification_id: The ID returned by ask_user or notify_with_buttons.
+    """
+    if notification_id not in _pending:
+        return {"status": "not_found", "notification_id": notification_id}
+
+    entry = _pending[notification_id]
+    result = {"status": entry["status"], "notification_id": notification_id}
+
+    if entry["status"] == "replied":
+        result["reply"] = entry["reply"]
+        del _pending[notification_id]
+    elif entry["status"] == "clicked":
+        result["button"] = entry["reply"]
+        del _pending[notification_id]
+    elif entry["status"] == "dismissed":
+        del _pending[notification_id]
+
+    return result
 
 
 @mcp.tool()
 async def clear_notifications() -> dict[str, str]:
     """Clear all active notifications sent by this server."""
     await _notifier.clear_all()
+    _pending.clear()
     logger.info("All notifications cleared")
     return {"status": "cleared"}
 
