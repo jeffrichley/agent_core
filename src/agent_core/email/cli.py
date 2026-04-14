@@ -157,3 +157,53 @@ def send(
     except Exception as e:
         typer.echo(f"Error: Failed to send: {e}", err=True)
         raise typer.Exit(code=1)
+
+
+@email_app.command("reply")
+def reply(
+    message_id: str = typer.Argument(help="ID of the message to reply to."),
+    body: Optional[str] = typer.Argument(None, help="Reply body text."),
+    body_file: Optional[str] = typer.Option(None, help="Read body from file instead."),
+    dry_run: bool = typer.Option(False, "--dry-run", help="Preview without sending."),
+) -> None:
+    """Reply to an existing email."""
+    # Resolve body
+    if body_file:
+        from pathlib import Path
+        body_path = Path(body_file)
+        if not body_path.exists():
+            typer.echo(f"Error: Body file not found: {body_file}", err=True)
+            raise typer.Exit(code=1)
+        body_text = body_path.read_text(encoding="utf-8")
+    elif body:
+        body_text = body
+    else:
+        typer.echo("Error: Provide reply text or --body-file.", err=True)
+        raise typer.Exit(code=1)
+
+    client = get_client()
+    inbox_id = get_inbox_id()
+
+    # Look up original message for context
+    try:
+        original = client.inboxes.messages.get(inbox_id, message_id)
+    except Exception as e:
+        typer.echo(f"Error: Could not find message {message_id}: {e}", err=True)
+        raise typer.Exit(code=1)
+
+    if dry_run:
+        typer.echo("[DRY RUN] Would reply:")
+        typer.echo(f"  To: {original.from_}")
+        typer.echo(f"  Subject: Re: {original.subject or '(no subject)'}")
+        typer.echo(f"  In-Reply-To: {message_id}")
+        typer.echo(f"  Body: {body_text[:200]}{'...' if len(body_text) > 200 else ''}")
+        return
+
+    try:
+        response = client.inboxes.messages.reply(inbox_id, message_id, text=body_text)
+        typer.echo(f"Reply sent to {original.from_}")
+        typer.echo(f"Subject: Re: {original.subject or '(no subject)'}")
+        typer.echo(f"Message ID: {response.message_id}")
+    except Exception as e:
+        typer.echo(f"Error: Failed to reply: {e}", err=True)
+        raise typer.Exit(code=1)
