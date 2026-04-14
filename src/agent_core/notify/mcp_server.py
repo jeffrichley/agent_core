@@ -63,6 +63,15 @@ URGENCY_MAP = {
 }
 
 
+def _make_sound(sound: str | None) -> Sound | None:
+    """Create a Sound object — auto-detects file path vs system sound name."""
+    if not sound:
+        return None
+    if Path(sound).suffix in (".wav", ".mp3", ".ogg", ".flac", ".aac", ".wma"):
+        return Sound(path=Path(sound))
+    return Sound(name=sound)
+
+
 @mcp.tool()
 async def send_notification(
     title: str,
@@ -87,7 +96,7 @@ async def send_notification(
     urg = URGENCY_MAP.get(urgency, Urgency.Normal)
     icon_obj = Icon(path=Path(icon)) if icon else None
     attach_obj = Attachment(path=Path(attachment)) if attachment else None
-    sound_obj = Sound(name=sound) if sound else None
+    sound_obj = _make_sound(sound)
 
     await _notifier.send(
         title=title,
@@ -138,7 +147,7 @@ async def ask_user(
 
     urg = URGENCY_MAP.get(urgency, Urgency.Normal)
     icon_obj = Icon(path=Path(icon)) if icon else None
-    sound_obj = Sound(name=sound) if sound else None
+    sound_obj = _make_sound(sound)
 
     await _notifier.send(
         title=title,
@@ -212,7 +221,7 @@ async def notify_with_buttons(
 
     urg = URGENCY_MAP.get(urgency, Urgency.Normal)
     icon_obj = Icon(path=Path(icon)) if icon else None
-    sound_obj = Sound(name=sound) if sound else None
+    sound_obj = _make_sound(sound)
 
     await _notifier.send(
         title=title,
