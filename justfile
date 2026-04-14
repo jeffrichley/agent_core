@@ -1,4 +1,5 @@
 # agent_core justfile
+set shell := ["powershell", "-NoProfile", "-Command"]
 
 # Run all tests
 test:
