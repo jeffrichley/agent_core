@@ -5,14 +5,21 @@ Inbox ID defaults to pepper_ai@agentmail.to, overridable via PEPPER_INBOX_ID.
 """
 
 import os
+from pathlib import Path
 
 import typer
+from dotenv import load_dotenv
+
+# Load .env from ~/.pepper/.env if it exists (for API keys)
+_pepper_env = Path.home() / ".pepper" / ".env"
+if _pepper_env.exists():
+    load_dotenv(_pepper_env)
 
 
 def get_client():
     """Create and return an AgentMail sync client.
 
-    Reads AGENTMAIL_API_KEY from environment. Exits with error if missing.
+    Reads AGENTMAIL_API_KEY from environment (or ~/.pepper/.env). Exits with error if missing.
     """
     from agentmail import AgentMail
 

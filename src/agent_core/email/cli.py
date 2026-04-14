@@ -65,7 +65,10 @@ def check(
         msg_id = msg.message_id[:12] if msg.message_id else ""
         from_addr = msg.from_ or ""
         subject = msg.subject or "(no subject)"
-        ts = msg.timestamp[:16] if msg.timestamp else ""
+        if msg.timestamp:
+            ts = msg.timestamp.strftime("%Y-%m-%d %H:%M") if hasattr(msg.timestamp, "strftime") else str(msg.timestamp)[:16]
+        else:
+            ts = ""
         table.add_row(msg_id, from_addr, subject, ts, marker)
 
     console.print(table)
@@ -90,7 +93,8 @@ def read(
     if msg.cc:
         typer.echo(f"CC: {', '.join(msg.cc)}")
     typer.echo(f"Subject: {msg.subject or '(no subject)'}")
-    typer.echo(f"Date: {msg.timestamp}")
+    date_str = msg.timestamp.strftime("%Y-%m-%d %H:%M") if hasattr(msg.timestamp, "strftime") else str(msg.timestamp)
+    typer.echo(f"Date: {date_str}")
     typer.echo(f"Labels: {', '.join(msg.labels) if msg.labels else ''}")
     typer.echo("-" * 60)
     typer.echo(msg.text or msg.html or "(no body)")
