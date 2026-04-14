@@ -18,3 +18,11 @@ pipelines:
     - tool: agent_core.hooks.tools.time_injector.TimeInjector
       params:
         format: "%A, %B %d, %Y %I:%M %p %Z"
+
+  SessionEnd:
+    - tool: agent_core.hooks.tools.handoff_writer.HandoffWriter
+      params:
+        output_path: "E:\\workspaces\\ai\\agents\\agent_core\\tests\\hooks\\test-handoff.md"
+        transcript_tail_lines: 200
+        timezone: "US/Eastern"
+        agent_name: "TestAgent"

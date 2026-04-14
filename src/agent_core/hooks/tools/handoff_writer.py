@@ -1,9 +1,12 @@
-"""HandoffWriter — writes a structured continuity note before context is lost.
+"""HandoffWriter — spawns a detached claude CLI process to write continuity notes.
 
-Uses LLM extraction via the Claude Agent SDK to analyze the conversation
-transcript and produce a handoff note with topics, decisions, emotional
-temperature, and open threads. The note is written to a file that gets
-loaded by IdentityInjector on the next session start.
+The hook itself is fast (<1 second): it reads the transcript, writes context
+to a temp file, and spawns `claude -p` as a detached background process.
+The claude process reads the context, generates a structured handoff note,
+and writes it to the output path.
+
+This uses the Claude CLI directly (subscription auth), not the Agent SDK.
+The detached process survives Ctrl+C during session exit.
 
 Register on both PreCompact and SessionEnd events to maximize coverage.
 Deduplication prevents writing the same handoff twice if both events fire.
@@ -35,10 +38,11 @@ See Also:
 
 from __future__ import annotations
 
-import asyncio
 import json
 import logging
-import os
+import shutil
+import subprocess
+import sys
 import time
 from datetime import datetime, timezone
 from pathlib import Path
@@ -49,13 +53,23 @@ from agent_core.transcript import read_transcript
 
 logger = logging.getLogger("agent_core.hooks.tools.handoff_writer")
 
+# Debug log file for diagnosing hook failures (hooks swallow stderr)
+_DEBUG_LOG = Path.home() / ".pepper" / "Memory" / "pepper" / "handoff-debug.log"
+
+
+def _debug(msg: str) -> None:
+    """Append a timestamped debug line to the debug log file."""
+    try:
+        _DEBUG_LOG.parent.mkdir(parents=True, exist_ok=True)
+        with open(_DEBUG_LOG, "a", encoding="utf-8") as f:
+            ts = datetime.now(timezone.utc).astimezone().strftime("%Y-%m-%d %H:%M:%S")
+            f.write(f"[{ts}] {msg}\n")
+    except Exception:
+        pass
+
 
 def _state_file_for(output_path: Path) -> Path:
-    """Derive the deduplication state file path from the output path.
-
-    Places handoff-state.json alongside the handoff file so it works
-    regardless of whether the package is installed or run from the repo.
-    """
+    """Derive the deduplication state file path from the output path."""
     return output_path.parent / "handoff-state.json"
 
 
@@ -73,28 +87,21 @@ def _save_state(state_file: Path, state: dict) -> None:
     state_file.write_text(json.dumps(state), encoding="utf-8")
 
 
-def extract_handoff(transcript_context: str, agent_name: str) -> str:
-    """Call Claude via the Agent SDK to extract a structured handoff note.
+def _build_prompt(context_file: str, output_path: str, agent_name: str,
+                  session_id: str, event: str, timestamp: str) -> str:
+    """Build the prompt for the detached claude process."""
+    return f"""Read the conversation transcript from the file at {context_file}.
 
-    Args:
-        transcript_context: Formatted transcript text.
-        agent_name: Name of the agent for the LLM prompt perspective.
+Then write a handoff note for {agent_name} to the file at {output_path}.
 
-    Returns:
-        The LLM's response — structured markdown sections or "HANDOFF_EMPTY".
-    """
-    os.environ["CLAUDE_INVOKED_BY"] = "handoff_writer"
+The handoff note must start with this exact header:
 
-    from claude_agent_sdk import (
-        AssistantMessage,
-        ClaudeAgentOptions,
-        TextBlock,
-        query,
-    )
+# Handoff Note
+**Written:** {timestamp}
+**Session:** {session_id}
+**Event:** {event}
 
-    prompt = f"""You are writing a handoff note for {agent_name} for continuity between sessions.
-Write from {agent_name}'s perspective. Based on the conversation transcript
-below, write a brief note covering:
+Then write from {agent_name}'s perspective covering these sections:
 
 ## What We Were Working On
 [Topics and tasks in progress — a few bullet points]
@@ -111,65 +118,32 @@ below, write a brief note covering:
 ## Observations
 [Patterns noticed, hunches worth remembering — bullet points]
 
-Keep each section to 2-5 bullet points. Skip sections with nothing to report.
-If the transcript is too short or trivial, respond with: HANDOFF_EMPTY
+Rules:
+- Keep each section to 2-5 bullet points.
+- Skip sections with nothing to report.
+- Be specific — name files, tools, errors, and decisions. Not vague summaries.
+- If the transcript is genuinely trivial (only greetings, no real work), write a note
+  that just says "No significant content to hand off." under the header.
 
-## Transcript
+After writing the handoff note, delete the context file at {context_file}.
 
-{transcript_context}"""
+Write the state file at {Path(output_path).parent / 'handoff-state.json'} with this JSON:
+{{"session_id": "{session_id}", "timestamp": {int(time.time())}}}
 
-    response = ""
+After everything is written, send a desktop notification by running this exact command:
+uv run --directory E:/workspaces/ai/agents/agent_core agent-core notify "{agent_name}" "Handoff note written"
 
-    async def _run() -> str:
-        nonlocal response
-        async for message in query(
-            prompt=prompt,
-            options=ClaudeAgentOptions(
-                allowed_tools=[],
-                max_turns=2,
-            ),
-        ):
-            if isinstance(message, AssistantMessage):
-                for block in message.content:
-                    if isinstance(block, TextBlock):
-                        response += block.text
-        return response
-
-    try:
-        asyncio.run(_run())
-    except Exception as e:
-        logger.error("Agent SDK error during handoff extraction: %s", e)
-        response = f"HANDOFF_ERROR: {type(e).__name__}: {e}"
-
-    return response
-
-
-def _build_header(timestamp: str, session_id: str, event: str) -> str:
-    """Build the standard handoff note header."""
-    return (
-        f"# Handoff Note\n"
-        f"**Written:** {timestamp}\n"
-        f"**Session:** {session_id}\n"
-        f"**Event:** {event}\n\n"
-    )
+If the notify command fails, that's fine — the handoff note is the important part."""
 
 
 class HandoffWriter:
-    """Writes a structured continuity note before context is lost."""
+    """Spawns a detached claude CLI process to write a continuity note."""
 
     def execute(self, event: str, hook_input: dict, params: dict) -> ToolResult:
-        """Read transcript, extract via LLM, write handoff note.
+        """Read transcript, write to temp file, spawn claude -p in background.
 
-        Args:
-            event: The lifecycle event name (included in the handoff header).
-            hook_input: Data from Claude Code. Expected: transcript_path, session_id.
-            params: Required: output_path. Optional: transcript_tail_lines, timezone, agent_name.
-
-        Returns:
-            ToolResult confirming the handoff was written.
-
-        Raises:
-            ValueError: If output_path param is missing.
+        Returns immediately (<1 second). The detached claude process handles
+        the LLM generation and writes the handoff note.
         """
         output_path_str = params.get("output_path")
         if not output_path_str:
@@ -182,17 +156,41 @@ class HandoffWriter:
         session_id = hook_input.get("session_id", "unknown")
         transcript_path_str = hook_input.get("transcript_path", "")
 
-        # Deduplication
+        _debug(f"=== HandoffWriter fired: event={event} session={session_id}")
+        _debug(f"transcript_path={transcript_path_str!r}")
+
+        # Quick deduplication check
         state_file = _state_file_for(output_path)
         state = _load_state(state_file)
         if (
             state.get("session_id") == session_id
             and time.time() - state.get("timestamp", 0) < 60
         ):
-            logger.info("Skipping duplicate handoff for session %s", session_id)
+            _debug(f"skipping duplicate handoff for session {session_id}")
             return ToolResult(
                 heading="Handoff Note Written",
                 content="Handoff already written for this session.",
+            )
+
+        # Check transcript exists
+        if not transcript_path_str or not Path(transcript_path_str).exists():
+            _debug(f"transcript not available: {transcript_path_str!r}")
+            return ToolResult(
+                heading="Handoff Note Written",
+                content="No transcript available.",
+            )
+
+        # Read transcript (fast — local file I/O only)
+        transcript_context, turn_count = read_transcript(
+            Path(transcript_path_str), max_turns=tail_lines
+        )
+        _debug(f"read_transcript: {turn_count} turns, {len(transcript_context)} chars")
+
+        if not transcript_context.strip():
+            _debug("transcript empty after read")
+            return ToolResult(
+                heading="Handoff Note Written",
+                content="Transcript empty — nothing to hand off.",
             )
 
         # Timestamp
@@ -202,63 +200,68 @@ class HandoffWriter:
             tz = ZoneInfo("US/Eastern")
         now = datetime.now(timezone.utc).astimezone(tz)
         timestamp = now.strftime("%A, %B %d, %Y %I:%M %p %Z")
-        header = _build_header(timestamp, session_id, event)
 
-        # Read transcript
-        if transcript_path_str and Path(transcript_path_str).exists():
-            transcript_context, turn_count = read_transcript(
-                Path(transcript_path_str), max_turns=tail_lines
-            )
-        else:
-            transcript_context = ""
-            turn_count = 0
+        # Write context to temp file for the claude process
+        ts_str = datetime.now(timezone.utc).astimezone().strftime("%Y%m%d-%H%M%S")
+        context_file = output_path.parent / f"handoff-context-{session_id[:8]}-{ts_str}.md"
+        context_file.write_text(transcript_context, encoding="utf-8")
+        _debug(f"wrote context to {context_file}")
 
-        # Handle missing/empty transcript
-        if not transcript_context.strip():
-            content = header + "No transcript available — session ended without accessible transcript.\n"
-            output_path.parent.mkdir(parents=True, exist_ok=True)
-            output_path.write_text(content, encoding="utf-8")
-            _save_state(state_file, {"session_id": session_id, "timestamp": time.time()})
+        # Build prompt
+        prompt = _build_prompt(
+            context_file=str(context_file),
+            output_path=str(output_path),
+            agent_name=agent_name,
+            session_id=session_id,
+            event=event,
+            timestamp=timestamp,
+        )
+
+        # Find claude binary
+        claude_bin = shutil.which("claude")
+        if not claude_bin:
+            _debug("claude binary not found on PATH")
             return ToolResult(
                 heading="Handoff Note Written",
-                content="No transcript available — wrote empty handoff note.",
+                content="claude CLI not found — cannot write handoff note.",
             )
 
-        # LLM extraction
-        logger.info("Extracting handoff from %d turns for session %s", turn_count, session_id)
-        llm_response = extract_handoff(transcript_context, agent_name)
+        # Spawn detached claude process
+        cmd = [
+            claude_bin,
+            "-p", prompt,
+            "--allowedTools", "Read,Write,Edit,Bash",
+            "--max-turns", "5",
+        ]
 
-        # Handle HANDOFF_EMPTY
-        if "HANDOFF_EMPTY" in llm_response:
-            content = header + "No significant content to hand off.\n"
-            output_path.parent.mkdir(parents=True, exist_ok=True)
-            output_path.write_text(content, encoding="utf-8")
-            _save_state(state_file, {"session_id": session_id, "timestamp": time.time()})
+        # Detach from parent so it survives Ctrl+C
+        creation_flags = subprocess.CREATE_NO_WINDOW if sys.platform == "win32" else 0
+        kwargs = {}
+        if sys.platform != "win32":
+            kwargs["start_new_session"] = True
+
+        try:
+            subprocess.Popen(
+                cmd,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                creationflags=creation_flags,
+                cwd=str(output_path.parent),
+                **kwargs,
+            )
+            _debug(f"spawned claude -p for session {session_id}")
+        except Exception as e:
+            _debug(f"FAILED to spawn claude: {e}")
+            logger.error("Failed to spawn claude: %s", e)
             return ToolResult(
                 heading="Handoff Note Written",
-                content="No significant content to hand off.",
+                content=f"Failed to spawn claude process: {e}",
             )
 
-        # Handle HANDOFF_ERROR — don't write raw error text to identity vault
-        if "HANDOFF_ERROR" in llm_response:
-            logger.warning("Handoff extraction failed: %s", llm_response)
-            content = header + "Handoff extraction failed — no continuity note available.\n"
-            output_path.parent.mkdir(parents=True, exist_ok=True)
-            output_path.write_text(content, encoding="utf-8")
-            _save_state(state_file, {"session_id": session_id, "timestamp": time.time()})
-            return ToolResult(
-                heading="Handoff Note Written",
-                content="Handoff extraction failed — wrote fallback note.",
-            )
-
-        # Write handoff note
-        handoff_content = header + f"{llm_response}\n"
-        output_path.parent.mkdir(parents=True, exist_ok=True)
-        output_path.write_text(handoff_content, encoding="utf-8")
+        # Save state immediately to prevent duplicate spawns
         _save_state(state_file, {"session_id": session_id, "timestamp": time.time()})
 
-        logger.info("Handoff note written to %s", output_path)
         return ToolResult(
             heading="Handoff Note Written",
-            content=f"Handoff note saved to {output_path} at {timestamp}.",
+            content=f"Background handoff extraction spawned for session {session_id} ({turn_count} turns).",
         )

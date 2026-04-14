@@ -1,30 +1,8 @@
 """agent-core CLI — command-line interface for the agent_core framework.
 
-This module provides the Typer-based CLI that serves as the entrypoint for
-Claude Code hooks and other agent_core operations.
-
 Commands:
     agent-core hooks run <event>    Execute all tools registered for a hook event.
-                                    Reads hook_input from stdin (JSON from Claude Code),
-                                    runs the pipeline, outputs JSON to stdout.
-
-Usage from Claude Code hooks (.claude/settings.json):
-    {
-        "hooks": {
-            "SessionStart": [{
-                "matcher": "",
-                "hooks": [{
-                    "type": "command",
-                    "command": "uv run agent-core hooks run SessionStart",
-                    "timeout": 15
-                }]
-            }]
-        }
-    }
-
-Usage from the command line:
-    echo '{"session_id": "abc"}' | agent-core hooks run SessionStart
-    agent-core hooks run SessionStart --config /path/to/agent_core.yaml
+    agent-core notify <title> <msg> Send a desktop toast notification.
 
 See Also:
     agent_core.hooks.pipeline.Pipeline: The engine that runs the tools.
@@ -87,3 +65,18 @@ def run_hook(
         }
     }
     typer.echo(json.dumps(output))
+
+
+@app.command("notify")
+def notify(
+    title: str = typer.Argument(help="Notification title (e.g., agent name)."),
+    message: str = typer.Argument(help="Notification message body."),
+) -> None:
+    """Send a desktop toast notification. Cross-platform (Windows, macOS, Linux)."""
+    import asyncio
+
+    from desktop_notifier import DesktopNotifier
+
+    notifier = DesktopNotifier()
+    asyncio.run(notifier.send(title=title, message=message))
+    typer.echo(f"Notification sent: {title} — {message}")
