@@ -1,8 +1,7 @@
 {
   "mcpServers": {
     "notify": {
-      "command": "uv",
-      "args": ["run", "--directory", "E:/workspaces/ai/agents/agent_core", "agent-core-notify"]
+      "command": "agent-core-notify"
     }
   }
 }
