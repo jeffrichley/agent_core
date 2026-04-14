@@ -179,3 +179,65 @@ class TestEmailRead:
 
         result = runner.invoke(app, ["email", "read", "bad-id"])
         assert result.exit_code == 1
+
+
+class TestEmailSend:
+    @patch("agent_core.email.cli.get_inbox_id", return_value="test@agentmail.to")
+    @patch("agent_core.email.cli.get_client")
+    def test_send_basic(self, mock_client_fn, mock_inbox):
+        client = MagicMock()
+        mock_client_fn.return_value = client
+        resp = MagicMock()
+        resp.message_id = "sent-1"
+        resp.thread_id = "thread-1"
+        client.inboxes.messages.send.return_value = resp
+
+        result = runner.invoke(app, ["email", "send", "jeff@gmail.com", "Hello", "Body text"])
+        assert result.exit_code == 0
+        assert "sent" in result.stdout.lower()
+        client.inboxes.messages.send.assert_called_once()
+
+    @patch("agent_core.email.cli.get_inbox_id", return_value="test@agentmail.to")
+    @patch("agent_core.email.cli.get_client")
+    def test_send_with_cc(self, mock_client_fn, mock_inbox):
+        client = MagicMock()
+        mock_client_fn.return_value = client
+        resp = MagicMock()
+        resp.message_id = "sent-2"
+        client.inboxes.messages.send.return_value = resp
+
+        result = runner.invoke(app, ["email", "send", "jeff@gmail.com", "Hello", "Body", "--cc", "other@example.com"])
+        assert result.exit_code == 0
+        call_kwargs = client.inboxes.messages.send.call_args[1]
+        assert call_kwargs.get("cc") == "other@example.com"
+
+    @patch("agent_core.email.cli.get_inbox_id", return_value="test@agentmail.to")
+    @patch("agent_core.email.cli.get_client")
+    def test_send_dry_run(self, mock_client_fn, mock_inbox):
+        client = MagicMock()
+        mock_client_fn.return_value = client
+
+        result = runner.invoke(app, ["email", "send", "jeff@gmail.com", "Hello", "Body", "--dry-run"])
+        assert result.exit_code == 0
+        assert "dry run" in result.stdout.lower()
+        client.inboxes.messages.send.assert_not_called()
+
+    def test_send_body_file(self, tmp_path):
+        body_file = tmp_path / "body.txt"
+        body_file.write_text("Body from file", encoding="utf-8")
+
+        with patch("agent_core.email.cli.get_inbox_id", return_value="test@agentmail.to"), \
+             patch("agent_core.email.cli.get_client") as mock_client_fn:
+            client = MagicMock()
+            mock_client_fn.return_value = client
+            resp = MagicMock()
+            resp.message_id = "sent-3"
+            client.inboxes.messages.send.return_value = resp
+
+            result = runner.invoke(app, [
+                "email", "send", "jeff@gmail.com", "Subject",
+                "--body-file", str(body_file),
+            ])
+            assert result.exit_code == 0
+            call_kwargs = client.inboxes.messages.send.call_args[1]
+            assert "Body from file" in (call_kwargs.get("text", "") or call_kwargs.get("html", ""))

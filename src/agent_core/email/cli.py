@@ -100,3 +100,60 @@ def read(
         for att in msg.attachments:
             filename = getattr(att, "filename", None) or getattr(att, "name", "unknown")
             typer.echo(f"  - {filename}")
+
+
+@email_app.command("send")
+def send(
+    to: str = typer.Argument(help="Recipient email address."),
+    subject: str = typer.Argument(help="Email subject line."),
+    body: Optional[str] = typer.Argument(None, help="Email body text."),
+    body_file: Optional[str] = typer.Option(None, help="Read body from file instead."),
+    html: bool = typer.Option(False, help="Treat body as HTML."),
+    cc: Optional[str] = typer.Option(None, help="CC recipient."),
+    dry_run: bool = typer.Option(False, "--dry-run", help="Preview without sending."),
+) -> None:
+    """Send a new email."""
+    # Resolve body
+    if body_file:
+        from pathlib import Path
+        body_path = Path(body_file)
+        if not body_path.exists():
+            typer.echo(f"Error: Body file not found: {body_file}", err=True)
+            raise typer.Exit(code=1)
+        body_text = body_path.read_text(encoding="utf-8")
+    elif body:
+        body_text = body
+    else:
+        typer.echo("Error: Provide body text or --body-file.", err=True)
+        raise typer.Exit(code=1)
+
+    inbox_id = get_inbox_id()
+
+    if dry_run:
+        typer.echo("[DRY RUN] Would send:")
+        typer.echo(f"  From: {inbox_id}")
+        typer.echo(f"  To: {to}")
+        if cc:
+            typer.echo(f"  CC: {cc}")
+        typer.echo(f"  Subject: {subject}")
+        typer.echo(f"  Body: {body_text[:200]}{'...' if len(body_text) > 200 else ''}")
+        return
+
+    client = get_client()
+
+    kwargs = {"to": to, "subject": subject}
+    if html:
+        kwargs["html"] = body_text
+    else:
+        kwargs["text"] = body_text
+    if cc:
+        kwargs["cc"] = cc
+
+    try:
+        response = client.inboxes.messages.send(inbox_id, **kwargs)
+        typer.echo(f"Sent: {inbox_id} → {to}")
+        typer.echo(f"Subject: {subject}")
+        typer.echo(f"Message ID: {response.message_id}")
+    except Exception as e:
+        typer.echo(f"Error: Failed to send: {e}", err=True)
+        raise typer.Exit(code=1)
