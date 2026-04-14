@@ -113,3 +113,69 @@ class TestEmailCheck:
         result = runner.invoke(app, ["email", "check"])
         assert result.exit_code == 0
         assert "no messages" in result.stdout.lower()
+
+
+def make_mock_full_message(message_id="msg-1", from_="sender@example.com",
+                            to=None, subject="Test Subject", text="Hello body",
+                            labels=None, timestamp="2026-04-14T12:00:00Z",
+                            attachments=None, cc=None):
+    """Create a mock full Message (from .get())."""
+    msg = MagicMock()
+    msg.message_id = message_id
+    msg.from_ = from_
+    msg.to = to or ["pepper_ai@agentmail.to"]
+    msg.cc = cc
+    msg.subject = subject
+    msg.text = text
+    msg.html = None
+    msg.labels = labels or ["received"]
+    msg.timestamp = timestamp
+    msg.attachments = attachments or []
+    return msg
+
+
+class TestEmailRead:
+    @patch("agent_core.email.cli.get_inbox_id", return_value="test@agentmail.to")
+    @patch("agent_core.email.cli.get_client")
+    def test_read_message(self, mock_client_fn, mock_inbox):
+        client = MagicMock()
+        mock_client_fn.return_value = client
+        client.inboxes.messages.get.return_value = make_mock_full_message(
+            from_="alice@example.com",
+            subject="Important",
+            text="This is the full body.",
+        )
+
+        result = runner.invoke(app, ["email", "read", "msg-1"])
+        assert result.exit_code == 0
+        assert "alice@example.com" in result.stdout
+        assert "Important" in result.stdout
+        assert "This is the full body." in result.stdout
+
+    @patch("agent_core.email.cli.get_inbox_id", return_value="test@agentmail.to")
+    @patch("agent_core.email.cli.get_client")
+    def test_read_with_attachments(self, mock_client_fn, mock_inbox):
+        client = MagicMock()
+        mock_client_fn.return_value = client
+        att1 = MagicMock()
+        att1.filename = "file1.pdf"
+        att2 = MagicMock()
+        att2.filename = "image.png"
+        client.inboxes.messages.get.return_value = make_mock_full_message(
+            attachments=[att1, att2],
+        )
+
+        result = runner.invoke(app, ["email", "read", "msg-1"])
+        assert result.exit_code == 0
+        assert "file1.pdf" in result.stdout
+        assert "image.png" in result.stdout
+
+    @patch("agent_core.email.cli.get_inbox_id", return_value="test@agentmail.to")
+    @patch("agent_core.email.cli.get_client")
+    def test_read_not_found(self, mock_client_fn, mock_inbox):
+        client = MagicMock()
+        mock_client_fn.return_value = client
+        client.inboxes.messages.get.side_effect = Exception("Not found")
+
+        result = runner.invoke(app, ["email", "read", "bad-id"])
+        assert result.exit_code == 1

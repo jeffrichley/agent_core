@@ -69,3 +69,34 @@ def check(
         table.add_row(msg_id, from_addr, subject, ts, marker)
 
     console.print(table)
+
+
+@email_app.command("read")
+def read(
+    message_id: str = typer.Argument(help="ID of the message to read."),
+) -> None:
+    """Read the full content of a specific email."""
+    client = get_client()
+    inbox_id = get_inbox_id()
+
+    try:
+        msg = client.inboxes.messages.get(inbox_id, message_id)
+    except Exception as e:
+        typer.echo(f"Error: Could not read message {message_id}: {e}", err=True)
+        raise typer.Exit(code=1)
+
+    typer.echo(f"From: {msg.from_}")
+    typer.echo(f"To: {', '.join(msg.to) if msg.to else ''}")
+    if msg.cc:
+        typer.echo(f"CC: {', '.join(msg.cc)}")
+    typer.echo(f"Subject: {msg.subject or '(no subject)'}")
+    typer.echo(f"Date: {msg.timestamp}")
+    typer.echo(f"Labels: {', '.join(msg.labels) if msg.labels else ''}")
+    typer.echo("-" * 60)
+    typer.echo(msg.text or msg.html or "(no body)")
+
+    if msg.attachments:
+        typer.echo(f"\nAttachments: {len(msg.attachments)}")
+        for att in msg.attachments:
+            filename = getattr(att, "filename", None) or getattr(att, "name", "unknown")
+            typer.echo(f"  - {filename}")
