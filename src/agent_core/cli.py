@@ -29,6 +29,9 @@ hooks_app = typer.Typer(
 )
 app.add_typer(hooks_app, name="hooks")
 
+from agent_core.email.cli import email_app
+app.add_typer(email_app, name="email")
+
 
 @hooks_app.command("run")
 def run_hook(
