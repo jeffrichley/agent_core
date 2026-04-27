@@ -13,6 +13,31 @@
 #   - SubagentStart: When a subagent is spawned
 #   - UserPromptSubmit: When user submits a prompt
 
+# Example bus config for development. Real use overrides via per-agent
+# config or env vars.
+bus:
+  storage_path: ~/.agent-core/bus.sqlite
+  redelivery_timeout_seconds: 300
+  max_delivery_attempts: 5
+  ttl_sweep_seconds: 60
+  redelivery_sweep_seconds: 10
+  max_pending_per_endpoint: 10000
+
+http:
+  bind_host: 127.0.0.1
+  bind_port: 8788
+
+endpoints:
+  - class: agent_core.endpoints.stub.StubEndpoint
+    name: dev-stub
+    description: "Dev/test stub endpoint."
+    params: {}
+
+bus_hooks:
+  pre_publish: []
+  pre_deliver: []
+
+# Existing — Claude Code lifecycle hooks (untouched).
 pipelines:
   SessionStart:
     - tool: agent_core.hooks.tools.time_injector.TimeInjector
