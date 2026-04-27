@@ -8,14 +8,15 @@ from __future__ import annotations
 
 import logging
 import uuid
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from typing import Literal
 
 from agent_core.bus.envelope import EndpointInfo, Envelope
 from agent_core.bus.handle import BusHandle
 from agent_core.bus.persistence import Persistence
-from agent_core.bus.protocol import Endpoint
+from agent_core.bus.protocol import BusHook, Endpoint
 
 log = logging.getLogger(__name__)
 
@@ -44,6 +45,12 @@ class EndpointSpec:
         return self.endpoint.name
 
 
+@dataclass
+class BusHookSpec:
+    hook: BusHook
+    params: dict = field(default_factory=dict)
+
+
 class MailboxFull(Exception):
     """Raised when an endpoint's pending mailbox has reached max_pending_per_endpoint."""
 
@@ -54,6 +61,10 @@ class Bus:
     def __init__(self, config: BusConfig):
         self.config = config
         self._endpoints_by_name: dict[str, EndpointSpec] = {}
+        self._hooks: dict[str, list[BusHookSpec]] = {
+            "pre_publish": [],
+            "pre_deliver": [],
+        }
         self._store: Persistence | None = None
         self._started = False
 
@@ -61,6 +72,26 @@ class Bus:
         if spec.name in self._endpoints_by_name:
             raise ValueError(f"Endpoint '{spec.name}' already registered")
         self._endpoints_by_name[spec.name] = spec
+
+    def register_hook(
+        self, stage: Literal["pre_publish", "pre_deliver"], spec: BusHookSpec
+    ) -> None:
+        if stage not in self._hooks:
+            raise ValueError(f"unknown hook stage: {stage}")
+        self._hooks[stage].append(spec)
+
+    async def _run_hooks(
+        self, stage: Literal["pre_publish", "pre_deliver"], envelope: Envelope
+    ) -> Envelope | None:
+        """Run hooks in registration order. Return the (possibly mutated)
+        envelope, or None if any hook dropped it."""
+        current = envelope
+        for spec in self._hooks[stage]:
+            result = await spec.hook.execute(stage, current, spec.params)
+            if result is None:
+                return None
+            current = result
+        return current
 
     async def start(self) -> None:
         if self._started:
@@ -101,6 +132,13 @@ class Bus:
 
     # BusHandle-facing surface — _ack / _nack implemented in Task 9
     async def _enqueue(self, envelope: Envelope, to: str | list[str] | None = None) -> None:
+        # `from_` was already stamped by BusHandle.publish before we got here,
+        # so hooks see authenticated provenance.
+        hooked = await self._run_hooks("pre_publish", envelope)
+        if hooked is None:
+            return  # dropped before persist
+        envelope = hooked
+
         # Determine recipient list. If `to` provided, override envelope.to.
         recipients: list[str]
         if to is None:
@@ -129,6 +167,13 @@ class Bus:
             await self._dispatch(new_env)
 
     async def _dispatch(self, envelope: Envelope) -> None:
+        hooked = await self._run_hooks("pre_deliver", envelope)
+        if hooked is None:
+            # Pre_deliver dropped: dead-letter rather than silently leaving in pending.
+            await self._store.mark_dead_letter(envelope.id, reason="dropped by pre_deliver hook")
+            return
+        envelope = hooked
+
         spec = self._endpoints_by_name.get(envelope.to)
         if spec is None:
             return  # shouldn't happen — caller already checked
