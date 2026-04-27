@@ -10,7 +10,7 @@ from __future__ import annotations
 import json
 import os
 import sys
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -148,7 +148,7 @@ class Persistence:
                    last_attempted = ?,
                    in_flight_until = ?
                WHERE id = ?""",
-            (datetime.utcnow().isoformat(), in_flight_until.isoformat(), id_),
+            (datetime.now(timezone.utc).isoformat(), in_flight_until.isoformat(), id_),
         )
         await self._conn.commit()
 

@@ -113,16 +113,21 @@ class Bus:
         else:
             recipients = list(to)
 
-        for i, recipient in enumerate(recipients):
+        # Pre-validate ALL recipients before any side effect.
+        # This makes fan-out atomic: either all recipients are accepted, or none.
+        for recipient in recipients:
             if recipient not in self._endpoints_by_name:
                 raise ValueError(f"publish to unregistered endpoint '{recipient}'")
+            count = await self._store.count_pending(recipient)
+            if count >= self.config.max_pending_per_endpoint:
+                raise MailboxFull(f"mailbox '{recipient}' full ({count} pending)")
+
+        # All checks passed. Now insert and dispatch.
+        for i, recipient in enumerate(recipients):
             # First recipient reuses the original id; rest get fresh ids.
             new_env = envelope.model_copy(
                 update={"id": envelope.id if i == 0 else uuid.uuid4().hex, "to": recipient}
             )
-            count = await self._store.count_pending(recipient)
-            if count >= self.config.max_pending_per_endpoint:
-                raise MailboxFull(f"mailbox '{recipient}' full ({count} pending)")
             await self._store.insert(new_env)
             await self._dispatch(new_env)
 
