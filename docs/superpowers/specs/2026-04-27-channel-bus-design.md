@@ -87,16 +87,60 @@ bus stay small while ingress and egress sources keep being added.
 
 ### Process model
 
-The bus is **in-process** — a Python object inside the agent_core
-runtime. Endpoints are Python objects registered with that bus instance.
-There is no separate broker process, no Redis, no NATS, no Kafka. The
-runtime starts via `agent-core bus run`, reads `agent_core.yaml`,
-instantiates and starts each endpoint, and drives the asyncio event loop.
+agent_core is one long-lived Python process. The bus, all endpoint
+adapters, all endpoint state, and the SQLite mailbox file all live
+inside it. There is no separate broker process, no Redis, no NATS, no
+Kafka. The runtime starts via `agent-core bus run`, reads
+`agent_core.yaml`, instantiates and starts each endpoint, and drives
+one asyncio event loop.
 
-External processes (Claude Code, a Discord client, a webhook receiver)
-become endpoints by way of an in-process **adapter** that owns the IPC.
-The adapter is what the bus sees; the IPC is the adapter's private
-business.
+External agents and external services live in their own processes and
+talk to agent_core through an in-process **adapter** that owns the IPC.
+From the bus's perspective, the adapter *is* the endpoint; whatever IPC
+the adapter uses (MCP over HTTP, a Discord WebSocket, an APScheduler
+event, a webhook POST) is the adapter's private business.
+
+```
+┌────────────────── agent_core process (one) ─────────────────────────┐
+│  ┌── Bus ──┐                                                        │
+│  │ SQLite  │                                                        │
+│  │mailboxes│                                                        │
+│  └────┬────┘                                                        │
+│       │                                                             │
+│  Endpoint adapters (Python objects in this process):                │
+│  ┌──────────┐ ┌──────────┐ ┌──────────────────────────────────┐     │
+│  │ Discord  │ │ Scheduler│ │ ClaudeCodeMCPEndpoint            │     │
+│  │ adapter  │ │ adapter  │ │   name=agent-pepper              │     │
+│  │          │ │          │ │   mount=/mcp/agent-pepper        │     │
+│  │          │ │          │ │ (FastMCP server on shared host)  │     │
+│  └─────┬────┘ └──────────┘ └────────────────┬─────────────────┘     │
+│        │ websocket                          │ MCP over HTTP/SSE      │
+└────────┼────────────────────────────────────┼─────────────────────-─┘
+         ▼                                    ▼
+   ┌──────────┐                       ┌──────────────────────┐
+   │ Discord  │                       │ Claude Code process  │
+   │ servers  │                       │  (the Pepper agent)  │
+   └──────────┘                       └──────────────────────┘
+```
+
+For multiple agents on the same bus, there is one
+`ClaudeCodeMCPEndpoint` adapter per agent (each with its own `name` and
+`mount` path), all hosted on a single shared HTTP server inside the
+agent_core process. Each Claude Code instance connects to its own URL
+path and that path *is* the agent's identity:
+
+```
+agent_core process (same one)
+   ClaudeCodeMCPEndpoint(name=agent-pepper, mount=/mcp/agent-pepper) ←─MCP─→ [CC: Pepper]
+   ClaudeCodeMCPEndpoint(name=agent-deb,    mount=/mcp/agent-deb)    ←─MCP─→ [CC: Deb]
+```
+
+Process separation is what makes the durable mailbox semantics
+meaningful: when a Claude Code instance dies or restarts, mail
+addressed to its name keeps queuing in the bus's SQLite-backed mailbox.
+When agent_core itself restarts, all mailboxes survive (state is on
+disk) and in-flight envelopes redeliver. Co-locating the agent runtime
+inside agent_core would invalidate this guarantee.
 
 ## The Envelope
 
@@ -263,10 +307,85 @@ class BusHandle(Protocol):
 
     async def nack(self, envelope_id: str, requeue: bool = True) -> None:
         """Reject a delivered envelope. requeue=True schedules redelivery."""
+
+    def endpoints(self) -> list["EndpointInfo"]:
+        """Snapshot of currently-registered endpoints (name + description).
+        Used by consumer adapters to surface discovery to their agents."""
+
+
+class EndpointInfo(BaseModel):
+    name: str
+    description: str = ""
 ```
 
 That is the entire surface available to endpoints. Endpoints never see
-other endpoints, never see other mailboxes, never see bus internals.
+other endpoints' mailboxes, other endpoints' adapters, or bus
+internals. They see a name + description directory through
+`endpoints()`, and that is all the topology information they need.
+
+### Endpoint discovery
+
+Agents need to know who they can address. The bus already knows the
+registered endpoint set — it just instantiated them all from YAML.
+Discovery is a metadata view of that set, surfaced to whoever needs it.
+
+**Static metadata in YAML.** Every endpoint declaration may carry an
+optional `description: str` field. Operator-authored prose that says
+what the endpoint is for. There is no schema language, no capability
+matrix, no JSON-RPC service descriptor — just a sentence or two
+describing the endpoint.
+
+```yaml
+endpoints:
+  - class: agent_core.endpoints.claude_code_mcp.ClaudeCodeMCPEndpoint
+    name: agent-deb
+    description: "Research-focused agent. Deep web research, source comparison, citations."
+    params: { ... }
+```
+
+**Bus-level access.** `BusHandle.endpoints()` returns the snapshot
+described above. The set is fixed at boot (registration is YAML-only;
+see § Endpoint Protocol > Registration).
+
+**Surface in the agent's idiom.** Each consumer adapter exposes the
+directory in whatever shape its agent runtime expects. For
+`ClaudeCodeMCPEndpoint`, that means MCP tools that Claude can call:
+
+```
+list_endpoints()
+  → [{"name": "agent-deb", "description": "Research-focused agent..."},
+     {"name": "discord",   "description": "Bridges Discord channels..."},
+     ... ]
+
+describe_endpoint(name="agent-deb")
+  → {"name": "agent-deb", "description": "Research-focused agent..."}
+
+send(to="agent-deb", correlation_id="c2", kind="TextMessage",
+     payload={"text": "Look up Jeff's preferred slot..."})
+  → publishes the envelope; bus stamps `from:` automatically
+```
+
+Agents never hardcode endpoint names. They call `list_endpoints()`,
+read descriptions, decide who to address, and send. Adding a new agent
+is "edit YAML with name + description, restart" — every other agent
+sees it on its next discovery call.
+
+**What this design deliberately omits:**
+
+- **Capability schemas / RPC IDLs.** No "agent-deb accepts these payload
+  shapes." Description is prose. Agents reason about descriptions; they
+  do not statically validate capability matrices.
+- **Liveness flags in the directory.** `endpoints()` returns the
+  *registered* set, not the *currently connected* set. The bus already
+  buffers when an endpoint is offline; the sender does not need to
+  know. (Easy to add a `live: bool` flag later if a use case appears.)
+- **Per-endpoint metadata beyond description.** No tags, no roles, no
+  versions. If you need that information, put it in the description.
+
+The set of addressable endpoints is operator-controlled. Agents can
+only reach what is in YAML. They can discover only what the operator
+declared. The directory is the agent's world; the operator owns the
+world.
 
 ### Why `deliver()` does not auto-ack
 
@@ -522,15 +641,30 @@ bus:
   acked_retention_days: 14
   max_pending_per_endpoint: 10000
 
-# Endpoints — addressable, named, instantiated at boot
+# HTTP host shared by all MCP endpoint adapters
+http:
+  bind_host: 127.0.0.1
+  bind_port: 8788
+
+# Endpoints — addressable, named, instantiated at boot.
+# `description` is operator-authored prose surfaced to other agents
+# via the discovery API.
 endpoints:
   - class: agent_core.endpoints.claude_code_mcp.ClaudeCodeMCPEndpoint
     name: agent-pepper
+    description: "Chief-of-staff agent. Owns calendar, projects, people; routes work."
     params:
-      transport: stdio
+      mount: /mcp/agent-pepper
+
+  - class: agent_core.endpoints.claude_code_mcp.ClaudeCodeMCPEndpoint
+    name: agent-deb
+    description: "Research-focused agent. Deep web research, source comparison, citations."
+    params:
+      mount: /mcp/agent-deb
 
   - class: agent_core.endpoints.discord.DiscordEndpoint
     name: discord
+    description: "Bridges Discord channels. Use for user-facing replies."
     params:
       token_env: DISCORD_BOT_TOKEN
       routing:
@@ -541,6 +675,7 @@ endpoints:
 
   - class: agent_core.endpoints.scheduler.SchedulerEndpoint
     name: scheduler
+    description: "Fires scheduled prompts on cron/interval. Send envelopes here to add jobs."
     params:
       jobs_path: ./jobs.yaml
 
@@ -562,6 +697,12 @@ pipelines:
 The shape mirrors the existing `pipelines` block: fully-qualified class
 path + `params` dict. Same import-by-string pattern. Same
 `@runtime_checkable` Protocol verification at load time.
+
+The `bind_host` defaults to `127.0.0.1` deliberately: v1 ships
+loopback-only. Binding to other interfaces (`0.0.0.0`, a LAN IP)
+requires the auth/TLS items in BACKLOG to be implemented first; the
+runner refuses to start if `bind_host` is non-loopback and no auth hook
+is configured.
 
 ### Module layout
 
@@ -599,6 +740,60 @@ exposes").
 `agent-core bus run` is the primary entry point — the long-running
 process that hosts the bus and all endpoints. Operators run it under
 systemd / launchd / a shell loop, however they prefer.
+
+### MCP transport implementation
+
+`ClaudeCodeMCPEndpoint` uses **HTTP/SSE only** (no stdio support in
+v1). Identity is path-based: each adapter mounts at `/mcp/<name>` on
+the shared HTTP host, and each Claude Code instance configures its
+`.mcp.json` to connect to its specific URL.
+
+```jsonc
+// .mcp.json for Pepper's Claude Code instance
+{
+  "mcpServers": {
+    "agent-core": {
+      "type": "http",
+      "url": "http://localhost:8788/mcp/agent-pepper"
+    }
+  }
+}
+```
+
+Implementation libraries (declared in `pyproject.toml`):
+
+- **FastMCP** (`/prefecthq/fastmcp`, pinned to `^3.2`) — handles MCP
+  protocol details: initialize handshake, tool registration with
+  schema generation, server-pushed notifications, session management.
+  Each `ClaudeCodeMCPEndpoint` instance owns one `FastMCP` server.
+- **Starlette** — ASGI host. The bus's HTTP server is one Starlette
+  app; each endpoint adapter contributes its FastMCP ASGI app via
+  `Mount("/mcp/<name>", app=mcp.http_app(path="/"))`.
+- **Uvicorn** — ASGI runner driving the Starlette app on the bus's
+  asyncio event loop.
+
+Tools each `ClaudeCodeMCPEndpoint` exposes to its connected Claude
+Code instance:
+
+- `send(to, kind, payload, correlation_id?, in_reply_to?, metadata?, expires_at?)`
+- `list_endpoints() → [{name, description}]`
+- `describe_endpoint(name) → {name, description}`
+- `list_pending() → [envelope]` — drains the agent's mailbox snapshot
+- `handle(envelope_id) → ack` — convenience wrapper around `ack`
+- `ack(envelope_id)`, `nack(envelope_id, requeue?)`
+
+Inbound envelopes flow to Claude Code via MCP **notifications** on
+the SSE stream. The adapter holds the active session and pushes
+notifications as they arrive at the agent's mailbox. If no session is
+connected, mail queues at the bus per the durable-mailbox semantics.
+
+**Why no stdio:** the bus is a long-lived shared service hosting
+multiple agents simultaneously. stdio MCP is a parent-child subprocess
+relationship — exactly one parent per server. Supporting it would
+require either spawning a separate agent_core per Claude Code (defeats
+the bus) or running an stdio-bridge subprocess per agent (adds a
+process and a transport with no benefit). HTTP/SSE on loopback is the
+correct shape for this design.
 
 ## Security
 
@@ -711,6 +906,10 @@ discipline is to not implement until that trigger fires.
 | Tracing/observability integration (OpenTelemetry, etc.) | The CLI `trace` command is sufficient for v1. |
 | Hot-pluggable endpoints (runtime register/deregister) | YAML + restart is fine; revisit only when there's actual demand. |
 | Public Python `Bus` API | Endpoints are the only legitimate publishers; this is the security discipline. |
+| stdio MCP transport for `ClaudeCodeMCPEndpoint` | HTTP/SSE on loopback covers single-agent and multi-agent uniformly. stdio is fundamentally 1:1 and would require a parallel implementation for no benefit. |
+| Non-loopback `bind_host` (LAN, public) | Requires the auth/TLS BACKLOG items first; runner refuses to start in this configuration without them. |
+| Capability schemas / RPC IDLs in the directory | Description prose is sufficient for agent-side reasoning; revisit only if a tool-discovery use case demands structure. |
+| Liveness flags in `endpoints()` results | Bus already buffers when offline; sender does not need to know live state. Easy to add later. |
 
 ## Where Pepper-style concerns live
 

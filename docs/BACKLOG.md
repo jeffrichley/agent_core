@@ -61,11 +61,17 @@ OS-level full-disk encryption is the layer that handles this today.
   encryption is unavailable, or storing payloads regulated under a regime
   that mandates application-layer encryption.
 
-### mTLS / token auth for cross-host bus comms
+### Auth (tokens or mTLS) for the MCP HTTP host
 
-Not needed while the bus is single-process.
+Not needed while `bus.http.bind_host` is loopback. The runner refuses
+to start with a non-loopback bind unless an auth scheme is configured.
 
-- **Trigger:** When the bus federates across hosts.
+- **Trigger (token auth):** First time `bind_host` needs to be
+  non-loopback — for example, exposing the MCP host on a LAN IP so a
+  Claude Code instance on a different machine can connect, or running
+  agent_core in a container with a forwarded port.
+- **Trigger (mTLS):** When the bus federates across hosts, or when an
+  organization-level policy requires mutual auth on internal services.
 
 ### Signed envelopes
 
