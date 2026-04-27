@@ -3,8 +3,7 @@
 Single asyncio event loop. Endpoints register before start; the bus
 constructs a per-endpoint BusHandle and calls endpoint.start().
 
-Ack/nack (Task 9) and sweeps (Task 10) are not yet implemented —
-`_ack` and `_nack` raise NotImplementedError until those tasks land.
+Sweeps (Task 10) are not yet implemented.
 """
 
 from __future__ import annotations
@@ -174,6 +173,7 @@ class Bus:
             await self._dispatch(env)
 
     async def _ack(self, envelope_id: str) -> None:
+        # Idempotent: marking acked twice (or acking a missing id) is a no-op.
         await self._store.mark_acked(envelope_id)
 
     async def _nack(self, envelope_id: str, requeue: bool) -> None:
