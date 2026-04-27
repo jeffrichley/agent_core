@@ -60,7 +60,7 @@ class TestE2E:
         finally:
             await bus.stop()
 
-    async def test_persistence_survives_restart(self, cfg_path: Path):
+    async def test_delivered_envelope_persists_to_disk(self, cfg_path: Path):
         # First run: queue an envelope to a (deliberately not-running) recipient.
         bus1 = await build_bus_from_config(cfg_path)
         await bus1.start()
@@ -114,3 +114,45 @@ class TestE2E:
             assert (await bus._store.row(env.id))["state"] == "expired"
         finally:
             await bus.stop()
+
+    async def test_pending_envelope_drains_on_restart(self, cfg_path: Path):
+        """Durable mailbox survives restart: pending envelope is delivered on second boot."""
+        import uuid
+
+        from agent_core.bus.envelope import Envelope
+
+        # First boot: seed a pending envelope addressed to bob directly into the
+        # store, simulating "bob was unavailable so delivery was queued."
+        bus1 = await build_bus_from_config(cfg_path)
+        await bus1.start()
+        try:
+            env = Envelope(
+                id=uuid.uuid4().hex,
+                correlation_id="restart-test",
+                from_="alice",
+                to="bob",
+                kind="TextMessage",
+                payload=TextMessagePayload(text="hello after restart"),
+                created_at=datetime.now(timezone.utc),
+            )
+            # Bypass dispatch so the envelope lands as "pending" (not auto-acked).
+            await bus1._store.insert(env)
+            assert (await bus1._store.row(env.id))["state"] == "pending"
+        finally:
+            await bus1.stop()
+
+        # Second boot: a fresh bus from the same config. Bus.start calls
+        # drain_for for each registered endpoint, which should pick up the
+        # pending envelope and deliver it to bob's fresh inbox.
+        bus2 = await build_bus_from_config(cfg_path)
+        await bus2.start()
+        try:
+            bob = bus2._endpoints_by_name["bob"].endpoint
+            assert len(bob.inbox) == 1
+            assert bob.inbox[0].correlation_id == "restart-test"
+            # The envelope must now be acked, proving the full loop ran:
+            # drain → dispatch → deliver → auto-ack.
+            row = await bus2._store.row(env.id)
+            assert row["state"] == "acked"
+        finally:
+            await bus2.stop()
