@@ -72,3 +72,11 @@ class TestTrace:
         for eid in ("a1", "a2", "a3"):
             assert eid in result.output
         assert "other" not in result.output
+
+    def test_trace_unknown_correlation_id(self, tmp_path: Path):
+        cfg = _write_config(tmp_path)
+        _seed_thread(tmp_path)
+        runner = CliRunner()
+        result = runner.invoke(app, ["bus", "trace", "does-not-exist", "--config", str(cfg)])
+        assert result.exit_code == 0
+        assert "no envelopes found" in result.output
