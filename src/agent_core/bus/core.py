@@ -3,15 +3,16 @@
 Single asyncio event loop. Endpoints register before start; the bus
 constructs a per-endpoint BusHandle and calls endpoint.start().
 
-Dispatch (Task 8/9), ack/nack (Task 9), and sweeps (Task 10) are not
-yet implemented — `_enqueue`, `_ack`, and `_nack` raise NotImplementedError
-until those tasks land.
+Ack/nack (Task 9) and sweeps (Task 10) are not yet implemented —
+`_ack` and `_nack` raise NotImplementedError until those tasks land.
 """
 
 from __future__ import annotations
 
 import logging
+import uuid
 from dataclasses import dataclass
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from agent_core.bus.envelope import EndpointInfo, Envelope
@@ -46,6 +47,10 @@ class EndpointSpec:
         return self.endpoint.name
 
 
+class MailboxFull(Exception):
+    """Raised when an endpoint's pending mailbox has reached max_pending_per_endpoint."""
+
+
 class Bus:
     """In-process bus router."""
 
@@ -71,6 +76,7 @@ class Bus:
                 handle = BusHandle(self, spec.name)
                 await spec.endpoint.start(handle)
                 started_specs.append(spec)
+                await self.drain_for(spec.name)
         except Exception:
             for spec in reversed(started_specs):
                 try:
@@ -96,15 +102,77 @@ class Bus:
             await self._store.close()
         self._started = False
 
-    # BusHandle-facing surface — implemented in Tasks 8/9
+    # BusHandle-facing surface — _ack / _nack implemented in Task 9
     async def _enqueue(self, envelope: Envelope, to: str | list[str] | None = None) -> None:
-        raise NotImplementedError
+        # Determine recipient list. If `to` provided, override envelope.to.
+        recipients: list[str]
+        if to is None:
+            recipients = [envelope.to]
+        elif isinstance(to, str):
+            recipients = [to]
+        else:
+            recipients = list(to)
+
+        for i, recipient in enumerate(recipients):
+            if recipient not in self._endpoints_by_name:
+                raise ValueError(f"publish to unregistered endpoint '{recipient}'")
+            # First recipient reuses the original id; rest get fresh ids.
+            new_env = envelope.model_copy(
+                update={"id": envelope.id if i == 0 else uuid.uuid4().hex, "to": recipient}
+            )
+            count = await self._store.count_pending(recipient)
+            if count >= self.config.max_pending_per_endpoint:
+                raise MailboxFull(f"mailbox '{recipient}' full ({count} pending)")
+            await self._store.insert(new_env)
+            await self._dispatch(new_env)
+
+    async def _dispatch(self, envelope: Envelope) -> None:
+        spec = self._endpoints_by_name.get(envelope.to)
+        if spec is None:
+            return  # shouldn't happen — caller already checked
+        endpoint = spec.endpoint
+        in_flight_until = datetime.now(timezone.utc) + timedelta(
+            seconds=self.config.redelivery_timeout_seconds
+        )
+        await self._store.mark_in_flight(envelope.id, in_flight_until)
+        try:
+            await endpoint.deliver(envelope)
+        except Exception as exc:
+            from agent_core.bus.protocol import EndpointUnavailable
+
+            if isinstance(exc, EndpointUnavailable):
+                # Temporary failure — return to pending; sweep will retry.
+                await self._store.requeue(envelope.id)
+                log.info(
+                    "endpoint %s unavailable; envelope %s requeued: %s",
+                    envelope.to,
+                    envelope.id,
+                    exc,
+                )
+            else:
+                # Terminal failure — dead-letter.
+                await self._store.mark_dead_letter(envelope.id, reason=str(exc))
+                log.exception(
+                    "endpoint %s deliver() raised; dead-lettering envelope %s",
+                    envelope.to,
+                    envelope.id,
+                )
+
+    async def drain_for(self, endpoint_name: str) -> None:
+        """Drain persisted-but-pending envelopes addressed to this endpoint.
+
+        Called after an endpoint comes online (start() returns, or a previously
+        unavailable endpoint becomes available again).
+        """
+        pending = await self._store.list_pending(endpoint_name)
+        for env in pending:
+            await self._dispatch(env)
 
     async def _ack(self, envelope_id: str) -> None:
-        raise NotImplementedError
+        raise NotImplementedError  # Task 9
 
     async def _nack(self, envelope_id: str, requeue: bool) -> None:
-        raise NotImplementedError
+        raise NotImplementedError  # Task 9
 
     def _endpoints(self) -> list[EndpointInfo]:
         return [
