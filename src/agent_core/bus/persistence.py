@@ -214,3 +214,31 @@ class Persistence:
         ) as cur:
             rows = await cur.fetchall()
         return [_row_to_envelope(dict(r)) for r in rows]
+
+    async def purge_dlq(self, *, older_than: datetime) -> int:
+        """Delete dead_letter rows whose last_attempted is older than the cutoff.
+        Returns the number of rows deleted."""
+        cur = await self._conn.execute(
+            """DELETE FROM envelopes
+               WHERE state = 'dead_letter'
+                 AND last_attempted IS NOT NULL
+                 AND last_attempted < ?""",
+            (older_than.isoformat(),),
+        )
+        await self._conn.commit()
+        return cur.rowcount
+
+    async def reset_for_replay(self, id_: str) -> bool:
+        """Reset a dead_letter row to pending; reset delivery_count.
+        Returns True if a row was changed."""
+        cur = await self._conn.execute(
+            """UPDATE envelopes
+               SET state = 'pending',
+                   delivery_count = 0,
+                   in_flight_until = NULL,
+                   nack_reason = NULL
+               WHERE id = ? AND state = 'dead_letter'""",
+            (id_,),
+        )
+        await self._conn.commit()
+        return cur.rowcount == 1

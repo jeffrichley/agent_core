@@ -4,7 +4,9 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import re
 import signal
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import typer
@@ -207,5 +209,99 @@ async def _trace(correlation_id: str, config_path: Path) -> None:
         for env in thread:
             table.add_row(env.id, env.from_, env.to, env.kind, env.created_at.isoformat())
         console.print(table)
+    finally:
+        await store.close()
+
+
+# Sub-app for `bus dlq` and `bus dlq purge`.
+dlq_app = typer.Typer(help="Dead-letter operations.", invoke_without_command=True)
+app.add_typer(dlq_app, name="dlq")
+
+
+@dlq_app.callback(invoke_without_command=True)
+def _dlq_default(ctx: typer.Context, config: Path = _config_option()):
+    """List dead-letter envelopes (when `bus dlq` is invoked with no subcommand)."""
+    if ctx.invoked_subcommand is None:
+        asyncio.run(_dlq_list(config))
+
+
+async def _dlq_list(config_path: Path) -> None:
+    bus = await build_bus_from_config(config_path)
+    store = Persistence(bus.config.storage_path)
+    await store.connect()
+    try:
+        rows = await store.list_dead_letter()
+        if not rows:
+            console.print("[dim]DLQ is empty[/dim]")
+            return
+        table = Table(title=f"Dead-Letter Queue ({len(rows)})")
+        table.add_column("id")
+        table.add_column("from")
+        table.add_column("to")
+        table.add_column("kind")
+        table.add_column("reason")
+        for env in rows:
+            row = await store.row(env.id)
+            table.add_row(env.id, env.from_, env.to, env.kind, row["nack_reason"] or "")
+        console.print(table)
+    finally:
+        await store.close()
+
+
+@app.command()
+def replay(
+    envelope_id: str = typer.Argument(..., help="Envelope id to replay"),
+    config: Path = _config_option(),
+):
+    """Reset a dead-letter envelope to pending and re-queue."""
+    asyncio.run(_replay(envelope_id, config))
+
+
+async def _replay(envelope_id: str, config_path: Path) -> None:
+    bus = await build_bus_from_config(config_path)
+    store = Persistence(bus.config.storage_path)
+    await store.connect()
+    try:
+        ok = await store.reset_for_replay(envelope_id)
+        if not ok:
+            console.print(f"[red]envelope {envelope_id!r} not found in DLQ[/red]")
+            raise typer.Exit(code=1)
+        console.print(f"[green]replayed:[/green] {envelope_id}")
+    finally:
+        await store.close()
+
+
+_DURATION_RE = re.compile(r"^(\d+)([dhm])$")
+
+
+def _parse_duration(s: str) -> timedelta:
+    m = _DURATION_RE.match(s.strip().lower())
+    if not m:
+        raise typer.BadParameter(f"invalid duration: {s!r} (use e.g. '7d', '12h', '30m')")
+    n, unit = int(m.group(1)), m.group(2)
+    if unit == "d":
+        return timedelta(days=n)
+    if unit == "h":
+        return timedelta(hours=n)
+    return timedelta(minutes=n)
+
+
+@dlq_app.command("purge")
+def dlq_purge(
+    older_than: str = typer.Option(..., "--older-than"),
+    config: Path = _config_option(),
+):
+    """Delete dead-letter envelopes older than the given duration (e.g. 7d, 24h)."""
+    asyncio.run(_dlq_purge(older_than, config))
+
+
+async def _dlq_purge(older_than: str, config_path: Path) -> None:
+    bus = await build_bus_from_config(config_path)
+    store = Persistence(bus.config.storage_path)
+    await store.connect()
+    try:
+        cutoff = datetime.now(timezone.utc) - _parse_duration(older_than)
+        n = await store.purge_dlq(older_than=cutoff)
+        console.print(f"[green]purged {n} envelope(s) older than {older_than}[/green]")
     finally:
         await store.close()
