@@ -189,15 +189,19 @@ class Bus:
         stale = await self._store.find_in_flight_timeouts(now=now)
         moved = 0
         for env in stale:
-            row = await self._store.row(env.id)
-            if row["delivery_count"] >= self.config.max_delivery_attempts:
-                await self._store.mark_dead_letter(
-                    env.id,
-                    reason=f"exceeded {self.config.max_delivery_attempts} delivery attempts",
-                )
-            else:
-                await self._store.requeue(env.id)
-                await self._dispatch(env)
+            try:
+                row = await self._store.row(env.id)
+                if row["delivery_count"] >= self.config.max_delivery_attempts:
+                    await self._store.mark_dead_letter(
+                        env.id,
+                        reason=f"exceeded {self.config.max_delivery_attempts} delivery attempts",
+                    )
+                else:
+                    await self._store.requeue(env.id)
+                    await self._dispatch(env)
+            except Exception:
+                log.exception("redelivery sweep error on envelope %s; skipping", env.id)
+                continue
             moved += 1
         return moved
 
