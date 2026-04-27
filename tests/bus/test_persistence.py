@@ -3,11 +3,17 @@
 import os
 import stat
 import sys
+from datetime import datetime, timezone
 from pathlib import Path
 
 import pytest
 
+from agent_core.bus.envelope import Envelope, TextMessagePayload
 from agent_core.bus.persistence import Persistence
+
+
+def _now() -> datetime:
+    return datetime(2026, 4, 27, 12, 0, 0, tzinfo=timezone.utc)
 
 
 @pytest.fixture
@@ -52,3 +58,131 @@ class TestSchemaInit:
         ) as cur:
             row = await cur.fetchone()
         assert row is not None
+
+
+def _envelope(id_: str = "e1", to: str = "agent-pepper", **overrides) -> Envelope:
+    fields = dict(
+        id=id_,
+        correlation_id="c1",
+        from_="discord",
+        to=to,
+        kind="TextMessage",
+        payload=TextMessagePayload(text="hi"),
+        created_at=_now(),
+    )
+    fields.update(overrides)
+    return Envelope(**fields)
+
+
+class TestPersistenceCRUD:
+    async def test_insert_and_fetch(self, store: Persistence):
+        env = _envelope()
+        await store.insert(env)
+        fetched = await store.get(env.id)
+        assert fetched is not None
+        assert fetched.id == env.id
+        assert fetched.from_ == "discord"
+        assert fetched.payload.text == "hi"
+
+    async def test_get_missing(self, store: Persistence):
+        assert await store.get("does-not-exist") is None
+
+    async def test_list_pending_for_endpoint(self, store: Persistence):
+        await store.insert(_envelope("e1", to="agent-pepper"))
+        await store.insert(_envelope("e2", to="agent-pepper"))
+        await store.insert(_envelope("e3", to="discord"))
+        pending = await store.list_pending("agent-pepper")
+        assert {e.id for e in pending} == {"e1", "e2"}
+
+    async def test_count_pending_for_endpoint(self, store: Persistence):
+        await store.insert(_envelope("e1", to="x"))
+        await store.insert(_envelope("e2", to="x"))
+        assert await store.count_pending("x") == 2
+
+    async def test_state_transitions(self, store: Persistence):
+        env = _envelope()
+        await store.insert(env)
+        assert (await store.get(env.id)).model_extra is None  # sanity
+        await store.mark_in_flight(env.id, in_flight_until=_now())
+        row = await store.row(env.id)
+        assert row["state"] == "in_flight"
+        assert row["delivery_count"] == 1
+        await store.mark_acked(env.id)
+        row = await store.row(env.id)
+        assert row["state"] == "acked"
+
+    async def test_mark_dead_letter(self, store: Persistence):
+        env = _envelope()
+        await store.insert(env)
+        await store.mark_dead_letter(env.id, reason="boom")
+        row = await store.row(env.id)
+        assert row["state"] == "dead_letter"
+        assert row["nack_reason"] == "boom"
+
+    async def test_requeue_resets_state(self, store: Persistence):
+        env = _envelope()
+        await store.insert(env)
+        await store.mark_in_flight(env.id, in_flight_until=_now())
+        await store.requeue(env.id)
+        row = await store.row(env.id)
+        assert row["state"] == "pending"
+
+    async def test_expire(self, store: Persistence):
+        env = _envelope()
+        await store.insert(env)
+        await store.expire(env.id)
+        assert (await store.row(env.id))["state"] == "expired"
+
+    async def test_idempotent_ack(self, store: Persistence):
+        env = _envelope()
+        await store.insert(env)
+        await store.mark_in_flight(env.id, in_flight_until=_now())
+        await store.mark_acked(env.id)
+        # Second ack must not raise.
+        await store.mark_acked(env.id)
+        assert (await store.row(env.id))["state"] == "acked"
+
+    async def test_list_by_correlation(self, store: Persistence):
+        await store.insert(_envelope("e1", to="x"))
+        await store.insert(_envelope("e2", to="y", correlation_id="c1"))
+        await store.insert(
+            Envelope(
+                id="e3",
+                correlation_id="c2",
+                to="x",
+                kind="TextMessage",
+                payload=TextMessagePayload(text="other"),
+                created_at=_now(),
+            )
+        )
+        thread = await store.list_by_correlation("c1")
+        assert {e.id for e in thread} == {"e1", "e2"}
+
+    async def test_list_dead_letter(self, store: Persistence):
+        await store.insert(_envelope("e1"))
+        await store.insert(_envelope("e2"))
+        await store.mark_dead_letter("e1", reason="test")
+        dlq = await store.list_dead_letter()
+        assert [e.id for e in dlq] == ["e1"]
+
+    async def test_expired_undelivered_lookup(self, store: Persistence):
+        from datetime import timedelta
+
+        past = _now() - timedelta(hours=1)
+        env = _envelope("e1")
+        env.expires_at = past
+        await store.insert(env)
+        # No expires_at → not in result
+        await store.insert(_envelope("e2"))
+        results = await store.find_expired(now=_now())
+        assert {e.id for e in results} == {"e1"}
+
+    async def test_in_flight_timeouts(self, store: Persistence):
+        from datetime import timedelta
+
+        env = _envelope("e1")
+        await store.insert(env)
+        past = _now() - timedelta(minutes=10)
+        await store.mark_in_flight(env.id, in_flight_until=past)
+        results = await store.find_in_flight_timeouts(now=_now())
+        assert {e.id for e in results} == {"e1"}
