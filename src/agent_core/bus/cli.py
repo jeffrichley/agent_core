@@ -9,7 +9,9 @@ from pathlib import Path
 
 import typer
 from rich.console import Console
+from rich.table import Table
 
+from agent_core.bus.persistence import Persistence
 from agent_core.bus.runner import BusBootError, build_bus_from_config
 
 app = typer.Typer(help="Bus operations: run, status, mailbox, trace, dlq, replay.")
@@ -97,3 +99,82 @@ async def _run_bus(config_path: Path) -> None:
         await asyncio.gather(*sweeps, return_exceptions=True)
         await bus.stop()
         console.print("[yellow]bus stopped[/yellow]")
+
+
+def _config_option():
+    return typer.Option(
+        Path("./agent_core.yaml"),
+        "--config",
+        "-c",
+        exists=True,
+        readable=True,
+    )
+
+
+@app.command()
+def status(config: Path = _config_option()):
+    """Show endpoints, in-flight count, and DLQ depth."""
+    asyncio.run(_status(config))
+
+
+async def _status(config_path: Path) -> None:
+    bus = await build_bus_from_config(config_path)
+    store = Persistence(bus.config.storage_path)
+    await store.connect()
+    try:
+        # Endpoint table
+        ep_table = Table(title="Endpoints")
+        ep_table.add_column("name")
+        ep_table.add_column("description")
+        ep_table.add_column("pending")
+        for spec in bus._endpoints_by_name.values():
+            count = await store.count_pending(spec.name)
+            ep_table.add_row(spec.name, spec.description, str(count))
+        console.print(ep_table)
+
+        # Aggregate counts
+        async with store._conn.execute(
+            "SELECT state, COUNT(*) FROM envelopes GROUP BY state"
+        ) as cur:
+            rows = await cur.fetchall()
+        agg = Table(title="State counts")
+        agg.add_column("state")
+        agg.add_column("count")
+        for state, count in rows:
+            agg.add_row(state, str(count))
+        console.print(agg)
+    finally:
+        await store.close()
+
+
+@app.command()
+def mailbox(
+    endpoint: str = typer.Argument(..., help="Endpoint name to inspect"),
+    config: Path = _config_option(),
+):
+    """List pending envelopes for an endpoint."""
+    asyncio.run(_mailbox(endpoint, config))
+
+
+async def _mailbox(endpoint: str, config_path: Path) -> None:
+    bus = await build_bus_from_config(config_path)
+    if endpoint not in bus._endpoints_by_name:
+        console.print(f"[red]unknown endpoint:[/red] {endpoint}")
+        raise typer.Exit(code=1)
+    store = Persistence(bus.config.storage_path)
+    await store.connect()
+    try:
+        pending = await store.list_pending(endpoint)
+        if not pending:
+            console.print(f"[dim]mailbox '{endpoint}' is empty[/dim]")
+            return
+        table = Table(title=f"Mailbox: {endpoint} ({len(pending)} pending)")
+        table.add_column("id")
+        table.add_column("from")
+        table.add_column("kind")
+        table.add_column("created_at")
+        for env in pending:
+            table.add_row(env.id, env.from_, env.kind, env.created_at.isoformat())
+        console.print(table)
+    finally:
+        await store.close()
