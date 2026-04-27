@@ -174,10 +174,13 @@ class Bus:
             await self._dispatch(env)
 
     async def _ack(self, envelope_id: str) -> None:
-        raise NotImplementedError  # Task 9
+        await self._store.mark_acked(envelope_id)
 
     async def _nack(self, envelope_id: str, requeue: bool) -> None:
-        raise NotImplementedError  # Task 9
+        if requeue:
+            await self._store.requeue(envelope_id)
+        else:
+            await self._store.mark_dead_letter(envelope_id, reason="nack")
 
     def _endpoints(self) -> list[EndpointInfo]:
         return [
