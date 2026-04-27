@@ -14,11 +14,14 @@ dependencies = [
     "desktop-notifier>=5.0",
     "mcp>=1.9.0",
     "agentmail>=0.4",
+    "aiosqlite>=0.20",
 ]
 
 [dependency-groups]
 dev = [
     "pytest>=8.0",
+    "pytest-asyncio>=0.23",
+    "freezegun>=1.5",
     "ruff>=0.14",
 ]
 
@@ -40,3 +43,4 @@ src = ["src"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 pythonpath = ["src"]
+asyncio_mode = "auto"
