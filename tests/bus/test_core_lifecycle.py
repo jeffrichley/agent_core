@@ -63,3 +63,28 @@ class TestRegistration:
         bus.register(EndpointSpec(endpoint=_LifecycleSpy("x")))
         with pytest.raises(ValueError, match="already registered"):
             bus.register(EndpointSpec(endpoint=_LifecycleSpy("x")))
+
+    async def test_start_partial_failure_rolls_back(self, bus: Bus):
+        class _ExplodingStart:
+            name = "boom"
+
+            async def start(self, bus) -> None:
+                raise RuntimeError("kaboom")
+
+            async def deliver(self, envelope: Envelope) -> None:
+                pass
+
+            async def stop(self) -> None:
+                pass
+
+        good = _LifecycleSpy("good")
+        bad = _ExplodingStart()
+        bus.register(EndpointSpec(endpoint=good))
+        bus.register(EndpointSpec(endpoint=bad))
+
+        with pytest.raises(RuntimeError, match="kaboom"):
+            await bus.start()
+
+        assert good.started is True
+        assert good.stopped is True  # rollback called stop on the already-started one
+        assert bus._started is False
