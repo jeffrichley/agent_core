@@ -105,3 +105,75 @@ activity, sudden topology changes, etc. The audit trail enables this; the
 detector is a separate project.
 
 - **Trigger:** Separate observability project, not a bus feature.
+
+---
+
+## Bus Phase 1 — surfaced by whole-phase review
+
+These items were observed during the final whole-phase code review of the
+v1 bus and judged non-blocking for merge. Each lists the affected file
+and the specific condition or change that should trigger the fix.
+
+### Mailbox cap TOCTOU under concurrent publishers
+
+`src/agent_core/bus/core.py` `_enqueue` — pre-validate-then-insert is
+not atomic across awaits. Two coroutines both observing `count_pending`
+below the cap can both pass the check and both insert, exceeding the
+cap. Soft cap, not hard.
+
+- **Source:** Phase 1 whole-phase review
+- **Trigger:** First production observation of mailbox-cap overshoot,
+  or any consumer that absolutely cannot tolerate a slightly-over-cap
+  mailbox. Mitigation is a per-endpoint `asyncio.Lock` around the
+  check-then-insert critical section.
+
+### Hook visibility asymmetry across publish lifecycle
+
+`src/agent_core/bus/core.py` `_enqueue` — `pre_publish` hooks see the
+original `envelope.to` once before fan-out; per-recipient envelopes get
+their own `pre_deliver` pass with the rewritten `to`. An audit hook at
+pre_publish cannot record `alice → {a, b}` directly.
+
+- **Source:** Phase 1 whole-phase review
+- **Trigger:** First hook (audit log, ACL, redaction) that needs to
+  observe or transform the full fan-out recipient list at the
+  pre_publish stage. Cheapest fix is a docstring note on
+  `BusHandle.publish` and `BusHook.execute`; deeper fix is to thread
+  the recipient list into the pre_publish payload.
+
+### Duplicate envelope id raises raw aiosqlite IntegrityError
+
+`src/agent_core/bus/persistence.py` `insert` — republishing the same
+id surfaces `aiosqlite.IntegrityError: UNIQUE constraint failed:
+envelopes.id` to the caller. No domain wrapper.
+
+- **Source:** Phase 1 whole-phase review
+- **Trigger:** First channel adapter that relays events with caller-
+  supplied ids (webhook event ids, Discord message ids, etc.) where
+  duplicates are expected. Wrap in a `DuplicateEnvelopeId` exception
+  or make `insert` idempotent on conflict.
+
+### CLI read-only subcommands instantiate every endpoint
+
+`src/agent_core/bus/cli.py` `_status`, `_mailbox`, `_trace`, `_dlq_list`,
+`_replay`, `_dlq_purge` — all call `build_bus_from_config`, which
+constructs every endpoint and validates Protocol conformance, then
+discards the bus without starting it.
+
+- **Source:** Phase 1 whole-phase review
+- **Trigger:** First Phase 2 endpoint whose constructor opens files,
+  reads tokens, or otherwise has non-trivial cost — at which point
+  `bus status` becomes slow or fails when an unrelated endpoint can't
+  construct. Fix is to split YAML loading from endpoint instantiation
+  for read-only CLI paths.
+
+### Sweep loops silent on idle ticks
+
+`src/agent_core/bus/cli.py` `_ttl_loop` / `_redelivery_loop` — sweeps
+tick on schedule but log nothing on idle (no rows to process). An
+operator running `bus run` cannot easily confirm the sweeps are alive
+on a quiet bus.
+
+- **Source:** Phase 1 whole-phase review
+- **Trigger:** First operational confusion about whether sweeps are
+  running. Fix is a debug-level log on each tick.

@@ -253,7 +253,7 @@ def replay(
     envelope_id: str = typer.Argument(..., help="Envelope id to replay"),
     config: Path = _config_option(),
 ):
-    """Reset a dead-letter envelope to pending and re-queue."""
+    """Reset a dead-letter envelope to pending. The next bus startup will redeliver it via drain_for."""
     asyncio.run(_replay(envelope_id, config))
 
 
