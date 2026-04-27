@@ -37,6 +37,19 @@ class TestProtocols:
 
         assert not isinstance(NotAnEndpoint(), Endpoint)
 
+    def test_endpoint_missing_name_fails_check(self):
+        class MissingName:
+            async def start(self, bus) -> None:
+                pass
+
+            async def deliver(self, envelope) -> None:
+                pass
+
+            async def stop(self) -> None:
+                pass
+
+        assert not isinstance(MissingName(), Endpoint)
+
     def test_hook_runtime_check(self):
         hook = _MinimalHook()
         assert isinstance(hook, BusHook)
