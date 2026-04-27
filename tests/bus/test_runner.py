@@ -83,3 +83,17 @@ class TestRunner:
         p.write_text(yaml.dump(config))
         with pytest.raises(BusBootError, match="loopback"):
             await build_bus_from_config(p)
+
+    async def test_endpoint_missing_name_raises(self, tmp_path: Path):
+        config = {"endpoints": [{"class": "agent_core.endpoints.stub.StubEndpoint", "params": {}}]}
+        p = tmp_path / "bad.yaml"
+        p.write_text(yaml.dump(config))
+        with pytest.raises(BusBootError, match="missing required 'name'"):
+            await build_bus_from_config(p)
+
+    async def test_endpoint_missing_class_raises(self, tmp_path: Path):
+        config = {"endpoints": [{"name": "x", "params": {}}]}
+        p = tmp_path / "bad.yaml"
+        p.write_text(yaml.dump(config))
+        with pytest.raises(BusBootError, match="missing required 'class'"):
+            await build_bus_from_config(p)

@@ -65,9 +65,13 @@ async def build_bus_from_config(path: Path) -> Bus:
     bus = Bus(cfg)
 
     # Hooks (no auth-aware filtering yet — Phase 2 will add it).
-    has_auth_hook = False  # No auth hook in v1.
+    # TODO(Phase 2): scan loaded hooks for auth-hook interface and set True.
+    # Until then, non-loopback bind is always refused. See BACKLOG.md.
+    has_auth_hook = False
     for stage in ("pre_publish", "pre_deliver"):
         for entry in (raw.get("bus_hooks", {}) or {}).get(stage, []) or []:
+            if "class" not in entry:
+                raise BusBootError(f"hook entry missing required 'class' field: {entry!r}")
             cls = _import_class(entry["class"])
             try:
                 instance = cls(**entry.get("params", {}))
@@ -85,10 +89,16 @@ async def build_bus_from_config(path: Path) -> Bus:
 
     # Endpoints.
     for entry in raw.get("endpoints", []) or []:
+        if "class" not in entry:
+            raise BusBootError(f"endpoint entry missing required 'class' field: {entry!r}")
+        if "name" not in entry:
+            raise BusBootError(f"endpoint entry missing required 'name' field: {entry!r}")
         cls = _import_class(entry["class"])
         params = entry.get("params", {})
-        # Endpoint constructors typically take `name` and `**params` patterns.
-        # Convention: every endpoint class accepts `name` as first arg.
+        # Runner-side convention (not enforced by the Endpoint Protocol):
+        # every endpoint class must accept `name` as a constructor kwarg.
+        # The Protocol only requires `name` as an *attribute*; this convention
+        # is what lets the runner construct from YAML without per-class adapters.
         try:
             instance = cls(name=entry["name"], **params)
         except Exception as exc:
