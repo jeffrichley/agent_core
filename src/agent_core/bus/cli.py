@@ -178,3 +178,34 @@ async def _mailbox(endpoint: str, config_path: Path) -> None:
         console.print(table)
     finally:
         await store.close()
+
+
+@app.command()
+def trace(
+    correlation_id: str = typer.Argument(..., help="correlation_id to trace"),
+    config: Path = _config_option(),
+):
+    """Show all envelopes in a correlation_id thread, in arrival order."""
+    asyncio.run(_trace(correlation_id, config))
+
+
+async def _trace(correlation_id: str, config_path: Path) -> None:
+    bus = await build_bus_from_config(config_path)
+    store = Persistence(bus.config.storage_path)
+    await store.connect()
+    try:
+        thread = await store.list_by_correlation(correlation_id)
+        if not thread:
+            console.print(f"[dim]no envelopes found for correlation_id={correlation_id!r}[/dim]")
+            return
+        table = Table(title=f"Thread: {correlation_id}")
+        table.add_column("id")
+        table.add_column("from")
+        table.add_column("to")
+        table.add_column("kind")
+        table.add_column("created_at")
+        for env in thread:
+            table.add_row(env.id, env.from_, env.to, env.kind, env.created_at.isoformat())
+        console.print(table)
+    finally:
+        await store.close()
