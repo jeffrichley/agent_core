@@ -2,8 +2,6 @@
 
 Single asyncio event loop. Endpoints register before start; the bus
 constructs a per-endpoint BusHandle and calls endpoint.start().
-
-Sweeps (Task 10) are not yet implemented.
 """
 
 from __future__ import annotations
@@ -171,6 +169,37 @@ class Bus:
         pending = await self._store.list_pending(endpoint_name)
         for env in pending:
             await self._dispatch(env)
+
+    async def run_ttl_sweep_once(self, *, now: datetime | None = None) -> int:
+        """Mark expired-and-undelivered envelopes as 'expired'. Returns count swept."""
+        if self._store is None:
+            return 0
+        now = now or datetime.now(timezone.utc)
+        expired = await self._store.find_expired(now=now)
+        for env in expired:
+            await self._store.expire(env.id)
+            log.info("ttl swept envelope %s (to=%s)", env.id, env.to)
+        return len(expired)
+
+    async def run_redelivery_sweep_once(self, *, now: datetime | None = None) -> int:
+        """Find in_flight envelopes whose timeout has lapsed; requeue or dead-letter."""
+        if self._store is None:
+            return 0
+        now = now or datetime.now(timezone.utc)
+        stale = await self._store.find_in_flight_timeouts(now=now)
+        moved = 0
+        for env in stale:
+            row = await self._store.row(env.id)
+            if row["delivery_count"] >= self.config.max_delivery_attempts:
+                await self._store.mark_dead_letter(
+                    env.id,
+                    reason=f"exceeded {self.config.max_delivery_attempts} delivery attempts",
+                )
+            else:
+                await self._store.requeue(env.id)
+                await self._dispatch(env)
+            moved += 1
+        return moved
 
     async def _ack(self, envelope_id: str) -> None:
         # Idempotent: marking acked twice (or acking a missing id) is a no-op.
