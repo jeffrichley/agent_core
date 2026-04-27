@@ -65,6 +65,14 @@ class TestBusHandlePublish:
         await handle.publish(env, to=["a", "b"])
         assert bus.published[0][1] == ["a", "b"]
 
+    async def test_does_not_mutate_caller_envelope(self):
+        bus = _RecordingBus()
+        handle = BusHandle(bus, "agent-pepper")
+        env = _envelope(from_="not-pepper")
+        original_from = env.from_
+        await handle.publish(env)
+        assert env.from_ == original_from  # caller's copy is untouched
+
 
 class TestBusHandleAckNack:
     async def test_ack_delegates(self):
