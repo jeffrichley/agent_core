@@ -29,7 +29,7 @@ pipelines:
   SessionEnd:
     - tool: agent_core.hooks.tools.handoff_writer.HandoffWriter
       params:
-        output_path: "E:\\workspaces\\ai\\agents\\agent_core\\tests\\hooks\\test-handoff.md"
+        output_path: ".agent-core/handoffs/test-handoff.md"
         transcript_tail_lines: 200
         timezone: "US/Eastern"
         agent_name: "TestAgent"
