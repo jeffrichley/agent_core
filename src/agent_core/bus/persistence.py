@@ -216,13 +216,16 @@ class Persistence:
         return [_row_to_envelope(dict(r)) for r in rows]
 
     async def purge_dlq(self, *, older_than: datetime) -> int:
-        """Delete dead_letter rows whose last_attempted is older than the cutoff.
-        Returns the number of rows deleted."""
+        """Delete dead_letter rows older than the cutoff.
+
+        Uses last_attempted as the age signal, falling back to created_at for
+        rows that never entered in_flight (e.g., dropped by pre_deliver hooks).
+        Returns the number of rows deleted.
+        """
         cur = await self._conn.execute(
             """DELETE FROM envelopes
                WHERE state = 'dead_letter'
-                 AND last_attempted IS NOT NULL
-                 AND last_attempted < ?""",
+                 AND COALESCE(last_attempted, created_at) < ?""",
             (older_than.isoformat(),),
         )
         await self._conn.commit()

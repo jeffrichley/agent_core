@@ -36,6 +36,11 @@ class Endpoint(Protocol):
         You MUST eventually call bus.ack(envelope.id) when handling completes.
         Raise EndpointUnavailable to signal temporary failure (bus will retry).
         Other exceptions are terminal — envelope moves to dead-letter.
+
+        The bus awaits this call before dispatching the next envelope to ANY
+        endpoint, so deliver() should return promptly. Long work belongs in
+        a background task — return after acking, then do the work and
+        publish a Progress envelope or follow-up reply when ready.
         """
 
     async def stop(self) -> None:

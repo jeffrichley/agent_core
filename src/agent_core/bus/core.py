@@ -1,7 +1,12 @@
-"""Bus core — endpoint registration and lifecycle.
+"""Bus core — endpoint registration, lifecycle, dispatch, sweeps.
 
 Single asyncio event loop. Endpoints register before start; the bus
 constructs a per-endpoint BusHandle and calls endpoint.start().
+
+Dispatch is awaited synchronously per envelope: the bus calls
+endpoint.deliver() and waits for it to return (or raise) before
+moving on. Endpoints that need to do long work should return promptly
+from deliver() and continue work in a background task.
 """
 
 from __future__ import annotations
