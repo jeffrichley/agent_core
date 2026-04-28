@@ -12,6 +12,7 @@ from_=scheduler on every publish.
 
 from __future__ import annotations
 
+import json
 import logging
 import uuid
 from datetime import datetime, timezone
@@ -27,7 +28,7 @@ from apscheduler.triggers.interval import IntervalTrigger
 from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import create_async_engine
 
-from agent_core.bus.envelope import Envelope, TextMessagePayload
+from agent_core.bus.envelope import AcknowledgmentPayload, Envelope, TextMessagePayload
 from agent_core.bus.protocol import EndpointUnavailable
 
 if TYPE_CHECKING:
@@ -47,6 +48,33 @@ class JobDef(BaseModel):
     metadata: dict[str, Any] = Field(default_factory=dict)
 
 
+class _CreateJobArgs(BaseModel):
+    name: str = Field(min_length=1)
+    trigger: Literal["interval", "cron", "date"]
+    schedule: dict[str, Any]
+    target: str = Field(min_length=1)
+    prompt: str
+    timezone: str | None = None
+    metadata: dict[str, Any] = Field(default_factory=dict)
+
+
+class _UpdateJobArgs(BaseModel):
+    name: str = Field(min_length=1)
+    schedule: dict[str, Any] | None = None
+    target: str | None = None
+    prompt: str | None = None
+    timezone: str | None = None
+    metadata: dict[str, Any] | None = None
+
+
+class _NameOnlyArgs(BaseModel):
+    name: str = Field(min_length=1)
+
+
+class _NoArgs(BaseModel):
+    pass
+
+
 def build_trigger(job: JobDef) -> IntervalTrigger | CronTrigger | DateTrigger:
     """Build an APScheduler trigger from a JobDef."""
     if job.trigger == "interval":
@@ -57,16 +85,19 @@ def build_trigger(job: JobDef) -> IntervalTrigger | CronTrigger | DateTrigger:
             days=job.schedule.get("days", 0),
         )
     if job.trigger == "cron":
-        return CronTrigger(
-            second=job.schedule.get("second"),
-            minute=job.schedule.get("minute"),
-            hour=job.schedule.get("hour"),
-            day=job.schedule.get("day"),
-            month=job.schedule.get("month"),
-            day_of_week=job.schedule.get("day_of_week"),
-            year=job.schedule.get("year"),
-            timezone=job.timezone,
-        )
+        cron_kwargs: dict[str, Any] = {
+            "second": job.schedule.get("second"),
+            "minute": job.schedule.get("minute"),
+            "hour": job.schedule.get("hour"),
+            "day": job.schedule.get("day"),
+            "month": job.schedule.get("month"),
+            "day_of_week": job.schedule.get("day_of_week"),
+            "year": job.schedule.get("year"),
+        }
+        # APScheduler v4 CronTrigger rejects timezone=None — omit when not set.
+        if job.timezone is not None:
+            cron_kwargs["timezone"] = job.timezone
+        return CronTrigger(**cron_kwargs)
     if job.trigger == "date":
         run_time = job.schedule["run_time"]
         return DateTrigger(run_time=run_time)
@@ -159,12 +190,178 @@ class SchedulerEndpoint:
             log.info("Seeded job: %s", job_name)
 
     async def deliver(self, envelope: Envelope) -> None:
-        # Tool dispatch lands in Task 5. For now, every envelope reaches scheduler
-        # is unsupported; ack with a warning Acknowledgment.
+        """Handle ToolInvocation envelopes; warn on others."""
         if self._handle is None:
             raise EndpointUnavailable(f"scheduler '{self.name}' not started")
-        # Implemented in Task 5.
+
+        if envelope.kind != "ToolInvocation":
+            await self._reply(
+                envelope,
+                f"warning: unsupported envelope kind '{envelope.kind}'",
+                ok=False,
+            )
+            await self._handle.ack(envelope.id)
+            return
+
+        # ToolInvocation
+        tool = envelope.payload.tool  # type: ignore[union-attr]
+        args = envelope.payload.args  # type: ignore[union-attr]
+
+        try:
+            result = await self._dispatch(tool, args)
+            await self._reply(envelope, json.dumps(result))
+        except _ToolError as exc:
+            await self._reply(envelope, f"error: {exc}", ok=False)
+        except Exception as exc:
+            log.exception("scheduler tool '%s' raised", tool)
+            await self._reply(envelope, f"error: {exc}", ok=False)
+
         await self._handle.ack(envelope.id)
+
+    async def _dispatch(self, tool: str, args: dict) -> Any:
+        """Route a tool call to its handler. Raises _ToolError on user errors."""
+        if tool == "create_job":
+            return await self._create_job(_CreateJobArgs(**args))
+        if tool == "update_job":
+            return await self._update_job(_UpdateJobArgs(**args))
+        if tool == "delete_job":
+            return await self._delete_job(_NameOnlyArgs(**args))
+        if tool == "list_jobs":
+            _NoArgs(**args)  # validate empty
+            return await self._list_jobs()
+        if tool == "pause_job":
+            return await self._pause_job(_NameOnlyArgs(**args))
+        if tool == "resume_job":
+            return await self._resume_job(_NameOnlyArgs(**args))
+        raise _ToolError(f"unknown tool '{tool}'")
+
+    async def _create_job(self, args: _CreateJobArgs) -> dict:
+        assert self._scheduler is not None
+        existing = await self._scheduler.get_schedules()
+        if any(s.id == args.name for s in existing):
+            raise _ToolError(f"job '{args.name}' already exists")
+        jd = JobDef(
+            trigger=args.trigger,
+            schedule=args.schedule,
+            target=args.target,
+            prompt=args.prompt,
+            timezone=args.timezone,
+            metadata=args.metadata,
+        )
+        try:
+            trig = build_trigger(jd)
+        except Exception as exc:
+            raise _ToolError(f"invalid trigger: {exc}") from exc
+        await self._scheduler.add_schedule(
+            _fire,
+            trig,
+            id=args.name,
+            args=[self.name, args.name, args.target, args.prompt, args.metadata],
+        )
+        return {"status": "created", "name": args.name}
+
+    async def _update_job(self, args: _UpdateJobArgs) -> dict:
+        assert self._scheduler is not None
+        try:
+            existing = await self._scheduler.get_schedule(args.name)
+        except Exception as exc:
+            raise _ToolError(f"job '{args.name}' not found") from exc
+
+        # Existing args tuple is (scheduler_name, job_name, target, prompt, metadata).
+        cur_args = list(existing.args) if existing.args else [self.name, args.name, "", "", {}]
+        new_target = args.target if args.target is not None else cur_args[2]
+        new_prompt = args.prompt if args.prompt is not None else cur_args[3]
+        new_metadata = args.metadata if args.metadata is not None else cur_args[4]
+
+        # Rebuild trigger if schedule or timezone changed; else reuse existing.
+        if args.schedule is not None:
+            jd = JobDef(
+                trigger=_trigger_kind_of(existing.trigger),
+                schedule=args.schedule,
+                target=new_target,
+                prompt=new_prompt,
+                timezone=args.timezone,
+                metadata=new_metadata,
+            )
+            try:
+                new_trig = build_trigger(jd)
+            except Exception as exc:
+                raise _ToolError(f"invalid trigger: {exc}") from exc
+        else:
+            new_trig = existing.trigger
+
+        await self._scheduler.remove_schedule(args.name)
+        await self._scheduler.add_schedule(
+            _fire,
+            new_trig,
+            id=args.name,
+            args=[self.name, args.name, new_target, new_prompt, new_metadata],
+        )
+        return {"status": "updated", "name": args.name}
+
+    async def _delete_job(self, args: _NameOnlyArgs) -> dict:
+        assert self._scheduler is not None
+        # APScheduler v4's remove_schedule silently no-ops on missing ids; check
+        # existence first so we can return a meaningful error.
+        existing = await self._scheduler.get_schedules()
+        if not any(s.id == args.name for s in existing):
+            raise _ToolError(f"job '{args.name}' not found")
+        try:
+            await self._scheduler.remove_schedule(args.name)
+        except Exception as exc:
+            raise _ToolError(f"job '{args.name}' not found") from exc
+        return {"status": "deleted", "name": args.name}
+
+    async def _list_jobs(self) -> list[dict]:
+        assert self._scheduler is not None
+        schedules = await self._scheduler.get_schedules()
+        out: list[dict] = []
+        for s in schedules:
+            cur_args = list(s.args) if s.args else [self.name, s.id, "", "", {}]
+            out.append(
+                {
+                    "name": s.id,
+                    "trigger": str(s.trigger),
+                    "target": cur_args[2],
+                    "prompt": cur_args[3],
+                    "next_run": s.next_fire_time.isoformat() if s.next_fire_time else None,
+                    "paused": getattr(s, "paused", False),
+                }
+            )
+        return out
+
+    async def _pause_job(self, args: _NameOnlyArgs) -> dict:
+        assert self._scheduler is not None
+        try:
+            await self._scheduler.pause_schedule(args.name)
+        except Exception as exc:
+            raise _ToolError(f"job '{args.name}' not found") from exc
+        return {"status": "paused", "name": args.name}
+
+    async def _resume_job(self, args: _NameOnlyArgs) -> dict:
+        assert self._scheduler is not None
+        try:
+            await self._scheduler.unpause_schedule(args.name, resume_from="now")
+        except Exception as exc:
+            raise _ToolError(f"job '{args.name}' not found") from exc
+        return {"status": "resumed", "name": args.name}
+
+    async def _reply(self, incoming: Envelope, note: str, *, ok: bool = True) -> None:
+        """Publish an Acknowledgment back to incoming.from_."""
+        assert self._handle is not None
+        ack = Envelope(
+            id=uuid.uuid4().hex,
+            correlation_id=incoming.correlation_id,
+            in_reply_to=incoming.id,
+            to=incoming.from_,
+            kind="Acknowledgment",
+            payload=AcknowledgmentPayload(of=incoming.id, note=note),
+            created_at=datetime.now(timezone.utc),
+        )
+        try:
+            await self._handle.publish(ack)
+        except Exception:
+            log.exception("scheduler failed to publish Acknowledgment for %s", incoming.id)
 
     async def stop(self) -> None:
         _active_endpoints.pop(self.name, None)
@@ -233,3 +430,17 @@ async def _fire(
         log.info("Job %s fired → %s (envelope %s)", name, target, env.id)
     except Exception:
         log.exception("Job %s failed to publish to %s", name, target)
+
+
+class _ToolError(Exception):
+    """User-error during tool dispatch — produces an Acknowledgment with note."""
+
+
+def _trigger_kind_of(trigger: Any) -> str:
+    """Best-effort mapping from APScheduler trigger object → JobDef.trigger str."""
+    s = str(trigger).lower()
+    if "interval" in s:
+        return "interval"
+    if "date" in s:
+        return "date"
+    return "cron"

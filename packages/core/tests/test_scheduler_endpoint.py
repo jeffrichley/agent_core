@@ -2,7 +2,10 @@
 
 from __future__ import annotations
 
+import json
 import textwrap
+import uuid
+from datetime import datetime, timezone
 
 import pytest
 
@@ -400,3 +403,333 @@ async def test_fire_no_active_endpoint_is_noop():
     # Don't register anything in _active_endpoints.
     await _fire("not-running", "j", "agent-test", "x", None)
     # No assertion needed — passing without raising is the contract.
+
+
+def _make_envelope(env_id, frm, to, kind, payload, **kwargs):
+    """Build an Envelope for tests."""
+    from agent_core.bus.envelope import Envelope
+
+    return Envelope(
+        id=env_id,
+        correlation_id=kwargs.get("correlation_id", uuid.uuid4().hex),
+        from_=frm,
+        to=to,
+        kind=kind,
+        payload=payload,
+        created_at=datetime.now(timezone.utc),
+    )
+
+
+def _toolcall(tool: str, args: dict) -> dict:
+    """Construct a ToolInvocation payload dict."""
+    return {"kind": "ToolInvocation", "tool": tool, "args": args}
+
+
+@pytest.mark.asyncio
+async def test_deliver_create_job_publishes_acknowledgment(tmp_path):
+    handle = _RecordingHandle()
+    ep = SchedulerEndpoint(name="scheduler", db_path=str(tmp_path / "s.db"))
+    await ep.start(handle)
+    try:
+        env = _make_envelope(
+            "env-1",
+            frm="agent-test",
+            to="scheduler",
+            kind="ToolInvocation",
+            payload=_toolcall(
+                "create_job",
+                {
+                    "name": "weekly",
+                    "trigger": "cron",
+                    "schedule": {"day_of_week": "fri", "hour": 17},
+                    "target": "agent-test",
+                    "prompt": "weekly review",
+                },
+            ),
+        )
+        await ep.deliver(env)
+        # Expect one Acknowledgment published.
+        acks = [e for e in handle.published if e.kind == "Acknowledgment"]
+        assert len(acks) == 1
+        ack = acks[0]
+        assert ack.to == "agent-test"
+        assert ack.payload.of == "env-1"
+        result = json.loads(ack.payload.note)
+        assert result == {"status": "created", "name": "weekly"}
+    finally:
+        await ep.stop()
+
+
+@pytest.mark.asyncio
+async def test_deliver_create_job_duplicate_returns_error(tmp_path):
+    handle = _RecordingHandle()
+    ep = SchedulerEndpoint(name="scheduler", db_path=str(tmp_path / "s.db"))
+    await ep.start(handle)
+    try:
+        args = {
+            "name": "j",
+            "trigger": "interval",
+            "schedule": {"seconds": 60},
+            "target": "agent-test",
+            "prompt": "x",
+        }
+        env1 = _make_envelope(
+            "e1", "agent-test", "scheduler", "ToolInvocation", _toolcall("create_job", args)
+        )
+        env2 = _make_envelope(
+            "e2", "agent-test", "scheduler", "ToolInvocation", _toolcall("create_job", args)
+        )
+        await ep.deliver(env1)
+        await ep.deliver(env2)
+        ack2 = [e for e in handle.published if e.kind == "Acknowledgment" and e.payload.of == "e2"]
+        assert len(ack2) == 1
+        assert "already exists" in ack2[0].payload.note
+    finally:
+        await ep.stop()
+
+
+@pytest.mark.asyncio
+async def test_deliver_list_jobs_returns_empty_then_one(tmp_path):
+    handle = _RecordingHandle()
+    ep = SchedulerEndpoint(name="scheduler", db_path=str(tmp_path / "s.db"))
+    await ep.start(handle)
+    try:
+        # list when empty
+        env = _make_envelope(
+            "l1", "agent-test", "scheduler", "ToolInvocation", _toolcall("list_jobs", {})
+        )
+        await ep.deliver(env)
+        ack = [e for e in handle.published if e.kind == "Acknowledgment" and e.payload.of == "l1"][
+            0
+        ]
+        assert json.loads(ack.payload.note) == []
+
+        # create one then list
+        await ep.deliver(
+            _make_envelope(
+                "c1",
+                "agent-test",
+                "scheduler",
+                "ToolInvocation",
+                _toolcall(
+                    "create_job",
+                    {
+                        "name": "j",
+                        "trigger": "interval",
+                        "schedule": {"seconds": 60},
+                        "target": "agent-test",
+                        "prompt": "x",
+                    },
+                ),
+            )
+        )
+        await ep.deliver(
+            _make_envelope(
+                "l2", "agent-test", "scheduler", "ToolInvocation", _toolcall("list_jobs", {})
+            )
+        )
+        ack2 = [e for e in handle.published if e.kind == "Acknowledgment" and e.payload.of == "l2"][
+            0
+        ]
+        listed = json.loads(ack2.payload.note)
+        assert len(listed) == 1
+        assert listed[0]["name"] == "j"
+        assert listed[0]["target"] == "agent-test"
+    finally:
+        await ep.stop()
+
+
+@pytest.mark.asyncio
+async def test_deliver_delete_job_then_list_is_empty(tmp_path):
+    handle = _RecordingHandle()
+    ep = SchedulerEndpoint(name="scheduler", db_path=str(tmp_path / "s.db"))
+    await ep.start(handle)
+    try:
+        await ep.deliver(
+            _make_envelope(
+                "c",
+                "agent-test",
+                "scheduler",
+                "ToolInvocation",
+                _toolcall(
+                    "create_job",
+                    {
+                        "name": "j",
+                        "trigger": "interval",
+                        "schedule": {"seconds": 60},
+                        "target": "agent-test",
+                        "prompt": "x",
+                    },
+                ),
+            )
+        )
+        await ep.deliver(
+            _make_envelope(
+                "d",
+                "agent-test",
+                "scheduler",
+                "ToolInvocation",
+                _toolcall("delete_job", {"name": "j"}),
+            )
+        )
+        ack = [e for e in handle.published if e.kind == "Acknowledgment" and e.payload.of == "d"][0]
+        assert json.loads(ack.payload.note) == {"status": "deleted", "name": "j"}
+
+        await ep.deliver(
+            _make_envelope(
+                "l", "agent-test", "scheduler", "ToolInvocation", _toolcall("list_jobs", {})
+            )
+        )
+        ackl = [e for e in handle.published if e.kind == "Acknowledgment" and e.payload.of == "l"][
+            0
+        ]
+        assert json.loads(ackl.payload.note) == []
+    finally:
+        await ep.stop()
+
+
+@pytest.mark.asyncio
+async def test_deliver_delete_unknown_job_returns_error(tmp_path):
+    handle = _RecordingHandle()
+    ep = SchedulerEndpoint(name="scheduler", db_path=str(tmp_path / "s.db"))
+    await ep.start(handle)
+    try:
+        env = _make_envelope(
+            "d",
+            "agent-test",
+            "scheduler",
+            "ToolInvocation",
+            _toolcall("delete_job", {"name": "nope"}),
+        )
+        await ep.deliver(env)
+        ack = [e for e in handle.published if e.kind == "Acknowledgment" and e.payload.of == "d"][0]
+        assert "not found" in ack.payload.note
+    finally:
+        await ep.stop()
+
+
+@pytest.mark.asyncio
+async def test_deliver_pause_and_resume(tmp_path):
+    handle = _RecordingHandle()
+    ep = SchedulerEndpoint(name="scheduler", db_path=str(tmp_path / "s.db"))
+    await ep.start(handle)
+    try:
+        await ep.deliver(
+            _make_envelope(
+                "c",
+                "agent-test",
+                "scheduler",
+                "ToolInvocation",
+                _toolcall(
+                    "create_job",
+                    {
+                        "name": "j",
+                        "trigger": "interval",
+                        "schedule": {"seconds": 60},
+                        "target": "agent-test",
+                        "prompt": "x",
+                    },
+                ),
+            )
+        )
+        await ep.deliver(
+            _make_envelope(
+                "p",
+                "agent-test",
+                "scheduler",
+                "ToolInvocation",
+                _toolcall("pause_job", {"name": "j"}),
+            )
+        )
+        ackp = [e for e in handle.published if e.kind == "Acknowledgment" and e.payload.of == "p"][
+            0
+        ]
+        assert json.loads(ackp.payload.note) == {"status": "paused", "name": "j"}
+
+        await ep.deliver(
+            _make_envelope(
+                "r",
+                "agent-test",
+                "scheduler",
+                "ToolInvocation",
+                _toolcall("resume_job", {"name": "j"}),
+            )
+        )
+        ackr = [e for e in handle.published if e.kind == "Acknowledgment" and e.payload.of == "r"][
+            0
+        ]
+        assert json.loads(ackr.payload.note) == {"status": "resumed", "name": "j"}
+    finally:
+        await ep.stop()
+
+
+@pytest.mark.asyncio
+async def test_deliver_unknown_tool_returns_error(tmp_path):
+    handle = _RecordingHandle()
+    ep = SchedulerEndpoint(name="scheduler", db_path=str(tmp_path / "s.db"))
+    await ep.start(handle)
+    try:
+        env = _make_envelope(
+            "u",
+            "agent-test",
+            "scheduler",
+            "ToolInvocation",
+            _toolcall("frobnicate", {"x": 1}),
+        )
+        await ep.deliver(env)
+        ack = [e for e in handle.published if e.kind == "Acknowledgment" and e.payload.of == "u"][0]
+        assert "unknown tool" in ack.payload.note.lower()
+    finally:
+        await ep.stop()
+
+
+@pytest.mark.asyncio
+async def test_deliver_bad_args_returns_error(tmp_path):
+    handle = _RecordingHandle()
+    ep = SchedulerEndpoint(name="scheduler", db_path=str(tmp_path / "s.db"))
+    await ep.start(handle)
+    try:
+        # create_job missing required `target`
+        env = _make_envelope(
+            "b",
+            "agent-test",
+            "scheduler",
+            "ToolInvocation",
+            _toolcall(
+                "create_job",
+                {
+                    "name": "j",
+                    "trigger": "interval",
+                    "schedule": {"seconds": 60},
+                    "prompt": "x",
+                },
+            ),
+        )
+        await ep.deliver(env)
+        ack = [e for e in handle.published if e.kind == "Acknowledgment" and e.payload.of == "b"][0]
+        assert "error" in ack.payload.note.lower()
+    finally:
+        await ep.stop()
+
+
+@pytest.mark.asyncio
+async def test_deliver_non_toolinvocation_publishes_warning(tmp_path):
+    from agent_core.bus.envelope import TextMessagePayload
+
+    handle = _RecordingHandle()
+    ep = SchedulerEndpoint(name="scheduler", db_path=str(tmp_path / "s.db"))
+    await ep.start(handle)
+    try:
+        env = _make_envelope(
+            "w",
+            "agent-test",
+            "scheduler",
+            "TextMessage",
+            TextMessagePayload(text="random"),
+        )
+        await ep.deliver(env)
+        ack = [e for e in handle.published if e.kind == "Acknowledgment" and e.payload.of == "w"][0]
+        assert "warning" in ack.payload.note.lower()
+        assert "TextMessage" in ack.payload.note
+    finally:
+        await ep.stop()
