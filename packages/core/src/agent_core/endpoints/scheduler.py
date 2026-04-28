@@ -97,10 +97,20 @@ class SchedulerEndpoint:
         engine = create_async_engine(f"sqlite+aiosqlite:///{self.db_path}")
         data_store = SQLAlchemyDataStore(engine)
         self._scheduler = AsyncScheduler(data_store=data_store)
-        await self._scheduler.__aenter__()
-        # Allow concurrent fires per task (APScheduler defaults to max_running_jobs=1).
-        await self._scheduler.configure_task(_fire, max_running_jobs=None)
-        await self._scheduler.start_in_background()
+        try:
+            await self._scheduler.__aenter__()
+            # Allow concurrent fires per task (APScheduler defaults to max_running_jobs=1).
+            await self._scheduler.configure_task(_fire, max_running_jobs=None)
+            await self._scheduler.start_in_background()
+        except BaseException:
+            # Roll back partial init so callers don't see a half-built scheduler.
+            try:
+                await self._scheduler.__aexit__(None, None, None)
+            except Exception:
+                log.exception("rollback __aexit__ failed during start()")
+            self._scheduler = None
+            self._handle = None
+            raise
         # Seed loading + tool dispatch land in Tasks 3 and 5.
         log.info("SchedulerEndpoint(name=%s) started; db=%s", self.name, self.db_path)
 
@@ -114,8 +124,14 @@ class SchedulerEndpoint:
 
     async def stop(self) -> None:
         if self._scheduler is not None:
-            await self._scheduler.__aexit__(None, None, None)
-            self._scheduler = None
+            try:
+                await self._scheduler.__aexit__(None, None, None)
+            except Exception:
+                log.exception(
+                    "SchedulerEndpoint(%s) error during scheduler shutdown", self.name
+                )
+            finally:
+                self._scheduler = None
         self._handle = None
         log.info("SchedulerEndpoint(name=%s) stopped", self.name)
 
