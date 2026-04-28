@@ -172,9 +172,7 @@ class SchedulerEndpoint:
             try:
                 await self._scheduler.__aexit__(None, None, None)
             except Exception:
-                log.exception(
-                    "SchedulerEndpoint(%s) error during scheduler shutdown", self.name
-                )
+                log.exception("SchedulerEndpoint(%s) error during scheduler shutdown", self.name)
             finally:
                 self._scheduler = None
         self._handle = None

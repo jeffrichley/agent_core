@@ -149,7 +149,8 @@ async def test_start_stop_lifecycle(tmp_path):
         async def publish(self, *a, **kw): ...
         async def ack(self, *a, **kw): ...
         async def nack(self, *a, **kw): ...
-        def endpoints(self): return []
+        def endpoints(self):
+            return []
 
     ep = SchedulerEndpoint(
         name="scheduler",
@@ -231,7 +232,8 @@ async def test_seed_jobs_are_added_on_start(tmp_path):
         async def publish(self, *a, **kw): ...
         async def ack(self, *a, **kw): ...
         async def nack(self, *a, **kw): ...
-        def endpoints(self): return []
+        def endpoints(self):
+            return []
 
     yaml_path = tmp_path / "jobs.yaml"
     yaml_path.write_text(
@@ -272,7 +274,8 @@ async def test_seed_jobs_skip_duplicates(tmp_path):
         async def publish(self, *a, **kw): ...
         async def ack(self, *a, **kw): ...
         async def nack(self, *a, **kw): ...
-        def endpoints(self): return []
+        def endpoints(self):
+            return []
 
     yaml_path = tmp_path / "jobs.yaml"
     yaml_path.write_text(
@@ -318,7 +321,8 @@ class _RecordingHandle:
 
     async def ack(self, envelope_id: str) -> None: ...
     async def nack(self, envelope_id: str, requeue: bool = True) -> None: ...
-    def endpoints(self): return []
+    def endpoints(self):
+        return []
 
 
 class _StubEndpointForFire:
@@ -336,9 +340,7 @@ async def test_fire_publishes_text_message_to_target():
     handle = _RecordingHandle()
     _active_endpoints["sched-test"] = _StubEndpointForFire(handle)
     try:
-        await _fire(
-            "sched-test", "heartbeat", "agent-test", "ping", {"job_kind": "heartbeat"}
-        )
+        await _fire("sched-test", "heartbeat", "agent-test", "ping", {"job_kind": "heartbeat"})
         assert len(handle.published) == 1
         env = handle.published[0]
         assert env.to == "agent-test"
@@ -377,7 +379,8 @@ async def test_fire_swallows_publish_errors():
 
         async def ack(self, *a, **kw): ...
         async def nack(self, *a, **kw): ...
-        def endpoints(self): return []
+        def endpoints(self):
+            return []
 
     _active_endpoints["sched-test"] = _StubEndpointForFire(_FailingHandle())
     try:
