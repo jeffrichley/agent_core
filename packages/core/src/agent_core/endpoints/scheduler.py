@@ -16,6 +16,7 @@ import logging
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal
 
+import yaml  # type: ignore[import-untyped]
 from apscheduler import AsyncScheduler
 from apscheduler.datastores.sqlalchemy import SQLAlchemyDataStore
 from apscheduler.triggers.cron import CronTrigger
@@ -75,6 +76,18 @@ def _default_db_path() -> Path:
     return Path("~/.agent-core/scheduler.db").expanduser()
 
 
+def load_seed_jobs(yaml_path: Path) -> dict[str, JobDef]:
+    """Parse a yaml file into validated JobDef entries keyed by name.
+
+    Returns an empty dict if the file does not exist or is empty.
+    Raises pydantic ValidationError if any entry is malformed.
+    """
+    if not yaml_path.exists():
+        return {}
+    raw = yaml.safe_load(yaml_path.read_text(encoding="utf-8")) or {}
+    return {name: JobDef(**spec) for name, spec in raw.items()}
+
+
 class SchedulerEndpoint:
     """Bus endpoint that runs APScheduler and fires jobs as bus envelopes."""
 
@@ -102,6 +115,8 @@ class SchedulerEndpoint:
             # Allow concurrent fires per task (APScheduler defaults to max_running_jobs=1).
             await self._scheduler.configure_task(_fire, max_running_jobs=None)
             await self._scheduler.start_in_background()
+            if self.jobs_path is not None:
+                await self._seed_jobs()
         except BaseException:
             # Roll back partial init so callers don't see a half-built scheduler.
             try:
@@ -111,8 +126,26 @@ class SchedulerEndpoint:
             self._scheduler = None
             self._handle = None
             raise
-        # Seed loading + tool dispatch land in Tasks 3 and 5.
         log.info("SchedulerEndpoint(name=%s) started; db=%s", self.name, self.db_path)
+
+    async def _seed_jobs(self) -> None:
+        """Add jobs from jobs.yaml. Skip names that already exist in the store."""
+        assert self._scheduler is not None
+        existing = await self._scheduler.get_schedules()
+        existing_ids = {s.id for s in existing}
+        seeds = load_seed_jobs(self.jobs_path)  # type: ignore[arg-type]
+        for job_name, job in seeds.items():
+            if job_name in existing_ids:
+                log.debug("Seed job %s already present; skipping", job_name)
+                continue
+            trig = build_trigger(job)
+            await self._scheduler.add_schedule(
+                _fire,
+                trig,
+                id=job_name,
+                args=[self._handle, job_name, job.target, job.prompt, job.metadata],
+            )
+            log.info("Seeded job: %s", job_name)
 
     async def deliver(self, envelope: Envelope) -> None:
         # Tool dispatch lands in Task 5. For now, every envelope reaches scheduler
