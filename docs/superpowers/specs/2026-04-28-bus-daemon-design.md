@@ -1,7 +1,7 @@
 # Bus Daemon & ClaudeCodeMCPEndpoint — Design Spec
 
 **Date:** 2026-04-28
-**Status:** Proposed (pending user review)
+**Status:** Approved
 **Builds on:** [`2026-04-27-channel-bus-design.md`](2026-04-27-channel-bus-design.md)
 **Clarifies:** Transport language in the channel-bus spec — see § Architectural shape.
 
