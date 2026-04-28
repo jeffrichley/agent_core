@@ -8,6 +8,7 @@ members = ["packages/*"]
 [tool.uv.sources]
 agent-core = { workspace = true }
 agent-core-notify = { workspace = true }
+agent-core-credentials = { workspace = true }
 
 [dependency-groups]
 # Dev tools only; real package deps live in member pyprojects.
@@ -22,8 +23,9 @@ dev = [
 
 [tool.ruff]
 line-length = 100
-src = ["packages/core/src", "packages/notify/src"]
+src = ["packages/core/src", "packages/notify/src", "packages/credentials/src"]
 
 [tool.pytest.ini_options]
-testpaths = ["packages/core/tests"]
+testpaths = ["packages/core/tests", "packages/credentials/tests"]
 asyncio_mode = "auto"
+addopts = "--import-mode=importlib"
