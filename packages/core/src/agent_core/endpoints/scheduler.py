@@ -198,7 +198,6 @@ class SchedulerEndpoint:
             await self._reply(
                 envelope,
                 f"warning: unsupported envelope kind '{envelope.kind}'",
-                ok=False,
             )
             await self._handle.ack(envelope.id)
             return
@@ -211,10 +210,10 @@ class SchedulerEndpoint:
             result = await self._dispatch(tool, args)
             await self._reply(envelope, json.dumps(result))
         except _ToolError as exc:
-            await self._reply(envelope, f"error: {exc}", ok=False)
+            await self._reply(envelope, f"error: {exc}")
         except Exception as exc:
             log.exception("scheduler tool '%s' raised", tool)
-            await self._reply(envelope, f"error: {exc}", ok=False)
+            await self._reply(envelope, f"error: {exc}")
 
         await self._handle.ack(envelope.id)
 
@@ -306,10 +305,7 @@ class SchedulerEndpoint:
         existing = await self._scheduler.get_schedules()
         if not any(s.id == args.name for s in existing):
             raise _ToolError(f"job '{args.name}' not found")
-        try:
-            await self._scheduler.remove_schedule(args.name)
-        except Exception as exc:
-            raise _ToolError(f"job '{args.name}' not found") from exc
+        await self._scheduler.remove_schedule(args.name)
         return {"status": "deleted", "name": args.name}
 
     async def _list_jobs(self) -> list[dict]:
@@ -346,7 +342,7 @@ class SchedulerEndpoint:
         await self._scheduler.unpause_schedule(args.name, resume_from="now")
         return {"status": "resumed", "name": args.name}
 
-    async def _reply(self, incoming: Envelope, note: str, *, ok: bool = True) -> None:
+    async def _reply(self, incoming: Envelope, note: str) -> None:
         """Publish an Acknowledgment back to incoming.from_."""
         assert self._handle is not None
         ack = Envelope(

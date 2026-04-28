@@ -753,6 +753,67 @@ async def test_deliver_bad_args_returns_error(tmp_path):
 
 
 @pytest.mark.asyncio
+async def test_deliver_update_job_changes_prompt(tmp_path):
+    """update_job rewrites prompt while preserving target/schedule."""
+    handle = _RecordingHandle()
+    ep = SchedulerEndpoint(name="scheduler", db_path=str(tmp_path / "s.db"))
+    await ep.start(handle)
+    try:
+        # Create a job.
+        await ep.deliver(
+            _make_envelope(
+                "c",
+                "agent-test",
+                "scheduler",
+                "ToolInvocation",
+                _toolcall(
+                    "create_job",
+                    {
+                        "name": "j",
+                        "trigger": "interval",
+                        "schedule": {"seconds": 60},
+                        "target": "agent-test",
+                        "prompt": "old prompt",
+                    },
+                ),
+            )
+        )
+        # Update only the prompt.
+        await ep.deliver(
+            _make_envelope(
+                "u",
+                "agent-test",
+                "scheduler",
+                "ToolInvocation",
+                _toolcall("update_job", {"name": "j", "prompt": "new prompt"}),
+            )
+        )
+        ack = [e for e in handle.published if e.kind == "Acknowledgment" and e.payload.of == "u"][0]
+        assert json.loads(ack.payload.note) == {"status": "updated", "name": "j"}
+
+        # list_jobs confirms the prompt is updated and target preserved.
+        await ep.deliver(
+            _make_envelope(
+                "l",
+                "agent-test",
+                "scheduler",
+                "ToolInvocation",
+                _toolcall("list_jobs", {}),
+            )
+        )
+        ackl = [e for e in handle.published if e.kind == "Acknowledgment" and e.payload.of == "l"][
+            0
+        ]
+        listed = json.loads(ackl.payload.note)
+        assert len(listed) == 1
+        assert listed[0]["name"] == "j"
+        assert listed[0]["prompt"] == "new prompt"
+        assert listed[0]["target"] == "agent-test"
+    finally:
+        await ep.stop()
+
+
+@pytest.mark.asyncio
 async def test_deliver_non_toolinvocation_publishes_warning(tmp_path):
     from agent_core.bus.envelope import TextMessagePayload
 
