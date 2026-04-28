@@ -17,7 +17,9 @@ deliver() raises EndpointUnavailable so the bus queues the envelope.
 from __future__ import annotations
 
 import logging
-from typing import TYPE_CHECKING
+import uuid
+from datetime import datetime, timezone
+from typing import TYPE_CHECKING, Any
 
 from fastmcp import FastMCP
 
@@ -63,42 +65,65 @@ class ClaudeCodeMCPEndpoint:
     # --- Internal ---
 
     def _register_tools(self) -> None:
-        """Register the bus's MCP tool surface on the FastMCP server.
-
-        Tool bodies are stubbed in Task 3; implemented in Task 4 (outbound)
-        and Task 5 (inbound)."""
+        """Register the bus's MCP tool surface on the FastMCP server."""
 
         @self._mcp.tool()
-        async def send() -> dict:
-            """Implemented in Task 4."""
-            return {"status": "not_implemented"}
+        async def send(
+            to: str,
+            kind: str,
+            payload: dict[str, Any],
+            correlation_id: str | None = None,
+            in_reply_to: str | None = None,
+            metadata: dict[str, Any] | None = None,
+            expires_at: str | None = None,
+        ) -> dict:
+            """Publish an envelope. Bus stamps `from:` to this endpoint's name."""
+            if self._handle is None:
+                raise RuntimeError(f"endpoint '{self.name}' is not started")
+            env = Envelope(
+                id=uuid.uuid4().hex,
+                correlation_id=correlation_id or uuid.uuid4().hex,
+                in_reply_to=in_reply_to,
+                to=to,
+                kind=kind,  # type: ignore[arg-type]
+                payload=payload,  # type: ignore[arg-type]  # discriminated by kind
+                metadata=metadata or {},
+                expires_at=datetime.fromisoformat(expires_at) if expires_at else None,
+                created_at=datetime.now(timezone.utc),
+            )
+            await self._handle.publish(env)
+            return {"status": "published", "id": env.id}
 
         @self._mcp.tool()
         async def list_endpoints() -> list[dict]:
-            """Implemented in Task 4."""
-            return []
+            """Return the directory of registered bus endpoints."""
+            if self._handle is None:
+                return []
+            return [{"name": e.name, "description": e.description} for e in self._handle.endpoints()]
 
         @self._mcp.tool()
         async def describe_endpoint(name: str) -> dict | None:
-            """Implemented in Task 4."""
+            """Return one endpoint's directory entry, or None if unknown."""
+            if self._handle is None:
+                return None
+            for e in self._handle.endpoints():
+                if e.name == name:
+                    return {"name": e.name, "description": e.description}
             return None
 
+        # list_pending / handle / ack / nack — implemented in Task 5
         @self._mcp.tool()
         async def list_pending() -> list[dict]:
-            """Implemented in Task 5."""
             return []
 
         @self._mcp.tool()
         async def handle(envelope_id: str) -> dict:
-            """Implemented in Task 5."""
             return {"status": "not_implemented"}
 
         @self._mcp.tool()
         async def ack(envelope_id: str) -> dict:
-            """Implemented in Task 5."""
             return {"status": "not_implemented"}
 
         @self._mcp.tool()
         async def nack(envelope_id: str, requeue: bool = True) -> dict:
-            """Implemented in Task 5."""
             return {"status": "not_implemented"}
