@@ -12,14 +12,22 @@ Tools:
     clear_notifications: Clear all active notifications.
 
 Launch:
-    agent-core-notify           # stdio transport (for .mcp.json)
+    python -m agent_core_notify.mcp_server   # stdio transport (for .mcp.json)
 
 Register in .mcp.json:
     {
         "mcpServers": {
             "notify": {
                 "command": "uv",
-                "args": ["run", "--directory", "E:/workspaces/ai/agents/agent_core", "agent-core-notify"]
+                "args": [
+                    "run",
+                    "--no-sync",
+                    "--directory",
+                    "E:/workspaces/ai/agents/agent_core",
+                    "python",
+                    "-m",
+                    "agent_core_notify.mcp_server"
+                ]
             }
         }
     }
