@@ -16,6 +16,7 @@ memory-compiler/scripts/flush-context-*.md
 
 # Claude Code per-machine local overrides
 .claude/settings.local.json
+.claude/*.lock
 
 # Byte-compiled / optimized / DLL files
 __pycache__/
