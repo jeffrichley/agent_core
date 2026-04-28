@@ -5,7 +5,7 @@ document — update as decisions land. For tactical items deferred from
 approved designs, see `BACKLOG.md`. For approved per-feature designs,
 see `superpowers/specs/`.
 
-> **Last updated:** 2026-04-28 (Step 3 credentials shipped; sub-project B spec approved)
+> **Last updated:** 2026-04-28 (Step 3 credentials shipped; sub-project B v1 shipped)
 
 ---
 
@@ -84,7 +84,7 @@ across them.
 | # | Sub-project | Status | Depends on | Notes |
 |---|---|---|---|---|
 | **A** | **Repo / extension strategy** | 🟢 Spec approved — [`2026-04-28-monorepo-workspace-design.md`](superpowers/specs/2026-04-28-monorepo-workspace-design.md). Steps shipped: **1** ([PR #3](https://github.com/jeffrichley/agent_core/pull/3) `2e57de8`), **2a** notify carve-out ([PR #4](https://github.com/jeffrichley/agent_core/pull/4) `d834263`), **3** credentials port ([PR #5](https://github.com/jeffrichley/agent_core/pull/5) `9e5cc8a`). Step 2b (email) deferred until sub-project B; Steps 4–8 each get their own plan. | — | Foundational. Workspace monorepo with multiple PyPI packages. Drives where every other piece lives. |
-| B | Bus daemon + ClaudeCodeMCPEndpoint (v1) | 🟡 Spec approved — [`2026-04-28-bus-daemon-design.md`](superpowers/specs/2026-04-28-bus-daemon-design.md). Validates end-to-end on a fresh test agent; Pepper untouched. The full multi-agent CLI (`agent install/start/stop/list`) is its own future sub-project. | — | Real long-running daemon hosting the bus, plus a Streamable HTTP MCP endpoint adapter so Claude Code instances can connect. PID-managed lifecycle. |
+| B | Bus daemon + ClaudeCodeMCPEndpoint (v1) | 🟢 Shipped — [`2026-04-28-bus-daemon-design.md`](superpowers/specs/2026-04-28-bus-daemon-design.md), [PR #6](https://github.com/jeffrichley/agent_core/pull/6) `7bbef85`. Real `agent-core daemon start/stop/status` lifecycle, `ClaudeCodeMCPEndpoint` adapter, shared Starlette+Uvicorn HTTP host. Two FastMCP 3.x adapter gaps tracked in BACKLOG (polling-only inbound, `_session_active` doesn't reset on disconnect). The full multi-agent CLI (`agent install/start/stop/list`) is its own future sub-project. Pepper untouched. | — | Real long-running daemon hosting the bus, plus a Streamable HTTP MCP endpoint adapter so Claude Code instances can connect. PID-managed lifecycle. |
 | C | Smart init/update | 🔴 Not started | A | Non-destructive merge instead of wholesale Jinja overwrite. Jinja is OK for first-time install; not for updates. |
 | D | Native backup subsystem | 🔴 Not started | — (mostly independent) | Deterministic, not agent-driven. Includes git-repo backup as a first-class mode alongside tar.gz/cloud. |
 | E | Discord adapter + native attachments | 🔴 Not started | A | Discord becomes a bus `Endpoint`. Attachment download lives **with** the Discord adapter (not as a generic feature). |
