@@ -1,0 +1,1 @@
+Initial release. Port of Pepper's PyKeePass-backed credential vault into agent-core. Provides `agent_core_credentials` library API and `agent-core-creds` CLI. AES-256 encrypted vault at `~/.agent-core/credentials.kdbx` (override via `AGENT_CORE_VAULT_PATH`); master password from `AGENT_CORE_VAULT_PASSWORD` env var.
