@@ -44,62 +44,67 @@ def run(
 
 
 async def _run_bus(config_path: Path) -> None:
-    bus = await build_bus_from_config(config_path)
-    await bus.start()
-    console.print(
-        f"[green]bus running[/green] — {len(bus._endpoints_by_name)} endpoint(s); "
-        "press Ctrl+C to stop."
-    )
-
-    stop_event = asyncio.Event()
-
-    def _shutdown(*_):
-        stop_event.set()
-
-    loop = asyncio.get_running_loop()
+    bus, http_host = await build_bus_from_config(config_path)
+    if http_host is not None:
+        await http_host.start()
     try:
-        loop.add_signal_handler(signal.SIGINT, _shutdown)
-        loop.add_signal_handler(signal.SIGTERM, _shutdown)
-    except NotImplementedError:
-        # Windows — fall through; SIGINT will raise KeyboardInterrupt.
-        pass
+        await bus.start()
+        endpoint_count = len(bus._endpoints_by_name)
+        host_str = f" + http on :{http_host.port}" if http_host else ""
+        console.print(
+            f"[green]bus running[/green] — {endpoint_count} endpoint(s){host_str}; "
+            "press Ctrl+C to stop."
+        )
 
-    # Sweep tasks
-    async def _ttl_loop():
-        while not stop_event.is_set():
-            try:
-                await bus.run_ttl_sweep_once()
-            except Exception:
-                log.exception("TTL sweep failed")
-            try:
-                await asyncio.wait_for(stop_event.wait(), timeout=bus.config.ttl_sweep_seconds)
-            except TimeoutError:
-                pass
+        stop_event = asyncio.Event()
 
-    async def _redelivery_loop():
-        while not stop_event.is_set():
-            try:
-                await bus.run_redelivery_sweep_once()
-            except Exception:
-                log.exception("redelivery sweep failed")
-            try:
-                await asyncio.wait_for(
-                    stop_event.wait(), timeout=bus.config.redelivery_sweep_seconds
-                )
-            except TimeoutError:
-                pass
+        def _shutdown(*_):
+            stop_event.set()
 
-    sweeps = [asyncio.create_task(_ttl_loop()), asyncio.create_task(_redelivery_loop())]
+        loop = asyncio.get_running_loop()
+        try:
+            loop.add_signal_handler(signal.SIGINT, _shutdown)
+            loop.add_signal_handler(signal.SIGTERM, _shutdown)
+        except NotImplementedError:
+            pass  # Windows — SIGINT raises KeyboardInterrupt directly.
 
-    try:
-        await stop_event.wait()
-    except KeyboardInterrupt:
-        stop_event.set()
+        async def _ttl_loop():
+            while not stop_event.is_set():
+                try:
+                    await bus.run_ttl_sweep_once()
+                except Exception:
+                    log.exception("TTL sweep failed")
+                try:
+                    await asyncio.wait_for(stop_event.wait(), timeout=bus.config.ttl_sweep_seconds)
+                except TimeoutError:
+                    pass
+
+        async def _redelivery_loop():
+            while not stop_event.is_set():
+                try:
+                    await bus.run_redelivery_sweep_once()
+                except Exception:
+                    log.exception("redelivery sweep failed")
+                try:
+                    await asyncio.wait_for(
+                        stop_event.wait(), timeout=bus.config.redelivery_sweep_seconds
+                    )
+                except TimeoutError:
+                    pass
+
+        sweeps = [asyncio.create_task(_ttl_loop()), asyncio.create_task(_redelivery_loop())]
+        try:
+            await stop_event.wait()
+        except KeyboardInterrupt:
+            stop_event.set()
+        finally:
+            for t in sweeps:
+                t.cancel()
+            await asyncio.gather(*sweeps, return_exceptions=True)
+            await bus.stop()
     finally:
-        for t in sweeps:
-            t.cancel()
-        await asyncio.gather(*sweeps, return_exceptions=True)
-        await bus.stop()
+        if http_host is not None:
+            await http_host.stop()
         console.print("[yellow]bus stopped[/yellow]")
 
 
@@ -120,7 +125,7 @@ def status(config: Path = _config_option()):
 
 
 async def _status(config_path: Path) -> None:
-    bus = await build_bus_from_config(config_path)
+    bus, _ = await build_bus_from_config(config_path)
     store = Persistence(bus.config.storage_path)
     await store.connect()
     try:
@@ -159,7 +164,7 @@ def mailbox(
 
 
 async def _mailbox(endpoint: str, config_path: Path) -> None:
-    bus = await build_bus_from_config(config_path)
+    bus, _ = await build_bus_from_config(config_path)
     if endpoint not in bus._endpoints_by_name:
         console.print(f"[red]unknown endpoint:[/red] {endpoint}")
         raise typer.Exit(code=1)
@@ -192,7 +197,7 @@ def trace(
 
 
 async def _trace(correlation_id: str, config_path: Path) -> None:
-    bus = await build_bus_from_config(config_path)
+    bus, _ = await build_bus_from_config(config_path)
     store = Persistence(bus.config.storage_path)
     await store.connect()
     try:
@@ -226,7 +231,7 @@ def _dlq_default(ctx: typer.Context, config: Path = _config_option()):
 
 
 async def _dlq_list(config_path: Path) -> None:
-    bus = await build_bus_from_config(config_path)
+    bus, _ = await build_bus_from_config(config_path)
     store = Persistence(bus.config.storage_path)
     await store.connect()
     try:
@@ -258,7 +263,7 @@ def replay(
 
 
 async def _replay(envelope_id: str, config_path: Path) -> None:
-    bus = await build_bus_from_config(config_path)
+    bus, _ = await build_bus_from_config(config_path)
     store = Persistence(bus.config.storage_path)
     await store.connect()
     try:
@@ -296,7 +301,7 @@ def dlq_purge(
 
 
 async def _dlq_purge(older_than: str, config_path: Path) -> None:
-    bus = await build_bus_from_config(config_path)
+    bus, _ = await build_bus_from_config(config_path)
     store = Persistence(bus.config.storage_path)
     await store.connect()
     try:

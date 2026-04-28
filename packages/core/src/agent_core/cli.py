@@ -35,6 +35,9 @@ app.add_typer(email_app, name="email")
 from agent_core.bus.cli import app as bus_app
 app.add_typer(bus_app, name="bus")
 
+from agent_core.daemon.cli import app as daemon_app
+app.add_typer(daemon_app, name="daemon")
+
 
 @hooks_app.command("run")
 def run_hook(
