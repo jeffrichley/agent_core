@@ -60,7 +60,7 @@ logging.basicConfig(
     format="%(asctime)s %(levelname)s %(message)s",
     datefmt="%H:%M:%S",
 )
-logger = logging.getLogger("agent_core.notify")
+logger = logging.getLogger("agent_core_notify")
 
 mcp = FastMCP("agent-core-notify")
 
