@@ -1,0 +1,121 @@
+"""`agent-core daemon` — process supervision for the bus daemon.
+
+start: spawn `agent-core bus run --config <home>/agent_core.yaml`
+       detached; write the resulting PID to <home>/daemon.pid.
+stop:  read the PID file, kill the process tree, remove the PID file.
+status: report running/not-running, PID, last 20 lines of daemon.log.
+
+The daemon's home directory defaults to ~/.agent-core/ but can be
+overridden via the AGENT_CORE_HOME env var (used by tests).
+"""
+
+from __future__ import annotations
+
+import os
+import subprocess
+import sys
+from pathlib import Path
+
+import typer
+from rich.console import Console
+
+from agent_core.daemon.supervisor import is_alive, kill_tree, read_pid, remove_pid, write_pid
+
+app = typer.Typer(help="Daemon process supervision: start, stop, status.")
+console = Console()
+
+
+def _home() -> Path:
+    """Return ~/.agent-core/ unless AGENT_CORE_HOME overrides it."""
+    override = os.environ.get("AGENT_CORE_HOME")
+    if override:
+        return Path(override)
+    return Path.home() / ".agent-core"
+
+
+def _pid_path() -> Path:
+    return _home() / "daemon.pid"
+
+
+def _config_path() -> Path:
+    return _home() / "agent_core.yaml"
+
+
+def _log_path() -> Path:
+    return _home() / "daemon.log"
+
+
+@app.command()
+def start() -> None:
+    """Spawn `agent-core bus run` detached, write the PID file."""
+    pid_file = _pid_path()
+    cfg = _config_path()
+    log_file = _log_path()
+
+    if not cfg.exists():
+        console.print(
+            f"[red]No daemon config at {cfg}.[/red] "
+            f"Create it manually for v1 (sub-project C handles auto-init)."
+        )
+        raise typer.Exit(code=1)
+
+    existing = read_pid(pid_file)
+    if existing is not None and is_alive(existing):
+        console.print(f"[yellow]daemon already running (PID: {existing})[/yellow]")
+        raise typer.Exit(code=1)
+    if existing is not None:
+        # Stale.
+        remove_pid(pid_file)
+
+    log_file.parent.mkdir(parents=True, exist_ok=True)
+    log_handle = open(log_file, "ab", buffering=0)
+
+    proc = subprocess.Popen(
+        [sys.executable, "-m", "agent_core.cli", "bus", "run", "--config", str(cfg)],
+        stdout=log_handle,
+        stderr=subprocess.STDOUT,
+        stdin=subprocess.DEVNULL,
+        start_new_session=True,
+    )
+    write_pid(pid_file, proc.pid)
+    console.print(f"[green]daemon started (PID: {proc.pid})[/green]")
+
+
+@app.command()
+def stop() -> None:
+    """Kill the daemon and clean the PID file. Idempotent."""
+    pid_file = _pid_path()
+    pid = read_pid(pid_file)
+    if pid is None:
+        console.print("[yellow]daemon is not running[/yellow]")
+        return
+    if not is_alive(pid):
+        console.print("[yellow]daemon is not running (stale PID file removed)[/yellow]")
+        remove_pid(pid_file)
+        return
+    kill_tree(pid)
+    remove_pid(pid_file)
+    console.print(f"[green]daemon stopped (PID: {pid})[/green]")
+
+
+@app.command()
+def status() -> None:
+    """Report daemon liveness and tail the log."""
+    pid_file = _pid_path()
+    log_file = _log_path()
+    pid = read_pid(pid_file)
+
+    if pid is None:
+        console.print("[yellow]daemon is not running[/yellow]")
+        return
+    if not is_alive(pid):
+        console.print("[yellow]daemon is not running (stale PID file removed)[/yellow]")
+        remove_pid(pid_file)
+        return
+
+    console.print(f"[green]daemon is running (PID: {pid})[/green]")
+    if log_file.exists():
+        console.print("\n[dim]--- last 20 lines of daemon.log ---[/dim]")
+        lines = log_file.read_text(encoding="utf-8", errors="replace").splitlines()
+        for line in lines[-20:]:
+            console.print(line)
