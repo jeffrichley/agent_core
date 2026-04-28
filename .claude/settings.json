@@ -6,7 +6,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "uv run agent-core hooks run SessionStart",
+            "command": "uv run --no-sync agent-core hooks run SessionStart",
             "timeout": 15
           }
         ]
@@ -18,7 +18,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "uv run agent-core hooks run UserPromptSubmit",
+            "command": "uv run --no-sync agent-core hooks run UserPromptSubmit",
             "timeout": 10
           }
         ]
@@ -30,7 +30,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "uv run --directory . python memory-compiler/hooks/pre-compact.py",
+            "command": "uv run --no-sync --directory . python memory-compiler/hooks/pre-compact.py",
             "timeout": 10
           }
         ]
@@ -42,7 +42,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "uv run --directory . python memory-compiler/hooks/session-end.py",
+            "command": "uv run --no-sync --directory . python memory-compiler/hooks/session-end.py",
             "timeout": 10
           }
         ]
@@ -52,7 +52,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "uv run agent-core hooks run SessionEnd",
+            "command": "uv run --no-sync agent-core hooks run SessionEnd",
             "timeout": 1800
           }
         ]

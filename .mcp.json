@@ -1,7 +1,16 @@
 {
   "mcpServers": {
     "notify": {
-      "command": "agent-core-notify"
+      "command": "uv",
+      "args": [
+        "run",
+        "--no-sync",
+        "--directory",
+        "E:/workspaces/ai/agents/agent_core",
+        "python",
+        "-m",
+        "agent_core.notify.mcp_server"
+      ]
     }
   }
 }

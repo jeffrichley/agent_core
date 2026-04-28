@@ -291,4 +291,16 @@ async def clear_notifications() -> dict[str, str]:
 
 def run() -> None:
     """Launch the MCP server on stdio transport."""
-    mcp.run(transport="stdio")
+    try:
+        mcp.run(transport="stdio")
+    finally:
+        # desktop-notifier's WinRT backend keeps non-daemon threads alive,
+        # which blocks normal interpreter shutdown on Windows. Force-exit
+        # so the agent-core-notify entry-point .exe isn't held open after
+        # stdio closes (otherwise `uv sync` can't replace it on the next run).
+        import os
+        os._exit(0)
+
+
+if __name__ == "__main__":
+    run()
