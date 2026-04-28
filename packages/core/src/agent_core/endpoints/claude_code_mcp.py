@@ -38,9 +38,12 @@ class _SessionTracker(Middleware):
 
     FastMCP's Middleware class fires on_initialize when a client sends the MCP
     initialize request (works for both in-memory Client and real HTTP sessions).
-    There is no on_disconnect hook in Middleware; session_active is reset to
-    False in ClaudeCodeMCPEndpoint.stop() or when deliver() detects a closed
-    session (Task 9)."""
+    There is no on_disconnect hook in FastMCP 3.x's Middleware, so the flag
+    only resets in ClaudeCodeMCPEndpoint.stop(). Consequence: after the first
+    HTTP disconnect, deliver() no longer raises EndpointUnavailable; envelopes
+    queue in _pending and the agent picks them up via list_pending on
+    reconnect. See docs/BACKLOG.md → "FastMCP 3.x adapter gaps" for the
+    longer story and trigger to revisit."""
 
     def __init__(self, endpoint: "ClaudeCodeMCPEndpoint") -> None:
         self._endpoint = endpoint

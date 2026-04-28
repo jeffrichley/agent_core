@@ -2,8 +2,13 @@
 
 from __future__ import annotations
 
-import pytest
+import uuid
+from datetime import datetime, timezone
 
+import pytest
+from fastmcp import Client
+
+from agent_core.bus.envelope import EndpointInfo, Envelope, TextMessagePayload
 from agent_core.bus.http_host import MCPHostable
 from agent_core.bus.protocol import Endpoint
 from agent_core.endpoints.claude_code_mcp import ClaudeCodeMCPEndpoint
@@ -44,14 +49,6 @@ async def test_start_stop_lifecycle_no_session():
 
     await ep.start(_FakeHandle())
     await ep.stop()
-
-
-import uuid
-from datetime import datetime, timezone
-
-from fastmcp import Client
-
-from agent_core.bus.envelope import EndpointInfo, Envelope, TextMessagePayload
 
 
 class _RecordingHandle:
