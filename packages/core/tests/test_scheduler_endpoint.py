@@ -14,17 +14,6 @@ from agent_core.endpoints.scheduler import (
 )
 
 
-class _PicklableFakeHandle:
-    """Module-level fake bus handle so APScheduler's PickleSerializer can
-    serialize it into the SQLAlchemyDataStore. Locally-defined classes cannot
-    be pickled (Python pickles classes by qualified name)."""
-
-    async def publish(self, *a, **kw): ...
-    async def ack(self, *a, **kw): ...
-    async def nack(self, *a, **kw): ...
-    def endpoints(self): return []
-
-
 def test_endpoint_satisfies_endpoint_protocol():
     ep = SchedulerEndpoint(name="scheduler")
     assert isinstance(ep, Endpoint)
@@ -238,10 +227,11 @@ def test_load_seed_jobs_raises_on_malformed_entry(tmp_path):
 async def test_seed_jobs_are_added_on_start(tmp_path):
     """When jobs_path points at a yaml file, jobs are added at start()."""
 
-    # APScheduler's SQLAlchemyDataStore pickles `args` on add_schedule. A
-    # locally-defined fake class can't be pickled, so we use the module-level
-    # _PicklableFakeHandle. The JobDef args still flow through pickling intact.
-    _FakeHandle = _PicklableFakeHandle
+    class _FakeHandle:
+        async def publish(self, *a, **kw): ...
+        async def ack(self, *a, **kw): ...
+        async def nack(self, *a, **kw): ...
+        def endpoints(self): return []
 
     yaml_path = tmp_path / "jobs.yaml"
     yaml_path.write_text(
@@ -278,8 +268,11 @@ async def test_seed_jobs_are_added_on_start(tmp_path):
 async def test_seed_jobs_skip_duplicates(tmp_path):
     """Re-running start() with the same yaml does not duplicate jobs."""
 
-    # See note above: pickleable handle required by SQLAlchemyDataStore.
-    _FakeHandle = _PicklableFakeHandle
+    class _FakeHandle:
+        async def publish(self, *a, **kw): ...
+        async def ack(self, *a, **kw): ...
+        async def nack(self, *a, **kw): ...
+        def endpoints(self): return []
 
     yaml_path = tmp_path / "jobs.yaml"
     yaml_path.write_text(

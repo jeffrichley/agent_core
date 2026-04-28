@@ -88,6 +88,13 @@ def load_seed_jobs(yaml_path: Path) -> dict[str, JobDef]:
     return {name: JobDef(**spec) for name, spec in raw.items()}
 
 
+# Module-level lookup so APScheduler-persisted job args can be pure strings.
+# Args passed to add_schedule() are pickled into the SQLAlchemy data store; a
+# live BusHandle isn't safely picklable (it holds the running Bus). _fire uses
+# this map to find the live endpoint by name at fire time.
+_active_endpoints: dict[str, "SchedulerEndpoint"] = {}
+
+
 class SchedulerEndpoint:
     """Bus endpoint that runs APScheduler and fires jobs as bus envelopes."""
 
@@ -115,10 +122,12 @@ class SchedulerEndpoint:
             # Allow concurrent fires per task (APScheduler defaults to max_running_jobs=1).
             await self._scheduler.configure_task(_fire, max_running_jobs=None)
             await self._scheduler.start_in_background()
+            _active_endpoints[self.name] = self
             if self.jobs_path is not None:
                 await self._seed_jobs()
         except BaseException:
             # Roll back partial init so callers don't see a half-built scheduler.
+            _active_endpoints.pop(self.name, None)
             try:
                 await self._scheduler.__aexit__(None, None, None)
             except Exception:
@@ -143,7 +152,7 @@ class SchedulerEndpoint:
                 _fire,
                 trig,
                 id=job_name,
-                args=[self._handle, job_name, job.target, job.prompt, job.metadata],
+                args=[self.name, job_name, job.target, job.prompt, job.metadata],
             )
             log.info("Seeded job: %s", job_name)
 
@@ -156,6 +165,7 @@ class SchedulerEndpoint:
         await self._handle.ack(envelope.id)
 
     async def stop(self) -> None:
+        _active_endpoints.pop(self.name, None)
         if self._scheduler is not None:
             try:
                 await self._scheduler.__aexit__(None, None, None)
@@ -170,10 +180,11 @@ class SchedulerEndpoint:
 
 
 # _fire is a module-level coroutine so APScheduler can serialize a reference
-# to it across restarts. The bus_handle is closed over via a partial; see the
-# `_register_seed` and `create_job` paths for how that's wired up.
+# to it across restarts. Args are pickled into the SQLAlchemy data store, so
+# they must be picklable and stable across restarts — hence the scheduler
+# instance name (a string) instead of a live BusHandle.
 async def _fire(
-    bus_handle: "BusHandle",
+    scheduler_name: str,
     name: str,
     target: str,
     prompt: str,
@@ -182,5 +193,9 @@ async def _fire(
     """APScheduler job callable. Publishes a TextMessage envelope to target.
 
     Implemented in Task 4. Stubbed here so test_start_stop_lifecycle's
-    configure_task(_fire, ...) call has a function to register."""
+    configure_task(_fire, ...) call has a function to register.
+
+    Looks up the live SchedulerEndpoint via _active_endpoints[scheduler_name];
+    if missing (e.g. endpoint stopped, daemon restarted but scheduler not yet
+    re-registered), the fire is a no-op. Task 4 implements the real publish."""
     return None
