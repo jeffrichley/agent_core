@@ -664,6 +664,46 @@ async def test_deliver_pause_and_resume(tmp_path):
 
 
 @pytest.mark.asyncio
+async def test_deliver_pause_unknown_job_returns_error(tmp_path):
+    handle = _RecordingHandle()
+    ep = SchedulerEndpoint(name="scheduler", db_path=str(tmp_path / "s.db"))
+    await ep.start(handle)
+    try:
+        env = _make_envelope(
+            "p",
+            "agent-test",
+            "scheduler",
+            "ToolInvocation",
+            _toolcall("pause_job", {"name": "nope"}),
+        )
+        await ep.deliver(env)
+        ack = [e for e in handle.published if e.kind == "Acknowledgment" and e.payload.of == "p"][0]
+        assert "not found" in ack.payload.note
+    finally:
+        await ep.stop()
+
+
+@pytest.mark.asyncio
+async def test_deliver_resume_unknown_job_returns_error(tmp_path):
+    handle = _RecordingHandle()
+    ep = SchedulerEndpoint(name="scheduler", db_path=str(tmp_path / "s.db"))
+    await ep.start(handle)
+    try:
+        env = _make_envelope(
+            "r",
+            "agent-test",
+            "scheduler",
+            "ToolInvocation",
+            _toolcall("resume_job", {"name": "nope"}),
+        )
+        await ep.deliver(env)
+        ack = [e for e in handle.published if e.kind == "Acknowledgment" and e.payload.of == "r"][0]
+        assert "not found" in ack.payload.note
+    finally:
+        await ep.stop()
+
+
+@pytest.mark.asyncio
 async def test_deliver_unknown_tool_returns_error(tmp_path):
     handle = _RecordingHandle()
     ep = SchedulerEndpoint(name="scheduler", db_path=str(tmp_path / "s.db"))

@@ -332,18 +332,18 @@ class SchedulerEndpoint:
 
     async def _pause_job(self, args: _NameOnlyArgs) -> dict:
         assert self._scheduler is not None
-        try:
-            await self._scheduler.pause_schedule(args.name)
-        except Exception as exc:
-            raise _ToolError(f"job '{args.name}' not found") from exc
+        existing = await self._scheduler.get_schedules()
+        if not any(s.id == args.name for s in existing):
+            raise _ToolError(f"job '{args.name}' not found")
+        await self._scheduler.pause_schedule(args.name)
         return {"status": "paused", "name": args.name}
 
     async def _resume_job(self, args: _NameOnlyArgs) -> dict:
         assert self._scheduler is not None
-        try:
-            await self._scheduler.unpause_schedule(args.name, resume_from="now")
-        except Exception as exc:
-            raise _ToolError(f"job '{args.name}' not found") from exc
+        existing = await self._scheduler.get_schedules()
+        if not any(s.id == args.name for s in existing):
+            raise _ToolError(f"job '{args.name}' not found")
+        await self._scheduler.unpause_schedule(args.name, resume_from="now")
         return {"status": "resumed", "name": args.name}
 
     async def _reply(self, incoming: Envelope, note: str, *, ok: bool = True) -> None:
