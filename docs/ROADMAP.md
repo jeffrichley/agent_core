@@ -83,7 +83,7 @@ across them.
 
 | # | Sub-project | Status | Depends on | Notes |
 |---|---|---|---|---|
-| **A** | **Repo / extension strategy** | 🟡 Spec written — [`2026-04-28-monorepo-workspace-design.md`](superpowers/specs/2026-04-28-monorepo-workspace-design.md) | — | Foundational. Workspace monorepo with multiple PyPI packages. Drives where every other piece lives. |
+| **A** | **Repo / extension strategy** | 🟢 Spec approved — [`2026-04-28-monorepo-workspace-design.md`](superpowers/specs/2026-04-28-monorepo-workspace-design.md). Plan next. | — | Foundational. Workspace monorepo with multiple PyPI packages. Drives where every other piece lives. |
 | B | Lifecycle CLI (install / start / stop / status) | 🔴 Not started | A | Replaces Pepper's `pepper start` model. Should be more intelligent and adapter-aware. |
 | C | Smart init/update | 🔴 Not started | A | Non-destructive merge instead of wholesale Jinja overwrite. Jinja is OK for first-time install; not for updates. |
 | D | Native backup subsystem | 🔴 Not started | — (mostly independent) | Deterministic, not agent-driven. Includes git-repo backup as a first-class mode alongside tar.gz/cloud. |

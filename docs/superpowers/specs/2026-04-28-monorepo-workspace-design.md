@@ -1,7 +1,7 @@
 # Monorepo Workspace & Extension Strategy — Design
 
 > **Sub-project:** A (foundational) — see `docs/ROADMAP.md`.
-> **Status:** Awaiting user review.
+> **Status:** Approved 2026-04-28. Ready for implementation plan.
 > **Date:** 2026-04-28
 
 ---
