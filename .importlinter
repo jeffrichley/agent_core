@@ -1,6 +1,7 @@
 [importlinter]
 root_packages =
     agent_core
+    agent_core_notify
 
 [importlinter:contract:bus-core-self-contained]
 name = bus core does not depend on other agent_core subpackages
