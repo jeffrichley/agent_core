@@ -1,24 +1,28 @@
-# agent_core justfile
+# agent_core justfile (workspace root)
 set shell := ["powershell", "-NoProfile", "-Command"]
 
 # Run all tests
 test:
-    uv run pytest tests/ -v
+    uv run --no-sync pytest -v
 
 # Run tests (fast, no output)
 test-quick:
-    uv run pytest tests/ -q
+    uv run --no-sync pytest -q
 
 # Lint
 lint:
-    uv run ruff check .
+    uv run --no-sync ruff check .
 
 # Format
 format:
-    uv run ruff format .
+    uv run --no-sync ruff format .
 
-# Full quality gate
-gate: lint test
+# Architecture contracts
+contracts:
+    uv run --no-sync lint-imports
+
+# Full quality gate (mirrors CI)
+gate: lint contracts test
 
 # Install agent-core as a global tool (isolated venv, no file lock conflicts)
 install:
