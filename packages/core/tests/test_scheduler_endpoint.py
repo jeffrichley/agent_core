@@ -303,3 +303,97 @@ async def test_seed_jobs_skip_duplicates(tmp_path):
         assert len([s for s in schedules2 if s.id == "heartbeat"]) == 1
     finally:
         await ep2.stop()
+
+
+class _RecordingHandle:
+    """Test-double BusHandle that records publishes."""
+
+    def __init__(self):
+        self.published: list = []
+
+    async def publish(self, envelope, to=None) -> None:
+        if to is not None:
+            envelope = envelope.model_copy(update={"to": to if isinstance(to, str) else to[0]})
+        self.published.append(envelope)
+
+    async def ack(self, envelope_id: str) -> None: ...
+    async def nack(self, envelope_id: str, requeue: bool = True) -> None: ...
+    def endpoints(self): return []
+
+
+class _StubEndpointForFire:
+    """Minimal stand-in for SchedulerEndpoint that holds a _handle."""
+
+    def __init__(self, handle):
+        self._handle = handle
+
+
+@pytest.mark.asyncio
+async def test_fire_publishes_text_message_to_target():
+    from agent_core.bus.envelope import TextMessagePayload
+    from agent_core.endpoints.scheduler import _active_endpoints, _fire
+
+    handle = _RecordingHandle()
+    _active_endpoints["sched-test"] = _StubEndpointForFire(handle)
+    try:
+        await _fire(
+            "sched-test", "heartbeat", "agent-test", "ping", {"job_kind": "heartbeat"}
+        )
+        assert len(handle.published) == 1
+        env = handle.published[0]
+        assert env.to == "agent-test"
+        assert env.kind == "TextMessage"
+        assert isinstance(env.payload, TextMessagePayload)
+        assert env.payload.text == "ping"
+        # scheduler_job is automatically merged into metadata
+        assert env.metadata["scheduler_job"] == "heartbeat"
+        assert env.metadata["job_kind"] == "heartbeat"
+    finally:
+        _active_endpoints.pop("sched-test", None)
+
+
+@pytest.mark.asyncio
+async def test_fire_handles_metadata_none():
+    from agent_core.endpoints.scheduler import _active_endpoints, _fire
+
+    handle = _RecordingHandle()
+    _active_endpoints["sched-test"] = _StubEndpointForFire(handle)
+    try:
+        await _fire("sched-test", "j", "agent-test", "x", None)
+        env = handle.published[0]
+        assert env.metadata == {"scheduler_job": "j"}
+    finally:
+        _active_endpoints.pop("sched-test", None)
+
+
+@pytest.mark.asyncio
+async def test_fire_swallows_publish_errors():
+    """If bus.publish raises, _fire logs and returns; does not bubble."""
+    from agent_core.endpoints.scheduler import _active_endpoints, _fire
+
+    class _FailingHandle:
+        async def publish(self, *a, **kw):
+            raise RuntimeError("bus dispatch failed")
+
+        async def ack(self, *a, **kw): ...
+        async def nack(self, *a, **kw): ...
+        def endpoints(self): return []
+
+    _active_endpoints["sched-test"] = _StubEndpointForFire(_FailingHandle())
+    try:
+        # Should not raise. Bus-side delivery failures are logged + swallowed
+        # so APScheduler's misfire policy handles future runs.
+        await _fire("sched-test", "j", "agent-test", "x", {})
+    finally:
+        _active_endpoints.pop("sched-test", None)
+
+
+@pytest.mark.asyncio
+async def test_fire_no_active_endpoint_is_noop():
+    """If the named scheduler isn't in _active_endpoints (e.g., stopped), _fire
+    logs a warning and returns. No exception, no crash."""
+    from agent_core.endpoints.scheduler import _fire
+
+    # Don't register anything in _active_endpoints.
+    await _fire("not-running", "j", "agent-test", "x", None)
+    # No assertion needed — passing without raising is the contract.

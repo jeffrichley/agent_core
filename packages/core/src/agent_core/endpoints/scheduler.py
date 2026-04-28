@@ -13,6 +13,8 @@ from_=scheduler on every publish.
 from __future__ import annotations
 
 import logging
+import uuid
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal
 
@@ -25,7 +27,7 @@ from apscheduler.triggers.interval import IntervalTrigger
 from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import create_async_engine
 
-from agent_core.bus.envelope import Envelope
+from agent_core.bus.envelope import Envelope, TextMessagePayload
 from agent_core.bus.protocol import EndpointUnavailable
 
 if TYPE_CHECKING:
@@ -190,12 +192,46 @@ async def _fire(
     prompt: str,
     metadata: dict | None = None,
 ) -> None:
-    """APScheduler job callable. Publishes a TextMessage envelope to target.
-
-    Implemented in Task 4. Stubbed here so test_start_stop_lifecycle's
-    configure_task(_fire, ...) call has a function to register.
+    """APScheduler job callable. Publishes a TextMessage envelope to `target`.
 
     Looks up the live SchedulerEndpoint via _active_endpoints[scheduler_name];
-    if missing (e.g. endpoint stopped, daemon restarted but scheduler not yet
-    re-registered), the fire is a no-op. Task 4 implements the real publish."""
-    return None
+    if missing (endpoint stopped, daemon restarted but scheduler not yet
+    re-registered), the fire is a no-op (logs a warning).
+
+    Errors during publish are logged and swallowed: the job stays scheduled,
+    and APScheduler's misfire policy decides whether to retry. Bus-side
+    delivery failures (target unregistered, mailbox full) propagate as
+    publish exceptions and end up here."""
+    endpoint = _active_endpoints.get(scheduler_name)
+    if endpoint is None:
+        log.warning(
+            "Job %s fired but scheduler '%s' is not active; dropping",
+            name,
+            scheduler_name,
+        )
+        return
+    bus_handle = endpoint._handle
+    if bus_handle is None:
+        log.warning(
+            "Job %s fired but scheduler '%s' has no handle; dropping",
+            name,
+            scheduler_name,
+        )
+        return
+
+    md = dict(metadata or {})
+    md["scheduler_job"] = name
+    env = Envelope(
+        id=uuid.uuid4().hex,
+        correlation_id=uuid.uuid4().hex,
+        to=target,
+        kind="TextMessage",
+        payload=TextMessagePayload(text=prompt),
+        metadata=md,
+        created_at=datetime.now(timezone.utc),
+    )
+    try:
+        await bus_handle.publish(env)
+        log.info("Job %s fired → %s (envelope %s)", name, target, env.id)
+    except Exception:
+        log.exception("Job %s failed to publish to %s", name, target)
