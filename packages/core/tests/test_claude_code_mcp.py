@@ -175,3 +175,152 @@ async def test_send_tool_errors_when_endpoint_not_started():
                     "payload": {"kind": "TextMessage", "text": "x"},
                 },
             )
+
+
+# ---------------------------------------------------------------------------
+# Task 5 — inbound surface: list_pending, ack, nack, handle, deliver()
+# ---------------------------------------------------------------------------
+
+
+class _RecordingHandleWithPending(_RecordingHandle):
+    def __init__(self, pending: list[Envelope]):
+        super().__init__()
+        self.pending = pending
+        self.acked: list[str] = []
+        self.nacked: list[tuple[str, bool]] = []
+
+    async def ack(self, envelope_id: str) -> None:
+        self.acked.append(envelope_id)
+
+    async def nack(self, envelope_id: str, requeue: bool = True) -> None:
+        self.nacked.append((envelope_id, requeue))
+
+
+def _make_envelope(env_id: str, frm: str = "stub", to: str = "agent-test") -> Envelope:
+    return Envelope(
+        id=env_id,
+        correlation_id=uuid.uuid4().hex,
+        from_=frm,
+        to=to,
+        kind="TextMessage",
+        payload=TextMessagePayload(text="hello"),
+        created_at=datetime.now(timezone.utc),
+    )
+
+
+@pytest.mark.asyncio
+async def test_list_pending_returns_queued_envelopes():
+    ep = ClaudeCodeMCPEndpoint(name="agent-test", mount="/mcp/agent-test")
+    env = _make_envelope("env-1")
+    handle = _RecordingHandleWithPending(pending=[])
+    await ep.start(handle)
+    try:
+        # Endpoint queues envelopes via deliver() when no session is connected.
+        # Force a queued envelope by calling _queue (test seam) or by raising
+        # EndpointUnavailable from deliver(). For this test, push directly into
+        # the endpoint's pending list via its public API.
+        ep.queue_for_pickup(env)
+
+        async with Client(ep._mcp) as client:
+            res = await client.call_tool("list_pending", {})
+        assert len(res.data) == 1
+        assert res.data[0]["id"] == "env-1"
+        assert res.data[0]["from"] == "stub"
+        assert res.data[0]["kind"] == "TextMessage"
+    finally:
+        await ep.stop()
+
+
+@pytest.mark.asyncio
+async def test_ack_tool_calls_handle_ack():
+    ep = ClaudeCodeMCPEndpoint(name="agent-test", mount="/mcp/agent-test")
+    handle = _RecordingHandleWithPending(pending=[])
+    await ep.start(handle)
+    try:
+        async with Client(ep._mcp) as client:
+            await client.call_tool("ack", {"envelope_id": "env-9"})
+        assert handle.acked == ["env-9"]
+    finally:
+        await ep.stop()
+
+
+@pytest.mark.asyncio
+async def test_nack_tool_passes_requeue_flag():
+    ep = ClaudeCodeMCPEndpoint(name="agent-test", mount="/mcp/agent-test")
+    handle = _RecordingHandleWithPending(pending=[])
+    await ep.start(handle)
+    try:
+        async with Client(ep._mcp) as client:
+            await client.call_tool("nack", {"envelope_id": "env-3", "requeue": False})
+        assert handle.nacked == [("env-3", False)]
+    finally:
+        await ep.stop()
+
+
+@pytest.mark.asyncio
+async def test_handle_tool_acks_and_removes_from_pending():
+    ep = ClaudeCodeMCPEndpoint(name="agent-test", mount="/mcp/agent-test")
+    env = _make_envelope("env-h")
+    handle = _RecordingHandleWithPending(pending=[])
+    await ep.start(handle)
+    try:
+        ep.queue_for_pickup(env)
+        async with Client(ep._mcp) as client:
+            await client.call_tool("handle", {"envelope_id": "env-h"})
+        # handle is a convenience for ack — verify the ack happened.
+        assert handle.acked == ["env-h"]
+        # And the pending entry is gone.
+        async with Client(ep._mcp) as client:
+            res = await client.call_tool("list_pending", {})
+        assert res.data == []
+    finally:
+        await ep.stop()
+
+
+@pytest.mark.asyncio
+async def test_deliver_without_session_raises_endpoint_unavailable_and_queues():
+    from agent_core.bus.protocol import EndpointUnavailable
+
+    ep = ClaudeCodeMCPEndpoint(name="agent-test", mount="/mcp/agent-test")
+    handle = _RecordingHandleWithPending(pending=[])
+    await ep.start(handle)
+    try:
+        env = _make_envelope("env-q")
+        with pytest.raises(EndpointUnavailable):
+            await ep.deliver(env)
+        # When the agent reconnects, list_pending must surface this envelope
+        # (or it must be redelivered by the bus). The endpoint queues it
+        # internally so a freshly-attached client can pick it up.
+        async with Client(ep._mcp) as client:
+            res = await client.call_tool("list_pending", {})
+        ids = {item["id"] for item in res.data}
+        assert "env-q" in ids
+    finally:
+        await ep.stop()
+
+
+@pytest.mark.asyncio
+async def test_session_active_flag_set_after_mcp_initialize():
+    """_SessionTracker middleware sets _session_active=True on MCP initialize.
+
+    The in-memory Client fires the initialize request just like a real HTTP
+    session, so this test exercises the session-lifecycle hook without needing
+    a live HTTP server."""
+    ep = ClaudeCodeMCPEndpoint(name="agent-test", mount="/mcp/agent-test")
+    handle = _RecordingHandleWithPending(pending=[])
+    await ep.start(handle)
+    try:
+        assert ep._session_active is False
+        async with Client(ep._mcp) as client:
+            # After entering the context manager, initialize has fired.
+            assert ep._session_active is True
+            # deliver() must NOT raise while session is active.
+            env = _make_envelope("env-active")
+            await ep.deliver(env)
+            # Envelope should be in pending (no EU raised).
+            res = await client.call_tool("list_pending", {})
+            ids = {item["id"] for item in res.data}
+            assert "env-active" in ids
+    finally:
+        await ep.stop()
+        assert ep._session_active is False

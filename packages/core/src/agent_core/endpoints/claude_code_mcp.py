@@ -22,6 +22,7 @@ from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Any
 
 from fastmcp import FastMCP
+from fastmcp.server.middleware import Middleware, MiddlewareContext
 
 from agent_core.bus.envelope import Envelope
 from agent_core.bus.protocol import EndpointUnavailable
@@ -32,6 +33,27 @@ if TYPE_CHECKING:
 log = logging.getLogger(__name__)
 
 
+class _SessionTracker(Middleware):
+    """Middleware that toggles a flag on the endpoint when a session initializes.
+
+    FastMCP's Middleware class fires on_initialize when a client sends the MCP
+    initialize request (works for both in-memory Client and real HTTP sessions).
+    There is no on_disconnect hook in Middleware; session_active is reset to
+    False in ClaudeCodeMCPEndpoint.stop() or when deliver() detects a closed
+    session (Task 9)."""
+
+    def __init__(self, endpoint: "ClaudeCodeMCPEndpoint") -> None:
+        self._endpoint = endpoint
+
+    async def on_initialize(self, context: MiddlewareContext, call_next) -> Any:
+        result = await call_next(context)
+        self._endpoint._session_active = True
+        log.debug(
+            "ClaudeCodeMCPEndpoint(name=%s) session initialized", self._endpoint.name
+        )
+        return result
+
+
 class ClaudeCodeMCPEndpoint:
     """Bus endpoint backed by a FastMCP server, served on the shared HTTP host."""
 
@@ -40,6 +62,9 @@ class ClaudeCodeMCPEndpoint:
         self.mount = mount
         self._mcp: FastMCP = FastMCP(name)
         self._handle: "BusHandle | None" = None
+        self._pending: list[Envelope] = []
+        self._session_active: bool = False  # set true when an MCP session is attached
+        self._mcp.add_middleware(_SessionTracker(self))
         self._register_tools()
 
     # --- Endpoint Protocol ---
@@ -49,11 +74,22 @@ class ClaudeCodeMCPEndpoint:
         log.info("ClaudeCodeMCPEndpoint(name=%s) started at mount=%s", self.name, self.mount)
 
     async def deliver(self, envelope: Envelope) -> None:
-        # Implemented in Task 5 — for now, no session is ever connected.
-        raise EndpointUnavailable(f"no MCP session connected for {self.name}")
+        """Push the envelope to the connected agent.
+
+        If a session is active: queue and send a mail-arrived notification hint.
+        If no session: queue locally and raise EndpointUnavailable so the bus
+        retries when the session reconnects."""
+        if not self._session_active:
+            self.queue_for_pickup(envelope)
+            raise EndpointUnavailable(f"no MCP session connected for {self.name}")
+
+        # Active session path — queue then notify.
+        self.queue_for_pickup(envelope)
+        await self._notify_mail_arrived(envelope.id)
 
     async def stop(self) -> None:
         self._handle = None
+        self._session_active = False
         log.info("ClaudeCodeMCPEndpoint(name=%s) stopped", self.name)
 
     # --- MCPHostable Protocol ---
@@ -62,7 +98,30 @@ class ClaudeCodeMCPEndpoint:
         """Return the ASGI app for this endpoint's FastMCP server."""
         return self._mcp.http_app(path="/")
 
+    # --- Public helpers ---
+
+    def queue_for_pickup(self, envelope: Envelope) -> None:
+        """Add an envelope to this endpoint's pending pickup queue.
+
+        Used by deliver() when no session is connected, and by tests."""
+        self._pending.append(envelope)
+
     # --- Internal ---
+
+    async def _notify_mail_arrived(self, envelope_id: str) -> None:
+        """Send a server-initiated MCP notification on the active session.
+
+        FastMCP 3.x does not expose a clean out-of-band server-push API for
+        use outside of a tool-call request context. ctx.send_notification() is
+        only callable inside a tool handler. The Docket-based push_notification
+        requires Redis. Neither is appropriate here.
+
+        The session-active path is exercised by the integration test in Task 9
+        (real HTTP); at that point we can evaluate wrapping the ASGI app to
+        intercept the StreamableHTTP session and call send_notification from
+        inside the session task. For now, log a debug line and rely on the
+        agent polling list_pending."""
+        log.debug("mail-arrived notification scheduled for envelope %s", envelope_id)
 
     def _register_tools(self) -> None:
         """Register the bus's MCP tool surface on the FastMCP server."""
@@ -111,19 +170,47 @@ class ClaudeCodeMCPEndpoint:
                     return {"name": e.name, "description": e.description}
             return None
 
-        # list_pending / handle / ack / nack — implemented in Task 5
         @self._mcp.tool()
         async def list_pending() -> list[dict]:
-            return []
+            """Return a snapshot of envelopes in this agent's pickup queue."""
+            return [
+                {
+                    "id": env.id,
+                    "from": env.from_,
+                    "to": env.to,
+                    "kind": env.kind,
+                    "correlation_id": env.correlation_id,
+                    "in_reply_to": env.in_reply_to,
+                    "payload": env.payload.model_dump(),
+                    "metadata": env.metadata,
+                    "created_at": env.created_at.isoformat(),
+                }
+                for env in self._pending
+            ]
 
         @self._mcp.tool()
         async def handle(envelope_id: str) -> dict:
-            return {"status": "not_implemented"}
+            """Acknowledge an envelope and remove it from the pickup queue."""
+            if self._handle is None:
+                return {"status": "error", "message": "endpoint not started"}
+            await self._handle.ack(envelope_id)
+            self._pending = [e for e in self._pending if e.id != envelope_id]
+            return {"status": "handled", "id": envelope_id}
 
         @self._mcp.tool()
         async def ack(envelope_id: str) -> dict:
-            return {"status": "not_implemented"}
+            """Direct ack via the BusHandle."""
+            if self._handle is None:
+                return {"status": "error", "message": "endpoint not started"}
+            await self._handle.ack(envelope_id)
+            self._pending = [e for e in self._pending if e.id != envelope_id]
+            return {"status": "acked", "id": envelope_id}
 
         @self._mcp.tool()
         async def nack(envelope_id: str, requeue: bool = True) -> dict:
-            return {"status": "not_implemented"}
+            """Direct nack via the BusHandle."""
+            if self._handle is None:
+                return {"status": "error", "message": "endpoint not started"}
+            await self._handle.nack(envelope_id, requeue)
+            self._pending = [e for e in self._pending if e.id != envelope_id]
+            return {"status": "nacked", "id": envelope_id, "requeue": requeue}
