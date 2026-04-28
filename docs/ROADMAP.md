@@ -5,7 +5,7 @@ document — update as decisions land. For tactical items deferred from
 approved designs, see `BACKLOG.md`. For approved per-feature designs,
 see `superpowers/specs/`.
 
-> **Last updated:** 2026-04-28
+> **Last updated:** 2026-04-28 (Step 3 credentials shipped)
 
 ---
 
@@ -83,7 +83,7 @@ across them.
 
 | # | Sub-project | Status | Depends on | Notes |
 |---|---|---|---|---|
-| **A** | **Repo / extension strategy** | 🟢 Spec approved — [`2026-04-28-monorepo-workspace-design.md`](superpowers/specs/2026-04-28-monorepo-workspace-design.md). Steps shipped: **1** ([PR #3](https://github.com/jeffrichley/agent_core/pull/3) `2e57de8`), **2a** notify carve-out ([PR #4](https://github.com/jeffrichley/agent_core/pull/4) `d834263`). Step 2b (email) deferred until sub-project B; Steps 3–8 each get their own plan. | — | Foundational. Workspace monorepo with multiple PyPI packages. Drives where every other piece lives. |
+| **A** | **Repo / extension strategy** | 🟢 Spec approved — [`2026-04-28-monorepo-workspace-design.md`](superpowers/specs/2026-04-28-monorepo-workspace-design.md). Steps shipped: **1** ([PR #3](https://github.com/jeffrichley/agent_core/pull/3) `2e57de8`), **2a** notify carve-out ([PR #4](https://github.com/jeffrichley/agent_core/pull/4) `d834263`), **3** credentials port ([PR #5](https://github.com/jeffrichley/agent_core/pull/5) `9e5cc8a`). Step 2b (email) deferred until sub-project B; Steps 4–8 each get their own plan. | — | Foundational. Workspace monorepo with multiple PyPI packages. Drives where every other piece lives. |
 | B | Lifecycle CLI (install / start / stop / status) | 🔴 Not started | A | Replaces Pepper's `pepper start` model. Should be more intelligent and adapter-aware. |
 | C | Smart init/update | 🔴 Not started | A | Non-destructive merge instead of wholesale Jinja overwrite. Jinja is OK for first-time install; not for updates. |
 | D | Native backup subsystem | 🔴 Not started | — (mostly independent) | Deterministic, not agent-driven. Includes git-repo backup as a first-class mode alongside tar.gz/cloud. |
