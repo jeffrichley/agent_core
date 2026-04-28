@@ -14,6 +14,7 @@ from typing import Any
 import yaml
 
 from agent_core.bus.core import Bus, BusConfig, BusHookSpec, EndpointSpec
+from agent_core.bus.http_host import HTTPHost, MCPHostable
 from agent_core.bus.protocol import BusHook, Endpoint
 
 
@@ -47,7 +48,7 @@ def _validate_http(http_cfg: dict, has_auth_hook: bool) -> None:
         )
 
 
-async def build_bus_from_config(path: Path) -> Bus:
+async def build_bus_from_config(path: Path) -> tuple[Bus, HTTPHost | None]:
     raw = yaml.safe_load(Path(path).read_text(encoding="utf-8")) or {}
 
     bus_cfg_raw = raw.get("bus", {})
@@ -109,4 +110,17 @@ async def build_bus_from_config(path: Path) -> Bus:
             raise BusBootError(f"{entry['class']!r} does not satisfy Endpoint protocol")
         bus.register(EndpointSpec(endpoint=instance, description=entry.get("description", "")))
 
-    return bus
+    hostable: list[MCPHostable] = [
+        spec.endpoint
+        for spec in bus._endpoints_by_name.values()
+        if isinstance(spec.endpoint, MCPHostable)
+    ]
+    http_host: HTTPHost | None = None
+    if hostable:
+        host = http_cfg.get("bind_host", "127.0.0.1")
+        port = http_cfg.get("bind_port", 8788)
+        http_host = HTTPHost(bind_host=host, bind_port=port)
+        for h in hostable:
+            http_host.mount(h)
+
+    return bus, http_host

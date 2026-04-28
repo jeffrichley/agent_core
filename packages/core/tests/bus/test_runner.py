@@ -41,7 +41,7 @@ def cfg_path(tmp_path: Path) -> Path:
 
 class TestRunner:
     async def test_loads_endpoints(self, cfg_path: Path):
-        bus = await build_bus_from_config(cfg_path)
+        bus, _ = await build_bus_from_config(cfg_path)
         try:
             await bus.start()
             names = {info.name for info in bus._endpoints()}
