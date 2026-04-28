@@ -74,7 +74,7 @@ Expected output contains `main` and `## main...origin/main` with no `behind`/`ah
 - [ ] **Step 3: Snapshot current passing state**
 
 Run: `uv sync && uv run pytest -q && uv run ruff check .`
-Expected: pytest reports all tests passing; ruff reports no errors. Note the test count — you will compare against it after the move.
+Expected: pytest reports all tests passing (baseline: **183 passed, 2 skipped**); ruff reports a known **baseline of 9 errors** (7 auto-fixable, 2 E402 import-order in `cli.py`). These errors exist on `main` today and are out of scope for this restructure plan. Success criterion is **no new errors**, not zero errors. Note both numbers — they're regression baselines for later tasks.
 
 - [ ] **Step 4: Create the feature branch**
 
