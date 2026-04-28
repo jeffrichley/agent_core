@@ -1,16 +1,17 @@
 [importlinter]
 root_packages =
     agent_core
+    agent_core_notify
 
 [importlinter:contract:bus-core-self-contained]
-name = bus core does not depend on other agent_core subpackages
+name = bus core does not depend on other agent-core packages
 type = forbidden
 source_modules =
     agent_core.bus
 forbidden_modules =
     agent_core.cli
     agent_core.email
-    agent_core.notify
     agent_core.endpoints
     agent_core.bus_hooks
     agent_core.skills
+    agent_core_notify

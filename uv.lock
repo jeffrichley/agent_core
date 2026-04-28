@@ -5,6 +5,7 @@ requires-python = ">=3.12"
 [manifest]
 members = [
     "agent-core",
+    "agent-core-notify",
 ]
 
 [manifest.dependency-groups]
@@ -25,8 +26,6 @@ dependencies = [
     { name = "agentmail" },
     { name = "aiosqlite" },
     { name = "claude-agent-sdk" },
-    { name = "desktop-notifier" },
-    { name = "mcp" },
     { name = "pydantic" },
     { name = "python-dotenv" },
     { name = "pyyaml" },
@@ -40,14 +39,27 @@ requires-dist = [
     { name = "agentmail", specifier = ">=0.4" },
     { name = "aiosqlite", specifier = ">=0.20" },
     { name = "claude-agent-sdk", specifier = ">=0.1.29" },
-    { name = "desktop-notifier", specifier = ">=5.0" },
-    { name = "mcp", specifier = ">=1.9.0" },
     { name = "pydantic", specifier = ">=2.0" },
     { name = "python-dotenv", specifier = ">=1.0.0" },
     { name = "pyyaml", specifier = ">=6.0" },
     { name = "rich", specifier = ">=13.0" },
     { name = "typer", specifier = ">=0.12" },
     { name = "tzdata", specifier = ">=2024.1" },
+]
+
+[[package]]
+name = "agent-core-notify"
+version = "0.1.0"
+source = { editable = "packages/notify" }
+dependencies = [
+    { name = "desktop-notifier" },
+    { name = "mcp" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "desktop-notifier", specifier = ">=5.0" },
+    { name = "mcp", specifier = ">=1.9.0" },
 ]
 
 [[package]]

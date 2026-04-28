@@ -1,0 +1,1 @@
+Notify subsystem (desktop notifications via `desktop-notifier`) extracted to the new `agent-core-notify` package. The `agent-core-notify` script and `agent_core.notify` module are no longer part of `agent-core`. Install `agent-core-notify` directly to use desktop notifications.

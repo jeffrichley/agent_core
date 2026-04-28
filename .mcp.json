@@ -9,7 +9,7 @@
         "E:/workspaces/ai/agents/agent_core",
         "python",
         "-m",
-        "agent_core.notify.mcp_server"
+        "agent_core_notify.mcp_server"
       ]
     }
   }
