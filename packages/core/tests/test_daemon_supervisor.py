@@ -8,7 +8,6 @@ import sys
 import time
 from pathlib import Path
 
-import pytest
 
 from agent_core.daemon.supervisor import (
     is_alive,
