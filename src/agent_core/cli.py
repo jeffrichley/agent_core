@@ -32,6 +32,9 @@ app.add_typer(hooks_app, name="hooks")
 from agent_core.email.cli import email_app
 app.add_typer(email_app, name="email")
 
+from agent_core.bus.cli import app as bus_app
+app.add_typer(bus_app, name="bus")
+
 
 @hooks_app.command("run")
 def run_hook(
@@ -83,3 +86,7 @@ def notify(
     notifier = DesktopNotifier()
     asyncio.run(notifier.send(title=title, message=message))
     typer.echo(f"Notification sent: {title} — {message}")
+
+
+if __name__ == "__main__":
+    app()
