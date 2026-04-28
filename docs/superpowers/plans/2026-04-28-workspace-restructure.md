@@ -141,7 +141,7 @@ Expected: commit succeeds. Run `git log --stat -1 | head -20` and confirm the di
 
 - [ ] **Step 1: Create `packages/core/pyproject.toml`**
 
-This is the package-owning pyproject. It carries `[project]`, `[project.scripts]`, runtime deps, the hatchling build target, and the per-package pytest config. Ruff and dev deps stay at root.
+This is the package-owning pyproject. It carries `[project]`, `[project.scripts]`, runtime deps, and the hatchling build target. Ruff, dev deps, and pytest config stay at root for now (single-member workspace).
 
 Create `packages/core/pyproject.toml` with:
 
@@ -418,9 +418,9 @@ EOF
 [tool.towncrier]
 name = "agent-core"
 package = "agent_core"
-package_dir = "packages/core/src"
-directory = "packages/core/changelog.d"
-filename = "packages/core/CHANGELOG.md"
+package_dir = "src"
+directory = "changelog.d"
+filename = "CHANGELOG.md"
 title_format = "## {version} ({project_date})"
 issue_format = "[#{issue}](https://github.com/jeffrichley/agent_core/pull/{issue})"
 
@@ -456,7 +456,7 @@ showcontent = true
 ```
 
 Notes:
-- All paths in `[tool.towncrier]` are relative to *this* config file's directory, but `towncrier` resolves them relative to the directory you invoke it from. Since CI runs from the repo root, the explicit `packages/core/` prefix on `directory`, `filename`, and `package_dir` makes invocation root-anchored.
+- All paths in `[tool.towncrier]` are relative to the config file's directory (`packages/core/`). Towncrier joins the config's parent dir with `directory`, `filename`, and `package_dir` to find fragments. Do NOT include `packages/core/` in those values — it produces a doubled path that silently finds zero fragments.
 - One config per package keeps fragments scoped to their package.
 
 - [ ] **Step 2: Create `packages/core/CHANGELOG.md` with an empty stub**

@@ -1,9 +1,9 @@
 [tool.towncrier]
 name = "agent-core"
 package = "agent_core"
-package_dir = "packages/core/src"
-directory = "packages/core/changelog.d"
-filename = "packages/core/CHANGELOG.md"
+package_dir = "src"
+directory = "changelog.d"
+filename = "CHANGELOG.md"
 title_format = "## {version} ({project_date})"
 issue_format = "[#{issue}](https://github.com/jeffrichley/agent_core/pull/{issue})"
 
