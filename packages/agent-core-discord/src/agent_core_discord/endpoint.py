@@ -16,11 +16,15 @@ import contextlib
 import json
 import logging
 import os
+import re
+import time
 import uuid
+from collections import OrderedDict
 from collections.abc import Callable
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
+from urllib.parse import unquote, urlparse
 
 from agent_core.bus.envelope import (
     AcknowledgmentPayload,
@@ -57,6 +61,28 @@ def _default_attachments_dir(endpoint_name: str) -> Path:
     return (Path("~/.agent-core/attachments").expanduser() / endpoint_name).resolve()
 
 
+_FILENAME_ALLOWED = re.compile(r"[^A-Za-z0-9._-]")
+
+
+def _safe_filename(url: str) -> str:
+    """Extract a safe filename from a URL.
+
+    Strips path components on both POSIX and Windows, allowlists chars,
+    caps length at 128, and falls back to a uuid stub if nothing usable
+    remains. The returned name is intended to be appended to a directory
+    that the caller has already validated; the caller MUST also assert
+    `(target_dir / name).resolve()` stays inside `target_dir.resolve()`.
+    """
+    raw = unquote(urlparse(url).path).rsplit("/", 1)[-1]
+    # Path(...).name strips both / and \ on Windows.
+    clean = Path(raw).name
+    clean = _FILENAME_ALLOWED.sub("_", clean)
+    clean = clean[:128]
+    if not clean or clean in (".", ".."):
+        clean = f"attach-{uuid.uuid4().hex[:8]}"
+    return clean
+
+
 class DiscordEndpoint:
     """Bus endpoint that bridges one Discord bot to one named agent (1:1)."""
 
@@ -69,6 +95,9 @@ class DiscordEndpoint:
         env_file: str | Path | None = None,
         access_config_path: str | Path | None = None,
         attachments_dir: str | Path | None = None,
+        pending_acks_max: int = 5000,
+        pending_acks_ttl_seconds: float = 3600.0,
+        pending_acks_sweep_seconds: float = 60.0,
         _client_factory: Callable[..., Any] | None = None,
     ):
         self.name = name
@@ -83,13 +112,20 @@ class DiscordEndpoint:
             if attachments_dir
             else _default_attachments_dir(name)
         )
+        self.pending_acks_max = pending_acks_max
+        self.pending_acks_ttl_seconds = pending_acks_ttl_seconds
+        self.pending_acks_sweep_seconds = pending_acks_sweep_seconds
         self._client_factory = _client_factory  # test seam
         self._handle: BusHandle | None = None
         self._client: Any = None
         self._client_task: asyncio.Task | None = None
+        self._sweep_task: asyncio.Task | None = None
         self._ready_event: asyncio.Event = asyncio.Event()
         self._access: AccessConfig = AccessConfig()
-        self._pending_acks: dict[str, str] = {}  # message_id → ack emoji (Task 4)
+        # message_id → (ack_emoji, channel_id, monotonic_inserted_at).
+        # OrderedDict so the head is the oldest entry — used for both LRU
+        # eviction at the cap and TTL eviction in the sweep loop.
+        self._pending_acks: OrderedDict[str, tuple[str, str, float]] = OrderedDict()
 
     # --- Endpoint Protocol ---
 
@@ -190,9 +226,26 @@ class DiscordEndpoint:
                 raise RuntimeError(
                     f"discord endpoint '{self.name}': gateway connect returned before ready"
                 )
-            # ready_wait completed first — happy path.
+            # ready_wait completed first — happy path. Kick off the
+            # _pending_acks sweeper now that the loop is live.
+            self._sweep_task = asyncio.create_task(
+                self._pending_acks_sweep_loop(),
+                name=f"discord-endpoint-{self.name}-acks-sweep",
+            )
         except BaseException:
             _active_endpoints.pop(self.name, None)
+            if self._sweep_task is not None:
+                self._sweep_task.cancel()
+                try:
+                    await self._sweep_task
+                except asyncio.CancelledError:
+                    pass
+                except Exception:
+                    log.exception(
+                        "discord endpoint '%s': sweep task raised during start rollback",
+                        self.name,
+                    )
+                self._sweep_task = None
             if self._client_task is not None:
                 self._client_task.cancel()
                 try:
@@ -283,6 +336,18 @@ class DiscordEndpoint:
 
     async def stop(self) -> None:
         _active_endpoints.pop(self.name, None)
+        if self._sweep_task is not None:
+            self._sweep_task.cancel()
+            try:
+                await self._sweep_task
+            except asyncio.CancelledError:
+                pass
+            except Exception:
+                log.exception(
+                    "discord endpoint '%s': sweep task raised during stop",
+                    self.name,
+                )
+            self._sweep_task = None
         if self._client_task is not None:
             self._client_task.cancel()
             try:
@@ -332,12 +397,21 @@ class DiscordEndpoint:
                 )
                 return
 
-            # 4. Add ack reaction (best-effort).
+            # 4. Add ack reaction (best-effort) and track for later clearing.
             ack_emoji = self._access.ack_reaction
             if ack_emoji:
-                with contextlib.suppress(Exception):
+                added = False
+                try:
                     await message.add_reaction(ack_emoji)
-                    self._pending_acks[str(message.id)] = ack_emoji
+                    added = True
+                except Exception:
+                    log.warning(
+                        "discord(%s): add_reaction failed on message %s — skipping pending ack",
+                        self.name,
+                        message.id,
+                    )
+                if added:
+                    self._track_pending_ack(str(message.id), ack_emoji, str(message.channel.id))
 
             # 5. Collect attachment metadata (no auto-download).
             attachments: list[dict[str, Any]] = []
@@ -426,10 +500,81 @@ class DiscordEndpoint:
             raise _ToolError(f"channel '{channel_id}' not found")
         return ch
 
-    async def _clear_pending_ack(self, channel, message_id: str) -> None:
-        emoji = self._pending_acks.pop(message_id, None)
-        if not emoji:
+    def _track_pending_ack(self, message_id: str, emoji: str, channel_id: str) -> None:
+        """Record a pending ack and evict the oldest entry if we hit the cap.
+
+        When LRU eviction fires, the evicted entry's 👀 is removed from the
+        original message in a fire-and-forget task — we don't want bookkeeping
+        to slow down on_message dispatch.
+        """
+        self._pending_acks[message_id] = (emoji, channel_id, time.monotonic())
+        while len(self._pending_acks) > self.pending_acks_max:
+            old_id, (old_emoji, old_ch, _ts) = self._pending_acks.popitem(last=False)
+            asyncio.create_task(
+                self._remote_remove_ack(old_id, old_emoji, old_ch),
+                name=f"discord-endpoint-{self.name}-evict-ack",
+            )
+
+    async def _remote_remove_ack(self, message_id: str, emoji: str, channel_id: str) -> None:
+        """Best-effort removal of an ack reaction from a Discord message."""
+        if self._client is None:
             return
+        try:
+            channel = self._client.get_channel(channel_id)
+            if channel is None:
+                channel = await self._client.fetch_channel(channel_id)
+            msg = await channel.fetch_message(message_id)
+            if msg is None:
+                return
+            await msg.remove_reaction(emoji, self._client.user)
+        except Exception:
+            log.debug(
+                "discord(%s): could not remove evicted ack on message %s",
+                self.name,
+                message_id,
+                exc_info=True,
+            )
+
+    def _sweep_pending_acks_once(self, *, now: float | None = None) -> int:
+        """One pass of TTL eviction. Returns count evicted.
+
+        Walks the OrderedDict from oldest to newest. Since insertion order
+        is monotonic, we can break as soon as we find a non-stale entry.
+        Eviction fires `_remote_remove_ack` as a fire-and-forget task.
+        """
+        now = now if now is not None else time.monotonic()
+        cutoff = now - self.pending_acks_ttl_seconds
+        evicted = 0
+        while self._pending_acks:
+            head_id = next(iter(self._pending_acks))
+            emoji, channel_id, ts = self._pending_acks[head_id]
+            if ts >= cutoff:
+                break
+            self._pending_acks.pop(head_id)
+            asyncio.create_task(
+                self._remote_remove_ack(head_id, emoji, channel_id),
+                name=f"discord-endpoint-{self.name}-ttl-ack",
+            )
+            evicted += 1
+        return evicted
+
+    async def _pending_acks_sweep_loop(self) -> None:
+        """Periodic TTL sweep. Runs until cancelled by stop()."""
+        try:
+            while True:
+                await asyncio.sleep(self.pending_acks_sweep_seconds)
+                try:
+                    self._sweep_pending_acks_once()
+                except Exception:
+                    log.exception("discord endpoint '%s': sweep iteration failed", self.name)
+        except asyncio.CancelledError:
+            raise
+
+    async def _clear_pending_ack(self, channel, message_id: str) -> None:
+        entry = self._pending_acks.pop(message_id, None)
+        if entry is None:
+            return
+        emoji, _channel_id, _ts = entry
         try:
             msg = await channel.fetch_message(message_id)
         except Exception:
@@ -594,10 +739,25 @@ class DiscordEndpoint:
             return {"saved": []}
         target_dir = self.attachments_dir / args.message_id
         target_dir.mkdir(parents=True, exist_ok=True)
+        target_resolved = target_dir.resolve()
         saved: list[dict] = []
         for url in args.attachment_urls:
-            filename = url.split("/")[-1].split("?")[0] or "unknown"
-            path = target_dir / filename
+            filename = _safe_filename(url)
+            path = (target_dir / filename).resolve()
+            try:
+                path.relative_to(target_resolved)
+            except ValueError as exc:
+                raise _ToolError(f"download_attachments: refused unsafe path for {url!r}") from exc
+            # De-dup so two URLs ending in the same name don't silently overwrite.
+            if path.exists():
+                stem, suffix = path.stem, path.suffix
+                path = (target_dir / f"{stem}-{uuid.uuid4().hex[:8]}{suffix}").resolve()
+                try:
+                    path.relative_to(target_resolved)
+                except ValueError as exc:
+                    raise _ToolError(
+                        f"download_attachments: refused unsafe dedup path for {url!r}"
+                    ) from exc
             try:
                 data = await self._download_url(url)
             except Exception as exc:
@@ -605,7 +765,7 @@ class DiscordEndpoint:
             path.write_bytes(data)
             saved.append(
                 {
-                    "filename": filename,
+                    "filename": path.name,
                     "path": str(path),
                     "content_type": "",
                     "size_bytes": len(data),

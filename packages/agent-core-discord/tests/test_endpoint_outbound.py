@@ -121,7 +121,7 @@ async def test_send_with_reply_to_clears_pending_ack(monkeypatch):
     fake.add_channel(ch)
     # Simulate prior on_message having added the ack.
     await original.add_reaction("👀")
-    ep._pending_acks["m-orig"] = "👀"
+    ep._track_pending_ack("m-orig", "👀", "200")
     try:
         env = _envelope(
             "e",
@@ -244,7 +244,7 @@ async def test_react_clears_pending_ack(monkeypatch):
     ch._messages["m-r"] = msg
     fake.add_channel(ch)
     await msg.add_reaction("👀")
-    ep._pending_acks["m-r"] = "👀"
+    ep._track_pending_ack("m-r", "👀", "200")
     try:
         env = _envelope(
             "e",
@@ -405,6 +405,196 @@ async def test_download_attachments_saves_files(monkeypatch, tmp_path):
         # Files must exist on disk:
         assert (tmp_path / "att" / "m-att" / "a.pdf").exists()
         assert (tmp_path / "att" / "m-att" / "b.png").exists()
+    finally:
+        await ep.stop()
+
+
+@pytest.mark.asyncio
+async def test_download_attachments_rejects_path_traversal(monkeypatch, tmp_path):
+    """A URL crafted to escape the target dir gets sanitized — never writes outside."""
+    monkeypatch.setenv("X_TOK", "tok")
+    handle = _Recording()
+    fake = _FakeDiscordClient()
+    ep = DiscordEndpoint(
+        name="discord-test",
+        target="agent-test",
+        token_env="X_TOK",
+        attachments_dir=str(tmp_path / "att"),
+        _client_factory=lambda **kw: fake,
+    )
+    await ep.start(handle)
+
+    async def _fake_download(url: str) -> bytes:
+        return b"x"
+
+    ep._download_url = _fake_download  # type: ignore[attr-defined]
+    try:
+        env = _envelope(
+            "e",
+            "agent-test",
+            "discord-test",
+            _toolcall(
+                "download_attachments",
+                {
+                    "channel_id": "200",
+                    "message_id": "m-att",
+                    "attachment_urls": [
+                        # URL-encoded traversal attempt.
+                        "https://x/y/..%2F..%2F..%2Fevil.txt",
+                        # Backslash-flavored attempt for Windows.
+                        "https://x/y/..%5C..%5Cevil.txt",
+                    ],
+                },
+            ),
+        )
+        await ep.deliver(env)
+        # Every saved file MUST live inside target_dir — the sanitizer should
+        # have stripped the traversal segments so what lands on disk is just
+        # the basename, contained.
+        target_dir = (tmp_path / "att" / "m-att").resolve()
+        for child in target_dir.rglob("*"):
+            assert child.resolve().is_relative_to(target_dir)
+        # And nothing leaked into the parent (att/) or grandparent (tmp_path).
+        siblings_of_target = [p for p in (tmp_path / "att").iterdir() if p.is_file()]
+        assert siblings_of_target == []
+        outside_att = [p for p in tmp_path.iterdir() if p.is_file()]
+        assert outside_att == []
+    finally:
+        await ep.stop()
+
+
+@pytest.mark.asyncio
+async def test_download_attachments_caps_long_filenames(monkeypatch, tmp_path):
+    """A 5000-char URL tail produces a filename ≤ 128 chars."""
+    monkeypatch.setenv("X_TOK", "tok")
+    handle = _Recording()
+    fake = _FakeDiscordClient()
+    ep = DiscordEndpoint(
+        name="discord-test",
+        target="agent-test",
+        token_env="X_TOK",
+        attachments_dir=str(tmp_path / "att"),
+        _client_factory=lambda **kw: fake,
+    )
+    await ep.start(handle)
+
+    async def _fake_download(url: str) -> bytes:
+        return b"x"
+
+    ep._download_url = _fake_download  # type: ignore[attr-defined]
+    try:
+        long_tail = "A" * 5000
+        env = _envelope(
+            "e",
+            "agent-test",
+            "discord-test",
+            _toolcall(
+                "download_attachments",
+                {
+                    "channel_id": "200",
+                    "message_id": "m-att",
+                    "attachment_urls": [f"https://x/y/{long_tail}"],
+                },
+            ),
+        )
+        await ep.deliver(env)
+        ack = [e for e in handle.published if e.kind == "Acknowledgment"][0]
+        result = json.loads(ack.payload.note)
+        saved_name = result["saved"][0]["filename"]
+        assert len(saved_name) <= 128
+        # File exists with that capped name.
+        assert (tmp_path / "att" / "m-att" / saved_name).exists()
+    finally:
+        await ep.stop()
+
+
+@pytest.mark.asyncio
+async def test_download_attachments_dedups_same_filename(monkeypatch, tmp_path):
+    """Two URLs ending in the same trailing filename produce two distinct files."""
+    monkeypatch.setenv("X_TOK", "tok")
+    handle = _Recording()
+    fake = _FakeDiscordClient()
+    ep = DiscordEndpoint(
+        name="discord-test",
+        target="agent-test",
+        token_env="X_TOK",
+        attachments_dir=str(tmp_path / "att"),
+        _client_factory=lambda **kw: fake,
+    )
+    await ep.start(handle)
+
+    async def _fake_download(url: str) -> bytes:
+        return url.encode()  # different bytes per URL
+
+    ep._download_url = _fake_download  # type: ignore[attr-defined]
+    try:
+        env = _envelope(
+            "e",
+            "agent-test",
+            "discord-test",
+            _toolcall(
+                "download_attachments",
+                {
+                    "channel_id": "200",
+                    "message_id": "m-att",
+                    "attachment_urls": [
+                        "https://server-a/path/file.png",
+                        "https://server-b/path/file.png",
+                    ],
+                },
+            ),
+        )
+        await ep.deliver(env)
+        ack = [e for e in handle.published if e.kind == "Acknowledgment"][0]
+        result = json.loads(ack.payload.note)
+        names = {entry["filename"] for entry in result["saved"]}
+        assert len(names) == 2
+        # Both files exist with their distinct names.
+        for entry in result["saved"]:
+            assert (tmp_path / "att" / "m-att" / entry["filename"]).exists()
+    finally:
+        await ep.stop()
+
+
+@pytest.mark.asyncio
+async def test_download_attachments_empty_url_uses_uuid_fallback(monkeypatch, tmp_path):
+    """A URL ending in / produces an attach-<hex> fallback name."""
+    monkeypatch.setenv("X_TOK", "tok")
+    handle = _Recording()
+    fake = _FakeDiscordClient()
+    ep = DiscordEndpoint(
+        name="discord-test",
+        target="agent-test",
+        token_env="X_TOK",
+        attachments_dir=str(tmp_path / "att"),
+        _client_factory=lambda **kw: fake,
+    )
+    await ep.start(handle)
+
+    async def _fake_download(url: str) -> bytes:
+        return b"y"
+
+    ep._download_url = _fake_download  # type: ignore[attr-defined]
+    try:
+        env = _envelope(
+            "e",
+            "agent-test",
+            "discord-test",
+            _toolcall(
+                "download_attachments",
+                {
+                    "channel_id": "200",
+                    "message_id": "m-att",
+                    "attachment_urls": ["https://x/y/"],
+                },
+            ),
+        )
+        await ep.deliver(env)
+        ack = [e for e in handle.published if e.kind == "Acknowledgment"][0]
+        result = json.loads(ack.payload.note)
+        name = result["saved"][0]["filename"]
+        assert name.startswith("attach-")
+        assert (tmp_path / "att" / "m-att" / name).exists()
     finally:
         await ep.stop()
 
