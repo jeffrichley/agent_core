@@ -5,7 +5,7 @@ document — update as decisions land. For tactical items deferred from
 approved designs, see `BACKLOG.md`. For approved per-feature designs,
 see `superpowers/specs/`.
 
-> **Last updated:** 2026-04-28 (Step 4 scheduler shipped — PR #7)
+> **Last updated:** 2026-04-29 (Sub-project E v1 DiscordEndpoint shipped — PR #8)
 
 ---
 
@@ -87,7 +87,7 @@ across them.
 | B | Bus daemon + ClaudeCodeMCPEndpoint (v1) | 🟢 Shipped — [`2026-04-28-bus-daemon-design.md`](superpowers/specs/2026-04-28-bus-daemon-design.md), [PR #6](https://github.com/jeffrichley/agent_core/pull/6) `7bbef85`. Real `agent-core daemon start/stop/status` lifecycle, `ClaudeCodeMCPEndpoint` adapter, shared Starlette+Uvicorn HTTP host. Two FastMCP 3.x adapter gaps tracked in BACKLOG (polling-only inbound, `_session_active` doesn't reset on disconnect). The full multi-agent CLI (`agent install/start/stop/list`) is its own future sub-project. Pepper untouched. | — | Real long-running daemon hosting the bus, plus a Streamable HTTP MCP endpoint adapter so Claude Code instances can connect. PID-managed lifecycle. |
 | C | Smart init/update | 🔴 Not started | A | Non-destructive merge instead of wholesale Jinja overwrite. Jinja is OK for first-time install; not for updates. |
 | D | Native backup subsystem | 🔴 Not started | — (mostly independent) | Deterministic, not agent-driven. Includes git-repo backup as a first-class mode alongside tar.gz/cloud. |
-| E | Discord adapter + native attachments | 🔴 Not started | A | Discord becomes a bus `Endpoint`. Attachment download lives **with** the Discord adapter (not as a generic feature). |
+| E | Discord adapter + native attachments | 🟡 v1 shipped — [`2026-04-28-discord-endpoint-design.md`](superpowers/specs/2026-04-28-discord-endpoint-design.md), [PR #8](https://github.com/jeffrichley/agent_core/pull/8) `a26e764`. `DiscordEndpoint` 1:1 bot↔agent, 7 outbound tools (send/edit/react/fetch/download_attachments/list_channels/get_channel_info), inbound `on_message` + `on_reaction_add`, access gate (DM policy + channel allowlist), 👀 ack reaction with TTL+LRU bounded `_pending_acks`. Validated end-to-end against real Discord via testbot (4/4 PASS). v2 deferred: polls, scheduled events, threads, typing indicators, briefing UI. | A | Discord becomes a bus `Endpoint`. Attachment download lives **with** the Discord adapter (not as a generic feature). |
 | F | Skills consolidation | 🔴 Not started | A (where the kept ones live) | Keep: creds, google (gog), scheduler. Drop the rest. |
 | G | Dashboard | 🔴 Not started | A, B, the bus | Manage agent instance — start/stop, view mailboxes, view scheduler, view logs. |
 | H | Claude plugin packaging | 🔴 Not started — far horizon | A | Bundle as a Claude plugin. Not mandatory near-term. |
