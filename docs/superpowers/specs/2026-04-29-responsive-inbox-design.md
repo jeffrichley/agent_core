@@ -1,11 +1,20 @@
-# Responsive Inbox — Sub-project I Design
+# Responsive Inbox — Sub-project I Design (Part 1: Daemon Side)
 
 **Date:** 2026-04-29
-**Status:** Spec — open for review
+**Status:** Implemented (8 commits on `feat/responsive-inbox`); paired with channel relay.
 **Source material:** Pepper's `inbox-architecture.md` (2026-04-29);
 adversarial review of PR #8; testbot validation showing polling latency.
-**Companion:** `docs/BACKLOG.md` entries `_notify_mail_arrived` (now resolved
+**Companion:** `docs/BACKLOG.md` entries `_notify_mail_arrived` (resolved
 by this spec) and `Heartbeat-checker endpoint` (deferred).
+
+> **Addendum (2026-04-29, after live testbot validation):** This spec covers
+> the **daemon-side** half of sub-project I. Live testbot validation revealed
+> that plain Claude Code drops `notifications/claude/channel` notifications
+> (standard `ClientSession` validates against a strict `ServerNotification`
+> union and discards unknown methods). The agent-side consumer that delivers
+> autonomous wake is specified in
+> [`2026-04-29-channel-relay-design.md`](2026-04-29-channel-relay-design.md).
+> Both halves ship together as one PR; either alone is incomplete.
 
 ---
 
