@@ -8,14 +8,10 @@ Validates the complete chain:
 The relay's two halves (`iter_notify_events` from sse_client and
 `emit_channel_notification` from stdio_server) run in-process. Instead of
 real stdin/stdout, an `anyio.create_memory_object_stream` pair stands in
-for the MCP write stream.
-
-The bus has no real Claude Code MCP session attached — only a recording
-fake — but `ClaudeCodeMCPEndpoint.deliver` requires a session to flow into
-`_notify_mail_arrived`, which is what triggers the broker publish. We
-register the fake session before publishing so the wire path through the
-broker fires deterministically. The relay is wholly orthogonal to that
-fake session: it consumes `/notify/<agent>` only.
+for the MCP write stream. No HTTP MCP session is attached to the agent
+endpoint — exactly the production scenario the relay was built for: the
+agent connects only via the stdio relay, and `deliver()` must still fan
+out to the broker so the relay's SSE subscription wakes the agent.
 """
 
 from __future__ import annotations
@@ -23,7 +19,6 @@ from __future__ import annotations
 import asyncio
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any
 
 import anyio
 import pytest
@@ -35,24 +30,6 @@ from agent_core.bus.http_host import HTTPHost
 from agent_core.bus.notify_broker import NotificationBroker
 from agent_core.endpoints.claude_code_mcp import ClaudeCodeMCPEndpoint
 from agent_core.endpoints.stub import StubEndpoint
-
-
-class _RecordingSession:
-    """Minimal stand-in for the daemon's ServerSession.
-
-    The endpoint's `_notify_mail_arrived` only fires when a session is
-    registered. Production attaches a real ServerSession via the
-    SessionRegistry middleware once Claude Code's daemon-side MCP client
-    initializes; in this test no real Claude Code is running, so a recorder
-    here keeps the deliver -> notify -> broker path live without coupling
-    the test to FastMCP's HTTP transport.
-    """
-
-    def __init__(self) -> None:
-        self.sent: list[Any] = []
-
-    async def send_message(self, message: SessionMessage) -> None:
-        self.sent.append(message)
 
 
 @pytest.mark.asyncio
@@ -107,12 +84,6 @@ async def test_bus_arrival_reaches_relay_stdio_stream(tmp_path: Path) -> None:
                 # Give the relay a moment to subscribe to /notify/agent
                 # before we publish, so the broker fan-out has a target.
                 await asyncio.sleep(0.3)
-
-                # Register a fake session so deliver() takes the
-                # `_notify_mail_arrived` -> broker.publish path. Without
-                # this, deliver() raises EndpointUnavailable and the
-                # broker never fires.
-                agent_ep._register_session(_RecordingSession())
 
                 # 4. Publish via the stub. BusHandle.publish stamps `from_`.
                 env = Envelope(
