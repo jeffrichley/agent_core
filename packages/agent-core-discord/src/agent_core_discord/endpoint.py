@@ -14,14 +14,16 @@ from __future__ import annotations
 import contextlib
 import logging
 import os
+import uuid
 from collections.abc import Callable
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from agent_core.bus.envelope import Envelope
+from agent_core.bus.envelope import Envelope, TextMessagePayload
 from agent_core.bus.protocol import EndpointUnavailable
 
-from agent_core_discord.access import AccessConfig, load_access_config
+from agent_core_discord.access import AccessConfig, InboundContext, gate_message, load_access_config
 
 if TYPE_CHECKING:
     from agent_core.bus.handle import BusHandle
@@ -156,9 +158,74 @@ class DiscordEndpoint:
     # --- Internal handler factories — bodies land in Tasks 4 and 5. ---
 
     def _make_on_message_handler(self):
-        async def on_message(message):
-            # Body in Task 4.
-            return None
+        async def on_message(message: Any) -> None:
+            # 1. Filter our own messages and other bots.
+            if message.author == self._client.user or message.author.bot:
+                return
+
+            # 2. Build inbound context for the access gate.
+            is_dm = message.guild is None
+            ctx = InboundContext(
+                is_dm=is_dm,
+                author_id=str(message.author.id),
+                channel_id=str(message.channel.id),
+                is_bot=False,
+            )
+
+            # 3. Run the access gate.
+            if not gate_message(self._access, ctx):
+                log.debug(
+                    "discord(%s): gate denied message from %s in channel %s",
+                    self.name,
+                    message.author.id,
+                    message.channel.id,
+                )
+                return
+
+            # 4. Add ack reaction (best-effort).
+            ack_emoji = self._access.ack_reaction
+            if ack_emoji:
+                with contextlib.suppress(Exception):
+                    await message.add_reaction(ack_emoji)
+                    self._pending_acks[str(message.id)] = ack_emoji
+
+            # 5. Collect attachment metadata (no auto-download).
+            attachments: list[dict[str, Any]] = []
+            for att in getattr(message, "attachments", []) or []:
+                attachments.append(
+                    {
+                        "filename": att.filename,
+                        "url": att.url,
+                        "content_type": getattr(att, "content_type", None) or "unknown",
+                        "size_bytes": int(getattr(att, "size", 0)),
+                    }
+                )
+
+            # 6. Build and publish the envelope.
+            metadata: dict[str, Any] = {
+                "discord": {
+                    "channel_id": str(message.channel.id),
+                    "message_id": str(message.id),
+                    "guild_id": str(message.guild.id) if message.guild else "",
+                    "author_id": str(message.author.id),
+                    "author_display_name": getattr(message.author, "display_name", "") or "",
+                    "is_dm": is_dm,
+                },
+            }
+            if attachments:
+                metadata["attachments"] = attachments
+
+            env = Envelope(
+                id=uuid.uuid4().hex,
+                correlation_id=uuid.uuid4().hex,
+                to=self.target,
+                kind="TextMessage",
+                payload=TextMessagePayload(text=message.content or ""),
+                metadata=metadata,
+                created_at=datetime.now(timezone.utc),
+            )
+            assert self._handle is not None
+            await self._handle.publish(env)
 
         return on_message
 
