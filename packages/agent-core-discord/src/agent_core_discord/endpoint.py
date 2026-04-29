@@ -446,13 +446,87 @@ class DiscordEndpoint:
         await self._clear_pending_ack(ch, args.message_id)
         return {"status": "reacted", "emoji": args.emoji}
 
-    # _fetch, _download_attachments, _list_channels, _get_channel_info land in Tasks 7 and 8.
+    # _list_channels, _get_channel_info land in Task 8.
 
     async def _fetch(self, args: _FetchArgs) -> list[dict]:
-        raise _ToolError("fetch: not implemented yet (Task 7)")
+        ch = await self._resolve_channel(args.channel_id)
+        out: list[dict] = []
+        # discord.py's history() returns an async iterator; the fake provides one.
+        before = None
+        if args.before is not None:
+            try:
+                before = await ch.fetch_message(args.before)
+            except Exception:
+                before = None
+        async for m in ch.history(limit=args.limit, before=before):
+            embeds = [
+                e.to_dict() if hasattr(e, "to_dict") else e
+                for e in (getattr(m, "embeds", None) or [])
+            ]
+            attachments = []
+            for att in getattr(m, "attachments", None) or []:
+                attachments.append(
+                    {
+                        "filename": att.filename,
+                        "url": att.url,
+                        "content_type": getattr(att, "content_type", None) or "unknown",
+                        "size_bytes": int(getattr(att, "size", 0)),
+                    }
+                )
+            author = getattr(m, "author", None)
+            out.append(
+                {
+                    "id": str(m.id),
+                    "channel_id": str(getattr(m, "channel_id", args.channel_id)),
+                    "author_id": str(getattr(author, "id", "")),
+                    "author_display_name": getattr(author, "display_name", "")
+                    or getattr(author, "name", "")
+                    or "",
+                    "is_bot": bool(getattr(author, "bot", False)),
+                    "content": getattr(m, "content", "") or "",
+                    "created_at": m.created_at.isoformat()
+                    if getattr(m, "created_at", None)
+                    else "",
+                    "embeds": embeds,
+                    "attachments": attachments,
+                }
+            )
+        return out
+
+    async def _download_url(self, url: str) -> bytes:
+        """Fetch a URL's bytes. Override in tests to avoid network."""
+        try:
+            import httpx
+        except ImportError as exc:
+            raise _ToolError("download_attachments: httpx not available") from exc
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            resp = await client.get(url)
+            resp.raise_for_status()
+            return resp.content
 
     async def _download_attachments(self, args: _DownloadAttachmentsArgs) -> dict:
-        raise _ToolError("download_attachments: not implemented yet (Task 7)")
+        if not args.attachment_urls:
+            return {"saved": []}
+        target_dir = self.attachments_dir / args.message_id
+        target_dir.mkdir(parents=True, exist_ok=True)
+        saved: list[dict] = []
+        for url in args.attachment_urls:
+            filename = url.split("/")[-1].split("?")[0] or "unknown"
+            path = target_dir / filename
+            try:
+                data = await self._download_url(url)
+            except Exception as exc:
+                raise _ToolError(f"download failed for {url}: {exc}") from exc
+            path.write_bytes(data)
+            saved.append(
+                {
+                    "filename": filename,
+                    "path": str(path),
+                    "content_type": "",
+                    "size_bytes": len(data),
+                }
+            )
+        return {"saved": saved}
 
     async def _list_channels(self, args: _ListChannelsArgs) -> list[dict]:
         raise _ToolError("list_channels: not implemented yet (Task 8)")

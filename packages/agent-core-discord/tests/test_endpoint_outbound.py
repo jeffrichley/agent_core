@@ -301,3 +301,144 @@ async def test_non_toolinvocation_returns_warning(monkeypatch):
         assert "TextMessage" in ack.payload.note
     finally:
         await ep.stop()
+
+
+# --- fetch ---
+
+
+@pytest.mark.asyncio
+async def test_fetch_returns_recent_messages(monkeypatch):
+    ep, handle, fake = await _started(monkeypatch)
+    ch = _FakeChannel(id="200")
+    for i in range(3):
+        m = _FakeMessage(id=f"m{i}", channel_id="200", content=f"msg {i}")
+        m.author = type(
+            "A", (), {"id": "100", "name": "alice", "bot": False, "display_name": "Alice"}
+        )()
+        m.created_at = datetime.now(timezone.utc)
+        m.embeds = []
+        m.attachments = []
+        ch._messages[m.id] = m
+    fake.add_channel(ch)
+    try:
+        env = _envelope(
+            "e",
+            "agent-test",
+            "discord-test",
+            _toolcall("fetch", {"channel_id": "200", "limit": 10}),
+        )
+        await ep.deliver(env)
+        ack = [e for e in handle.published if e.kind == "Acknowledgment"][0]
+        result = json.loads(ack.payload.note)
+        assert isinstance(result, list)
+        assert len(result) == 3
+        for entry in result:
+            assert "id" in entry
+            assert "channel_id" in entry
+            assert "content" in entry
+    finally:
+        await ep.stop()
+
+
+@pytest.mark.asyncio
+async def test_fetch_unknown_channel_returns_error(monkeypatch):
+    ep, handle, fake = await _started(monkeypatch)
+    try:
+        env = _envelope(
+            "e",
+            "agent-test",
+            "discord-test",
+            _toolcall("fetch", {"channel_id": "missing", "limit": 5}),
+        )
+        await ep.deliver(env)
+        ack = [e for e in handle.published if e.kind == "Acknowledgment"][0]
+        assert "not found" in ack.payload.note.lower()
+    finally:
+        await ep.stop()
+
+
+# --- download_attachments ---
+
+
+@pytest.mark.asyncio
+async def test_download_attachments_saves_files(monkeypatch, tmp_path):
+    monkeypatch.setenv("X_TOK", "tok")
+    handle = _Recording()
+    fake = _FakeDiscordClient()
+    ep = DiscordEndpoint(
+        name="discord-test",
+        target="agent-test",
+        token_env="X_TOK",
+        attachments_dir=str(tmp_path / "att"),
+        _client_factory=lambda **kw: fake,
+    )
+    await ep.start(handle)
+
+    # Install a fake httpx-style downloader to avoid network.
+    async def _fake_download(url: str) -> bytes:
+        return b"data:" + url.encode()
+
+    ep._download_url = _fake_download  # type: ignore[attr-defined]
+
+    try:
+        env = _envelope(
+            "e",
+            "agent-test",
+            "discord-test",
+            _toolcall(
+                "download_attachments",
+                {
+                    "channel_id": "200",
+                    "message_id": "m-att",
+                    "attachment_urls": [
+                        "https://example.com/a.pdf",
+                        "https://example.com/b.png",
+                    ],
+                },
+            ),
+        )
+        await ep.deliver(env)
+        ack = [e for e in handle.published if e.kind == "Acknowledgment"][0]
+        result = json.loads(ack.payload.note)
+        assert "saved" in result
+        assert len(result["saved"]) == 2
+        # Files must exist on disk:
+        assert (tmp_path / "att" / "m-att" / "a.pdf").exists()
+        assert (tmp_path / "att" / "m-att" / "b.png").exists()
+    finally:
+        await ep.stop()
+
+
+@pytest.mark.asyncio
+async def test_download_attachments_empty_urls_returns_empty(monkeypatch, tmp_path):
+    monkeypatch.setenv("X_TOK", "tok")
+    handle = _Recording()
+    fake = _FakeDiscordClient()
+    ep = DiscordEndpoint(
+        name="discord-test",
+        target="agent-test",
+        token_env="X_TOK",
+        attachments_dir=str(tmp_path / "att"),
+        _client_factory=lambda **kw: fake,
+    )
+    await ep.start(handle)
+    try:
+        env = _envelope(
+            "e",
+            "agent-test",
+            "discord-test",
+            _toolcall(
+                "download_attachments",
+                {
+                    "channel_id": "200",
+                    "message_id": "m-att",
+                    "attachment_urls": [],
+                },
+            ),
+        )
+        await ep.deliver(env)
+        ack = [e for e in handle.published if e.kind == "Acknowledgment"][0]
+        result = json.loads(ack.payload.note)
+        assert result["saved"] == []
+    finally:
+        await ep.stop()
