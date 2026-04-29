@@ -21,6 +21,7 @@ import uuid
 from datetime import datetime, timedelta, timezone
 from typing import TYPE_CHECKING, Any
 
+import anyio
 from fastmcp import FastMCP
 from fastmcp.server.middleware import Middleware, MiddlewareContext
 
@@ -33,26 +34,52 @@ if TYPE_CHECKING:
 log = logging.getLogger(__name__)
 
 
-class _SessionTracker(Middleware):
-    """Middleware that toggles a flag on the endpoint when a session initializes.
+class SessionRegistry(Middleware):
+    """Middleware that captures the connected ServerSession on first message.
 
-    FastMCP's Middleware class fires on_initialize when a client sends the MCP
-    initialize request (works for both in-memory Client and real HTTP sessions).
-    There is no on_disconnect hook in FastMCP 3.x's Middleware, so the flag
-    only resets in ClaudeCodeMCPEndpoint.stop(). Consequence: after the first
-    HTTP disconnect, deliver() no longer raises EndpointUnavailable; envelopes
-    queue in _pending and the agent picks them up via list_pending on
-    reconnect. See docs/BACKLOG.md → "FastMCP 3.x adapter gaps" for the
-    longer story and trigger to revisit."""
+    Mirrors FastMCP's official PingMiddleware pattern: spawn a long-lived
+    coroutine into session._subscription_task_group; the coroutine registers
+    the session with the endpoint, awaits forever, and runs cleanup in
+    finally: when the session task group is cancelled (which fires when the
+    SSE stream closes).
+    """
 
     def __init__(self, endpoint: "ClaudeCodeMCPEndpoint") -> None:
         self._endpoint = endpoint
+        self._known: set[int] = set()
+        self._lock = anyio.Lock()
 
-    async def on_initialize(self, context: MiddlewareContext, call_next) -> Any:
-        result = await call_next(context)
-        self._endpoint._session_active = True
-        log.debug("ClaudeCodeMCPEndpoint(name=%s) session initialized", self._endpoint.name)
-        return result
+    async def on_message(self, context: MiddlewareContext, call_next) -> Any:
+        if context.fastmcp_context is None or context.fastmcp_context.request_context is None:
+            return await call_next(context)
+
+        session = context.fastmcp_context.session
+        sid = id(session)
+
+        async with self._lock:
+            if sid not in self._known:
+                tg = getattr(session, "_subscription_task_group", None)
+                if tg is not None:
+                    self._known.add(sid)
+                    tg.start_soon(self._claim_session, session, sid)
+
+        return await call_next(context)
+
+    async def _claim_session(self, session: Any, sid: int) -> None:
+        try:
+            self._endpoint._register_session(session)
+            await anyio.sleep_forever()
+        except RuntimeError:
+            # Collision rejected — caller already holds the slot. Do not
+            # cancel the existing one; just exit this lifetime task.
+            log.warning(
+                "endpoint '%s': refused concurrent session %d (slot held)",
+                self._endpoint.name,
+                sid,
+            )
+        finally:
+            self._endpoint._unregister_session(session)
+            self._known.discard(sid)
 
 
 class ClaudeCodeMCPEndpoint:
@@ -67,8 +94,27 @@ class ClaudeCodeMCPEndpoint:
         self._handle: "BusHandle | None" = None
         self._pending: list[Envelope] = []
         self._session_active: bool = False  # set true when an MCP session is attached
-        self._mcp.add_middleware(_SessionTracker(self))
+        self._active_session: Any = None  # ServerSession, when connected
+        self._mcp.add_middleware(SessionRegistry(self))
         self._register_tools()
+
+    def _register_session(self, session: Any) -> None:
+        """Capture the active ServerSession; refuse a different concurrent one."""
+        if self._active_session is not None and self._active_session is not session:
+            raise RuntimeError(
+                f"endpoint '{self.name}' already has an active session; "
+                f"refusing concurrent connection"
+            )
+        self._active_session = session
+        self._session_active = True
+        log.debug("endpoint '%s' captured active session", self.name)
+
+    def _unregister_session(self, session: Any) -> None:
+        """Clear the slot if the session matches the one we hold."""
+        if self._active_session is session:
+            self._active_session = None
+            self._session_active = False
+            log.debug("endpoint '%s' released active session", self.name)
 
     async def _call_list_pending(self, batch_window_seconds: int = 0) -> list[dict]:
         """Mailbox view sorted by urgency, optionally batched by sender.
@@ -162,6 +208,7 @@ class ClaudeCodeMCPEndpoint:
     async def stop(self) -> None:
         self._handle = None
         self._session_active = False
+        self._active_session = None
         log.info("ClaudeCodeMCPEndpoint(name=%s) stopped", self.name)
 
     # --- MCPHostable Protocol ---
