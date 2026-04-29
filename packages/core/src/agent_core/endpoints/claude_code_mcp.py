@@ -224,7 +224,7 @@ class ClaudeCodeMCPEndpoint:
 
         # Active session path — queue then notify.
         self.queue_for_pickup(envelope)
-        await self._notify_mail_arrived(envelope.id)
+        await self._notify_mail_arrived()
 
     async def stop(self) -> None:
         self._handle = None
@@ -305,8 +305,14 @@ class ClaudeCodeMCPEndpoint:
         )
         return SessionMessage(message=JSONRPCMessage(notification))
 
-    async def _notify_mail_arrived(self, envelope_id: str) -> None:
-        """Coalesce arrivals via 50ms debounce, then push one summary."""
+    async def _notify_mail_arrived(self) -> None:
+        """Schedule a debounced push summarizing the current mailbox.
+
+        Called by `deliver()` on each arrival. Cancels any pending debounce
+        task and schedules a fresh one so a burst of arrivals coalesces into
+        one notification. The summary is rebuilt from `_pending` at fire time;
+        the per-envelope id is therefore not needed here.
+        """
         if self._debounce_task is not None and not self._debounce_task.done():
             self._debounce_task.cancel()
         self._debounce_task = asyncio.create_task(self._fire_after_debounce())
