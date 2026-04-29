@@ -10,6 +10,7 @@ agent-core = { workspace = true }
 agent-core-notify = { workspace = true }
 agent-core-credentials = { workspace = true }
 agent-core-discord = { workspace = true }
+agent-core-channel = { workspace = true }
 
 [dependency-groups]
 # Dev tools only; real package deps live in member pyprojects.
@@ -24,13 +25,19 @@ dev = [
 
 [tool.ruff]
 line-length = 100
-src = ["packages/core/src", "packages/notify/src", "packages/credentials/src"]
+src = [
+    "packages/core/src",
+    "packages/notify/src",
+    "packages/credentials/src",
+    "packages/agent-core-channel/src",
+]
 
 [tool.pytest.ini_options]
 testpaths = [
     "packages/core/tests",
     "packages/credentials/tests",
     "packages/agent-core-discord/tests",
+    "packages/agent-core-channel/tests",
 ]
 asyncio_mode = "auto"
 addopts = "--import-mode=importlib"
