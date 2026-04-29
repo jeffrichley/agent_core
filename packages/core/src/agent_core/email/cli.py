@@ -66,7 +66,11 @@ def check(
         from_addr = msg.from_ or ""
         subject = msg.subject or "(no subject)"
         if msg.timestamp:
-            ts = msg.timestamp.strftime("%Y-%m-%d %H:%M") if hasattr(msg.timestamp, "strftime") else str(msg.timestamp)[:16]
+            ts = (
+                msg.timestamp.strftime("%Y-%m-%d %H:%M")
+                if hasattr(msg.timestamp, "strftime")
+                else str(msg.timestamp)[:16]
+            )
         else:
             ts = ""
         table.add_row(msg_id, from_addr, subject, ts, marker)
@@ -93,7 +97,11 @@ def read(
     if msg.cc:
         typer.echo(f"CC: {', '.join(msg.cc)}")
     typer.echo(f"Subject: {msg.subject or '(no subject)'}")
-    date_str = msg.timestamp.strftime("%Y-%m-%d %H:%M") if hasattr(msg.timestamp, "strftime") else str(msg.timestamp)
+    date_str = (
+        msg.timestamp.strftime("%Y-%m-%d %H:%M")
+        if hasattr(msg.timestamp, "strftime")
+        else str(msg.timestamp)
+    )
     typer.echo(f"Date: {date_str}")
     typer.echo(f"Labels: {', '.join(msg.labels) if msg.labels else ''}")
     typer.echo("-" * 60)
@@ -120,6 +128,7 @@ def send(
     # Resolve body
     if body_file:
         from pathlib import Path
+
         body_path = Path(body_file)
         if not body_path.exists():
             typer.echo(f"Error: Body file not found: {body_file}", err=True)
@@ -174,6 +183,7 @@ def reply(
     # Resolve body
     if body_file:
         from pathlib import Path
+
         body_path = Path(body_file)
         if not body_path.exists():
             typer.echo(f"Error: Body file not found: {body_file}", err=True)

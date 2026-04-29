@@ -82,6 +82,6 @@ def read_transcript(
         context = context[-max_chars:]
         boundary = context.find("\n**")
         if boundary > 0:
-            context = context[boundary + 1:]
+            context = context[boundary + 1 :]
 
     return context, len(recent)

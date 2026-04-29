@@ -47,10 +47,17 @@ class TestReadTranscript:
     def test_handles_content_as_list_of_blocks(self, tmp_path: Path):
         """Content can be a list of text blocks instead of a plain string."""
         transcript = tmp_path / "transcript.jsonl"
-        entries = [{"message": {"role": "assistant", "content": [
-            {"type": "text", "text": "First block"},
-            {"type": "text", "text": "Second block"},
-        ]}}]
+        entries = [
+            {
+                "message": {
+                    "role": "assistant",
+                    "content": [
+                        {"type": "text", "text": "First block"},
+                        {"type": "text", "text": "Second block"},
+                    ],
+                }
+            }
+        ]
         write_jsonl(transcript, entries)
         context, count = read_transcript(transcript)
         assert count == 1
@@ -60,11 +67,18 @@ class TestReadTranscript:
     def test_filters_non_text_content_blocks(self, tmp_path: Path):
         """Non-text content blocks (tool_use, etc.) are ignored."""
         transcript = tmp_path / "transcript.jsonl"
-        entries = [{"message": {"role": "assistant", "content": [
-            {"type": "text", "text": "Visible text"},
-            {"type": "tool_use", "id": "t1", "name": "read", "input": {}},
-            {"type": "tool_result", "tool_use_id": "t1", "content": "result"},
-        ]}}]
+        entries = [
+            {
+                "message": {
+                    "role": "assistant",
+                    "content": [
+                        {"type": "text", "text": "Visible text"},
+                        {"type": "tool_use", "id": "t1", "name": "read", "input": {}},
+                        {"type": "tool_result", "tool_use_id": "t1", "content": "result"},
+                    ],
+                }
+            }
+        ]
         write_jsonl(transcript, entries)
         context, count = read_transcript(transcript)
         assert count == 1

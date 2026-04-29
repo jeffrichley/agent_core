@@ -87,8 +87,14 @@ def _save_state(state_file: Path, state: dict) -> None:
     state_file.write_text(json.dumps(state), encoding="utf-8")
 
 
-def _build_prompt(context_file: str, output_path: str, agent_name: str,
-                  session_id: str, event: str, timestamp: str) -> str:
+def _build_prompt(
+    context_file: str,
+    output_path: str,
+    agent_name: str,
+    session_id: str,
+    event: str,
+    timestamp: str,
+) -> str:
     """Build the prompt for the detached claude process."""
     return f"""Read the conversation transcript from the file at {context_file}.
 
@@ -127,7 +133,7 @@ Rules:
 
 After writing the handoff note, delete the context file at {context_file}.
 
-Write the state file at {Path(output_path).parent / 'handoff-state.json'} with this JSON:
+Write the state file at {Path(output_path).parent / "handoff-state.json"} with this JSON:
 {{"session_id": "{session_id}", "timestamp": {int(time.time())}}}
 
 After everything is written, send a desktop notification by running this exact command:
@@ -162,10 +168,7 @@ class HandoffWriter:
         # Quick deduplication check
         state_file = _state_file_for(output_path)
         state = _load_state(state_file)
-        if (
-            state.get("session_id") == session_id
-            and time.time() - state.get("timestamp", 0) < 60
-        ):
+        if state.get("session_id") == session_id and time.time() - state.get("timestamp", 0) < 60:
             _debug(f"skipping duplicate handoff for session {session_id}")
             return ToolResult(
                 heading="Handoff Note Written",
@@ -229,9 +232,12 @@ class HandoffWriter:
         # Spawn detached claude process
         cmd = [
             claude_bin,
-            "-p", prompt,
-            "--allowedTools", "Read,Write,Edit,Bash",
-            "--max-turns", "5",
+            "-p",
+            prompt,
+            "--allowedTools",
+            "Read,Write,Edit,Bash",
+            "--max-turns",
+            "5",
         ]
 
         # Detach from parent so it survives Ctrl+C

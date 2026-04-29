@@ -9,10 +9,15 @@ from agent_core.cli import app
 runner = CliRunner()
 
 
-def make_mock_message(message_id="msg-1", from_="sender@example.com",
-                       subject="Test Subject", preview="Hello...",
-                       labels=None, timestamp="2026-04-14T12:00:00Z",
-                       attachments=None):
+def make_mock_message(
+    message_id="msg-1",
+    from_="sender@example.com",
+    subject="Test Subject",
+    preview="Hello...",
+    labels=None,
+    timestamp="2026-04-14T12:00:00Z",
+    attachments=None,
+):
     """Create a mock MessageItem."""
     msg = MagicMock()
     msg.message_id = message_id
@@ -115,10 +120,17 @@ class TestEmailCheck:
         assert "no messages" in result.stdout.lower()
 
 
-def make_mock_full_message(message_id="msg-1", from_="sender@example.com",
-                            to=None, subject="Test Subject", text="Hello body",
-                            labels=None, timestamp="2026-04-14T12:00:00Z",
-                            attachments=None, cc=None):
+def make_mock_full_message(
+    message_id="msg-1",
+    from_="sender@example.com",
+    to=None,
+    subject="Test Subject",
+    text="Hello body",
+    labels=None,
+    timestamp="2026-04-14T12:00:00Z",
+    attachments=None,
+    cc=None,
+):
     """Create a mock full Message (from .get())."""
     msg = MagicMock()
     msg.message_id = message_id
@@ -206,7 +218,9 @@ class TestEmailSend:
         resp.message_id = "sent-2"
         client.inboxes.messages.send.return_value = resp
 
-        result = runner.invoke(app, ["email", "send", "jeff@gmail.com", "Hello", "Body", "--cc", "other@example.com"])
+        result = runner.invoke(
+            app, ["email", "send", "jeff@gmail.com", "Hello", "Body", "--cc", "other@example.com"]
+        )
         assert result.exit_code == 0
         call_kwargs = client.inboxes.messages.send.call_args[1]
         assert call_kwargs.get("cc") == "other@example.com"
@@ -217,7 +231,9 @@ class TestEmailSend:
         client = MagicMock()
         mock_client_fn.return_value = client
 
-        result = runner.invoke(app, ["email", "send", "jeff@gmail.com", "Hello", "Body", "--dry-run"])
+        result = runner.invoke(
+            app, ["email", "send", "jeff@gmail.com", "Hello", "Body", "--dry-run"]
+        )
         assert result.exit_code == 0
         assert "dry run" in result.stdout.lower()
         client.inboxes.messages.send.assert_not_called()
@@ -226,18 +242,27 @@ class TestEmailSend:
         body_file = tmp_path / "body.txt"
         body_file.write_text("Body from file", encoding="utf-8")
 
-        with patch("agent_core.email.cli.get_inbox_id", return_value="test@agentmail.to"), \
-             patch("agent_core.email.cli.get_client") as mock_client_fn:
+        with (
+            patch("agent_core.email.cli.get_inbox_id", return_value="test@agentmail.to"),
+            patch("agent_core.email.cli.get_client") as mock_client_fn,
+        ):
             client = MagicMock()
             mock_client_fn.return_value = client
             resp = MagicMock()
             resp.message_id = "sent-3"
             client.inboxes.messages.send.return_value = resp
 
-            result = runner.invoke(app, [
-                "email", "send", "jeff@gmail.com", "Subject",
-                "--body-file", str(body_file),
-            ])
+            result = runner.invoke(
+                app,
+                [
+                    "email",
+                    "send",
+                    "jeff@gmail.com",
+                    "Subject",
+                    "--body-file",
+                    str(body_file),
+                ],
+            )
             assert result.exit_code == 0
             call_kwargs = client.inboxes.messages.send.call_args[1]
             assert "Body from file" in (call_kwargs.get("text", "") or call_kwargs.get("html", ""))
@@ -250,7 +275,9 @@ class TestEmailReply:
         client = MagicMock()
         mock_client_fn.return_value = client
         client.inboxes.messages.get.return_value = make_mock_full_message(
-            message_id="orig-1", from_="alice@example.com", subject="Question",
+            message_id="orig-1",
+            from_="alice@example.com",
+            subject="Question",
         )
         resp = MagicMock()
         resp.message_id = "reply-1"
@@ -267,7 +294,9 @@ class TestEmailReply:
         client = MagicMock()
         mock_client_fn.return_value = client
         client.inboxes.messages.get.return_value = make_mock_full_message(
-            message_id="orig-2", from_="bob@example.com", subject="Re: Hello",
+            message_id="orig-2",
+            from_="bob@example.com",
+            subject="Re: Hello",
         )
 
         result = runner.invoke(app, ["email", "reply", "orig-2", "Got it", "--dry-run"])
@@ -279,8 +308,10 @@ class TestEmailReply:
         body_file = tmp_path / "reply.txt"
         body_file.write_text("Reply from file", encoding="utf-8")
 
-        with patch("agent_core.email.cli.get_inbox_id", return_value="test@agentmail.to"), \
-             patch("agent_core.email.cli.get_client") as mock_client_fn:
+        with (
+            patch("agent_core.email.cli.get_inbox_id", return_value="test@agentmail.to"),
+            patch("agent_core.email.cli.get_client") as mock_client_fn,
+        ):
             client = MagicMock()
             mock_client_fn.return_value = client
             client.inboxes.messages.get.return_value = make_mock_full_message()
@@ -288,9 +319,16 @@ class TestEmailReply:
             resp.message_id = "reply-3"
             client.inboxes.messages.reply.return_value = resp
 
-            result = runner.invoke(app, [
-                "email", "reply", "msg-1", "--body-file", str(body_file),
-            ])
+            result = runner.invoke(
+                app,
+                [
+                    "email",
+                    "reply",
+                    "msg-1",
+                    "--body-file",
+                    str(body_file),
+                ],
+            )
             assert result.exit_code == 0
             call_kwargs = client.inboxes.messages.reply.call_args[1]
             assert "Reply from file" in (call_kwargs.get("text", "") or "")

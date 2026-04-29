@@ -80,8 +80,14 @@ class TestPipelineRun:
         config = {
             "pipelines": {
                 "SessionStart": [
-                    {"tool": "agent_core.hooks.tools.time_injector.TimeInjector", "params": {"format": "%Y"}},
-                    {"tool": "agent_core.hooks.tools.time_injector.TimeInjector", "params": {"format": "%m"}},
+                    {
+                        "tool": "agent_core.hooks.tools.time_injector.TimeInjector",
+                        "params": {"format": "%Y"},
+                    },
+                    {
+                        "tool": "agent_core.hooks.tools.time_injector.TimeInjector",
+                        "params": {"format": "%m"},
+                    },
                 ],
             }
         }
