@@ -49,16 +49,31 @@ async def test_unregister_session_only_clears_if_same_session():
 
 
 @pytest.mark.asyncio
-async def test_register_second_concurrent_session_raises():
-    """Collision guard: second session with no prior unregister is refused."""
+async def test_register_second_session_replaces_first():
+    """Most-recent-wins: a new session replaces the held one."""
     ep = ClaudeCodeMCPEndpoint(name="a", mount="/mcp/a")
     session_a = _FakeSession()
     session_b = _FakeSession()
     ep._register_session(session_a)
-    with pytest.raises(RuntimeError, match="already has an active session"):
-        ep._register_session(session_b)
-    # Original is preserved.
-    assert ep._active_session is session_a
+    ep._register_session(session_b)
+    assert ep._active_session is session_b
+    assert ep._session_active is True
+
+
+@pytest.mark.asyncio
+async def test_old_session_unregister_after_replacement_is_noop():
+    """When the old session's `_claim_session.finally:` fires after it was
+    replaced, the identity check in `_unregister_session` must NOT clear
+    the slot now held by the new session.
+    """
+    ep = ClaudeCodeMCPEndpoint(name="a", mount="/mcp/a")
+    session_a = _FakeSession()
+    session_b = _FakeSession()
+    ep._register_session(session_a)
+    ep._register_session(session_b)  # replaces a
+    ep._unregister_session(session_a)  # late finally on the old session
+    assert ep._active_session is session_b
+    assert ep._session_active is True
 
 
 @pytest.mark.asyncio

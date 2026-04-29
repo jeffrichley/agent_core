@@ -46,44 +46,52 @@ class SessionRegistry(Middleware):
     the session with the endpoint, awaits forever, and runs cleanup in
     finally: when the session task group is cancelled (which fires when the
     SSE stream closes).
+
+    Dedup key is `mcp-session-id` (string), not `id(session)`. The header is
+    the spec-defined stable identifier across HTTP requests in a streamable-
+    HTTP session; `id(session)` happens to also be stable in stateful mode
+    but isn't load-bearing — and using the string makes us robust to clients
+    that genuinely open new logical sessions (most-recent-wins).
     """
 
     def __init__(self, endpoint: "ClaudeCodeMCPEndpoint") -> None:
         self._endpoint = endpoint
-        self._known: set[int] = set()
+        self._spawned_for: set[str] = set()
         self._lock = anyio.Lock()
 
     async def on_message(self, context: MiddlewareContext, call_next) -> Any:
         if context.fastmcp_context is None or context.fastmcp_context.request_context is None:
             return await call_next(context)
 
-        session = context.fastmcp_context.session
-        sid = id(session)
+        ctx = context.fastmcp_context
+        session = ctx.session
+        # `session_id` is the mcp-session-id header (stable across the SSE
+        # stream's lifetime in stateful mode). Fall back to `id(session)` for
+        # in-memory transports that don't have a session id.
+        sid = getattr(ctx, "session_id", None) or f"obj:{id(session)}"
+        log.debug(
+            "endpoint '%s': on_message session_id=%s id(session)=%d",
+            self._endpoint.name,
+            sid,
+            id(session),
+        )
 
         async with self._lock:
-            if sid not in self._known:
+            if sid not in self._spawned_for:
                 tg = getattr(session, "_subscription_task_group", None)
                 if tg is not None:
-                    self._known.add(sid)
+                    self._spawned_for.add(sid)
                     tg.start_soon(self._claim_session, session, sid)
 
         return await call_next(context)
 
-    async def _claim_session(self, session: Any, sid: int) -> None:
+    async def _claim_session(self, session: Any, sid: str) -> None:
         try:
             self._endpoint._register_session(session)
             await anyio.sleep_forever()
-        except RuntimeError:
-            # Collision rejected — caller already holds the slot. Do not
-            # cancel the existing one; just exit this lifetime task.
-            log.warning(
-                "endpoint '%s': refused concurrent session %d (slot held)",
-                self._endpoint.name,
-                sid,
-            )
         finally:
             self._endpoint._unregister_session(session)
-            self._known.discard(sid)
+            self._spawned_for.discard(sid)
 
 
 class ClaudeCodeMCPEndpoint:
@@ -120,15 +128,23 @@ class ClaudeCodeMCPEndpoint:
         self._register_tools()
 
     def _register_session(self, session: Any) -> None:
-        """Capture the active ServerSession; refuse a different concurrent one."""
-        if self._active_session is not None and self._active_session is not session:
-            raise RuntimeError(
-                f"endpoint '{self.name}' already has an active session; "
-                f"refusing concurrent connection"
-            )
+        """Capture the active ServerSession.
+
+        Most-recent-wins: a new session replaces any prior one. The previous
+        session's `_claim_session.finally:` will eventually run (when its
+        task group cancels) and call `_unregister_session(old_session)`,
+        which is identity-checked and will no-op against the new slot.
+        """
+        replaced = self._active_session is not None and self._active_session is not session
         self._active_session = session
         self._session_active = True
-        log.debug("endpoint '%s' captured active session", self.name)
+        if replaced:
+            log.info(
+                "endpoint '%s': replaced active session with newer connection",
+                self.name,
+            )
+        else:
+            log.debug("endpoint '%s' captured active session", self.name)
 
     def _unregister_session(self, session: Any) -> None:
         """Clear the slot if the session matches the one we hold."""
