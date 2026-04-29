@@ -30,6 +30,7 @@ from mcp.shared.session import SessionMessage
 from mcp.types import JSONRPCMessage, JSONRPCNotification
 
 from agent_core.bus.envelope import Envelope
+from agent_core.bus.notify_broker import NotificationBroker
 from agent_core.bus.protocol import EndpointUnavailable
 
 if TYPE_CHECKING:
@@ -100,7 +101,13 @@ class ClaudeCodeMCPEndpoint:
     _URGENCY_RANK = {"red": 0, "yellow": 1, "green": 2}
     _URGENCY_ORDER = ["red", "yellow", "green"]
 
-    def __init__(self, *, name: str, mount: str):
+    def __init__(
+        self,
+        *,
+        name: str,
+        mount: str,
+        notify_broker: "NotificationBroker | None" = None,
+    ):
         self.name = name
         self.mount = mount
         self._mcp: FastMCP = FastMCP(
@@ -124,6 +131,7 @@ class ClaudeCodeMCPEndpoint:
         self._active_session: Any = None  # ServerSession, when connected
         self._notify_debounce_seconds: float = 0.05
         self._debounce_task: asyncio.Task | None = None
+        self._notify_broker = notify_broker
         self._mcp.add_middleware(SessionRegistry(self))
         self._register_tools()
 
@@ -346,14 +354,24 @@ class ClaudeCodeMCPEndpoint:
             await asyncio.sleep(self._notify_debounce_seconds)
         except asyncio.CancelledError:
             return
+        summary = self._build_summary()
+
+        # Always publish to the broker so /notify/<agent> subscribers
+        # (the channel relay) wake the agent regardless of whether the
+        # daemon's HTTP MCP session is currently captured.
+        if self._notify_broker is not None:
+            try:
+                await self._notify_broker.publish(self.name, summary)
+            except Exception:
+                log.warning("endpoint '%s': broker publish failed", self.name, exc_info=True)
+
         session = self._active_session
         if session is None:
             log.info(
-                "endpoint '%s': debounce fired; no active session, skipping push",
+                "endpoint '%s': debounce fired; no active session, skipping HTTP push",
                 self.name,
             )
-            return  # mailbox is authoritative; agent picks up on connect
-        summary = self._build_summary()
+            return
         try:
             message = self._make_channel_notification(summary)
             log.info(
@@ -370,7 +388,6 @@ class ClaudeCodeMCPEndpoint:
                 self.name,
                 exc_info=True,
             )
-            # Best-effort cleanup; the session is presumed dead.
             if self._active_session is session:
                 self._active_session = None
                 self._session_active = False
