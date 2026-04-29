@@ -239,16 +239,19 @@ class ClaudeCodeMCPEndpoint:
     async def deliver(self, envelope: Envelope) -> None:
         """Push the envelope to the connected agent.
 
-        If a session is active: queue and send a mail-arrived notification hint.
-        If no session: queue locally and raise EndpointUnavailable so the bus
-        retries when the session reconnects."""
-        if not self._session_active:
-            self.queue_for_pickup(envelope)
-            raise EndpointUnavailable(f"no MCP session connected for {self.name}")
+        Always queues for pickup and fans out to the NotificationBroker so the
+        stdio relay's SSE subscription on /notify/<agent> wakes the agent even
+        when no HTTP MCP session is attached. If no HTTP MCP session is
+        currently captured, additionally raise EndpointUnavailable so the bus
+        knows direct push isn't available and applies its retry/log semantics.
 
-        # Active session path — queue then notify.
+        The broker fan-out is unconditional; the HTTP push leg inside
+        _fire_after_debounce is already guarded by `if self._active_session is
+        not None`, so this path is safe to take with no session attached."""
         self.queue_for_pickup(envelope)
         await self._notify_mail_arrived()
+        if not self._session_active:
+            raise EndpointUnavailable(f"no MCP session connected for {self.name}")
 
     async def stop(self) -> None:
         self._handle = None
