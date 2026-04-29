@@ -133,6 +133,7 @@ class _FakeDiscordClient:
         self._handlers: dict[str, Callable] = {}
         self._on_ready_event = asyncio.Event()
         self._closed_event: asyncio.Event | None = None
+        self._on_ready_task: asyncio.Task | None = None
 
     def event(self, fn: Callable) -> Callable:
         """Decorator @client.event — registers the handler by function name."""
@@ -160,7 +161,9 @@ class _FakeDiscordClient:
         does not block on the handler. We mirror that by firing on_ready in a
         task, then blocking on the close event."""
         if "on_ready" in self._handlers:
-            asyncio.create_task(self._handlers["on_ready"]())
+            # Hold a reference so test failures inside on_ready don't disappear
+            # into "Task exception was never retrieved" warnings.
+            self._on_ready_task = asyncio.create_task(self._handlers["on_ready"]())
         if self._closed_event is None:
             self._closed_event = asyncio.Event()
         await self._closed_event.wait()

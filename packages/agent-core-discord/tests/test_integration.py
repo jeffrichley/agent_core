@@ -117,9 +117,9 @@ async def test_real_bot_send_react_edit_via_bus(tmp_path):
     bus.register(EndpointSpec(endpoint=probe))
     bus.register(EndpointSpec(endpoint=discord_ep))
 
-    # If start() is broken (awaits blocking gateway loop), this hangs.
-    await bus.start()
     try:
+        # If start() is broken (awaits blocking gateway loop), this hangs.
+        await bus.start()
         # 1. send
         send_id = await probe.send(
             to="discord-it-test",

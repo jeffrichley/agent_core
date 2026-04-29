@@ -171,6 +171,40 @@ async def test_start_returns_while_connect_still_running(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_start_surfaces_connect_failure_quickly(monkeypatch):
+    """Regression: if connect() raises before on_ready fires, start() should
+    surface the real exception fast — not hang on the 30s ready timeout."""
+    from tests.conftest import _FakeDiscordClient
+
+    monkeypatch.setenv("TEST_TOKEN", "fake-token")
+
+    class _FailingClient(_FakeDiscordClient):
+        async def connect(self) -> None:
+            raise RuntimeError("simulated gateway 401")
+
+    fake = _FailingClient()
+    ep = DiscordEndpoint(
+        name="d",
+        target="agent-x",
+        token_env="TEST_TOKEN",
+        _client_factory=lambda **kw: fake,
+    )
+    handle = _FakeBusHandle()
+    start_t0 = asyncio.get_event_loop().time()
+    with pytest.raises(RuntimeError) as exc_info:
+        await asyncio.wait_for(ep.start(handle), timeout=5.0)
+    elapsed = asyncio.get_event_loop().time() - start_t0
+    assert elapsed < 5.0, f"start() should surface connect failure quickly, took {elapsed:.1f}s"
+    # The real cause should chain through.
+    assert "simulated gateway 401" in str(
+        exc_info.value.__cause__
+    ) or "simulated gateway 401" in str(exc_info.value)
+    # Cleanup state should be reset.
+    assert ep._client_task is None
+    assert ep._handle is None
+
+
+@pytest.mark.asyncio
 async def test_start_failure_resets_handle_so_deliver_raises_unavailable(monkeypatch):
     """If start() fails (e.g. token missing), deliver() must still raise
     EndpointUnavailable — start() must roll back self._handle on failure."""

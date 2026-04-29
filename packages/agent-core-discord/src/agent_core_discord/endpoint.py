@@ -161,26 +161,59 @@ class DiscordEndpoint:
                 name=f"discord-endpoint-{self.name}-gateway",
             )
 
-            # Wait for on_ready, with a timeout so a hung connect() can't hang
-            # the bus boot indefinitely.
-            try:
-                await asyncio.wait_for(self._ready_event.wait(), timeout=30.0)
-            except asyncio.TimeoutError as exc:
+            # Race the ready event against the gateway task. Whichever
+            # completes first wins. This avoids a 30s hang when connect()
+            # raises immediately (bad token, network blip, gateway 401) —
+            # the task completes with the exception and we surface the
+            # real cause instead of a generic timeout.
+            ready_wait = asyncio.create_task(self._ready_event.wait(), name="discord-ready-wait")
+            done, _pending = await asyncio.wait(
+                {ready_wait, self._client_task},
+                timeout=30.0,
+                return_when=asyncio.FIRST_COMPLETED,
+            )
+            if not done:
+                # Timeout: cancel the ready waiter (the client task is
+                # cleaned up by rollback below).
+                ready_wait.cancel()
                 raise RuntimeError(
                     f"discord endpoint '{self.name}': bot did not become ready within 30s"
-                ) from exc
+                )
+            if self._client_task in done:
+                # connect() exited before on_ready fired — surface the real cause.
+                ready_wait.cancel()
+                exc = self._client_task.exception()
+                if exc is not None:
+                    raise RuntimeError(
+                        f"discord endpoint '{self.name}': gateway connect failed before ready"
+                    ) from exc
+                raise RuntimeError(
+                    f"discord endpoint '{self.name}': gateway connect returned before ready"
+                )
+            # ready_wait completed first — happy path.
         except BaseException:
             _active_endpoints.pop(self.name, None)
-            task = self._client_task
-            if task is not None and not task.done():
-                task.cancel()
-                with contextlib.suppress(asyncio.CancelledError, Exception):
-                    await task
+            if self._client_task is not None:
+                self._client_task.cancel()
+                try:
+                    await self._client_task
+                except asyncio.CancelledError:
+                    pass
+                except Exception:
+                    log.exception(
+                        "discord endpoint '%s': gateway task raised during start rollback",
+                        self.name,
+                    )
+                self._client_task = None
             if self._client is not None:
-                with contextlib.suppress(Exception):
+                try:
                     await self._client.close()
+                except Exception:
+                    log.exception(
+                        "discord endpoint '%s': client.close() raised during start rollback",
+                        self.name,
+                    )
             self._client = None
-            self._client_task = None
             self._handle = None
             raise
 
@@ -250,12 +283,18 @@ class DiscordEndpoint:
 
     async def stop(self) -> None:
         _active_endpoints.pop(self.name, None)
-        task = self._client_task
-        if task is not None and not task.done():
-            task.cancel()
-            with contextlib.suppress(asyncio.CancelledError, Exception):
-                await task
-        self._client_task = None
+        if self._client_task is not None:
+            self._client_task.cancel()
+            try:
+                await self._client_task
+            except asyncio.CancelledError:
+                pass
+            except Exception:
+                log.exception(
+                    "discord endpoint '%s': gateway task raised during stop",
+                    self.name,
+                )
+            self._client_task = None
         if self._client is not None:
             try:
                 await self._client.close()
