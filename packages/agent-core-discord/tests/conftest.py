@@ -170,3 +170,13 @@ class _FakeDiscordClient:
         self._guilds[g.id] = g
         for ch in g.channels:
             self._channels[ch.id] = ch
+
+
+class _FakeBusHandle:
+    """Minimal BusHandle stub for endpoint lifecycle tests."""
+
+    async def publish(self, *a, **kw): ...
+    async def ack(self, *a, **kw): ...
+    async def nack(self, *a, **kw): ...
+    def endpoints(self):
+        return []

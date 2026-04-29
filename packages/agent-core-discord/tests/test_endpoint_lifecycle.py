@@ -8,14 +8,7 @@ import pytest
 
 from agent_core.bus.protocol import Endpoint
 from agent_core_discord.endpoint import DiscordEndpoint, _active_endpoints
-
-
-class _FakeBusHandle:
-    async def publish(self, *a, **kw): ...
-    async def ack(self, *a, **kw): ...
-    async def nack(self, *a, **kw): ...
-    def endpoints(self):
-        return []
+from tests.conftest import _FakeBusHandle
 
 
 def test_endpoint_satisfies_endpoint_protocol():
@@ -142,6 +135,38 @@ async def test_deliver_raises_when_not_started():
         id=uuid.uuid4().hex,
         correlation_id=uuid.uuid4().hex,
         to="discord-test",
+        kind="ToolInvocation",
+        payload=ToolInvocationPayload(tool="send", args={}),
+        created_at=datetime.now(timezone.utc),
+    )
+    with pytest.raises(EndpointUnavailable):
+        await ep.deliver(env)
+
+
+@pytest.mark.asyncio
+async def test_start_failure_resets_handle_so_deliver_raises_unavailable(monkeypatch):
+    """If start() fails (e.g. token missing), deliver() must still raise
+    EndpointUnavailable — start() must roll back self._handle on failure."""
+    from datetime import datetime, timezone
+    import uuid
+
+    from agent_core.bus.envelope import Envelope, ToolInvocationPayload
+    from agent_core.bus.protocol import EndpointUnavailable
+
+    monkeypatch.delenv("DISCORD_ROLLBACK_MISSING", raising=False)
+    ep = DiscordEndpoint(
+        name="discord-rollback-test",
+        target="agent-test",
+        token_env="DISCORD_ROLLBACK_MISSING",
+    )
+    with pytest.raises(RuntimeError):
+        await ep.start(_FakeBusHandle())
+
+    # Even though start() raised, deliver() must treat the endpoint as not-running.
+    env = Envelope(
+        id=uuid.uuid4().hex,
+        correlation_id=uuid.uuid4().hex,
+        to="discord-rollback-test",
         kind="ToolInvocation",
         payload=ToolInvocationPayload(tool="send", args={}),
         created_at=datetime.now(timezone.utc),

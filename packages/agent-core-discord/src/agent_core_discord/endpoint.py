@@ -11,6 +11,7 @@ just owns lifecycle and dispatch entry points.
 
 from __future__ import annotations
 
+import contextlib
 import logging
 import os
 from collections.abc import Callable
@@ -60,7 +61,7 @@ class DiscordEndpoint:
             Path(access_config_path).expanduser() if access_config_path else None
         )
         self.attachments_dir: Path = (
-            Path(attachments_dir).expanduser()
+            Path(attachments_dir).expanduser().resolve()
             if attachments_dir
             else _default_attachments_dir(name)
         )
@@ -74,56 +75,54 @@ class DiscordEndpoint:
 
     async def start(self, bus: BusHandle) -> None:
         self._handle = bus
-
-        # 1. Load env_file (if set).
-        if self.env_file is not None and self.env_file.exists():
-            from dotenv import load_dotenv
-
-            load_dotenv(self.env_file, override=False)
-            log.info("loaded env file: %s", self.env_file)
-
-        # 2. Read the bot token. Fail fast if missing.
-        token = os.environ.get(self.token_env)
-        if not token:
-            raise RuntimeError(
-                f"discord endpoint '{self.name}': env var "
-                f"'{self.token_env}' is not set (env_file={self.env_file})"
-            )
-
-        # 3. Load access policy (or use permissive defaults).
-        self._access = load_access_config(self.access_config_path)
-
-        # 4. Create the Discord client. The factory seam lets tests inject a
-        #    fake client without touching discord.py.
-        if self._client_factory is None:
-            import discord
-
-            intents = discord.Intents.default()
-            intents.message_content = True
-            intents.reactions = True
-            self._client = discord.Client(intents=intents)
-        else:
-            self._client = self._client_factory(intents=None)
-
-        # 5. Wire event handlers (Task 4 fills the on_message body, Task 5 the
-        #    on_reaction_add body).
-        self._client.event(self._make_on_message_handler())
-        self._client.event(self._make_on_reaction_add_handler())
-
-        # 6. Register in the live endpoint map BEFORE awaiting client.start, so
-        #    racing on_ready callbacks find us. Pop-on-failure below.
-        _active_endpoints[self.name] = self
-
-        # 7. Connect the bot. discord.Client.start() runs the event loop until
-        #    closed; tests' fake client returns immediately after on_ready.
         try:
+            # 1. Load env_file (if set).
+            if self.env_file is not None and self.env_file.exists():
+                from dotenv import load_dotenv
+
+                load_dotenv(self.env_file, override=False)
+                log.info("loaded env file: %s", self.env_file)
+
+            # 2. Read the bot token. Fail fast if missing.
+            token = os.environ.get(self.token_env)
+            if not token:
+                raise RuntimeError(
+                    f"discord endpoint '{self.name}': env var "
+                    f"'{self.token_env}' is not set (env_file={self.env_file})"
+                )
+
+            # 3. Load access policy (or use permissive defaults).
+            self._access = load_access_config(self.access_config_path)
+
+            # 4. Create the Discord client. The factory seam lets tests inject a
+            #    fake client without touching discord.py.
+            if self._client_factory is None:
+                import discord
+
+                intents = discord.Intents.default()
+                intents.message_content = True
+                intents.reactions = True
+                self._client = discord.Client(intents=intents)
+            else:
+                self._client = self._client_factory(intents=None)
+
+            # 5. Wire event handlers (Task 4 fills the on_message body, Task 5 the
+            #    on_reaction_add body).
+            self._client.event(self._make_on_message_handler())
+            self._client.event(self._make_on_reaction_add_handler())
+
+            # 6. Register in the live endpoint map BEFORE awaiting client.start, so
+            #    racing on_ready callbacks find us.
+            _active_endpoints[self.name] = self
+
+            # 7. Connect the bot. discord.Client.start() runs the event loop until
+            #    closed; tests' fake client returns immediately after on_ready.
             await self._client.start(token)
         except BaseException:
             _active_endpoints.pop(self.name, None)
-            try:
-                await self._client.close()
-            except Exception:
-                log.exception("rollback close() failed during start()")
+            if self._client is not None:
+                with contextlib.suppress(Exception):
+                    await self._client.close()
             self._client = None
             self._handle = None
             raise
