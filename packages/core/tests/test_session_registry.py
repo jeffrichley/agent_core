@@ -7,36 +7,14 @@ import pytest
 from agent_core.endpoints.claude_code_mcp import ClaudeCodeMCPEndpoint
 
 
-class _FakeTaskGroup:
-    """Mimics anyio.TaskGroup just enough for the middleware test."""
-
-    def __init__(self):
-        self.spawned: list[tuple] = []
-
-    def start_soon(self, fn, *args, name: str | None = None) -> None:
-        # Capture; we'll drive it by hand in tests.
-        self.spawned.append((fn, args))
-
-
 class _FakeSession:
-    def __init__(self):
-        self._subscription_task_group = _FakeTaskGroup()
-        # Test helper to run the spawned _claim_session body manually.
+    """Stand-in object identity for register/unregister tests.
 
-    @property
-    def task_group(self) -> _FakeTaskGroup:
-        return self._subscription_task_group
-
-
-class _FakeFastMCPContext:
-    def __init__(self, session: _FakeSession):
-        self.session = session
-        self.request_context = object()  # truthy
-
-
-class _FakeMiddlewareContext:
-    def __init__(self, session: _FakeSession):
-        self.fastmcp_context = _FakeFastMCPContext(session)
+    The middleware loop (`on_message` → `_claim_session` → `start_soon`) is
+    covered end-to-end by `test_session_active_flag_set_after_mcp_message`
+    in `test_claude_code_mcp.py`. These tests drive the sync register/
+    unregister methods directly, so the fake only needs unique identity.
+    """
 
 
 @pytest.mark.asyncio
