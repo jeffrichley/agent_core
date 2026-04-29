@@ -69,7 +69,7 @@ class SessionRegistry(Middleware):
         # stream's lifetime in stateful mode). Fall back to `id(session)` for
         # in-memory transports that don't have a session id.
         sid = getattr(ctx, "session_id", None) or f"obj:{id(session)}"
-        log.debug(
+        log.info(
             "endpoint '%s': on_message session_id=%s id(session)=%d",
             self._endpoint.name,
             sid,
@@ -340,11 +340,22 @@ class ClaudeCodeMCPEndpoint:
             return
         session = self._active_session
         if session is None:
+            log.info(
+                "endpoint '%s': debounce fired; no active session, skipping push",
+                self.name,
+            )
             return  # mailbox is authoritative; agent picks up on connect
         summary = self._build_summary()
         try:
             message = self._make_channel_notification(summary)
+            log.info(
+                "endpoint '%s': pushing notifications/claude/channel to session %d (count=%d)",
+                self.name,
+                id(session),
+                summary["meta"]["count"],
+            )
             await session.send_message(message)
+            log.info("endpoint '%s': push to session %d returned", self.name, id(session))
         except Exception:
             log.warning(
                 "endpoint '%s': push to active session failed; clearing slot",
