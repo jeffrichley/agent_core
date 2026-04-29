@@ -12,6 +12,7 @@ just owns lifecycle and dispatch entry points.
 from __future__ import annotations
 
 import contextlib
+import json
 import logging
 import os
 import uuid
@@ -20,10 +21,24 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from agent_core.bus.envelope import Envelope, EventPayload, TextMessagePayload
+from agent_core.bus.envelope import (
+    AcknowledgmentPayload,
+    Envelope,
+    EventPayload,
+    TextMessagePayload,
+)
 from agent_core.bus.protocol import EndpointUnavailable
 
 from agent_core_discord.access import AccessConfig, InboundContext, gate_message, load_access_config
+from agent_core_discord.args import (
+    _DownloadAttachmentsArgs,
+    _EditArgs,
+    _FetchArgs,
+    _GetChannelInfoArgs,
+    _ListChannelsArgs,
+    _ReactArgs,
+    _SendArgs,
+)
 
 if TYPE_CHECKING:
     from agent_core.bus.handle import BusHandle
@@ -137,11 +152,61 @@ class DiscordEndpoint:
         )
 
     async def deliver(self, envelope: Envelope) -> None:
-        # Tool dispatch lands in Task 6. For now, just guard the not-started case.
+        """Handle ToolInvocation envelopes; warn on others."""
         if self._handle is None:
             raise EndpointUnavailable(f"discord '{self.name}' not started")
-        # Real dispatch in Task 6.
+
+        if envelope.kind != "ToolInvocation":
+            await self._reply(envelope, f"warning: unsupported envelope kind '{envelope.kind}'")
+            await self._handle.ack(envelope.id)
+            return
+
+        tool = envelope.payload.tool  # type: ignore[union-attr]
+        args = envelope.payload.args  # type: ignore[union-attr]
+
+        try:
+            result = await self._dispatch(tool, args)
+            await self._reply(envelope, json.dumps(result))
+        except _ToolError as exc:
+            await self._reply(envelope, f"error: {exc}")
+        except Exception as exc:
+            log.exception("discord tool '%s' raised", tool)
+            await self._reply(envelope, f"error: {exc}")
+
         await self._handle.ack(envelope.id)
+
+    async def _dispatch(self, tool: str, args: dict) -> Any:
+        if tool == "send":
+            return await self._send(_SendArgs(**args))
+        if tool == "edit":
+            return await self._edit(_EditArgs(**args))
+        if tool == "react":
+            return await self._react(_ReactArgs(**args))
+        if tool == "fetch":
+            return await self._fetch(_FetchArgs(**args))
+        if tool == "download_attachments":
+            return await self._download_attachments(_DownloadAttachmentsArgs(**args))
+        if tool == "list_channels":
+            return await self._list_channels(_ListChannelsArgs(**args))
+        if tool == "get_channel_info":
+            return await self._get_channel_info(_GetChannelInfoArgs(**args))
+        raise _ToolError(f"unknown tool '{tool}'")
+
+    async def _reply(self, incoming: Envelope, note: str) -> None:
+        assert self._handle is not None
+        ack = Envelope(
+            id=uuid.uuid4().hex,
+            correlation_id=incoming.correlation_id,
+            in_reply_to=incoming.id,
+            to=incoming.from_,
+            kind="Acknowledgment",
+            payload=AcknowledgmentPayload(of=incoming.id, note=note),
+            created_at=datetime.now(timezone.utc),
+        )
+        try:
+            await self._handle.publish(ack)
+        except Exception:
+            log.exception("discord reply publish failed for %s", incoming.id)
 
     async def stop(self) -> None:
         _active_endpoints.pop(self.name, None)
@@ -262,3 +327,139 @@ class DiscordEndpoint:
             await self._handle.publish(env)
 
         return on_reaction_add
+
+    # --- Outbound tool handlers (Task 6: send, edit, react). ---
+
+    async def _resolve_channel(self, channel_id: str):
+        ch = self._client.get_channel(channel_id) if self._client else None
+        if ch is None and self._client is not None:
+            try:
+                ch = await self._client.fetch_channel(channel_id)
+            except Exception as exc:
+                raise _ToolError(f"channel '{channel_id}' not found: {exc}") from exc
+        if ch is None:
+            raise _ToolError(f"channel '{channel_id}' not found")
+        return ch
+
+    async def _clear_pending_ack(self, channel, message_id: str) -> None:
+        emoji = self._pending_acks.pop(message_id, None)
+        if not emoji:
+            return
+        try:
+            msg = await channel.fetch_message(message_id)
+        except Exception:
+            return
+        if msg is None:
+            return
+        with contextlib.suppress(Exception):
+            await msg.remove_reaction(emoji, self._client.user)
+
+    async def _send(self, args: _SendArgs) -> dict:
+        if args.text is None and not args.embeds:
+            raise _ToolError("send: one of 'text' or 'embeds' is required")
+        ch = await self._resolve_channel(args.channel_id)
+
+        # Build embeds list (validate via discord.Embed.from_dict).
+        embeds = None
+        if args.embeds:
+            try:
+                import discord  # type: ignore
+
+                embeds = [discord.Embed.from_dict(e) for e in args.embeds]
+            except ImportError:
+                # Tests with the fake client have no real discord — pass dicts through.
+                embeds = list(args.embeds)
+            except Exception as exc:
+                raise _ToolError(f"send: invalid embed: {exc}") from exc
+
+        # Build reply reference if reply_to provided.
+        reference = None
+        if args.reply_to:
+            try:
+                target = await ch.fetch_message(args.reply_to)
+            except Exception:
+                target = None
+            if target is None:
+                raise _ToolError(f"send: reply_to message '{args.reply_to}' not found")
+            try:
+                import discord  # type: ignore
+
+                reference = discord.MessageReference.from_message(target)
+            except (ImportError, AttributeError):
+                # Fakes don't need a real reference; pass the message itself as a marker.
+                reference = target
+
+        files = None  # File handling is mechanical; integration test exercises real files.
+        if args.files:
+            try:
+                import discord  # type: ignore
+
+                files = [discord.File(f) for f in args.files]
+            except ImportError:
+                files = list(args.files)
+            except Exception as exc:
+                raise _ToolError(f"send: invalid files: {exc}") from exc
+
+        new_msg = await ch.send(args.text, embeds=embeds, reference=reference, files=files)
+
+        # Clear the eyes if this was a reply to a tracked inbound.
+        if args.reply_to:
+            await self._clear_pending_ack(ch, args.reply_to)
+
+        return {"status": "sent", "message_id": str(new_msg.id)}
+
+    async def _edit(self, args: _EditArgs) -> dict:
+        if args.text is None and not args.embeds:
+            raise _ToolError("edit: one of 'text' or 'embeds' is required")
+        ch = await self._resolve_channel(args.channel_id)
+        try:
+            msg = await ch.fetch_message(args.message_id)
+        except Exception as exc:
+            raise _ToolError(f"edit: message '{args.message_id}' not found: {exc}") from exc
+        if msg is None:
+            raise _ToolError(f"edit: message '{args.message_id}' not found")
+
+        embeds = None
+        if args.embeds:
+            try:
+                import discord  # type: ignore
+
+                embeds = [discord.Embed.from_dict(e) for e in args.embeds]
+            except ImportError:
+                embeds = list(args.embeds)
+            except Exception as exc:
+                raise _ToolError(f"edit: invalid embed: {exc}") from exc
+
+        await msg.edit(content=args.text, embeds=embeds)
+        return {"status": "edited", "message_id": args.message_id}
+
+    async def _react(self, args: _ReactArgs) -> dict:
+        ch = await self._resolve_channel(args.channel_id)
+        try:
+            msg = await ch.fetch_message(args.message_id)
+        except Exception as exc:
+            raise _ToolError(f"react: message '{args.message_id}' not found: {exc}") from exc
+        if msg is None:
+            raise _ToolError(f"react: message '{args.message_id}' not found")
+        await msg.add_reaction(args.emoji)
+        # Clear the eyes if this reaction is on a tracked inbound message.
+        await self._clear_pending_ack(ch, args.message_id)
+        return {"status": "reacted", "emoji": args.emoji}
+
+    # _fetch, _download_attachments, _list_channels, _get_channel_info land in Tasks 7 and 8.
+
+    async def _fetch(self, args: _FetchArgs) -> list[dict]:
+        raise _ToolError("fetch: not implemented yet (Task 7)")
+
+    async def _download_attachments(self, args: _DownloadAttachmentsArgs) -> dict:
+        raise _ToolError("download_attachments: not implemented yet (Task 7)")
+
+    async def _list_channels(self, args: _ListChannelsArgs) -> list[dict]:
+        raise _ToolError("list_channels: not implemented yet (Task 8)")
+
+    async def _get_channel_info(self, args: _GetChannelInfoArgs) -> dict:
+        raise _ToolError("get_channel_info: not implemented yet (Task 8)")
+
+
+class _ToolError(Exception):
+    """User-error during tool dispatch — produces an Acknowledgment with note."""
