@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from agent_core.bus.envelope import EndpointInfo, Envelope, TextMessagePayload
+from agent_core.bus.envelope import EndpointInfo, Envelope, EventPayload, TextMessagePayload
 from agent_core_discord.endpoint import DiscordEndpoint
 from tests.conftest import _FakeChannel, _FakeDiscordClient, _FakeMessage, _FakeUser
 
@@ -192,5 +192,114 @@ async def test_on_message_dm_inbound_is_marked(monkeypatch):
         env = handle.published[0]
         assert env.metadata["discord"]["is_dm"] is True
         assert env.metadata["discord"]["guild_id"] == ""
+    finally:
+        await ep.stop()
+
+
+class _FakeReaction:
+    def __init__(self, *, emoji: str, message: _FakeMessage):
+        self.emoji = emoji
+        self.message = message
+
+
+@pytest.mark.asyncio
+async def test_on_reaction_add_publishes_event_envelope(monkeypatch):
+    ep, handle, fake = await _start_endpoint(monkeypatch)
+    fake.add_channel(_FakeChannel(id="200"))
+    bot_msg = _FakeMessage(id="bot-msg-1", channel_id="200", content="hello from bot")
+    bot_msg.author = fake.user
+    bot_msg.guild = type("G", (), {"id": "guild-1"})()
+    bot_msg.channel = fake.get_channel("200")
+    fake._channels["200"]._messages["bot-msg-1"] = bot_msg
+
+    user = _FakeUser(id="100", name="alice", display_name="Alice")
+    reaction = _FakeReaction(emoji="👍", message=bot_msg)
+    try:
+        await fake.fire("on_reaction_add", reaction, user)
+        assert len(handle.published) == 1
+        env = handle.published[0]
+        assert env.kind == "Event"
+        assert isinstance(env.payload, EventPayload)
+        assert env.payload.type == "discord.reaction_add"
+        assert env.payload.data["emoji"] == "👍"
+        assert env.payload.data["message_id"] == "bot-msg-1"
+        assert env.payload.data["channel_id"] == "200"
+        assert env.payload.data["user_id"] == "100"
+        assert env.payload.data["user_display_name"] == "Alice"
+    finally:
+        await ep.stop()
+
+
+@pytest.mark.asyncio
+async def test_on_reaction_add_drops_self_reactions(monkeypatch):
+    ep, handle, fake = await _start_endpoint(monkeypatch)
+    fake.add_channel(_FakeChannel(id="200"))
+    bot_msg = _FakeMessage(id="bm", channel_id="200")
+    bot_msg.author = fake.user
+    bot_msg.guild = type("G", (), {"id": "g"})()
+    bot_msg.channel = fake.get_channel("200")
+
+    reaction = _FakeReaction(emoji="👍", message=bot_msg)
+    # The reaction is from the bot itself.
+    try:
+        await fake.fire("on_reaction_add", reaction, fake.user)
+        assert handle.published == []
+    finally:
+        await ep.stop()
+
+
+@pytest.mark.asyncio
+async def test_on_reaction_add_drops_other_bots(monkeypatch):
+    ep, handle, fake = await _start_endpoint(monkeypatch)
+    fake.add_channel(_FakeChannel(id="200"))
+    msg = _FakeMessage(id="m", channel_id="200")
+    msg.author = fake.user
+    msg.guild = type("G", (), {"id": "g"})()
+    msg.channel = fake.get_channel("200")
+
+    other_bot = _FakeUser(id="999", name="other-bot", bot=True)
+    reaction = _FakeReaction(emoji="👍", message=msg)
+    try:
+        await fake.fire("on_reaction_add", reaction, other_bot)
+        assert handle.published == []
+    finally:
+        await ep.stop()
+
+
+@pytest.mark.asyncio
+async def test_on_reaction_add_drops_ack_emoji(monkeypatch):
+    """The bot's own 👀 ack reaction should never bounce back as an event."""
+    ep, handle, fake = await _start_endpoint(monkeypatch)
+    fake.add_channel(_FakeChannel(id="200"))
+    msg = _FakeMessage(id="m", channel_id="200")
+    msg.author = fake.user
+    msg.guild = type("G", (), {"id": "g"})()
+    msg.channel = fake.get_channel("200")
+
+    user = _FakeUser(id="100")
+    reaction = _FakeReaction(emoji="👀", message=msg)  # the ack emoji
+    try:
+        await fake.fire("on_reaction_add", reaction, user)
+        assert handle.published == []
+    finally:
+        await ep.stop()
+
+
+@pytest.mark.asyncio
+async def test_on_reaction_add_dm_context(monkeypatch):
+    ep, handle, fake = await _start_endpoint(monkeypatch)
+    fake.add_channel(_FakeChannel(id="dm"))
+    msg = _FakeMessage(id="m", channel_id="dm")
+    msg.author = fake.user
+    msg.guild = None  # DM
+    msg.channel = fake.get_channel("dm")
+
+    user = _FakeUser(id="100", name="alice", display_name="Alice")
+    reaction = _FakeReaction(emoji="🔥", message=msg)
+    try:
+        await fake.fire("on_reaction_add", reaction, user)
+        env = handle.published[0]
+        assert env.payload.data["guild_id"] == ""
+        assert env.payload.data["channel_id"] == "dm"
     finally:
         await ep.stop()

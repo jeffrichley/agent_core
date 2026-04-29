@@ -20,7 +20,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from agent_core.bus.envelope import Envelope, TextMessagePayload
+from agent_core.bus.envelope import Envelope, EventPayload, TextMessagePayload
 from agent_core.bus.protocol import EndpointUnavailable
 
 from agent_core_discord.access import AccessConfig, InboundContext, gate_message, load_access_config
@@ -230,8 +230,35 @@ class DiscordEndpoint:
         return on_message
 
     def _make_on_reaction_add_handler(self):
-        async def on_reaction_add(reaction, user):
-            # Body in Task 5.
-            return None
+        async def on_reaction_add(reaction: Any, user: Any) -> None:
+            # 1. Drop the bot's own reactions.
+            if user == self._client.user or user.bot:
+                return
+
+            # 2. Drop the ack emoji (the bot's own 👀, even if user reacts with same).
+            ack_emoji = self._access.ack_reaction
+            if ack_emoji and str(reaction.emoji) == ack_emoji:
+                return
+
+            # 3. Build the Event envelope.
+            message = reaction.message
+            data: dict[str, Any] = {
+                "emoji": str(reaction.emoji),
+                "channel_id": str(message.channel.id),
+                "message_id": str(message.id),
+                "guild_id": str(message.guild.id) if message.guild else "",
+                "user_id": str(user.id),
+                "user_display_name": getattr(user, "display_name", "") or "",
+            }
+            env = Envelope(
+                id=uuid.uuid4().hex,
+                correlation_id=uuid.uuid4().hex,
+                to=self.target,
+                kind="Event",
+                payload=EventPayload(type="discord.reaction_add", data=data),
+                created_at=datetime.now(timezone.utc),
+            )
+            assert self._handle is not None
+            await self._handle.publish(env)
 
         return on_reaction_add
