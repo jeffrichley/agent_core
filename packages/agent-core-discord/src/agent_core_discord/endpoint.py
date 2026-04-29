@@ -529,10 +529,34 @@ class DiscordEndpoint:
         return {"saved": saved}
 
     async def _list_channels(self, args: _ListChannelsArgs) -> list[dict]:
-        raise _ToolError("list_channels: not implemented yet (Task 8)")
+        out: list[dict] = []
+        if self._client is None:
+            return out
+        for g in self._client.guilds:
+            if args.guild_id is not None and str(g.id) != args.guild_id:
+                continue
+            for ch in g.channels:
+                out.append(
+                    {
+                        "id": str(ch.id),
+                        "name": getattr(ch, "name", ""),
+                        "type": str(getattr(ch, "type", "text")),
+                        "guild_id": str(getattr(ch, "guild_id", g.id)),
+                        "topic": getattr(ch, "topic", "") or "",
+                    }
+                )
+        return out
 
     async def _get_channel_info(self, args: _GetChannelInfoArgs) -> dict:
-        raise _ToolError("get_channel_info: not implemented yet (Task 8)")
+        ch = await self._resolve_channel(args.channel_id)
+        return {
+            "id": str(ch.id),
+            "name": getattr(ch, "name", ""),
+            "type": str(getattr(ch, "type", "text")),
+            "guild_id": str(getattr(ch, "guild_id", "") or ""),
+            "topic": getattr(ch, "topic", "") or "",
+            "nsfw": bool(getattr(ch, "nsfw", False)),
+        }
 
 
 class _ToolError(Exception):

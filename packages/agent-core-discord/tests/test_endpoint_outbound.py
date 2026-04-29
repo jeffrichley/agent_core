@@ -15,7 +15,7 @@ from agent_core.bus.envelope import (
     ToolInvocationPayload,
 )
 from agent_core_discord.endpoint import DiscordEndpoint
-from tests.conftest import _FakeChannel, _FakeDiscordClient, _FakeMessage
+from tests.conftest import _FakeChannel, _FakeDiscordClient, _FakeGuild, _FakeMessage
 
 
 class _Recording:
@@ -440,5 +440,100 @@ async def test_download_attachments_empty_urls_returns_empty(monkeypatch, tmp_pa
         ack = [e for e in handle.published if e.kind == "Acknowledgment"][0]
         result = json.loads(ack.payload.note)
         assert result["saved"] == []
+    finally:
+        await ep.stop()
+
+
+# --- list_channels ---
+
+
+@pytest.mark.asyncio
+async def test_list_channels_returns_all_when_no_guild_filter(monkeypatch):
+    ep, handle, fake = await _started(monkeypatch)
+    ch1 = _FakeChannel(id="200", name="general", channel_type="text", guild_id="g1")
+    ch2 = _FakeChannel(id="201", name="random", channel_type="text", guild_id="g1")
+    g = _FakeGuild(id="g1", channels=[ch1, ch2])
+    fake.add_guild(g)
+    try:
+        env = _envelope(
+            "e",
+            "agent-test",
+            "discord-test",
+            _toolcall("list_channels", {}),
+        )
+        await ep.deliver(env)
+        ack = [e for e in handle.published if e.kind == "Acknowledgment"][0]
+        result = json.loads(ack.payload.note)
+        assert len(result) == 2
+        names = {entry["name"] for entry in result}
+        assert names == {"general", "random"}
+    finally:
+        await ep.stop()
+
+
+@pytest.mark.asyncio
+async def test_list_channels_filters_by_guild_id(monkeypatch):
+    ep, handle, fake = await _started(monkeypatch)
+    ch1 = _FakeChannel(id="200", name="general", guild_id="g1")
+    ch2 = _FakeChannel(id="300", name="other", guild_id="g2")
+    g1 = _FakeGuild(id="g1", channels=[ch1])
+    g2 = _FakeGuild(id="g2", channels=[ch2])
+    fake.add_guild(g1)
+    fake.add_guild(g2)
+    try:
+        env = _envelope(
+            "e",
+            "agent-test",
+            "discord-test",
+            _toolcall("list_channels", {"guild_id": "g1"}),
+        )
+        await ep.deliver(env)
+        ack = [e for e in handle.published if e.kind == "Acknowledgment"][0]
+        result = json.loads(ack.payload.note)
+        names = {entry["name"] for entry in result}
+        assert names == {"general"}
+    finally:
+        await ep.stop()
+
+
+# --- get_channel_info ---
+
+
+@pytest.mark.asyncio
+async def test_get_channel_info_returns_metadata(monkeypatch):
+    ep, handle, fake = await _started(monkeypatch)
+    ch = _FakeChannel(id="200", name="general", guild_id="g1")
+    ch.topic = "the main channel"
+    fake.add_channel(ch)
+    try:
+        env = _envelope(
+            "e",
+            "agent-test",
+            "discord-test",
+            _toolcall("get_channel_info", {"channel_id": "200"}),
+        )
+        await ep.deliver(env)
+        ack = [e for e in handle.published if e.kind == "Acknowledgment"][0]
+        result = json.loads(ack.payload.note)
+        assert result["id"] == "200"
+        assert result["name"] == "general"
+        assert result["topic"] == "the main channel"
+    finally:
+        await ep.stop()
+
+
+@pytest.mark.asyncio
+async def test_get_channel_info_unknown_returns_error(monkeypatch):
+    ep, handle, fake = await _started(monkeypatch)
+    try:
+        env = _envelope(
+            "e",
+            "agent-test",
+            "discord-test",
+            _toolcall("get_channel_info", {"channel_id": "missing"}),
+        )
+        await ep.deliver(env)
+        ack = [e for e in handle.published if e.kind == "Acknowledgment"][0]
+        assert "not found" in ack.payload.note.lower()
     finally:
         await ep.stop()
