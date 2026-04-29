@@ -199,7 +199,11 @@ async def test_edit_replaces_content(monkeypatch):
             ),
         )
         await ep.deliver(env)
-        assert any(edit["content"] == "new" for edit in msg.edits)
+        assert any(edit.get("content") == "new" for edit in msg.edits)
+        # Regression: when the agent supplies only text, embeds must NOT be
+        # passed to msg.edit at all (real discord.py crashes on embeds=None).
+        for edit in msg.edits:
+            assert "embeds" not in edit, "edit() must omit embeds when not supplied"
         ack = [e for e in handle.published if e.kind == "Acknowledgment"][0]
         result = json.loads(ack.payload.note)
         assert result["status"] == "edited"

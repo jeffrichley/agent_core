@@ -708,7 +708,17 @@ class DiscordEndpoint:
             except Exception as exc:
                 raise _ToolError(f"send: invalid files: {exc}") from exc
 
-        new_msg = await ch.send(args.text, embeds=embeds, reference=reference, files=files)
+        # Only pass kwargs we actually have. discord.py uses MISSING sentinels
+        # internally and chokes on explicit None for some fields (e.g. embeds=None
+        # raises "object of type 'NoneType' has no len()"). Build the call dict.
+        send_kwargs: dict[str, Any] = {}
+        if embeds is not None:
+            send_kwargs["embeds"] = embeds
+        if reference is not None:
+            send_kwargs["reference"] = reference
+        if files is not None:
+            send_kwargs["files"] = files
+        new_msg = await ch.send(args.text, **send_kwargs)
 
         # Clear the eyes if this was a reply to a tracked inbound.
         if args.reply_to:
@@ -739,7 +749,15 @@ class DiscordEndpoint:
             except Exception as exc:
                 raise _ToolError(f"edit: invalid embed: {exc}") from exc
 
-        await msg.edit(content=args.text, embeds=embeds)
+        # Only pass kwargs we actually have. Real discord.py.Message.edit
+        # rejects `embeds=None` ("object of type 'NoneType' has no len()");
+        # the right way to "leave embeds alone" is to omit the kwarg.
+        edit_kwargs: dict[str, Any] = {}
+        if args.text is not None:
+            edit_kwargs["content"] = args.text
+        if embeds is not None:
+            edit_kwargs["embeds"] = embeds
+        await msg.edit(**edit_kwargs)
         return {"status": "edited", "message_id": args.message_id}
 
     async def _react(self, args: _ReactArgs) -> dict:

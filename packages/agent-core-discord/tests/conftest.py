@@ -26,8 +26,14 @@ class _FakeMessage:
         if emoji in self.reactions:
             self.reactions.remove(emoji)
 
-    async def edit(self, *, content: str | None = None, embeds: list | None = None) -> None:
-        self.edits.append({"content": content, "embeds": embeds})
+    async def edit(self, **kwargs: Any) -> None:
+        # Mirror discord.py's stricter contract. Passing embeds=None raises
+        # `object of type 'NoneType' has no len()` in real Message.edit;
+        # the right call-site idiom is to omit the kwarg entirely. Catch this
+        # at the fake so unit tests fail when production passes None.
+        if "embeds" in kwargs and kwargs["embeds"] is None:
+            raise TypeError("object of type 'NoneType' has no len()")
+        self.edits.append(kwargs)
 
 
 class _FakeChannel:
