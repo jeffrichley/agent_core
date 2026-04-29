@@ -232,6 +232,25 @@ FastMCP doesn't expose a way to declare custom experimental capabilities. Pepper
 
 ## testbot's `.mcp.json` after this lands
 
+The relay must be reachable as a binary on PATH — **not** spawned via `uv run` from inside `.mcp.json`. Two reasons:
+
+1. **CWD problem.** When Claude Code spawns the subprocess from `~/.testbot/`, there is no `pyproject.toml` there. `uv run` would walk up the tree looking for one (brittle, environment-dependent).
+2. **Lock contention + cold-start latency.** `uv run` syncs the project lockfile and acquires its file lock on every invocation. If the daemon happens to be running another `uv` operation, the relay's startup blocks. Even without contention, `uv run` adds hundreds of milliseconds per spawn.
+
+Install via `uv tool install` (or pipx, etc.) so the relay is a binary on PATH. From the agent_core repo:
+
+```bash
+uv tool install --from packages/agent-core-channel agent-core-channel
+```
+
+Once published to PyPI:
+
+```bash
+uv tool install agent-core-channel
+```
+
+Then `.mcp.json`:
+
 ```json
 {
   "mcpServers": {
@@ -240,14 +259,27 @@ FastMCP doesn't expose a way to declare custom experimental capabilities. Pepper
       "url": "http://localhost:8788/mcp/agent-testbot"
     },
     "agent-core-channel": {
-      "command": "uv",
-      "args": ["run", "agent-core-channel", "--agent", "agent-testbot"]
+      "command": "agent-core-channel",
+      "args": ["--agent", "agent-testbot"]
     }
   }
 }
 ```
 
-Two `mcpServers` entries. Two separate connections from Claude Code. Two responsibilities cleanly split.
+Two `mcpServers` entries. Two separate connections from Claude Code. Two responsibilities cleanly split. No `uv run`, no lockfile contention, fast cold start.
+
+**Alternative for ad-hoc / dev-loop use:** `uvx` (one-shot, caches after first run):
+
+```json
+"agent-core-channel": {
+  "command": "uvx",
+  "args": [
+    "--from", "/path/to/agent_core/packages/agent-core-channel",
+    "agent-core-channel",
+    "--agent", "agent-testbot"
+  ]
+}
+```
 
 testbot launch command (gains a flag):
 
