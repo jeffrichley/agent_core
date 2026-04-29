@@ -16,14 +16,18 @@ deliver() raises EndpointUnavailable so the bus queues the envelope.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import uuid
+from collections import Counter
 from datetime import datetime, timedelta, timezone
 from typing import TYPE_CHECKING, Any
 
 import anyio
 from fastmcp import FastMCP
 from fastmcp.server.middleware import Middleware, MiddlewareContext
+from mcp.shared.session import SessionMessage
+from mcp.types import JSONRPCMessage, JSONRPCNotification
 
 from agent_core.bus.envelope import Envelope
 from agent_core.bus.protocol import EndpointUnavailable
@@ -86,15 +90,32 @@ class ClaudeCodeMCPEndpoint:
     """Bus endpoint backed by a FastMCP server, served on the shared HTTP host."""
 
     _URGENCY_RANK = {"red": 0, "yellow": 1, "green": 2}
+    _URGENCY_ORDER = ["red", "yellow", "green"]
 
     def __init__(self, *, name: str, mount: str):
         self.name = name
         self.mount = mount
-        self._mcp: FastMCP = FastMCP(name)
+        self._mcp: FastMCP = FastMCP(
+            name,
+            instructions=(
+                "You are agent '{name}'. The bus pushes you notifications with method "
+                '"notifications/claude/channel" when envelopes arrive in your mailbox. '
+                'Each notification\'s params contain "content" (a brief summary) and '
+                '"meta" (count, urgency_max, urgency_counts, by_sender, endpoint, '
+                "fired_at). On receipt: call list_pending() to read the actual "
+                "envelopes (set batch_window_seconds=30 to fold human-paced bursts "
+                "from the same sender), process them, then call handle(envelope_id) "
+                "on each to ack and remove from the queue. Send replies via the "
+                "send tool. Treat the notification's content as a hint, not the "
+                "message itself — list_pending is authoritative."
+            ).format(name=name),
+        )
         self._handle: "BusHandle | None" = None
         self._pending: list[Envelope] = []
         self._session_active: bool = False  # set true when an MCP session is attached
         self._active_session: Any = None  # ServerSession, when connected
+        self._notify_debounce_seconds: float = 0.05
+        self._debounce_task: asyncio.Task | None = None
         self._mcp.add_middleware(SessionRegistry(self))
         self._register_tools()
 
@@ -209,6 +230,13 @@ class ClaudeCodeMCPEndpoint:
         self._handle = None
         self._session_active = False
         self._active_session = None
+        if self._debounce_task is not None and not self._debounce_task.done():
+            self._debounce_task.cancel()
+            try:
+                await self._debounce_task
+            except (asyncio.CancelledError, Exception):
+                pass
+        self._debounce_task = None
         log.info("ClaudeCodeMCPEndpoint(name=%s) stopped", self.name)
 
     # --- MCPHostable Protocol ---
@@ -227,20 +255,84 @@ class ClaudeCodeMCPEndpoint:
 
     # --- Internal ---
 
+    def _build_summary(self) -> dict:
+        """Snapshot the current mailbox into a notification summary."""
+        pending = list(self._pending)
+        count = len(pending)
+        # urgency counts
+        urg_counts = Counter(e.urgency for e in pending)
+        urg_full = {tier: int(urg_counts.get(tier, 0)) for tier in self._URGENCY_ORDER}
+        # urgency_max — highest tier present
+        urgency_max = "green"
+        for tier in self._URGENCY_ORDER:
+            if urg_full[tier] > 0:
+                urgency_max = tier
+                break
+        # by_sender
+        sender_index: dict[str, dict] = {}
+        for env in pending:
+            entry = sender_index.setdefault(env.from_, {"from": env.from_, "count": 0, "kinds": []})
+            entry["count"] += 1
+            if env.kind not in entry["kinds"]:
+                entry["kinds"].append(env.kind)
+        by_sender = list(sender_index.values())
+        # Headline content — terse, useful for triage.
+        if count == 0:
+            content = "INBOX: 0 pending"
+        else:
+            sender_summary = ", ".join(
+                f"{e['count']} from {e['from']} ({'/'.join(e['kinds'])})" for e in by_sender
+            )
+            content = f"INBOX: {count} pending — {sender_summary}"
+        return {
+            "content": content,
+            "meta": {
+                "count": count,
+                "urgency_max": urgency_max,
+                "urgency_counts": urg_full,
+                "by_sender": by_sender,
+                "endpoint": self.name,
+                "fired_at": datetime.now(timezone.utc).isoformat(),
+            },
+        }
+
+    def _make_channel_notification(self, summary: dict) -> SessionMessage:
+        """Wrap the summary into a JSON-RPC notification SessionMessage."""
+        notification = JSONRPCNotification(
+            jsonrpc="2.0",
+            method="notifications/claude/channel",
+            params=summary,
+        )
+        return SessionMessage(message=JSONRPCMessage(notification))
+
     async def _notify_mail_arrived(self, envelope_id: str) -> None:
-        """Send a server-initiated MCP notification on the active session.
+        """Coalesce arrivals via 50ms debounce, then push one summary."""
+        if self._debounce_task is not None and not self._debounce_task.done():
+            self._debounce_task.cancel()
+        self._debounce_task = asyncio.create_task(self._fire_after_debounce())
 
-        FastMCP 3.x does not expose a clean out-of-band server-push API for
-        use outside of a tool-call request context. ctx.send_notification() is
-        only callable inside a tool handler. The Docket-based push_notification
-        requires Redis. Neither is appropriate here.
-
-        The session-active path is exercised by the integration test in Task 9
-        (real HTTP); at that point we can evaluate wrapping the ASGI app to
-        intercept the StreamableHTTP session and call send_notification from
-        inside the session task. For now, log a debug line and rely on the
-        agent polling list_pending."""
-        log.debug("mail-arrived notification scheduled for envelope %s", envelope_id)
+    async def _fire_after_debounce(self) -> None:
+        try:
+            await asyncio.sleep(self._notify_debounce_seconds)
+        except asyncio.CancelledError:
+            return
+        session = self._active_session
+        if session is None:
+            return  # mailbox is authoritative; agent picks up on connect
+        summary = self._build_summary()
+        try:
+            message = self._make_channel_notification(summary)
+            await session.send_message(message)
+        except Exception:
+            log.warning(
+                "endpoint '%s': push to active session failed; clearing slot",
+                self.name,
+                exc_info=True,
+            )
+            # Best-effort cleanup; the session is presumed dead.
+            if self._active_session is session:
+                self._active_session = None
+                self._session_active = False
 
     def _register_tools(self) -> None:
         """Register the bus's MCP tool surface on the FastMCP server."""
@@ -253,9 +345,13 @@ class ClaudeCodeMCPEndpoint:
             correlation_id: str | None = None,
             in_reply_to: str | None = None,
             metadata: dict[str, Any] | None = None,
+            urgency: str = "green",
             expires_at: str | None = None,
         ) -> dict:
-            """Publish an envelope. Bus stamps `from:` to this endpoint's name."""
+            """Publish an envelope. Bus stamps `from:` to this endpoint's name.
+
+            urgency: 'green' (default), 'yellow', or 'red'. Schema-validated.
+            """
             if self._handle is None:
                 raise RuntimeError(f"endpoint '{self.name}' is not started")
             env = Envelope(
@@ -266,6 +362,7 @@ class ClaudeCodeMCPEndpoint:
                 kind=kind,  # type: ignore[arg-type]
                 payload=payload,  # type: ignore[arg-type]  # discriminated by kind
                 metadata=metadata or {},
+                urgency=urgency,  # type: ignore[arg-type]  # validated by Pydantic
                 expires_at=datetime.fromisoformat(expires_at) if expires_at else None,
                 created_at=datetime.now(timezone.utc),
             )
