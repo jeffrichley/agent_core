@@ -235,3 +235,55 @@ to the polling interval.
   that holds the active session's response stream and pushes
   `notifications/agent_core/mail_arrived` directly. Spec § Open
   Questions already contemplated this fallback.
+
+---
+
+## Heartbeat-checker endpoint (no-op heartbeat suppression)
+
+Pepper's inbox-architecture spec (`C:\Users\jeffr\.pepper\Memory\projects\pepper\inbox-architecture.md`,
+2026-04-29) calls for producer-side suppression of heartbeats whose
+checks find nothing actionable. The "all clear, nothing to surface"
+case should never enter the agent's mailbox at all — Pepper measured
+~38–43/day eliminated and a corresponding cognitive-load drop.
+
+In Pepper's current monolith the check logic (calendar / email /
+tasks / GitHub PRs / Discord-mentions) lives inside her prompt-and-tools
+so suppression is a 2-hour edit. In agent-core none of those check
+capabilities exist outside an agent context, so producer-side
+suppression needs its own infrastructure.
+
+The intended shape: a `HeartbeatCheckerEndpoint` that registers on
+the bus and is the scheduler's heartbeat target instead of Pepper.
+The checker:
+- Wakes every 30 minutes via SchedulerEndpoint (existing bus surface).
+- Uses `agent-core-credentials` (already shipped) for API keys.
+- Runs the check rules from Pepper's spec § 3.5:
+  - 🟢 Calendar event in next 2h
+  - 🟢 Unread urgent email or new in last 1h from priority sender
+  - 🟢 Task overdue today
+  - 🟢 Project STATUS.md changed in last hour
+  - 🟢 GitHub PR awaiting review or CI failure on active repo
+  - 🟢 Unread @mention in any channel
+- If any signal fires, publishes a heartbeat envelope to Pepper with
+  the signal payload as metadata.
+- If all clean, logs "all clear" to a debug file and drops.
+
+Each signal source is its own integration. v1 minimum is probably
+calendar + GitHub + filesystem (no Gmail/Discord-mention scan).
+Later versions add the rest as their respective MCP/API clients
+land in agent-core.
+
+The "always surface" jobs from Pepper's § 3.5 (`pepper_time`,
+`nightly_reflection`, `morning_briefing`, `evening_routine`,
+`daily_sync`, `weekly_digest`) are NOT heartbeats and don't need
+this endpoint — they keep going through the normal scheduler path.
+`github_backup` is the one outlier: surfaces only on failure
+(formalize the existing convention).
+
+- **Source:** Pepper inbox-architecture spec § 3.5 + § 4.1, 2026-04-29.
+- **Trigger:** After the responsive-inbox work (sub-project F or
+  similar) ships push notifications + same-sender batching + urgency.
+  Heartbeat suppression is a Pepper-readiness item; it doesn't make
+  sense to build it before the consumer side is in shape to use it.
+  Estimated 3–5 days for the v1 with calendar + GitHub + filesystem
+  checks; the long tail is per-source integrations.
