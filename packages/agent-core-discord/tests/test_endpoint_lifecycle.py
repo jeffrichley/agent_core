@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import os
 
 import pytest
@@ -141,6 +142,32 @@ async def test_deliver_raises_when_not_started():
     )
     with pytest.raises(EndpointUnavailable):
         await ep.deliver(env)
+
+
+@pytest.mark.asyncio
+async def test_start_returns_while_connect_still_running(monkeypatch):
+    """Regression test for the bug where start() awaited the blocking
+    gateway loop, deadlocking the bus boot."""
+    from tests.conftest import _FakeDiscordClient
+
+    monkeypatch.setenv("TEST_TOKEN", "fake-token")
+    fake = _FakeDiscordClient()
+    ep = DiscordEndpoint(
+        name="d",
+        target="agent-x",
+        token_env="TEST_TOKEN",
+        _client_factory=lambda **kw: fake,
+    )
+    handle = _FakeBusHandle()
+    # If start() is broken (awaits the blocking gateway loop), this hangs
+    # well past the bus boot timeline.
+    await asyncio.wait_for(ep.start(handle), timeout=5.0)
+    # The gateway task should still be running (connect() blocks until close).
+    assert ep._client_task is not None
+    assert not ep._client_task.done()
+    await ep.stop()
+    # After stop, the task should be cancelled (or completed via close).
+    assert ep._client_task is None or ep._client_task.done()
 
 
 @pytest.mark.asyncio

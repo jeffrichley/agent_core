@@ -129,8 +129,10 @@ class _FakeDiscordClient:
         self._channels: dict[str, _FakeChannel] = {}
         self._guilds: dict[str, _FakeGuild] = {}
         self._closed = False
+        self._logged_in = False
         self._handlers: dict[str, Callable] = {}
         self._on_ready_event = asyncio.Event()
+        self._closed_event: asyncio.Event | None = None
 
     def event(self, fn: Callable) -> Callable:
         """Decorator @client.event — registers the handler by function name."""
@@ -147,21 +149,38 @@ class _FakeDiscordClient:
     def guilds(self):
         return list(self._guilds.values())
 
-    async def start(self, token: str) -> None:
-        # Set on_ready immediately for tests; tests can call client._fire('on_ready')
-        # explicitly if they need to coordinate timing.
-        self._on_ready_event.set()
+    async def login(self, token: str) -> None:
+        """Mirrors discord.Client.login — returns once authenticated."""
+        self._logged_in = True
+
+    async def connect(self) -> None:
+        """Mirrors discord.Client.connect — runs until close() is called.
+
+        Real discord.py dispatches on_ready off the gateway loop, so connect()
+        does not block on the handler. We mirror that by firing on_ready in a
+        task, then blocking on the close event."""
         if "on_ready" in self._handlers:
-            await self._handlers["on_ready"]()
+            asyncio.create_task(self._handlers["on_ready"]())
+        if self._closed_event is None:
+            self._closed_event = asyncio.Event()
+        await self._closed_event.wait()
 
     async def close(self) -> None:
         self._closed = True
+        self._on_ready_event.set()
+        if self._closed_event is not None:
+            self._closed_event.set()
 
     async def fire(self, event_name: str, *args) -> None:
         """Test helper: invoke a registered handler."""
         h = self._handlers.get(event_name)
         if h is not None:
             await h(*args)
+
+    async def fire_ready(self) -> None:
+        """Test helper: fire on_ready immediately (await the handler)."""
+        if "on_ready" in self._handlers:
+            await self._handlers["on_ready"]()
 
     def add_channel(self, ch: _FakeChannel) -> None:
         self._channels[ch.id] = ch

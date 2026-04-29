@@ -7,19 +7,26 @@ Skipped unless these env vars are set:
 
 This is a smoke flow only. CI does not run it. Operators run it manually
 to validate against a live Discord application before declaring v1 done.
+
+The test exercises the same boot path the runner uses: it builds a real
+Bus, registers the DiscordEndpoint, and calls bus.start(). If start()
+were still awaiting the blocking gateway loop, bus.start() would deadlock
+and this test would hang — that's a feature, not a bug.
 """
 
 from __future__ import annotations
 
 import asyncio
+import json
 import os
 import uuid
 from datetime import datetime, timezone
 
 import pytest
 
+from agent_core.bus.core import Bus, BusConfig, EndpointSpec
 from agent_core.bus.envelope import (
-    EndpointInfo,
+    AcknowledgmentPayload,
     Envelope,
     ToolInvocationPayload,
 )
@@ -33,78 +40,112 @@ pytestmark = pytest.mark.skipif(
 )
 
 
-class _Recording:
-    def __init__(self):
-        self.published: list[Envelope] = []
+class _ProbeEndpoint:
+    """Minimal endpoint that just records every envelope delivered to it.
 
-    async def publish(self, envelope: Envelope, to=None) -> None:
-        self.published.append(envelope)
+    Used to capture the Acknowledgment the discord endpoint publishes back
+    after dispatching a ToolInvocation."""
 
-    async def ack(self, envelope_id: str) -> None: ...
-    async def nack(self, envelope_id: str, requeue: bool = True) -> None: ...
-    def endpoints(self) -> list[EndpointInfo]:
-        return []
+    def __init__(self, name: str = "probe-it"):
+        self.name = name
+        self.received: list[Envelope] = []
+        self._handle = None
+
+    async def start(self, bus) -> None:
+        self._handle = bus
+
+    async def deliver(self, envelope: Envelope) -> None:
+        self.received.append(envelope)
+        if self._handle is not None:
+            await self._handle.ack(envelope.id)
+
+    async def stop(self) -> None:
+        self._handle = None
+
+    async def send(self, *, to: str, payload: ToolInvocationPayload) -> str:
+        """Helper: publish a ToolInvocation through the bus to `to`."""
+        assert self._handle is not None
+        env_id = uuid.uuid4().hex
+        env = Envelope(
+            id=env_id,
+            correlation_id=uuid.uuid4().hex,
+            from_=self.name,
+            to=to,
+            kind="ToolInvocation",
+            payload=payload,
+            created_at=datetime.now(timezone.utc),
+        )
+        await self._handle.publish(env)
+        return env_id
+
+    async def wait_for_ack(self, in_reply_to: str, *, timeout: float = 10.0) -> Envelope:
+        """Spin until an Acknowledgment for `in_reply_to` shows up."""
+        deadline = asyncio.get_event_loop().time() + timeout
+        while asyncio.get_event_loop().time() < deadline:
+            for env in self.received:
+                if (
+                    env.kind == "Acknowledgment"
+                    and isinstance(env.payload, AcknowledgmentPayload)
+                    and env.in_reply_to == in_reply_to
+                ):
+                    return env
+            await asyncio.sleep(0.1)
+        raise AssertionError(f"no Acknowledgment for {in_reply_to} within {timeout}s")
 
 
 @pytest.mark.asyncio
-async def test_real_bot_send_and_react():
-    """Smoke flow: bot connects, sends a message, reacts to it, edits it."""
+async def test_real_bot_send_react_edit_via_bus(tmp_path):
+    """Smoke flow: bus boots discord endpoint, then sends/reacts/edits via real bus dispatch.
+
+    This is the boot path the runner uses — bus.start() must return after
+    every endpoint's start() returns. If DiscordEndpoint.start() were still
+    awaiting the blocking gateway loop (the original bug), bus.start() would
+    never return and this test would hang at that line.
+    """
     channel_id = os.environ["DISCORD_TEST_CHANNEL_ID"]
-    handle = _Recording()
-    ep = DiscordEndpoint(
+
+    config = BusConfig(storage_path=tmp_path / "bus.sqlite")
+    bus = Bus(config)
+
+    probe = _ProbeEndpoint(name="probe-it")
+    discord_ep = DiscordEndpoint(
         name="discord-it-test",
-        target="agent-it-test",
+        target="probe-it",
         token_env="DISCORD_TEST_TOKEN",
     )
-    # discord.Client.start() blocks the loop; spawn it.
-    start_task = asyncio.create_task(ep.start(handle))
-    # Give the connection a few seconds to settle.
-    await asyncio.sleep(5)
+
+    bus.register(EndpointSpec(endpoint=probe))
+    bus.register(EndpointSpec(endpoint=discord_ep))
+
+    # If start() is broken (awaits blocking gateway loop), this hangs.
+    await bus.start()
     try:
-        # Send.
-        send_env = Envelope(
-            id=uuid.uuid4().hex,
-            correlation_id=uuid.uuid4().hex,
-            from_="agent-it-test",
+        # 1. send
+        send_id = await probe.send(
             to="discord-it-test",
-            kind="ToolInvocation",
             payload=ToolInvocationPayload(
                 tool="send",
                 args={"channel_id": channel_id, "text": "agent-core-discord smoke ping"},
             ),
-            created_at=datetime.now(timezone.utc),
         )
-        await ep.deliver(send_env)
-        # Look at the Acknowledgment we got back.
-        acks = [e for e in handle.published if e.kind == "Acknowledgment"]
-        assert acks, "no Acknowledgment from send"
-        import json
+        ack = await probe.wait_for_ack(send_id)
+        result = json.loads(ack.payload.note)
+        assert "message_id" in result, f"send did not return message_id: {result}"
+        msg_id = result["message_id"]
 
-        sent = json.loads(acks[-1].payload.note)
-        msg_id = sent["message_id"]
-
-        # React.
-        react_env = Envelope(
-            id=uuid.uuid4().hex,
-            correlation_id=uuid.uuid4().hex,
-            from_="agent-it-test",
+        # 2. react
+        react_id = await probe.send(
             to="discord-it-test",
-            kind="ToolInvocation",
             payload=ToolInvocationPayload(
                 tool="react",
                 args={"channel_id": channel_id, "message_id": msg_id, "emoji": "✅"},
             ),
-            created_at=datetime.now(timezone.utc),
         )
-        await ep.deliver(react_env)
+        await probe.wait_for_ack(react_id)
 
-        # Edit.
-        edit_env = Envelope(
-            id=uuid.uuid4().hex,
-            correlation_id=uuid.uuid4().hex,
-            from_="agent-it-test",
+        # 3. edit
+        edit_id = await probe.send(
             to="discord-it-test",
-            kind="ToolInvocation",
             payload=ToolInvocationPayload(
                 tool="edit",
                 args={
@@ -113,16 +154,7 @@ async def test_real_bot_send_and_react():
                     "text": "agent-core-discord smoke ping (edited)",
                 },
             ),
-            created_at=datetime.now(timezone.utc),
         )
-        await ep.deliver(edit_env)
-
+        await probe.wait_for_ack(edit_id)
     finally:
-        await ep.stop()
-        start_task.cancel()
-        try:
-            await start_task
-        except asyncio.CancelledError:
-            pass
-        except BaseException:
-            pass
+        await bus.stop()

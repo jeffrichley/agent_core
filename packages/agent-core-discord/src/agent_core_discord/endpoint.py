@@ -11,6 +11,7 @@ just owns lifecycle and dispatch entry points.
 
 from __future__ import annotations
 
+import asyncio
 import contextlib
 import json
 import logging
@@ -85,6 +86,8 @@ class DiscordEndpoint:
         self._client_factory = _client_factory  # test seam
         self._handle: BusHandle | None = None
         self._client: Any = None
+        self._client_task: asyncio.Task | None = None
+        self._ready_event: asyncio.Event = asyncio.Event()
         self._access: AccessConfig = AccessConfig()
         self._pending_acks: dict[str, str] = {}  # message_id → ack emoji (Task 4)
 
@@ -92,6 +95,9 @@ class DiscordEndpoint:
 
     async def start(self, bus: BusHandle) -> None:
         self._handle = bus
+        # Re-create the ready event each start so re-starts after stop() get a
+        # fresh signal. asyncio.Event is bound to the running loop.
+        self._ready_event = asyncio.Event()
         try:
             # 1. Load env_file (if set).
             if self.env_file is not None and self.env_file.exists():
@@ -128,19 +134,53 @@ class DiscordEndpoint:
             self._client.event(self._make_on_message_handler())
             self._client.event(self._make_on_reaction_add_handler())
 
-            # 6. Register in the live endpoint map BEFORE awaiting client.start, so
-            #    racing on_ready callbacks find us.
+            # An on_ready listener that flips the ready event so start() can
+            # return once the gateway connection is live. discord.py keys
+            # listeners by function name, so the inner function MUST be
+            # named on_ready.
+            ready_event = self._ready_event
+
+            async def on_ready() -> None:
+                ready_event.set()
+
+            self._client.event(on_ready)
+
+            # 6. Register in the live endpoint map BEFORE kicking off the gateway
+            #    loop so racing on_ready callbacks find us.
             _active_endpoints[self.name] = self
 
-            # 7. Connect the bot. discord.Client.start() runs the event loop until
-            #    closed; tests' fake client returns immediately after on_ready.
-            await self._client.start(token)
+            # 7. Two-phase connect: login() returns once authenticated, then
+            #    connect() runs the gateway loop until close. We park connect()
+            #    in a background task so start() returns once on_ready fires.
+            #    discord.Client.start(token) is the convenience equivalent of
+            #    login() + connect() — and it never returns under normal
+            #    operation, which would deadlock the bus boot loop.
+            await self._client.login(token)
+            self._client_task = asyncio.create_task(
+                self._client.connect(),
+                name=f"discord-endpoint-{self.name}-gateway",
+            )
+
+            # Wait for on_ready, with a timeout so a hung connect() can't hang
+            # the bus boot indefinitely.
+            try:
+                await asyncio.wait_for(self._ready_event.wait(), timeout=30.0)
+            except asyncio.TimeoutError as exc:
+                raise RuntimeError(
+                    f"discord endpoint '{self.name}': bot did not become ready within 30s"
+                ) from exc
         except BaseException:
             _active_endpoints.pop(self.name, None)
+            task = self._client_task
+            if task is not None and not task.done():
+                task.cancel()
+                with contextlib.suppress(asyncio.CancelledError, Exception):
+                    await task
             if self._client is not None:
                 with contextlib.suppress(Exception):
                     await self._client.close()
             self._client = None
+            self._client_task = None
             self._handle = None
             raise
 
@@ -210,6 +250,12 @@ class DiscordEndpoint:
 
     async def stop(self) -> None:
         _active_endpoints.pop(self.name, None)
+        task = self._client_task
+        if task is not None and not task.done():
+            task.cancel()
+            with contextlib.suppress(asyncio.CancelledError, Exception):
+                await task
+        self._client_task = None
         if self._client is not None:
             try:
                 await self._client.close()
