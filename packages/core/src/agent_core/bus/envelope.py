@@ -86,6 +86,7 @@ class Envelope(BaseModel):
     ]
     payload: EnvelopePayload
     metadata: dict[str, Any] = Field(default_factory=dict)
+    urgency: Literal["green", "yellow", "red"] = "green"
     expires_at: datetime | None = None
     created_at: datetime
 
