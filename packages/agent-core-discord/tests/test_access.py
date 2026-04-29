@@ -26,6 +26,19 @@ def test_load_access_config_returns_defaults_for_missing_file(tmp_path):
     assert cfg.ack_reaction == "👀"
 
 
+def test_load_access_config_unknown_dm_policy_falls_back_to_deny(tmp_path, caplog):
+    """Defense in depth: unknown dmPolicy values fail closed, not open."""
+    import logging
+
+    p = tmp_path / "access.json"
+    p.write_text(json.dumps({"dmPolicy": "Open", "allowFrom": ["999"]}), encoding="utf-8")
+    with caplog.at_level(logging.WARNING):
+        cfg = load_access_config(p)
+    assert cfg.dm_policy == "deny"
+    assert cfg.allow_from == ["999"]
+    assert any("unknown dmPolicy" in rec.message for rec in caplog.records)
+
+
 def test_load_access_config_parses_json(tmp_path):
     p = tmp_path / "access.json"
     p.write_text(

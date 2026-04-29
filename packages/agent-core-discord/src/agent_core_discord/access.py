@@ -16,6 +16,7 @@ from typing import Any, Literal
 log = logging.getLogger(__name__)
 
 DmPolicy = Literal["open", "deny", "allowlist"]
+_VALID_DM_POLICIES = {"open", "deny", "allowlist"}
 
 
 @dataclass
@@ -51,8 +52,18 @@ def load_access_config(path: Path | str | None) -> AccessConfig:
     except json.JSONDecodeError:
         log.exception("failed to parse access config at %s; using defaults", p)
         return AccessConfig()
+    dm_policy = raw.get("dmPolicy", "open")
+    if dm_policy not in _VALID_DM_POLICIES:
+        # Fail-closed on unknown values rather than fall through gate_message
+        # branches that would otherwise default to allowlist semantics.
+        log.warning(
+            "access config %s: unknown dmPolicy %r; falling back to 'deny'",
+            p,
+            dm_policy,
+        )
+        dm_policy = "deny"
     return AccessConfig(
-        dm_policy=raw.get("dmPolicy", "open"),
+        dm_policy=dm_policy,  # type: ignore[arg-type]
         allow_from=list(raw.get("allowFrom", [])),
         channels=dict(raw.get("channels", {})),
         ack_reaction=raw.get("ackReaction", "👀"),

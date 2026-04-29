@@ -35,14 +35,17 @@ class _ReactArgs(BaseModel):
 
 class _FetchArgs(BaseModel):
     channel_id: str = Field(min_length=1)
-    limit: int = 50
+    # Discord's API caps a single history request at 100; discord.py paginates
+    # underneath. 500 keeps a fetch under ~5 round-trips while still useful.
+    limit: int = Field(default=50, ge=1, le=500)
     before: str | None = None
 
 
 class _DownloadAttachmentsArgs(BaseModel):
     channel_id: str = Field(min_length=1)
     message_id: str = Field(min_length=1)
-    attachment_urls: list[str]
+    # Cap to keep an agent from kicking off thousands of HTTP fetches.
+    attachment_urls: list[str] = Field(max_length=50)
 
 
 class _ListChannelsArgs(BaseModel):

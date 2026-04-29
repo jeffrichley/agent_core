@@ -140,6 +140,10 @@ class _FakeDiscordClient:
         self._handlers[fn.__name__] = fn
         return fn
 
+    def add_listener(self, fn: Callable, name: str | None = None) -> None:
+        """Mirrors discord.Client.add_listener — register by explicit event name."""
+        self._handlers[name or fn.__name__] = fn
+
     def get_channel(self, channel_id: int | str) -> _FakeChannel | None:
         return self._channels.get(str(channel_id))
 

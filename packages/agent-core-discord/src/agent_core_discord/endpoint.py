@@ -63,6 +63,39 @@ def _default_attachments_dir(endpoint_name: str) -> Path:
 
 _FILENAME_ALLOWED = re.compile(r"[^A-Za-z0-9._-]")
 
+# Discord caps total embed content per message at 6000 characters across all
+# embeds. Validate before send so we get a clear _ToolError rather than an
+# opaque HTTPException from the API.
+_DISCORD_EMBED_TOTAL_CHAR_CAP = 6000
+
+
+def _embed_char_count(embed: dict[str, Any]) -> int:
+    """Approximate Discord's len(Embed) for a raw dict.
+
+    Sums title, description, footer.text, author.name, and the name+value of
+    each field. This mirrors discord.Embed.__len__ on the real object.
+    """
+    n = 0
+    n += len(embed.get("title") or "")
+    n += len(embed.get("description") or "")
+    footer = embed.get("footer") or {}
+    n += len(footer.get("text") or "") if isinstance(footer, dict) else 0
+    author = embed.get("author") or {}
+    n += len(author.get("name") or "") if isinstance(author, dict) else 0
+    for f in embed.get("fields") or []:
+        if isinstance(f, dict):
+            n += len(f.get("name") or "") + len(f.get("value") or "")
+    return n
+
+
+def _check_embeds_within_caps(embeds: list[dict[str, Any]]) -> None:
+    """Raise _ToolError if the embeds dict list exceeds Discord's total cap."""
+    total = sum(_embed_char_count(e) for e in embeds if isinstance(e, dict))
+    if total > _DISCORD_EMBED_TOTAL_CHAR_CAP:
+        raise _ToolError(
+            f"embeds total {total} chars exceeds Discord cap of {_DISCORD_EMBED_TOTAL_CHAR_CAP}"
+        )
+
 
 def _safe_filename(url: str) -> str:
     """Extract a safe filename from a URL.
@@ -127,6 +160,21 @@ class DiscordEndpoint:
         # eviction at the cap and TTL eviction in the sweep loop.
         self._pending_acks: OrderedDict[str, tuple[str, str, float]] = OrderedDict()
 
+    def _add_listener(self, handler: Callable[..., Any], event_name: str) -> None:
+        """Register an event handler against the discord.py client.
+
+        Real discord.py uses `Client.add_listener(coro, name=)`. Tests use a
+        fake that exposes the same surface. Going through this helper lets us
+        switch implementations without touching call sites.
+        """
+        if hasattr(self._client, "add_listener"):
+            self._client.add_listener(handler, name=event_name)
+        else:
+            # Older fakes / minimal stubs: rebind the handler's name and use
+            # the @client.event protocol as a fallback.
+            handler.__name__ = event_name  # type: ignore[attr-defined]
+            self._client.event(handler)
+
     # --- Endpoint Protocol ---
 
     async def start(self, bus: BusHandle) -> None:
@@ -135,12 +183,20 @@ class DiscordEndpoint:
         # fresh signal. asyncio.Event is bound to the running loop.
         self._ready_event = asyncio.Event()
         try:
-            # 1. Load env_file (if set).
+            # 1. Load env_file (if set). dotenv is convenience, not load-bearing —
+            #    if it's missing from the install, log and skip rather than
+            #    failing the whole bus boot.
             if self.env_file is not None and self.env_file.exists():
-                from dotenv import load_dotenv
-
-                load_dotenv(self.env_file, override=False)
-                log.info("loaded env file: %s", self.env_file)
+                try:
+                    from dotenv import load_dotenv
+                except ImportError:
+                    log.warning(
+                        "dotenv not installed; skipping env_file %s",
+                        self.env_file,
+                    )
+                else:
+                    load_dotenv(self.env_file, override=False)
+                    log.info("loaded env file: %s", self.env_file)
 
             # 2. Read the bot token. Fail fast if missing.
             token = os.environ.get(self.token_env)
@@ -165,24 +221,32 @@ class DiscordEndpoint:
             else:
                 self._client = self._client_factory(intents=None)
 
-            # 5. Wire event handlers (Task 4 fills the on_message body, Task 5 the
-            #    on_reaction_add body).
-            self._client.event(self._make_on_message_handler())
-            self._client.event(self._make_on_reaction_add_handler())
+            # 5. Wire event handlers. Use add_listener with explicit name=
+            #    rather than @client.event so a future rename of the inner
+            #    function can't silently mis-route the event.
+            self._add_listener(self._make_on_message_handler(), "on_message")
+            self._add_listener(self._make_on_reaction_add_handler(), "on_reaction_add")
 
             # An on_ready listener that flips the ready event so start() can
-            # return once the gateway connection is live. discord.py keys
-            # listeners by function name, so the inner function MUST be
-            # named on_ready.
+            # return once the gateway connection is live.
             ready_event = self._ready_event
 
-            async def on_ready() -> None:
+            async def _ready_listener() -> None:
                 ready_event.set()
 
-            self._client.event(on_ready)
+            self._add_listener(_ready_listener, "on_ready")
 
             # 6. Register in the live endpoint map BEFORE kicking off the gateway
-            #    loop so racing on_ready callbacks find us.
+            #    loop so racing on_ready callbacks find us. Defense-in-depth
+            #    name-collision guard — Bus.register also checks, but a stray
+            #    second instance constructed in-process would otherwise silently
+            #    shadow ours.
+            existing = _active_endpoints.get(self.name)
+            if existing is not None and existing is not self:
+                raise RuntimeError(
+                    f"discord endpoint '{self.name}': another live instance is "
+                    f"already registered ({existing!r})"
+                )
             _active_endpoints[self.name] = self
 
             # 7. Two-phase connect: login() returns once authenticated, then
@@ -233,7 +297,10 @@ class DiscordEndpoint:
                 name=f"discord-endpoint-{self.name}-acks-sweep",
             )
         except BaseException:
-            _active_endpoints.pop(self.name, None)
+            # Only pop if WE own this slot — never evict a sibling that may
+            # have raced in.
+            if _active_endpoints.get(self.name) is self:
+                _active_endpoints.pop(self.name, None)
             if self._sweep_task is not None:
                 self._sweep_task.cancel()
                 try:
@@ -335,7 +402,8 @@ class DiscordEndpoint:
             log.exception("discord reply publish failed for %s", incoming.id)
 
     async def stop(self) -> None:
-        _active_endpoints.pop(self.name, None)
+        if _active_endpoints.get(self.name) is self:
+            _active_endpoints.pop(self.name, None)
         if self._sweep_task is not None:
             self._sweep_task.cancel()
             try:
@@ -592,6 +660,7 @@ class DiscordEndpoint:
         # Build embeds list (validate via discord.Embed.from_dict).
         embeds = None
         if args.embeds:
+            _check_embeds_within_caps(args.embeds)
             try:
                 import discord  # type: ignore
 
@@ -619,8 +688,17 @@ class DiscordEndpoint:
                 # Fakes don't need a real reference; pass the message itself as a marker.
                 reference = target
 
-        files = None  # File handling is mechanical; integration test exercises real files.
+        files = None
         if args.files:
+            # discord.File accepts a local path or a binary file-like object —
+            # not an HTTP URL. Reject URL strings upfront with a clear message
+            # so callers don't get confused FileNotFoundError errors.
+            for f in args.files:
+                if isinstance(f, str) and (f.startswith("http://") or f.startswith("https://")):
+                    raise _ToolError(
+                        f"send: 'files' must be local paths, not URLs (got {f!r}). "
+                        "Use download_attachments first if you need URL bytes."
+                    )
             try:
                 import discord  # type: ignore
 
@@ -651,6 +729,7 @@ class DiscordEndpoint:
 
         embeds = None
         if args.embeds:
+            _check_embeds_within_caps(args.embeds)
             try:
                 import discord  # type: ignore
 
