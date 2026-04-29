@@ -51,14 +51,14 @@ class _SessionTracker(Middleware):
     async def on_initialize(self, context: MiddlewareContext, call_next) -> Any:
         result = await call_next(context)
         self._endpoint._session_active = True
-        log.debug(
-            "ClaudeCodeMCPEndpoint(name=%s) session initialized", self._endpoint.name
-        )
+        log.debug("ClaudeCodeMCPEndpoint(name=%s) session initialized", self._endpoint.name)
         return result
 
 
 class ClaudeCodeMCPEndpoint:
     """Bus endpoint backed by a FastMCP server, served on the shared HTTP host."""
+
+    _URGENCY_RANK = {"red": 0, "yellow": 1, "green": 2}
 
     def __init__(self, *, name: str, mount: str):
         self.name = name
@@ -69,6 +69,29 @@ class ClaudeCodeMCPEndpoint:
         self._session_active: bool = False  # set true when an MCP session is attached
         self._mcp.add_middleware(_SessionTracker(self))
         self._register_tools()
+
+    async def _call_list_pending(self) -> list[dict]:
+        """Sorted by (urgency_rank, created_at) — red first, FIFO within tier."""
+        sorted_pending = sorted(
+            self._pending,
+            key=lambda e: (self._URGENCY_RANK[e.urgency], e.created_at),
+        )
+        return [self._envelope_to_dict(env) for env in sorted_pending]
+
+    @staticmethod
+    def _envelope_to_dict(env: Envelope) -> dict:
+        return {
+            "id": env.id,
+            "from": env.from_,
+            "to": env.to,
+            "kind": env.kind,
+            "correlation_id": env.correlation_id,
+            "in_reply_to": env.in_reply_to,
+            "payload": env.payload.model_dump(),
+            "metadata": env.metadata,
+            "urgency": env.urgency,
+            "created_at": env.created_at.isoformat(),
+        }
 
     # --- Endpoint Protocol ---
 
@@ -161,7 +184,9 @@ class ClaudeCodeMCPEndpoint:
             """Return the directory of registered bus endpoints."""
             if self._handle is None:
                 return []
-            return [{"name": e.name, "description": e.description} for e in self._handle.endpoints()]
+            return [
+                {"name": e.name, "description": e.description} for e in self._handle.endpoints()
+            ]
 
         @self._mcp.tool()
         async def describe_endpoint(name: str) -> dict | None:
@@ -175,21 +200,10 @@ class ClaudeCodeMCPEndpoint:
 
         @self._mcp.tool()
         async def list_pending() -> list[dict]:
-            """Return a snapshot of envelopes in this agent's pickup queue."""
-            return [
-                {
-                    "id": env.id,
-                    "from": env.from_,
-                    "to": env.to,
-                    "kind": env.kind,
-                    "correlation_id": env.correlation_id,
-                    "in_reply_to": env.in_reply_to,
-                    "payload": env.payload.model_dump(),
-                    "metadata": env.metadata,
-                    "created_at": env.created_at.isoformat(),
-                }
-                for env in self._pending
-            ]
+            """Return a snapshot of envelopes in this agent's pickup queue,
+            sorted by urgency (red first, then yellow, then green) with FIFO
+            within tier."""
+            return await self._call_list_pending()
 
         @self._mcp.tool()
         async def handle(envelope_id: str) -> dict:
