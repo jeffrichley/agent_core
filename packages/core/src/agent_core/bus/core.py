@@ -98,6 +98,23 @@ class Bus:
             current = result
         return current
 
+    def snapshot_for_agent(self, name: str) -> dict | None:
+        """Return the current notification summary for an agent, or None.
+
+        Only ClaudeCodeMCPEndpoint instances support snapshots; other endpoint
+        types return None. Used by the /notify/<agent> SSE route to emit an
+        immediate state event when a relay connects, so reconnecting agents
+        with pending mail get woken without waiting for the next arrival.
+        """
+        ep_spec = self._endpoints_by_name.get(name)
+        if ep_spec is None:
+            return None
+        ep = ep_spec.endpoint
+        snapshot_fn = getattr(ep, "snapshot", None)
+        if snapshot_fn is None:
+            return None
+        return snapshot_fn()
+
     async def start(self) -> None:
         if self._started:
             return

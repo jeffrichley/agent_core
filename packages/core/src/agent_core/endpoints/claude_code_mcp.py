@@ -312,6 +312,14 @@ class ClaudeCodeMCPEndpoint:
             },
         }
 
+    def snapshot(self) -> dict:
+        """Public wrapper around _build_summary; used by Bus.snapshot_for_agent.
+
+        Returns the same dict shape as the push pipeline produces, so a
+        snapshot emitted on relay connect looks identical to a real push.
+        """
+        return self._build_summary()
+
     def _make_channel_notification(self, summary: dict) -> SessionMessage:
         """Wrap the summary into a JSON-RPC notification SessionMessage."""
         notification = JSONRPCNotification(
