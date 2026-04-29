@@ -18,7 +18,7 @@ from __future__ import annotations
 
 import logging
 import uuid
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import TYPE_CHECKING, Any
 
 from fastmcp import FastMCP
@@ -70,13 +70,59 @@ class ClaudeCodeMCPEndpoint:
         self._mcp.add_middleware(_SessionTracker(self))
         self._register_tools()
 
-    async def _call_list_pending(self) -> list[dict]:
-        """Sorted by (urgency_rank, created_at) — red first, FIFO within tier."""
+    async def _call_list_pending(self, batch_window_seconds: int = 0) -> list[dict]:
+        """Mailbox view sorted by urgency, optionally batched by sender.
+
+        When batch_window_seconds == 0: returns a flat list of envelope dicts
+        (today's behavior). When > 0: consecutive envelopes (within urgency
+        tier and same `from_`) whose created_at fall within the window collapse
+        into one {"type": "batch", ...} entry; standalone entries are wrapped
+        as {"type": "single", "envelope": {...}}.
+        """
         sorted_pending = sorted(
             self._pending,
             key=lambda e: (self._URGENCY_RANK[e.urgency], e.created_at),
         )
-        return [self._envelope_to_dict(env) for env in sorted_pending]
+        if batch_window_seconds <= 0:
+            return [self._envelope_to_dict(env) for env in sorted_pending]
+
+        window = timedelta(seconds=batch_window_seconds)
+        groups: list[dict] = []
+        i = 0
+        while i < len(sorted_pending):
+            head = sorted_pending[i]
+            j = i + 1
+            run = [head]
+            while j < len(sorted_pending):
+                cand = sorted_pending[j]
+                if (
+                    cand.from_ == head.from_
+                    and cand.urgency == head.urgency
+                    and cand.kind == head.kind
+                    and (cand.created_at - run[-1].created_at) <= window
+                ):
+                    run.append(cand)
+                    j += 1
+                else:
+                    break
+            if len(run) == 1:
+                groups.append({"type": "single", "envelope": self._envelope_to_dict(head)})
+            else:
+                first_arrival = run[0].created_at
+                last_arrival = run[-1].created_at
+                groups.append(
+                    {
+                        "type": "batch",
+                        "from": head.from_,
+                        "kind": head.kind,
+                        "urgency": head.urgency,
+                        "envelopes": [self._envelope_to_dict(e) for e in run],
+                        "first_arrival": first_arrival.isoformat(),
+                        "total_age_seconds": int((last_arrival - first_arrival).total_seconds()),
+                    }
+                )
+            i = j
+        return groups
 
     @staticmethod
     def _envelope_to_dict(env: Envelope) -> dict:
@@ -199,11 +245,17 @@ class ClaudeCodeMCPEndpoint:
             return None
 
         @self._mcp.tool()
-        async def list_pending() -> list[dict]:
+        async def list_pending(batch_window_seconds: int = 0) -> list[dict]:
             """Return a snapshot of envelopes in this agent's pickup queue,
-            sorted by urgency (red first, then yellow, then green) with FIFO
-            within tier."""
-            return await self._call_list_pending()
+            sorted by urgency (red → yellow → green) with FIFO within tier.
+
+            When batch_window_seconds > 0, consecutive same-sender same-urgency
+            same-kind envelopes whose arrival times fall within the window are
+            collapsed into a single {"type": "batch", ...} entry. Each
+            underlying envelope retains its own id and ack semantics — call
+            handle(envelope_id) per envelope.
+            """
+            return await self._call_list_pending(batch_window_seconds=batch_window_seconds)
 
         @self._mcp.tool()
         async def handle(envelope_id: str) -> dict:
