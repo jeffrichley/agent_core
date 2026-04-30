@@ -46,6 +46,7 @@ import sys
 import time
 from datetime import UTC, datetime
 from pathlib import Path
+from typing import Any
 from zoneinfo import ZoneInfo
 
 from agent_core.models import ToolResult
@@ -242,7 +243,7 @@ class HandoffWriter:
 
         # Detach from parent so it survives Ctrl+C
         creation_flags = subprocess.CREATE_NO_WINDOW if sys.platform == "win32" else 0
-        kwargs = {}
+        kwargs: dict[str, Any] = {}
         if sys.platform != "win32":
             kwargs["start_new_session"] = True
 

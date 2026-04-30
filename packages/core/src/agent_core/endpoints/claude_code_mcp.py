@@ -23,7 +23,7 @@ import re
 import uuid
 from collections import Counter
 from datetime import UTC, datetime, timedelta
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Literal, cast
 
 import anyio
 from fastmcp import FastMCP
@@ -301,11 +301,15 @@ class ClaudeCodeMCPEndpoint:
         count = len(pending)
         # urgency counts
         urg_counts = Counter(e.urgency for e in pending)
-        urg_full = {tier: int(urg_counts.get(tier, 0)) for tier in self._URGENCY_ORDER}
+        urg_full: dict[Literal["red", "yellow", "green"], int] = {}
+        for tier in self._URGENCY_ORDER:
+            urgency_key = cast(Literal["red", "yellow", "green"], tier)
+            urg_full[urgency_key] = int(urg_counts.get(urgency_key, 0))
         # urgency_max — highest tier present
         urgency_max = "green"
         for tier in self._URGENCY_ORDER:
-            if urg_full[tier] > 0:
+            urgency_key = cast(Literal["red", "yellow", "green"], tier)
+            if urg_full[urgency_key] > 0:
                 urgency_max = tier
                 break
         # by_sender

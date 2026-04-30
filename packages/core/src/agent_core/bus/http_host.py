@@ -16,8 +16,8 @@ import asyncio
 import contextlib
 import json
 import logging
-from collections.abc import AsyncIterator, Callable
-from typing import Protocol, runtime_checkable
+from collections.abc import AsyncIterator, Awaitable, Callable, MutableMapping
+from typing import Any, Protocol, cast, runtime_checkable
 
 import uvicorn
 from starlette.requests import Request
@@ -30,16 +30,26 @@ log = logging.getLogger(__name__)
 
 
 @runtime_checkable
+class ASGIApp(Protocol):
+    async def __call__(
+        self,
+        scope: MutableMapping[str, object],
+        receive: Callable[[], Awaitable[MutableMapping[str, object]]],
+        send: Callable[[MutableMapping[str, object]], Awaitable[None]],
+    ) -> None: ...
+
+
+@runtime_checkable
 class MCPHostable(Protocol):
     """An endpoint that wants to be mounted on the shared HTTP host."""
 
     mount: str
 
-    def asgi_app(self) -> object:
+    def asgi_app(self) -> ASGIApp:
         """Return the ASGI application to serve under `self.mount`."""
 
 
-def _make_lifespan(apps: list[object]):
+def _make_lifespan(apps: list[ASGIApp]):
     """Return a Starlette-compatible lifespan context that propagates startup/shutdown
     to every sub-app in *apps*.
 
@@ -49,7 +59,7 @@ def _make_lifespan(apps: list[object]):
     """
 
     @contextlib.asynccontextmanager
-    async def _lifespan(_starlette_app: object):
+    async def _lifespan(_starlette_app: ASGIApp):
         tasks: list[asyncio.Task] = []
         receive_queues: list[asyncio.Queue] = []
         send_queues: list[asyncio.Queue] = []
@@ -60,7 +70,11 @@ def _make_lifespan(apps: list[object]):
             receive_queues.append(rq)
             send_queues.append(sq)
 
-            scope = {"type": "lifespan", "asgi": {"version": "3.0"}, "state": {}}
+            scope: MutableMapping[str, object] = {
+                "type": "lifespan",
+                "asgi": cast(object, {"version": "3.0"}),
+                "state": cast(object, {}),
+            }
 
             async def _receive(q=rq):
                 return await q.get()
@@ -68,7 +82,7 @@ def _make_lifespan(apps: list[object]):
             async def _send(msg, q=sq):
                 await q.put(msg)
 
-            tasks.append(asyncio.ensure_future(app(scope, _receive, _send)))  # type: ignore[operator]
+            tasks.append(asyncio.ensure_future(app(scope, _receive, _send)))
 
         # Fan out startup event and wait for all sub-apps to report ready.
         for rq in receive_queues:

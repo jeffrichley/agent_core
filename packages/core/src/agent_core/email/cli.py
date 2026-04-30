@@ -42,7 +42,7 @@ def check(
     client = get_client()
     inbox_id = get_inbox_id()
 
-    kwargs = {"limit": limit}
+    kwargs: dict[str, object] = {"limit": limit}
     if unread:
         kwargs["labels"] = "unread"
 

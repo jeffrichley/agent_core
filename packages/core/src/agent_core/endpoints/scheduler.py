@@ -17,9 +17,9 @@ import logging
 import uuid
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Literal
+from typing import TYPE_CHECKING, Any, Literal, cast
 
-import yaml  # type: ignore[import-untyped]
+import yaml
 from apscheduler import AsyncScheduler
 from apscheduler.datastores.sqlalchemy import SQLAlchemyDataStore
 from apscheduler.triggers.cron import CronTrigger
@@ -175,7 +175,8 @@ class SchedulerEndpoint:
         assert self._scheduler is not None
         existing = await self._scheduler.get_schedules()
         existing_ids = {s.id for s in existing}
-        seeds = load_seed_jobs(self.jobs_path)  # type: ignore[arg-type]
+        assert self.jobs_path is not None
+        seeds = load_seed_jobs(self.jobs_path)
         for job_name, job in seeds.items():
             if job_name in existing_ids:
                 log.debug("Seed job %s already present; skipping", job_name)
@@ -268,9 +269,12 @@ class SchedulerEndpoint:
 
         # Existing args tuple is (scheduler_name, job_name, target, prompt, metadata).
         cur_args = list(existing.args) if existing.args else [self.name, args.name, "", "", {}]
-        new_target = args.target if args.target is not None else cur_args[2]
-        new_prompt = args.prompt if args.prompt is not None else cur_args[3]
-        new_metadata = args.metadata if args.metadata is not None else cur_args[4]
+        current_target = str(cur_args[2])
+        current_prompt = str(cur_args[3])
+        current_metadata = cast(dict[str, Any], cur_args[4]) if isinstance(cur_args[4], dict) else {}
+        new_target = args.target if args.target is not None else current_target
+        new_prompt = args.prompt if args.prompt is not None else current_prompt
+        new_metadata = args.metadata if args.metadata is not None else current_metadata
 
         # Rebuild trigger if schedule or timezone changed; else reuse existing.
         if args.schedule is not None:
@@ -287,7 +291,7 @@ class SchedulerEndpoint:
             except Exception as exc:
                 raise _ToolError(f"invalid trigger: {exc}") from exc
         else:
-            new_trig = existing.trigger
+            new_trig = existing.trigger  # type: ignore[assignment]
 
         await self._scheduler.remove_schedule(args.name)
         await self._scheduler.add_schedule(
@@ -432,7 +436,7 @@ class _ToolError(Exception):
     """User-error during tool dispatch — produces an Acknowledgment with note."""
 
 
-def _trigger_kind_of(trigger: Any) -> str:
+def _trigger_kind_of(trigger: Any) -> Literal["interval", "cron", "date"]:
     """Best-effort mapping from APScheduler trigger object → JobDef.trigger str."""
     s = str(trigger).lower()
     if "interval" in s:
