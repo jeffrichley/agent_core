@@ -10,8 +10,13 @@ from agent_core_channel.sse_client import iter_notify_events
 class _FakeStreamResponse:
     """Mimics httpx.Response.aiter_lines() behavior for one batch of lines."""
 
-    def __init__(self, lines: list[str]):
+    def __init__(self, lines: list[str], status_error: Exception | None = None):
         self._lines = lines
+        self._status_error = status_error
+
+    def raise_for_status(self) -> None:
+        if self._status_error is not None:
+            raise self._status_error
 
     async def aiter_lines(self):
         for line in self._lines:
@@ -21,7 +26,8 @@ class _FakeStreamResponse:
 class _FakeAsyncClient:
     """Mimics httpx.AsyncClient.stream(). Each call yields the next scripted response.
 
-    A response can be a list[str] (lines) or an Exception (raised on stream open).
+    A response can be a list[str] (lines), a _FakeStreamResponse, or an
+    Exception (raised on stream open).
     """
 
     def __init__(self, scripted: list):
@@ -36,6 +42,8 @@ class _FakeAsyncClient:
             async def __aenter__(_self):
                 if isinstance(nxt, Exception):
                     raise nxt
+                if isinstance(nxt, _FakeStreamResponse):
+                    return nxt
                 return _FakeStreamResponse(nxt)
 
             async def __aexit__(_self, *exc):
@@ -125,6 +133,31 @@ async def test_sse_client_retries_on_connection_error():
 
     assert events == [{"after_retry": True}]
     assert len(client.calls) == 3
+
+
+@pytest.mark.asyncio
+async def test_sse_client_retries_on_http_error_status():
+    """Non-2xx responses should go through the backoff retry path."""
+    client = _FakeAsyncClient(
+        scripted=[
+            _FakeStreamResponse([], status_error=RuntimeError("404 not found")),
+            ['data: {"after_retry": true}', ""],
+        ]
+    )
+
+    events: list[dict] = []
+    async for ev in iter_notify_events(
+        agent="a",
+        daemon_url="http://127.0.0.1:8788",
+        client_factory=lambda: client,
+        max_events=1,
+        backoff_initial=0.001,
+        backoff_max=0.001,
+    ):
+        events.append(ev)
+
+    assert events == [{"after_retry": True}]
+    assert len(client.calls) == 2
 
 
 @pytest.mark.asyncio

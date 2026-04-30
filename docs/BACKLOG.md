@@ -182,59 +182,24 @@ on a quiet bus.
 
 ## FastMCP 3.x adapter gaps (`ClaudeCodeMCPEndpoint`)
 
-Two compromises in the `ClaudeCodeMCPEndpoint` adapter, both rooted in
-FastMCP 3.x's middleware/session API surface. Acceptable for v1; track
-here so the next person to touch the adapter has the context.
+The original v1 adapter gaps around `_session_active` disconnect cleanup and
+polling-only inbound mail were resolved by Sub-project I (PR #9 draft):
 
-### `_session_active` does not reset on HTTP disconnect
+- `SessionRegistry` now captures the active FastMCP session via the
+  session task-group lifecycle and releases it on disconnect.
+- `queue_for_pickup()` is idempotent by envelope id, avoiding duplicate
+  in-memory entries during bus retry paths.
+- `_notify_mail_arrived()` now pushes `notifications/claude/channel`
+  summaries with urgency-aware debounce.
+- `agent-core-channel` relays `/notify/<agent>` SSE events into Claude
+  Code's supported stdio channel mechanism, including initial wake-on-connect
+  snapshots.
 
-FastMCP's `Middleware` class exposes `on_initialize` (which the adapter
-hooks to flip `_session_active = True`) but no symmetric `on_disconnect`
-or session-end signal. The flag therefore stays `True` until
-`endpoint.stop()` is called, which only happens at daemon shutdown.
-
-After the first agent disconnect-without-teardown:
-
-- `deliver()` no longer raises `EndpointUnavailable`. Envelopes queue
-  in `_pending`; bus considers delivery successful.
-- The bus's `redelivery_timeout_seconds` (default 300s) sweep will
-  re-dispatch unacked envelopes; on each redelivery the same envelope
-  is appended to `_pending` again, so `list_pending` shows duplicates
-  during the disconnect window.
-- `ack(envelope_id)` removes all `_pending` entries with that id, so
-  the duplicate window is bounded and self-correcting on the next
-  agent reconnect.
-
-- **Source:** Bus daemon (sub-project B v1) implementation; see
-  `packages/core/src/agent_core/endpoints/claude_code_mcp.py` —
-  `_SessionTracker` and `deliver()`.
-- **Trigger:** FastMCP exposes a session-end / disconnect signal in a
-  later release, OR we observe duplicate `list_pending` entries
-  surfacing in real agent traffic. The fix is to flip `_session_active
-  = False` from a session-end hook (or wrap `_mcp.http_app(...)` in a
-  thin ASGI middleware that intercepts Streamable HTTP session close).
-
-### `_notify_mail_arrived` is a no-op (polling-only inbound)
-
-The spec calls for inbound envelopes to be pushed to the connected
-Claude Code session as MCP notifications on the SSE stream. FastMCP
-3.x doesn't expose a clean API to send a server-initiated notification
-on a specific session from outside a tool-call context (`Context.send_notification` is only available inside tool handlers; the
-`StreamableHTTPSessionManager` session map is internal state).
-
-Today the adapter relies on the agent calling `list_pending`
-periodically to drain mail. This works — verified in
-`tests/test_bus_daemon_integration.py` — but adds latency proportional
-to the polling interval.
-
-- **Source:** Bus daemon (sub-project B v1) implementation; see
-  `_notify_mail_arrived` in
-  `packages/core/src/agent_core/endpoints/claude_code_mcp.py`.
-- **Trigger:** FastMCP exposes a public out-of-band notification API,
-  OR we accept latency as material and write a custom ASGI middleware
-  that holds the active session's response stream and pushes
-  `notifications/agent_core/mail_arrived` directly. Spec § Open
-  Questions already contemplated this fallback.
+Remaining follow-up: decide whether multi-session-per-agent should be
+strictly refused or remain most-recent-wins. The current implementation
+keeps one active HTTP MCP session slot with most-recent-wins replacement,
+while the broker can fan out to multiple relay subscribers. That is useful
+for local recovery but has not been designed as a multi-agent ownership model.
 
 ---
 

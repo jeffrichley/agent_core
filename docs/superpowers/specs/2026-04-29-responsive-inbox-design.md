@@ -60,10 +60,13 @@ gymnastics.
 - Heartbeat suppression / no-op cancellation. Deferred to its own sub-project
   per the BACKLOG entry. The check-running infrastructure doesn't exist yet
   in agent-core, and standing it up is multi-week work tied to integrations.
-- Multi-session-per-endpoint support. We refuse a second concurrent session
-  on the same endpoint as a defense-in-depth choice. Multi-instance agents
-  get separate endpoints (`agent-pepper-primary`, `agent-pepper-shadow`),
-  not shared mailboxes.
+- Multi-session-per-endpoint ownership semantics. The implementation keeps one
+  active HTTP MCP session slot and uses most-recent-wins replacement for local
+  recovery. The notification broker can fan out to multiple relay subscribers,
+  but shared-mailbox ownership across multiple live Claude Code instances is
+  not a supported product model. Multi-instance agents should get separate
+  endpoints (`agent-pepper-primary`, `agent-pepper-shadow`), not shared
+  mailboxes.
 - Wake-cycle `done()` semantics. Agreed during brainstorming that the agent
   simply stops calling `list_pending` when it has nothing to do; push fires
   on next arrival. No protocol-level cycle boundary.
@@ -128,15 +131,12 @@ to `sleep_forever()`, the `finally:` block runs, and the registry entry is
 cleared. This is exactly how `PingMiddleware._ping_loop` cleans up — same
 shape, same guarantees.
 
-`_register_session` enforces the single-slot collision policy:
+`_register_session` keeps a single active HTTP MCP session slot. If a new
+session appears, it replaces the prior slot; the prior session's cleanup is
+identity-checked and will not clear the newer session:
 
 ```python
 def _register_session(self, session) -> None:
-    if self._active_session is not None and self._active_session is not session:
-        raise RuntimeError(
-            f"endpoint '{self.name}' already has an active session; "
-            f"refusing concurrent connection"
-        )
     self._active_session = session
 ```
 
@@ -246,8 +246,10 @@ async def list_pending(batch_window_seconds: int = 0) -> list[dict]:
 ```
 
 When `batch_window_seconds > 0`, consecutive envelopes from the same
-`from_` whose `created_at` are within the window are merged into a single
-returned group:
+`from_`, with the same `kind` and `urgency`, whose `created_at` are within
+the window are merged into a single returned group. Different urgency tiers
+stay separate so red-lane work is never hidden inside a lower-priority batch;
+different kinds stay separate so unlike cognitive events are not collapsed.
 
 ```json
 [

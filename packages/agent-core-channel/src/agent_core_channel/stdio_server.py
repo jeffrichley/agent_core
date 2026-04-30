@@ -20,6 +20,7 @@ from mcp.server.lowlevel.server import NotificationOptions, Server
 from mcp.server.stdio import stdio_server
 from mcp.shared.session import SessionMessage
 from mcp.types import JSONRPCMessage, JSONRPCNotification
+from mcp.types import JSONRPCResponse
 
 from agent_core_channel.sse_client import iter_notify_events
 
@@ -114,17 +115,44 @@ async def emit_channel_notification(
     await write_stream.send(msg)
 
 
+def _is_initialize_response(message: SessionMessage) -> bool:
+    root = message.message.root
+    return (
+        isinstance(root, JSONRPCResponse)
+        and isinstance(root.result, dict)
+        and "serverInfo" in root.result
+        and "capabilities" in root.result
+    )
+
+
+class _InitializationGateWriteStream:
+    """Forward writes and open a gate after the initialize response is sent."""
+
+    def __init__(
+        self,
+        inner: anyio.abc.ObjectSendStream[SessionMessage],
+        initialized: anyio.Event,
+    ) -> None:
+        self._inner = inner
+        self._initialized = initialized
+
+    async def send(self, message: SessionMessage) -> None:
+        await self._inner.send(message)
+        if _is_initialize_response(message):
+            self._initialized.set()
+
+
 async def _sse_pump(
     agent: str,
     daemon_url: str,
     write_stream: anyio.abc.ObjectSendStream[SessionMessage],
+    initialized: anyio.Event | None = None,
 ) -> None:
     """Read events from /notify/<agent> and emit them as MCP notifications."""
+    if initialized is not None:
+        await initialized.wait()
     async for summary in iter_notify_events(agent=agent, daemon_url=daemon_url):
-        try:
-            await emit_channel_notification(write_stream, summary)
-        except Exception:
-            log.warning("sse pump: emit failed; continuing", exc_info=True)
+        await emit_channel_notification(write_stream, summary)
 
 
 async def run_relay(agent: str, daemon_url: str) -> None:
@@ -146,7 +174,9 @@ async def run_relay(agent: str, daemon_url: str) -> None:
     )
 
     async with stdio_server() as (read_stream, write_stream):
+        initialized = anyio.Event()
+        gated_write_stream = _InitializationGateWriteStream(write_stream, initialized)
         async with anyio.create_task_group() as tg:
-            tg.start_soon(_sse_pump, agent, daemon_url, write_stream)
-            await server.run(read_stream, write_stream, init_options)
+            tg.start_soon(_sse_pump, agent, daemon_url, gated_write_stream, initialized)
+            await server.run(read_stream, gated_write_stream, init_options)
             tg.cancel_scope.cancel()

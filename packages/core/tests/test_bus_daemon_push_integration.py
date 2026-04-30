@@ -154,12 +154,13 @@ endpoints:
                     )
 
                     params = matched.params or {}
-                    assert params.get("meta", {}).get("count", 0) >= 1
+                    assert int(params.get("meta", {}).get("count", "0")) >= 1
                     assert params["meta"]["endpoint"] == "agent"
                     # Sanity-check the summary shape Task 6 ships.
                     assert "urgency_max" in params["meta"]
                     assert "urgency_counts" in params["meta"]
                     assert "by_sender" in params["meta"]
+                    assert all(isinstance(v, str) for v in params["meta"].values())
         finally:
             await bus.stop()
     finally:

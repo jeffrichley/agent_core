@@ -51,6 +51,7 @@ async def iter_notify_events(
         try:
             async with client_factory() as client:
                 async with client.stream("GET", url) as resp:
+                    resp.raise_for_status()
                     async for line in resp.aiter_lines():
                         if not line.startswith("data: "):
                             continue

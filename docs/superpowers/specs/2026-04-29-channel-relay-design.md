@@ -243,6 +243,14 @@ Install via `uv tool install` (or pipx, etc.) so the relay is a binary on PATH. 
 uv tool install --from packages/agent-core-channel agent-core-channel
 ```
 
+> **Windows validation caveat (2026-04-30):** `uv tool install --from
+> packages/agent-core-channel agent-core-channel` did not run the pywin32
+> post-install step needed by the MCP SDK's Windows utilities. For live
+> Windows validation, `.mcp.json` pointed at the workspace venv executable
+> (`.venv\\Scripts\\agent-core-channel.exe`) instead. Do not switch Windows
+> testbot back to the PATH-resolved tool install until that packaging issue is
+> fixed or replaced with a wrapper/pipx path that stages pywin32 correctly.
+
 Once published to PyPI:
 
 ```bash

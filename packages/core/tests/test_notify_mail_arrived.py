@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 from datetime import datetime, timezone
 from typing import Any
 
@@ -90,10 +91,27 @@ async def test_notify_pushes_summary_when_session_active():
     assert _extract_method(session.sent[0]) == "notifications/claude/channel"
     params = _extract_params(session.sent[0])
     assert "INBOX: 1 pending" in params["content"]
-    assert params["meta"]["count"] == 1
+    assert params["meta"]["count"] == "1"
     assert params["meta"]["endpoint"] == "a"
     assert params["meta"]["urgency_max"] == "green"
-    assert params["meta"]["urgency_counts"] == {"red": 0, "yellow": 0, "green": 1}
+    assert json.loads(params["meta"]["urgency_counts"]) == {"red": 0, "yellow": 0, "green": 1}
+
+
+@pytest.mark.asyncio
+async def test_notify_channel_meta_values_are_strings_on_http_push_path():
+    ep = ClaudeCodeMCPEndpoint(name="a", mount="/mcp/a")
+    _speed_up_debounce(ep)
+    session = _RecordingSession()
+    ep._register_session(session)
+    ep._pending = [_env("e1", urgency="red")]
+
+    await ep._notify_mail_arrived("red")
+    await asyncio.sleep(0.1)
+
+    meta = _extract_params(session.sent[0])["meta"]
+    assert meta["count"] == "1"
+    assert meta["urgency_counts"] == '{"red": 1, "yellow": 0, "green": 0}'
+    assert all(isinstance(v, str) for v in meta.values())
 
 
 @pytest.mark.asyncio
@@ -112,7 +130,7 @@ async def test_notify_debounces_burst_into_one_push():
 
     assert len(session.sent) == 1
     params = _extract_params(session.sent[0])
-    assert params["meta"]["count"] == 3
+    assert params["meta"]["count"] == "3"
 
 
 @pytest.mark.asyncio
@@ -131,7 +149,7 @@ async def test_notify_summary_reports_max_urgency():
 
     params = _extract_params(session.sent[0])
     assert params["meta"]["urgency_max"] == "red"
-    assert params["meta"]["urgency_counts"] == {"red": 1, "yellow": 1, "green": 1}
+    assert json.loads(params["meta"]["urgency_counts"]) == {"red": 1, "yellow": 1, "green": 1}
 
 
 @pytest.mark.asyncio
@@ -149,7 +167,7 @@ async def test_notify_summary_groups_by_sender():
     await asyncio.sleep(0.1)
 
     params = _extract_params(session.sent[0])
-    by_sender = {entry["from"]: entry["count"] for entry in params["meta"]["by_sender"]}
+    by_sender = {entry["from"]: entry["count"] for entry in json.loads(params["meta"]["by_sender"])}
     assert by_sender == {"alice": 2, "bob": 1}
 
 

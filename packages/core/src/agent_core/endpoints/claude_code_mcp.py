@@ -17,7 +17,9 @@ deliver() raises EndpointUnavailable so the bus queues the envelope.
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
+import re
 import uuid
 from collections import Counter
 from datetime import datetime, timedelta, timezone
@@ -37,6 +39,7 @@ if TYPE_CHECKING:
     from agent_core.bus.handle import BusHandle
 
 log = logging.getLogger(__name__)
+_META_KEY_RE = re.compile(r"^[A-Za-z0-9_]+$")
 
 
 class SessionRegistry(Middleware):
@@ -70,7 +73,7 @@ class SessionRegistry(Middleware):
         # stream's lifetime in stateful mode). Fall back to `id(session)` for
         # in-memory transports that don't have a session id.
         sid = getattr(ctx, "session_id", None) or f"obj:{id(session)}"
-        log.info(
+        log.debug(
             "endpoint '%s': on_message session_id=%s id(session)=%d",
             self._endpoint.name,
             sid,
@@ -343,12 +346,31 @@ class ClaudeCodeMCPEndpoint:
 
     def _make_channel_notification(self, summary: dict) -> SessionMessage:
         """Wrap the summary into a JSON-RPC notification SessionMessage."""
+        params = {
+            "content": str(summary.get("content", "")),
+            "meta": self._coerce_channel_meta(summary.get("meta", {}) or {}),
+        }
         notification = JSONRPCNotification(
             jsonrpc="2.0",
             method="notifications/claude/channel",
-            params=summary,
+            params=params,
         )
         return SessionMessage(message=JSONRPCMessage(notification))
+
+    @staticmethod
+    def _coerce_channel_meta(meta: dict[str, Any]) -> dict[str, str]:
+        """Claude Code channel meta must be Record<string, string>."""
+        out: dict[str, str] = {}
+        for key, value in meta.items():
+            if not isinstance(key, str) or not _META_KEY_RE.match(key):
+                continue
+            if isinstance(value, str):
+                out[key] = value
+            elif isinstance(value, (int, float, bool)):
+                out[key] = str(value)
+            else:
+                out[key] = json.dumps(value, default=str)
+        return out
 
     async def _notify_mail_arrived(self, urgency: str = "green") -> None:
         """Schedule a debounced push summarizing the current mailbox.

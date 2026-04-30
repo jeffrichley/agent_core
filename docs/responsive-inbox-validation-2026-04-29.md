@@ -8,7 +8,9 @@ Branch: `feat/responsive-inbox`
 Sub-project I is validated end to end with the daemon-side responsive inbox
 and the `agent-core-channel` stdio relay loaded in Claude Code.
 
-Ship: YES
+Ship: YES for the functional daemon + relay behavior validated with the
+workspace venv relay binary. Windows `uv tool install` packaging remains a
+documented follow-up caveat; see `packages/agent-core-channel/README.md`.
 
 ## Results
 

@@ -8,8 +8,14 @@ from __future__ import annotations
 
 import anyio
 import pytest
+from anyio import BrokenResourceError
 
-from agent_core_channel.stdio_server import build_initialization_options
+import agent_core_channel.stdio_server as stdio_server
+from agent_core_channel.stdio_server import (
+    _InitializationGateWriteStream,
+    _sse_pump,
+    build_initialization_options,
+)
 
 
 def test_initialization_options_declare_claude_channel_capability():
@@ -68,3 +74,70 @@ async def test_emit_channel_notification_writes_jsonrpc_to_stream():
     assert "bad-key" not in meta
     # All values are strings.
     assert all(isinstance(v, str) for v in meta.values())
+
+
+@pytest.mark.asyncio
+async def test_initialization_gate_opens_after_initialize_response_is_sent():
+    from mcp.shared.session import SessionMessage
+    from mcp.types import JSONRPCMessage, JSONRPCResponse
+
+    send_stream, receive_stream = anyio.create_memory_object_stream(max_buffer_size=8)
+    initialized = anyio.Event()
+    gated = _InitializationGateWriteStream(send_stream, initialized)
+
+    msg = SessionMessage(
+        message=JSONRPCMessage(
+            JSONRPCResponse(
+                jsonrpc="2.0",
+                id=1,
+                result={
+                    "serverInfo": {"name": "agent-core-channel", "version": "0.1.0"},
+                    "capabilities": {"experimental": {"claude/channel": {}}},
+                },
+            )
+        )
+    )
+    await gated.send(msg)
+
+    assert initialized.is_set()
+    assert await receive_stream.receive() is msg
+
+
+@pytest.mark.asyncio
+async def test_sse_pump_waits_for_initialization_before_consuming_events(monkeypatch):
+    async def fake_iter_notify_events(*, agent: str, daemon_url: str):
+        yield {"content": "INBOX: 1 pending", "meta": {"count": 1}}
+
+    monkeypatch.setattr(stdio_server, "iter_notify_events", fake_iter_notify_events)
+
+    initialized = anyio.Event()
+    send_stream, receive_stream = anyio.create_memory_object_stream(max_buffer_size=8)
+
+    async with anyio.create_task_group() as tg:
+        tg.start_soon(_sse_pump, "agent", "http://daemon", send_stream, initialized)
+        await anyio.sleep(0.01)
+        with pytest.raises(anyio.WouldBlock):
+            receive_stream.receive_nowait()
+
+        initialized.set()
+        msg = await receive_stream.receive()
+        assert msg.message.root.method == "notifications/claude/channel"
+        tg.cancel_scope.cancel()
+
+
+@pytest.mark.asyncio
+async def test_sse_pump_treats_write_failures_as_fatal(monkeypatch):
+    async def fake_iter_notify_events(*, agent: str, daemon_url: str):
+        yield {"content": "INBOX: 1 pending", "meta": {"count": 1}}
+
+    class _BrokenWriteStream:
+        async def send(self, _msg):
+            raise BrokenResourceError
+
+    monkeypatch.setattr(stdio_server, "iter_notify_events", fake_iter_notify_events)
+
+    initialized = anyio.Event()
+    initialized.set()
+
+    with pytest.raises(BrokenResourceError):
+        await _sse_pump("agent", "http://daemon", _BrokenWriteStream(), initialized)

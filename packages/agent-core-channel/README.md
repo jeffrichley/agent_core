@@ -10,7 +10,7 @@ Claude Code still uses the daemon's HTTP MCP endpoint for tools such as
 
 ## Claude Code Configuration
 
-Example `.mcp.json` entry:
+On Windows in this workspace, use the workspace venv executable for now:
 
 ```json
 {
@@ -20,7 +20,7 @@ Example `.mcp.json` entry:
       "url": "http://localhost:8788/mcp/agent-testbot"
     },
     "agent-core-channel": {
-      "command": "agent-core-channel",
+      "command": "E:\\workspaces\\ai\\agents\\agent_core\\.venv\\Scripts\\agent-core-channel.exe",
       "args": ["--agent", "agent-testbot"]
     }
   }
@@ -41,14 +41,14 @@ this workspace. The installed tool environment includes `pywin32` wheels, but
 the post-install step that stages `_win32sysloader.pyd` does not run, and the
 MCP SDK's Windows utility import can fail at startup.
 
-For local validation on Windows, point `.mcp.json` at the workspace venv binary
-instead:
+For non-Windows installs, or once the Windows packaging issue is fixed, a
+PATH-resolved binary is the intended shape:
 
 ```json
 {
   "mcpServers": {
     "agent-core-channel": {
-      "command": "E:\\workspaces\\ai\\agents\\agent_core\\.venv\\Scripts\\agent-core-channel.exe",
+      "command": "agent-core-channel",
       "args": ["--agent", "agent-testbot"]
     }
   }
