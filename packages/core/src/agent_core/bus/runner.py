@@ -17,8 +17,9 @@ import yaml
 from agent_core.bus.core import Bus, BusConfig, BusHookSpec, EndpointSpec
 from agent_core.bus.http_host import HTTPHost, MCPHostable
 from agent_core.bus.notify_broker import NotificationBroker
-from agent_core.bus.protocol import BusHook, Endpoint, NotificationBrokerAwareEndpoint
+from agent_core.bus.protocol import BusHook, Endpoint
 from agent_core.plugins.manager import create_plugin_manager
+from agent_core.plugins.specs import RunnerServices
 
 
 class BusBootError(Exception):
@@ -28,8 +29,21 @@ class BusBootError(Exception):
 _LOOPBACK_HOSTS = {"127.0.0.1", "::1", "localhost"}
 
 
-def _import_class(path: str, plugin_manager: pluggy.PluginManager) -> Any:
-    resolved = plugin_manager.hook.resolve_class(class_path=path)
+def _import_class(
+    path: str,
+    plugin_manager: pluggy.PluginManager,
+    *,
+    kind: str = "generic",
+) -> Any:
+    resolved = None
+    if kind == "endpoint":
+        resolved = plugin_manager.hook.resolve_endpoint_class(endpoint_class=path)
+    elif kind == "bus_hook":
+        resolved = plugin_manager.hook.resolve_bus_hook_class(hook_class=path)
+    elif kind == "hook_tool":
+        resolved = plugin_manager.hook.resolve_hook_tool_class(tool_class=path)
+    if resolved is None:
+        resolved = plugin_manager.hook.resolve_class(class_path=path)
     if resolved is not None:
         return resolved
     module_path, _, class_name = path.rpartition(".")
@@ -57,6 +71,7 @@ def _validate_http(http_cfg: dict, has_auth_hook: bool) -> None:
 async def build_bus_from_config(path: Path) -> tuple[Bus, HTTPHost | None]:
     raw = yaml.safe_load(Path(path).read_text(encoding="utf-8")) or {}
     plugin_manager = create_plugin_manager()
+    plugin_manager.hook.validate_config(raw_config=raw)
 
     bus_cfg_raw = raw.get("bus", {})
     storage_path = Path(bus_cfg_raw.get("storage_path", "~/.agent-core/bus.sqlite")).expanduser()
@@ -76,6 +91,7 @@ async def build_bus_from_config(path: Path) -> tuple[Bus, HTTPHost | None]:
     # constructed below can be wired to publish push summaries through it,
     # and HTTPHost can serve subscribers off the same instance.
     notify_broker = NotificationBroker()
+    services = RunnerServices(notify_broker=notify_broker)
 
     # Hooks (no auth-aware filtering yet — Phase 2 will add it).
     # TODO(Phase 2): scan loaded hooks for auth-hook interface and set True.
@@ -85,7 +101,7 @@ async def build_bus_from_config(path: Path) -> tuple[Bus, HTTPHost | None]:
         for entry in (raw.get("bus_hooks", {}) or {}).get(stage, []) or []:
             if "class" not in entry:
                 raise BusBootError(f"hook entry missing required 'class' field: {entry!r}")
-            cls = _import_class(entry["class"], plugin_manager)
+            cls = _import_class(entry["class"], plugin_manager, kind="bus_hook")
             try:
                 instance = cls(**entry.get("params", {}))
             except Exception as exc:
@@ -94,6 +110,12 @@ async def build_bus_from_config(path: Path) -> tuple[Bus, HTTPHost | None]:
                 ) from exc
             if not isinstance(instance, BusHook):
                 raise BusBootError(f"{entry['class']!r} does not satisfy BusHook protocol")
+            plugin_manager.hook.configure_bus_hook_instance(
+                instance=instance,
+                stage=stage,
+                hook_config=entry,
+                services=services,
+            )
             bus.register_hook(stage, BusHookSpec(hook=instance, params=entry.get("params", {})))
 
     # HTTP guardrail.
@@ -106,7 +128,7 @@ async def build_bus_from_config(path: Path) -> tuple[Bus, HTTPHost | None]:
             raise BusBootError(f"endpoint entry missing required 'class' field: {entry!r}")
         if "name" not in entry:
             raise BusBootError(f"endpoint entry missing required 'name' field: {entry!r}")
-        cls = _import_class(entry["class"], plugin_manager)
+        cls = _import_class(entry["class"], plugin_manager, kind="endpoint")
         params = entry.get("params", {})
         # Runner-side convention (not enforced by the Endpoint Protocol):
         # every endpoint class must accept `name` as a constructor kwarg.
@@ -120,8 +142,12 @@ async def build_bus_from_config(path: Path) -> tuple[Bus, HTTPHost | None]:
             ) from exc
         if not isinstance(instance, Endpoint):
             raise BusBootError(f"{entry['class']!r} does not satisfy Endpoint protocol")
-        if isinstance(instance, NotificationBrokerAwareEndpoint):
-            instance.attach_notify_broker(notify_broker)
+        plugin_manager.hook.configure_endpoint_instance(
+            instance=instance,
+            endpoint_name=entry["name"],
+            endpoint_config=entry,
+            services=services,
+        )
         bus.register(EndpointSpec(endpoint=instance, description=entry.get("description", "")))
 
     hostable: list[MCPHostable] = [

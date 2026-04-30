@@ -36,6 +36,7 @@ from rich.logging import RichHandler
 
 from agent_core.hooks.protocol import HookTool
 from agent_core.models import PipelineConfig, ToolResult
+from agent_core.plugins.manager import create_plugin_manager
 
 logging.basicConfig(
     level=logging.INFO,
@@ -56,6 +57,7 @@ class Pipeline:
         raw = yaml.safe_load(config_path.read_text(encoding="utf-8"))
         self.config = PipelineConfig(**raw)
         self.config_path = config_path
+        self._plugin_manager = create_plugin_manager()
 
         for event, tools in self.config.pipelines.items():
             tool_names = [t.tool.rsplit(".", 1)[-1] for t in tools]
@@ -65,13 +67,19 @@ class Pipeline:
 
     def _import_tool_class(self, class_path: str) -> type | None:
         """Dynamically import a tool class from its fully qualified path."""
-        module_path, class_name = class_path.rsplit(".", 1)
-        try:
-            module = importlib.import_module(module_path)
-            cls = getattr(module, class_name)
-        except (ImportError, AttributeError) as e:
-            logger.error("Failed to import tool '%s': %s", class_path, e)
-            return None
+        resolved = self._plugin_manager.hook.resolve_hook_tool_class(tool_class=class_path)
+        if resolved is None:
+            resolved = self._plugin_manager.hook.resolve_class(class_path=class_path)
+        if resolved is not None:
+            cls = resolved
+        else:
+            module_path, class_name = class_path.rsplit(".", 1)
+            try:
+                module = importlib.import_module(module_path)
+                cls = getattr(module, class_name)
+            except (ImportError, AttributeError) as e:
+                logger.error("Failed to import tool '%s': %s", class_path, e)
+                return None
 
         if not isinstance(cls, type) or not issubclass(cls, HookTool):
             instance = cls()

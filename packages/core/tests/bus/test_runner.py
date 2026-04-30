@@ -115,6 +115,30 @@ class TestRunner:
                     return _PluginEndpoint
                 return None
 
+            @staticmethod
+            def validate_config(*, raw_config):
+                return None
+
+            @staticmethod
+            def resolve_endpoint_class(*, endpoint_class: str):
+                return None
+
+            @staticmethod
+            def resolve_bus_hook_class(*, hook_class: str):
+                return None
+
+            @staticmethod
+            def resolve_hook_tool_class(*, tool_class: str):
+                return None
+
+            @staticmethod
+            def configure_endpoint_instance(*, instance, endpoint_name, endpoint_config, services):
+                return None
+
+            @staticmethod
+            def configure_bus_hook_instance(*, instance, stage, hook_config, services):
+                return None
+
         class _PluginManager:
             hook = _Hook()
 
