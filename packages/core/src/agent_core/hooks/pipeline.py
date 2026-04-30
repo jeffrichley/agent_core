@@ -27,7 +27,6 @@ See Also:
     agent_core.models.PipelineConfig: The config model this class validates against.
 """
 
-import importlib
 import logging
 from pathlib import Path
 
@@ -73,13 +72,8 @@ class Pipeline:
         if resolved is not None:
             cls = resolved
         else:
-            module_path, class_name = class_path.rsplit(".", 1)
-            try:
-                module = importlib.import_module(module_path)
-                cls = getattr(module, class_name)
-            except (ImportError, AttributeError) as e:
-                logger.error("Failed to import tool '%s': %s", class_path, e)
-                return None
+            logger.error("Failed to import tool '%s': no plugin resolved class path", class_path)
+            return None
 
         if not isinstance(cls, type) or not issubclass(cls, HookTool):
             instance = cls()

@@ -7,7 +7,6 @@ enforces v1 invariants: loopback-only bind unless an auth hook is configured
 
 from __future__ import annotations
 
-import importlib
 from pathlib import Path
 from typing import Any
 
@@ -46,17 +45,10 @@ def _import_class(
         resolved = plugin_manager.hook.resolve_class(class_path=path)
     if resolved is not None:
         return resolved
-    module_path, _, class_name = path.rpartition(".")
+    module_path, _, _ = path.rpartition(".")
     if not module_path:
         raise BusBootError(f"invalid class path: {path!r}")
-    try:
-        module = importlib.import_module(module_path)
-    except ImportError as exc:
-        raise BusBootError(f"cannot import {module_path!r}: {exc}") from exc
-    try:
-        return getattr(module, class_name)
-    except AttributeError as exc:
-        raise BusBootError(f"{module_path!r} has no attribute {class_name!r}") from exc
+    raise BusBootError(f"could not resolve class: {path!r}")
 
 
 def _validate_http(http_cfg: dict, has_auth_hook: bool) -> None:

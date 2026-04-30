@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import importlib
 import logging
+from typing import Any
 
 import pluggy
 
@@ -32,11 +34,28 @@ class BuiltinRuntimePlugin:
         return None
 
 
+class BuiltinImportResolverPlugin:
+    """Built-in fallback resolver for dotted import class paths."""
+
+    @hookimpl(trylast=True)
+    def resolve_class(self, class_path: str) -> type[Any] | None:
+        module_path, _, class_name = class_path.rpartition(".")
+        if not module_path:
+            return None
+        try:
+            module = importlib.import_module(module_path)
+        except ImportError:
+            return None
+        resolved = getattr(module, class_name, None)
+        return resolved if isinstance(resolved, type) else None
+
+
 def create_plugin_manager() -> pluggy.PluginManager:
     """Create and populate the agent_core Pluggy manager."""
     pm = pluggy.PluginManager("agent_core")
     pm.add_hookspecs(AgentCoreSpecs)
     pm.register(BuiltinRuntimePlugin(), name="agent_core_builtin_runtime")
+    pm.register(BuiltinImportResolverPlugin(), name="agent_core_builtin_import_resolver")
     try:
         pm.load_setuptools_entrypoints("agent_core")
     except Exception:
