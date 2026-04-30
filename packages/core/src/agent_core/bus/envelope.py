@@ -9,7 +9,7 @@ The `from_` field defaults to "" because the bus stamps it at publish time
 """
 
 from datetime import datetime
-from typing import Annotated, Any, Literal, Union
+from typing import Annotated, Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
@@ -54,14 +54,7 @@ class AcknowledgmentPayload(BaseModel):
 
 
 EnvelopePayload = Annotated[
-    Union[
-        TextMessagePayload,
-        EventPayload,
-        ToolInvocationPayload,
-        CancellationPayload,
-        ProgressPayload,
-        AcknowledgmentPayload,
-    ],
+    TextMessagePayload | EventPayload | ToolInvocationPayload | CancellationPayload | ProgressPayload | AcknowledgmentPayload,
     Field(discriminator="kind"),
 ]
 

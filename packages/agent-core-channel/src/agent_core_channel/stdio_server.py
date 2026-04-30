@@ -13,14 +13,13 @@ from __future__ import annotations
 import json
 import logging
 import re
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 import anyio
 from mcp.server.lowlevel.server import NotificationOptions, Server
 from mcp.server.stdio import stdio_server
 from mcp.shared.session import SessionMessage
-from mcp.types import JSONRPCMessage, JSONRPCNotification
-from mcp.types import JSONRPCResponse
+from mcp.types import JSONRPCMessage, JSONRPCNotification, JSONRPCResponse
 
 from agent_core_channel.sse_client import iter_notify_events
 
@@ -177,6 +176,6 @@ async def run_relay(agent: str, daemon_url: str) -> None:
         initialized = anyio.Event()
         gated_write_stream = _InitializationGateWriteStream(write_stream, initialized)
         async with anyio.create_task_group() as tg:
-            tg.start_soon(_sse_pump, agent, daemon_url, gated_write_stream, initialized)
-            await server.run(read_stream, gated_write_stream, init_options)
+            tg.start_soon(_sse_pump, agent, daemon_url, cast(Any, gated_write_stream), initialized)
+            await server.run(read_stream, cast(Any, gated_write_stream), init_options)
             tg.cancel_scope.cancel()

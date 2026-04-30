@@ -3,7 +3,7 @@
 import os
 import stat
 import sys
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 
 import pytest
@@ -13,7 +13,7 @@ from agent_core.bus.persistence import Persistence
 
 
 def _now() -> datetime:
-    return datetime(2026, 4, 27, 12, 0, 0, tzinfo=timezone.utc)
+    return datetime(2026, 4, 27, 12, 0, 0, tzinfo=UTC)
 
 
 @pytest.fixture

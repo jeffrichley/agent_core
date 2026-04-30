@@ -1,33 +1,64 @@
-# agent_core justfile (workspace root)
-set shell := ["powershell", "-NoProfile", "-Command"]
+# Justfile — single quality-command surface for agent_core workspace.
+#
+# Keep this as the source of truth for local + CI check commands so
+# developers and agents run the same gates in the same order.
 
-# Run all tests
-test:
-    uv run --no-sync pytest -v
+set windows-shell := ["cmd.exe", "/c"]
 
-# Run tests (fast, no output)
-test-quick:
-    uv run --no-sync pytest -q
+# Workspace package scopes
+core-src := "packages/core/src"
+core-tests := "packages/core/tests"
+channel-src := "packages/agent-core-channel/src"
+channel-tests := "packages/agent-core-channel/tests"
+credentials-tests := "packages/credentials/tests"
+discord-tests := "packages/agent-core-discord/tests"
+
+default:
+    @just --list
+
+# Composite gate (recommended before push)
+check: lint typecheck contracts test
+
+# Developer convenience: apply lint auto-fixes + formatter
+fix:
+    uv run --no-sync ruff check --fix packages/core packages/agent-core-channel
+    uv run --no-sync ruff format packages/core packages/agent-core-channel
 
 # Lint
 lint:
+    uv run --no-sync ruff check packages/core packages/agent-core-channel
+
+lint-all:
     uv run --no-sync ruff check .
 
-# Format
+# Formatting
 format:
-    uv run --no-sync ruff format .
+    uv run --no-sync ruff format packages/core packages/agent-core-channel
+
+format-check:
+    uv run --no-sync ruff format --check packages/core packages/agent-core-channel
+
+# Type checking (uses [tool.mypy] in pyproject.toml)
+typecheck:
+    uv run --no-sync mypy
 
 # Architecture contracts
 contracts:
     uv run --no-sync lint-imports
 
-# Full quality gate (mirrors CI)
-gate: lint contracts test
+# Tests
+test:
+    uv run --no-sync pytest -q
 
-# Install agent-core as a global tool (isolated venv, no file lock conflicts)
-install:
-    uv tool install --reinstall "e:/workspaces/ai/agents/agent_core"
+test-fast:
+    uv run --no-sync pytest {{core-tests}} {{channel-tests}} -q
 
-# Sync project dependencies (dev only)
+test-core:
+    uv run --no-sync pytest {{core-tests}} -q
+
+test-channel:
+    uv run --no-sync pytest {{channel-tests}} -q
+
+# Setup
 sync:
-    uv sync
+    uv sync --dev

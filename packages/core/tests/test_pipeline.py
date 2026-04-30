@@ -54,7 +54,7 @@ class TestPipelineLoad:
     def test_load_invalid_yaml_raises(self, tmp_path: Path):
         bad_config = tmp_path / "agent_core.yaml"
         bad_config.write_text("pipelines:\n  - not: valid: yaml: [[", encoding="utf-8")
-        with pytest.raises(Exception):
+        with pytest.raises(yaml.YAMLError):
             Pipeline(bad_config)
 
 

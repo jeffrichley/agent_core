@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 
 import pytest
 
@@ -19,7 +19,7 @@ def _env(eid: str, frm: str, age_seconds: int, urgency: str = "green") -> Envelo
         kind="TextMessage",
         payload=TextMessagePayload(text=eid),
         urgency=urgency,
-        created_at=datetime.now(timezone.utc) - timedelta(seconds=age_seconds),
+        created_at=datetime.now(UTC) - timedelta(seconds=age_seconds),
     )
 
 

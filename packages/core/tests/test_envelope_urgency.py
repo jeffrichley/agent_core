@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 import pytest
 from pydantic import ValidationError
@@ -18,7 +18,7 @@ def _make_envelope(**overrides):
         to="dst",
         kind="TextMessage",
         payload=TextMessagePayload(text="hi"),
-        created_at=datetime.now(timezone.utc),
+        created_at=datetime.now(UTC),
     )
     base.update(overrides)
     return Envelope(**base)
@@ -60,7 +60,7 @@ def test_envelope_urgency_default_when_absent_from_input_json():
         "to": "dst",
         "kind": "TextMessage",
         "payload": {"kind": "TextMessage", "text": "hi"},
-        "created_at": datetime.now(timezone.utc).isoformat(),
+        "created_at": datetime.now(UTC).isoformat(),
     }
     env = Envelope.model_validate(raw)
     assert env.urgency == "green"

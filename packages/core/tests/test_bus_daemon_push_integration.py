@@ -72,7 +72,7 @@ endpoints:
         jsonrpc: str | None = None
 
         @property
-        def root(self) -> "_PermissiveServerNotification":
+        def root(self) -> _PermissiveServerNotification:
             # Match ServerNotification's `.root` accessor used elsewhere.
             return self
 

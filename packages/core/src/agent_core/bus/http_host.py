@@ -16,8 +16,8 @@ import asyncio
 import contextlib
 import json
 import logging
-from collections.abc import AsyncIterator, Callable
-from typing import Protocol, runtime_checkable
+from collections.abc import AsyncIterator, Awaitable, Callable, MutableMapping
+from typing import Protocol, cast, runtime_checkable
 
 import uvicorn
 from starlette.requests import Request
@@ -30,16 +30,26 @@ log = logging.getLogger(__name__)
 
 
 @runtime_checkable
+class ASGIApp(Protocol):
+    async def __call__(
+        self,
+        scope: MutableMapping[str, object],
+        receive: Callable[[], Awaitable[MutableMapping[str, object]]],
+        send: Callable[[MutableMapping[str, object]], Awaitable[None]],
+    ) -> None: ...
+
+
+@runtime_checkable
 class MCPHostable(Protocol):
     """An endpoint that wants to be mounted on the shared HTTP host."""
 
     mount: str
 
-    def asgi_app(self) -> object:
+    def asgi_app(self) -> ASGIApp:
         """Return the ASGI application to serve under `self.mount`."""
 
 
-def _make_lifespan(apps: list[object]):
+def _make_lifespan(apps: list[ASGIApp]):
     """Return a Starlette-compatible lifespan context that propagates startup/shutdown
     to every sub-app in *apps*.
 
@@ -49,7 +59,7 @@ def _make_lifespan(apps: list[object]):
     """
 
     @contextlib.asynccontextmanager
-    async def _lifespan(_starlette_app: object):
+    async def _lifespan(_starlette_app: ASGIApp):
         tasks: list[asyncio.Task] = []
         receive_queues: list[asyncio.Queue] = []
         send_queues: list[asyncio.Queue] = []
@@ -60,7 +70,11 @@ def _make_lifespan(apps: list[object]):
             receive_queues.append(rq)
             send_queues.append(sq)
 
-            scope = {"type": "lifespan", "asgi": {"version": "3.0"}, "state": {}}
+            scope: MutableMapping[str, object] = {
+                "type": "lifespan",
+                "asgi": cast(object, {"version": "3.0"}),
+                "state": cast(object, {}),
+            }
 
             async def _receive(q=rq):
                 return await q.get()
@@ -68,7 +82,7 @@ def _make_lifespan(apps: list[object]):
             async def _send(msg, q=sq):
                 await q.put(msg)
 
-            tasks.append(asyncio.ensure_future(app(scope, _receive, _send)))  # type: ignore[operator]
+            tasks.append(asyncio.ensure_future(app(scope, _receive, _send)))
 
         # Fan out startup event and wait for all sub-apps to report ready.
         for rq in receive_queues:
@@ -86,12 +100,12 @@ def _make_lifespan(apps: list[object]):
             for rq in receive_queues:
                 await rq.put({"type": "lifespan.shutdown"})
 
-            for sq, task in zip(send_queues, tasks):
+            for sq, task in zip(send_queues, tasks, strict=False):
                 try:
                     msg = await asyncio.wait_for(sq.get(), timeout=5.0)
                     if msg["type"] != "lifespan.shutdown.complete":
                         log.warning("Unexpected lifespan shutdown message: %s", msg)
-                except asyncio.TimeoutError:
+                except TimeoutError:
                     log.warning("Timed out waiting for lifespan.shutdown.complete")
                 task.cancel()
                 try:
@@ -163,7 +177,7 @@ class HTTPHost:
         sub_apps = [m.asgi_app() for m in self._mounts]
         mount_prefixes = {m.mount for m in self._mounts}
 
-        routes: list = [Mount(m.mount, app=app) for m, app in zip(self._mounts, sub_apps)]
+        routes: list = [Mount(m.mount, app=app) for m, app in zip(self._mounts, sub_apps, strict=False)]
         if self._notify_broker is not None and self._notify_snapshot is not None:
             routes.append(
                 Route(
@@ -230,7 +244,7 @@ class HTTPHost:
         if self._serve_task is not None:
             try:
                 await asyncio.wait_for(self._serve_task, timeout=10)
-            except asyncio.TimeoutError:
+            except TimeoutError:
                 self._serve_task.cancel()
                 try:
                     await self._serve_task
@@ -260,10 +274,10 @@ class HTTPHost:
                 try:
                     initial = snapshot(agent)
                     if initial is not None and initial.get("meta", {}).get("count", 0) > 0:
-                        yield f"data: {json.dumps(initial)}\n\n".encode("utf-8")
+                        yield f"data: {json.dumps(initial)}\n\n".encode()
                     while True:
                         event = await queue.get()
-                        yield f"data: {json.dumps(event)}\n\n".encode("utf-8")
+                        yield f"data: {json.dumps(event)}\n\n".encode()
                 finally:
                     await broker.unsubscribe(agent, queue)
 

@@ -14,7 +14,7 @@ from __future__ import annotations
 import logging
 import uuid
 from dataclasses import dataclass, field
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Literal
 
@@ -72,6 +72,12 @@ class Bus:
         }
         self._store: Persistence | None = None
         self._started = False
+
+    def _require_store(self) -> Persistence:
+        if self._store is None:
+            msg = "Bus persistence store is not initialized"
+            raise RuntimeError(msg)
+        return self._store
 
     def register(self, spec: EndpointSpec) -> None:
         if spec.name in self._endpoints_by_name:
@@ -175,7 +181,8 @@ class Bus:
         for recipient in recipients:
             if recipient not in self._endpoints_by_name:
                 raise ValueError(f"publish to unregistered endpoint '{recipient}'")
-            count = await self._store.count_pending(recipient)
+            store = self._require_store()
+            count = await store.count_pending(recipient)
             if count >= self.config.max_pending_per_endpoint:
                 raise MailboxFull(f"mailbox '{recipient}' full ({count} pending)")
 
@@ -185,14 +192,16 @@ class Bus:
             new_env = envelope.model_copy(
                 update={"id": envelope.id if i == 0 else uuid.uuid4().hex, "to": recipient}
             )
-            await self._store.insert(new_env)
+            store = self._require_store()
+            await store.insert(new_env)
             await self._dispatch(new_env)
 
     async def _dispatch(self, envelope: Envelope) -> None:
         hooked = await self._run_hooks("pre_deliver", envelope)
         if hooked is None:
             # Pre_deliver dropped: dead-letter rather than silently leaving in pending.
-            await self._store.mark_dead_letter(envelope.id, reason="dropped by pre_deliver hook")
+            store = self._require_store()
+            await store.mark_dead_letter(envelope.id, reason="dropped by pre_deliver hook")
             return
         envelope = hooked
 
@@ -200,10 +209,11 @@ class Bus:
         if spec is None:
             return  # shouldn't happen — caller already checked
         endpoint = spec.endpoint
-        in_flight_until = datetime.now(timezone.utc) + timedelta(
+        in_flight_until = datetime.now(UTC) + timedelta(
             seconds=self.config.redelivery_timeout_seconds
         )
-        await self._store.mark_in_flight(envelope.id, in_flight_until)
+        store = self._require_store()
+        await store.mark_in_flight(envelope.id, in_flight_until)
         try:
             await endpoint.deliver(envelope)
         except Exception as exc:
@@ -211,7 +221,7 @@ class Bus:
 
             if isinstance(exc, EndpointUnavailable):
                 # Temporary failure — return to pending; sweep will retry.
-                await self._store.requeue(envelope.id)
+                await store.requeue(envelope.id)
                 log.info(
                     "endpoint %s unavailable; envelope %s requeued: %s",
                     envelope.to,
@@ -220,7 +230,7 @@ class Bus:
                 )
             else:
                 # Terminal failure — dead-letter.
-                await self._store.mark_dead_letter(envelope.id, reason=str(exc))
+                await store.mark_dead_letter(envelope.id, reason=str(exc))
                 log.exception(
                     "endpoint %s deliver() raised; dead-lettering envelope %s",
                     envelope.to,
@@ -233,7 +243,8 @@ class Bus:
         Called after an endpoint comes online (start() returns, or a previously
         unavailable endpoint becomes available again).
         """
-        pending = await self._store.list_pending(endpoint_name)
+        store = self._require_store()
+        pending = await store.list_pending(endpoint_name)
         for env in pending:
             await self._dispatch(env)
 
@@ -241,7 +252,7 @@ class Bus:
         """Mark expired-and-undelivered envelopes as 'expired'. Returns count swept."""
         if self._store is None:
             return 0
-        now = now or datetime.now(timezone.utc)
+        now = now or datetime.now(UTC)
         expired = await self._store.find_expired(now=now)
         for env in expired:
             await self._store.expire(env.id)
@@ -252,12 +263,14 @@ class Bus:
         """Find in_flight envelopes whose timeout has lapsed; requeue or dead-letter."""
         if self._store is None:
             return 0
-        now = now or datetime.now(timezone.utc)
+        now = now or datetime.now(UTC)
         stale = await self._store.find_in_flight_timeouts(now=now)
         moved = 0
         for env in stale:
             try:
                 row = await self._store.row(env.id)
+                if row is None:
+                    continue
                 if row["delivery_count"] >= self.config.max_delivery_attempts:
                     await self._store.mark_dead_letter(
                         env.id,
@@ -274,13 +287,15 @@ class Bus:
 
     async def _ack(self, envelope_id: str) -> None:
         # Idempotent: marking acked twice (or acking a missing id) is a no-op.
-        await self._store.mark_acked(envelope_id)
+        store = self._require_store()
+        await store.mark_acked(envelope_id)
 
     async def _nack(self, envelope_id: str, requeue: bool) -> None:
+        store = self._require_store()
         if requeue:
-            await self._store.requeue(envelope_id)
+            await store.requeue(envelope_id)
         else:
-            await self._store.mark_dead_letter(envelope_id, reason="nack")
+            await store.mark_dead_letter(envelope_id, reason="nack")
 
     def _endpoints(self) -> list[EndpointInfo]:
         return [

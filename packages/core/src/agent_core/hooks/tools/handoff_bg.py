@@ -22,7 +22,7 @@ import json
 import logging
 import sys
 import time
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
@@ -42,7 +42,7 @@ def _debug(msg: str) -> None:
     try:
         _DEBUG_LOG.parent.mkdir(parents=True, exist_ok=True)
         with open(_DEBUG_LOG, "a", encoding="utf-8") as f:
-            ts = datetime.now(timezone.utc).astimezone().strftime("%Y-%m-%d %H:%M:%S")
+            ts = datetime.now(UTC).astimezone().strftime("%Y-%m-%d %H:%M:%S")
             f.write(f"[{ts}] [bg] {msg}\n")
     except Exception:
         pass
@@ -229,7 +229,7 @@ def main():
         tz = ZoneInfo(tz_name)
     except Exception:
         tz = ZoneInfo("US/Eastern")
-    now = datetime.now(timezone.utc).astimezone(tz)
+    now = datetime.now(UTC).astimezone(tz)
     timestamp = now.strftime("%A, %B %d, %Y %I:%M %p %Z")
     header = _build_header(timestamp, session_id, event)
 

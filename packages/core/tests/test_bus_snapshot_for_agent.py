@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 
 import pytest
@@ -22,7 +22,7 @@ def _env(eid: str, frm: str = "stub", urgency: str = "green") -> Envelope:
         kind="TextMessage",
         payload=TextMessagePayload(text=eid),
         urgency=urgency,
-        created_at=datetime.now(timezone.utc),
+        created_at=datetime.now(UTC),
     )
 
 

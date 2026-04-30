@@ -23,7 +23,7 @@ class BusHandle:
     Endpoints never need to know their own name; the handle knows for them.
     """
 
-    def __init__(self, bus: "Bus", endpoint_name: str):
+    def __init__(self, bus: Bus, endpoint_name: str):
         self._bus = bus
         self._endpoint_name = endpoint_name
 

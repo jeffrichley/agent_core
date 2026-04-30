@@ -1,11 +1,12 @@
 """Tests for the Bus runner — load YAML, instantiate, start."""
 
 from pathlib import Path
+from typing import Any
 
 import pytest
 import yaml
 
-from agent_core.bus.runner import build_bus_from_config, BusBootError
+from agent_core.bus.runner import BusBootError, build_bus_from_config
 
 
 @pytest.fixture
@@ -97,3 +98,54 @@ class TestRunner:
         p.write_text(yaml.dump(config))
         with pytest.raises(BusBootError, match="missing required 'class'"):
             await build_bus_from_config(p)
+
+    async def test_plugin_can_resolve_endpoint_class(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+        class _PluginEndpoint:
+            def __init__(self, *, name: str, **_: Any):
+                self.name = name
+
+            async def start(self, bus): ...
+            async def deliver(self, envelope): ...
+            async def stop(self): ...
+
+        class _Hook:
+            @staticmethod
+            def resolve_class(*, class_path: str):
+                if class_path == "plugin.stub.Endpoint":
+                    return _PluginEndpoint
+                return None
+
+            @staticmethod
+            def validate_config(*, raw_config):
+                return None
+
+            @staticmethod
+            def resolve_endpoint_class(*, endpoint_class: str):
+                return None
+
+            @staticmethod
+            def resolve_bus_hook_class(*, hook_class: str):
+                return None
+
+            @staticmethod
+            def resolve_hook_tool_class(*, tool_class: str):
+                return None
+
+            @staticmethod
+            def configure_endpoint_instance(*, instance, endpoint_name, endpoint_config, services):
+                return None
+
+            @staticmethod
+            def configure_bus_hook_instance(*, instance, stage, hook_config, services):
+                return None
+
+        class _PluginManager:
+            hook = _Hook()
+
+        monkeypatch.setattr("agent_core.bus.runner.create_plugin_manager", lambda: _PluginManager())
+
+        config = {"endpoints": [{"class": "plugin.stub.Endpoint", "name": "plug", "params": {}}]}
+        p = tmp_path / "plugin.yaml"
+        p.write_text(yaml.dump(config))
+        bus, _ = await build_bus_from_config(p)
+        assert "plug" in bus._endpoints_by_name

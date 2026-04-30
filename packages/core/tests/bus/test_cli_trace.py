@@ -1,6 +1,6 @@
 """Tests for `agent-core bus trace <correlation_id>`."""
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 
 import yaml
@@ -42,7 +42,7 @@ def _seed_thread(tmp_path: Path):
                     to="a",
                     kind="TextMessage",
                     payload=TextMessagePayload(text=f"msg {i}"),
-                    created_at=datetime(2026, 4, 27, 12, i, 0, tzinfo=timezone.utc),
+                    created_at=datetime(2026, 4, 27, 12, i, 0, tzinfo=UTC),
                 )
             )
         # Unrelated thread
@@ -54,7 +54,7 @@ def _seed_thread(tmp_path: Path):
                 to="a",
                 kind="TextMessage",
                 payload=TextMessagePayload(text="unrelated"),
-                created_at=datetime(2026, 4, 27, 12, 0, 0, tzinfo=timezone.utc),
+                created_at=datetime(2026, 4, 27, 12, 0, 0, tzinfo=UTC),
             )
         )
         await store.close()

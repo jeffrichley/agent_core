@@ -1,6 +1,6 @@
 """Tests for the periodic TTL and redelivery sweeps."""
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 
 import pytest
@@ -30,7 +30,7 @@ def _envelope(**kwargs) -> Envelope:
         to="x",
         kind="TextMessage",
         payload=TextMessagePayload(text="hi"),
-        created_at=datetime(2026, 4, 27, 12, 0, 0, tzinfo=timezone.utc),
+        created_at=datetime(2026, 4, 27, 12, 0, 0, tzinfo=UTC),
     )
     fields.update(kwargs)
     return Envelope(**fields)
@@ -52,17 +52,17 @@ async def bus(tmp_path: Path) -> Bus:
 class TestTTLSweep:
     async def test_expired_pending_marked_expired(self, bus: Bus):
         await bus.start()
-        env = _envelope(expires_at=datetime(2020, 1, 1, tzinfo=timezone.utc))
+        env = _envelope(expires_at=datetime(2020, 1, 1, tzinfo=UTC))
         # Persist directly without dispatch to keep state=pending.
         await bus._store.insert(env)
-        await bus.run_ttl_sweep_once(now=datetime(2026, 4, 27, tzinfo=timezone.utc))
+        await bus.run_ttl_sweep_once(now=datetime(2026, 4, 27, tzinfo=UTC))
         assert (await bus._store.row("e1"))["state"] == "expired"
 
     async def test_unset_ttl_unaffected(self, bus: Bus):
         await bus.start()
         env = _envelope()  # no expires_at
         await bus._store.insert(env)
-        await bus.run_ttl_sweep_once(now=datetime(2026, 4, 27, tzinfo=timezone.utc))
+        await bus.run_ttl_sweep_once(now=datetime(2026, 4, 27, tzinfo=UTC))
         assert (await bus._store.row("e1"))["state"] == "pending"
 
 
@@ -74,10 +74,10 @@ class TestRedeliverySweep:
         # Force in_flight_until into the past.
         await bus._store._conn.execute(
             "UPDATE envelopes SET in_flight_until = ? WHERE id = ?",
-            (datetime(2020, 1, 1, tzinfo=timezone.utc).isoformat(), env.id),
+            (datetime(2020, 1, 1, tzinfo=UTC).isoformat(), env.id),
         )
         await bus._store._conn.commit()
-        await bus.run_redelivery_sweep_once(now=datetime(2026, 4, 27, tzinfo=timezone.utc))
+        await bus.run_redelivery_sweep_once(now=datetime(2026, 4, 27, tzinfo=UTC))
         # delivery_count was 1; max is 2, so still re-dispatchable → pending.
         assert (await bus._store.row("e1"))["state"] in ("pending", "in_flight")
         # If pending: dispatch will run again next time. Either way, count <=2.
@@ -94,10 +94,10 @@ class TestRedeliverySweep:
                WHERE id = ?""",
             (
                 bus.config.max_delivery_attempts,
-                datetime(2020, 1, 1, tzinfo=timezone.utc).isoformat(),
+                datetime(2020, 1, 1, tzinfo=UTC).isoformat(),
                 env.id,
             ),
         )
         await bus._store._conn.commit()
-        await bus.run_redelivery_sweep_once(now=datetime(2026, 4, 27, tzinfo=timezone.utc))
+        await bus.run_redelivery_sweep_once(now=datetime(2026, 4, 27, tzinfo=UTC))
         assert (await bus._store.row("e1"))["state"] == "dead_letter"

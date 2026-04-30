@@ -15,11 +15,11 @@ from __future__ import annotations
 import json
 import logging
 import uuid
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Literal
+from typing import TYPE_CHECKING, Any, Literal, cast
 
-import yaml  # type: ignore[import-untyped]
+import yaml
 from apscheduler import AsyncScheduler
 from apscheduler.datastores.sqlalchemy import SQLAlchemyDataStore
 from apscheduler.triggers.cron import CronTrigger
@@ -125,7 +125,7 @@ def load_seed_jobs(yaml_path: Path) -> dict[str, JobDef]:
 # Args passed to add_schedule() are pickled into the SQLAlchemy data store; a
 # live BusHandle isn't safely picklable (it holds the running Bus). _fire uses
 # this map to find the live endpoint by name at fire time.
-_active_endpoints: dict[str, "SchedulerEndpoint"] = {}
+_active_endpoints: dict[str, SchedulerEndpoint] = {}
 
 
 class SchedulerEndpoint:
@@ -141,10 +141,10 @@ class SchedulerEndpoint:
         self.name = name
         self.jobs_path: Path | None = Path(jobs_path).expanduser() if jobs_path else None
         self.db_path: Path = Path(db_path).expanduser() if db_path else _default_db_path()
-        self._handle: "BusHandle | None" = None
+        self._handle: BusHandle | None = None
         self._scheduler: AsyncScheduler | None = None
 
-    async def start(self, bus: "BusHandle") -> None:
+    async def start(self, bus: BusHandle) -> None:
         self._handle = bus
         self.db_path.parent.mkdir(parents=True, exist_ok=True)
         engine = create_async_engine(f"sqlite+aiosqlite:///{self.db_path}")
@@ -175,7 +175,8 @@ class SchedulerEndpoint:
         assert self._scheduler is not None
         existing = await self._scheduler.get_schedules()
         existing_ids = {s.id for s in existing}
-        seeds = load_seed_jobs(self.jobs_path)  # type: ignore[arg-type]
+        assert self.jobs_path is not None
+        seeds = load_seed_jobs(self.jobs_path)
         for job_name, job in seeds.items():
             if job_name in existing_ids:
                 log.debug("Seed job %s already present; skipping", job_name)
@@ -268,9 +269,12 @@ class SchedulerEndpoint:
 
         # Existing args tuple is (scheduler_name, job_name, target, prompt, metadata).
         cur_args = list(existing.args) if existing.args else [self.name, args.name, "", "", {}]
-        new_target = args.target if args.target is not None else cur_args[2]
-        new_prompt = args.prompt if args.prompt is not None else cur_args[3]
-        new_metadata = args.metadata if args.metadata is not None else cur_args[4]
+        current_target = str(cur_args[2])
+        current_prompt = str(cur_args[3])
+        current_metadata = cast(dict[str, Any], cur_args[4]) if isinstance(cur_args[4], dict) else {}
+        new_target = args.target if args.target is not None else current_target
+        new_prompt = args.prompt if args.prompt is not None else current_prompt
+        new_metadata = args.metadata if args.metadata is not None else current_metadata
 
         # Rebuild trigger if schedule or timezone changed; else reuse existing.
         if args.schedule is not None:
@@ -287,7 +291,7 @@ class SchedulerEndpoint:
             except Exception as exc:
                 raise _ToolError(f"invalid trigger: {exc}") from exc
         else:
-            new_trig = existing.trigger
+            new_trig = existing.trigger  # type: ignore[assignment]
 
         await self._scheduler.remove_schedule(args.name)
         await self._scheduler.add_schedule(
@@ -352,7 +356,7 @@ class SchedulerEndpoint:
             to=incoming.from_,
             kind="Acknowledgment",
             payload=AcknowledgmentPayload(of=incoming.id, note=note),
-            created_at=datetime.now(timezone.utc),
+            created_at=datetime.now(UTC),
         )
         try:
             await self._handle.publish(ack)
@@ -419,7 +423,7 @@ async def _fire(
         kind="TextMessage",
         payload=TextMessagePayload(text=prompt),
         metadata=md,
-        created_at=datetime.now(timezone.utc),
+        created_at=datetime.now(UTC),
     )
     try:
         await bus_handle.publish(env)
@@ -432,7 +436,7 @@ class _ToolError(Exception):
     """User-error during tool dispatch — produces an Acknowledgment with note."""
 
 
-def _trigger_kind_of(trigger: Any) -> str:
+def _trigger_kind_of(trigger: Any) -> Literal["interval", "cron", "date"]:
     """Best-effort mapping from APScheduler trigger object → JobDef.trigger str."""
     s = str(trigger).lower()
     if "interval" in s:

@@ -1,6 +1,5 @@
 """Email CLI subcommands for managing an agentmail inbox."""
 
-from typing import Optional
 
 import typer
 from rich.console import Console
@@ -43,7 +42,7 @@ def check(
     client = get_client()
     inbox_id = get_inbox_id()
 
-    kwargs = {"limit": limit}
+    kwargs: dict[str, object] = {"limit": limit}
     if unread:
         kwargs["labels"] = "unread"
 
@@ -90,7 +89,7 @@ def read(
         msg = client.inboxes.messages.get(inbox_id, message_id)
     except Exception as e:
         typer.echo(f"Error: Could not read message {message_id}: {e}", err=True)
-        raise typer.Exit(code=1)
+        raise typer.Exit(code=1) from e
 
     typer.echo(f"From: {msg.from_}")
     typer.echo(f"To: {', '.join(msg.to) if msg.to else ''}")
@@ -118,10 +117,10 @@ def read(
 def send(
     to: str = typer.Argument(help="Recipient email address."),
     subject: str = typer.Argument(help="Email subject line."),
-    body: Optional[str] = typer.Argument(None, help="Email body text."),
-    body_file: Optional[str] = typer.Option(None, help="Read body from file instead."),
+    body: str | None = typer.Argument(None, help="Email body text."),
+    body_file: str | None = typer.Option(None, help="Read body from file instead."),
     html: bool = typer.Option(False, help="Treat body as HTML."),
-    cc: Optional[str] = typer.Option(None, help="CC recipient."),
+    cc: str | None = typer.Option(None, help="CC recipient."),
     dry_run: bool = typer.Option(False, "--dry-run", help="Preview without sending."),
 ) -> None:
     """Send a new email."""
@@ -169,14 +168,14 @@ def send(
         typer.echo(f"Message ID: {response.message_id}")
     except Exception as e:
         typer.echo(f"Error: Failed to send: {e}", err=True)
-        raise typer.Exit(code=1)
+        raise typer.Exit(code=1) from e
 
 
 @email_app.command("reply")
 def reply(
     message_id: str = typer.Argument(help="ID of the message to reply to."),
-    body: Optional[str] = typer.Argument(None, help="Reply body text."),
-    body_file: Optional[str] = typer.Option(None, help="Read body from file instead."),
+    body: str | None = typer.Argument(None, help="Reply body text."),
+    body_file: str | None = typer.Option(None, help="Read body from file instead."),
     dry_run: bool = typer.Option(False, "--dry-run", help="Preview without sending."),
 ) -> None:
     """Reply to an existing email."""
@@ -203,7 +202,7 @@ def reply(
         original = client.inboxes.messages.get(inbox_id, message_id)
     except Exception as e:
         typer.echo(f"Error: Could not find message {message_id}: {e}", err=True)
-        raise typer.Exit(code=1)
+        raise typer.Exit(code=1) from e
 
     if dry_run:
         typer.echo("[DRY RUN] Would reply:")
@@ -220,4 +219,4 @@ def reply(
         typer.echo(f"Message ID: {response.message_id}")
     except Exception as e:
         typer.echo(f"Error: Failed to reply: {e}", err=True)
-        raise typer.Exit(code=1)
+        raise typer.Exit(code=1) from e

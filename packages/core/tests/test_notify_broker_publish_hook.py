@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import asyncio
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 import pytest
 
@@ -22,7 +22,7 @@ def _env(eid: str = "e1", urgency: str = "green") -> Envelope:
         kind="TextMessage",
         payload=TextMessagePayload(text=eid),
         urgency=urgency,
-        created_at=datetime.now(timezone.utc),
+        created_at=datetime.now(UTC),
     )
 
 

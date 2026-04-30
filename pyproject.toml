@@ -19,18 +19,56 @@ dev = [
     "pytest-asyncio>=0.23",
     "freezegun>=1.5",
     "ruff>=0.14",
+    "mypy>=1.11",
+    "types-PyYAML>=6.0",
+    "types-psutil>=7.0.0.20251001",
     "import-linter>=2.0",
     "towncrier>=23.11",
 ]
 
 [tool.ruff]
 line-length = 100
+target-version = "py312"
 src = [
     "packages/core/src",
     "packages/notify/src",
     "packages/credentials/src",
     "packages/agent-core-channel/src",
 ]
+extend-exclude = [
+    ".venv",
+    ".uv-cache-local",
+    ".tmp",
+]
+
+[tool.ruff.lint]
+select = [
+    "F",
+    "E",
+    "I",
+    "UP",
+    "B",
+    "RUF100",
+]
+ignore = [
+    "E501",
+]
+
+[tool.ruff.format]
+quote-style = "double"
+line-ending = "auto"
+skip-magic-trailing-comma = false
+docstring-code-format = true
+
+[tool.mypy]
+python_version = "3.12"
+files = [
+    "packages/core/src",
+    "packages/agent-core-channel/src",
+]
+warn_unused_ignores = true
+no_implicit_optional = true
+check_untyped_defs = true
 
 [tool.pytest.ini_options]
 testpaths = [

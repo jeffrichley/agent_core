@@ -30,8 +30,7 @@ Configuration:
 from __future__ import annotations
 
 import json
-import time
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 
 from agent_core.models import ToolResult
@@ -83,7 +82,7 @@ class TimeInjector:
         fmt = params.get("format", "%A, %B %d, %Y %I:%M %p %Z")
         track_session = bool(params.get("track_session", False))
 
-        now_dt = datetime.now(timezone.utc).astimezone()
+        now_dt = datetime.now(UTC).astimezone()
         now_ts = now_dt.timestamp()
         absolute = now_dt.strftime(fmt)
 

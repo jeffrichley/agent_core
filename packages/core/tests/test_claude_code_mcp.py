@@ -3,10 +3,11 @@
 from __future__ import annotations
 
 import uuid
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 import pytest
 from fastmcp import Client
+from fastmcp.exceptions import ToolError
 
 from agent_core.bus.envelope import EndpointInfo, Envelope, TextMessagePayload
 from agent_core.bus.http_host import MCPHostable
@@ -162,7 +163,7 @@ async def test_describe_endpoint_tool_finds_match():
 async def test_send_tool_errors_when_endpoint_not_started():
     ep = ClaudeCodeMCPEndpoint(name="agent-test", mount="/mcp/agent-test")
     async with Client(ep._mcp) as client:
-        with pytest.raises(Exception):
+        with pytest.raises(ToolError):
             await client.call_tool(
                 "send",
                 {
@@ -200,7 +201,7 @@ def _make_envelope(env_id: str, frm: str = "stub", to: str = "agent-test") -> En
         to=to,
         kind="TextMessage",
         payload=TextMessagePayload(text="hello"),
-        created_at=datetime.now(timezone.utc),
+        created_at=datetime.now(UTC),
     )
 
 

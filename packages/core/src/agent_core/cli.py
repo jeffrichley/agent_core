@@ -14,6 +14,9 @@ from pathlib import Path
 
 import typer
 
+from agent_core.bus.cli import app as bus_app
+from agent_core.daemon.cli import app as daemon_app
+from agent_core.email.cli import email_app
 from agent_core.hooks.pipeline import Pipeline
 
 app = typer.Typer(
@@ -28,35 +31,28 @@ hooks_app = typer.Typer(
     no_args_is_help=True,
 )
 app.add_typer(hooks_app, name="hooks")
-
-from agent_core.email.cli import email_app
-
 app.add_typer(email_app, name="email")
-
-from agent_core.bus.cli import app as bus_app
-
 app.add_typer(bus_app, name="bus")
-
-from agent_core.daemon.cli import app as daemon_app
-
 app.add_typer(daemon_app, name="daemon")
+
+_HOOK_CONFIG_OPTION = typer.Option(
+    "agent_core.yaml",
+    help="Path to pipeline config file.",
+    exists=False,
+)
 
 
 @hooks_app.command("run")
 def run_hook(
     event: str = typer.Argument(help="The lifecycle event name (e.g., SessionStart, PreToolUse)."),
-    config: Path = typer.Option(
-        "agent_core.yaml",
-        help="Path to pipeline config file.",
-        exists=False,
-    ),
+    config: Path = _HOOK_CONFIG_OPTION,
 ) -> None:
     """Execute all tools registered for a hook event."""
     try:
         pipeline = Pipeline(config)
-    except FileNotFoundError:
+    except FileNotFoundError as exc:
         typer.echo(f"Error: Config file not found: {config}", err=True)
-        raise typer.Exit(code=1)
+        raise typer.Exit(code=1) from exc
 
     raw_input = sys.stdin.read().strip()
     if raw_input:

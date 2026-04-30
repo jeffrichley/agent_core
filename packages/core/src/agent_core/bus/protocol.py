@@ -7,6 +7,7 @@ The Endpoint protocol is the minimal interface every adapter satisfies.
 from typing import TYPE_CHECKING, Literal, Protocol, runtime_checkable
 
 from agent_core.bus.envelope import Envelope
+from agent_core.bus.notify_broker import NotificationBroker
 
 if TYPE_CHECKING:
     from agent_core.bus.handle import BusHandle
@@ -45,6 +46,14 @@ class Endpoint(Protocol):
 
     async def stop(self) -> None:
         """Graceful shutdown. Close connections, flush state."""
+
+
+@runtime_checkable
+class NotificationBrokerAwareEndpoint(Protocol):
+    """Optional endpoint capability for broker-driven notifications."""
+
+    def attach_notify_broker(self, broker: NotificationBroker) -> None:
+        """Attach NotificationBroker after construction."""
 
 
 @runtime_checkable

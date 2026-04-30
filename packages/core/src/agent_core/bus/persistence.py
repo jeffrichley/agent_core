@@ -10,7 +10,7 @@ from __future__ import annotations
 import json
 import os
 import sys
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -77,6 +77,12 @@ class Persistence:
         self.path = Path(path)
         self._conn: aiosqlite.Connection | None = None
 
+    def _require_conn(self) -> aiosqlite.Connection:
+        if self._conn is None:
+            msg = "Persistence is not connected"
+            raise RuntimeError(msg)
+        return self._conn
+
     async def connect(self) -> None:
         self.path.parent.mkdir(parents=True, exist_ok=True)
         existed = self.path.exists()
@@ -105,7 +111,8 @@ class Persistence:
             self._conn = None
 
     async def insert(self, env: Envelope) -> None:
-        await self._conn.execute(
+        conn = self._require_conn()
+        await conn.execute(
             """INSERT INTO envelopes
                (id, correlation_id, in_reply_to, from_endpoint, to_endpoint,
                 kind, payload_json, metadata_json, urgency,
@@ -125,11 +132,12 @@ class Persistence:
                 env.created_at.isoformat(),
             ),
         )
-        await self._conn.commit()
+        await conn.commit()
 
     async def row(self, id_: str) -> dict[str, Any] | None:
-        self._conn.row_factory = aiosqlite.Row
-        async with self._conn.execute("SELECT * FROM envelopes WHERE id = ?", (id_,)) as cur:
+        conn = self._require_conn()
+        conn.row_factory = aiosqlite.Row
+        async with conn.execute("SELECT * FROM envelopes WHERE id = ?", (id_,)) as cur:
             r = await cur.fetchone()
         return dict(r) if r else None
 
@@ -138,8 +146,9 @@ class Persistence:
         return _row_to_envelope(r) if r else None
 
     async def list_pending(self, endpoint: str) -> list[Envelope]:
-        self._conn.row_factory = aiosqlite.Row
-        async with self._conn.execute(
+        conn = self._require_conn()
+        conn.row_factory = aiosqlite.Row
+        async with conn.execute(
             """SELECT * FROM envelopes
                WHERE to_endpoint = ? AND state = 'pending'
                ORDER BY created_at ASC""",
@@ -149,50 +158,57 @@ class Persistence:
         return [_row_to_envelope(dict(r)) for r in rows]
 
     async def count_pending(self, endpoint: str) -> int:
-        async with self._conn.execute(
+        conn = self._require_conn()
+        async with conn.execute(
             "SELECT COUNT(*) FROM envelopes WHERE to_endpoint = ? AND state = 'pending'",
             (endpoint,),
         ) as cur:
             row = await cur.fetchone()
-        return row[0]
+        return int(row[0]) if row is not None else 0
 
     async def mark_in_flight(self, id_: str, in_flight_until: datetime) -> None:
-        await self._conn.execute(
+        conn = self._require_conn()
+        await conn.execute(
             """UPDATE envelopes
                SET state = 'in_flight',
                    delivery_count = delivery_count + 1,
                    last_attempted = ?,
                    in_flight_until = ?
                WHERE id = ?""",
-            (datetime.now(timezone.utc).isoformat(), in_flight_until.isoformat(), id_),
+            (datetime.now(UTC).isoformat(), in_flight_until.isoformat(), id_),
         )
-        await self._conn.commit()
+        await conn.commit()
 
     async def mark_acked(self, id_: str) -> None:
-        await self._conn.execute("UPDATE envelopes SET state = 'acked' WHERE id = ?", (id_,))
-        await self._conn.commit()
+        conn = self._require_conn()
+        await conn.execute("UPDATE envelopes SET state = 'acked' WHERE id = ?", (id_,))
+        await conn.commit()
 
     async def mark_dead_letter(self, id_: str, reason: str | None = None) -> None:
-        await self._conn.execute(
+        conn = self._require_conn()
+        await conn.execute(
             "UPDATE envelopes SET state = 'dead_letter', nack_reason = ? WHERE id = ?",
             (reason, id_),
         )
-        await self._conn.commit()
+        await conn.commit()
 
     async def requeue(self, id_: str) -> None:
-        await self._conn.execute(
+        conn = self._require_conn()
+        await conn.execute(
             "UPDATE envelopes SET state = 'pending', in_flight_until = NULL WHERE id = ?",
             (id_,),
         )
-        await self._conn.commit()
+        await conn.commit()
 
     async def expire(self, id_: str) -> None:
-        await self._conn.execute("UPDATE envelopes SET state = 'expired' WHERE id = ?", (id_,))
-        await self._conn.commit()
+        conn = self._require_conn()
+        await conn.execute("UPDATE envelopes SET state = 'expired' WHERE id = ?", (id_,))
+        await conn.commit()
 
     async def list_by_correlation(self, correlation_id: str) -> list[Envelope]:
-        self._conn.row_factory = aiosqlite.Row
-        async with self._conn.execute(
+        conn = self._require_conn()
+        conn.row_factory = aiosqlite.Row
+        async with conn.execute(
             "SELECT * FROM envelopes WHERE correlation_id = ? ORDER BY created_at ASC",
             (correlation_id,),
         ) as cur:
@@ -200,16 +216,18 @@ class Persistence:
         return [_row_to_envelope(dict(r)) for r in rows]
 
     async def list_dead_letter(self) -> list[Envelope]:
-        self._conn.row_factory = aiosqlite.Row
-        async with self._conn.execute(
+        conn = self._require_conn()
+        conn.row_factory = aiosqlite.Row
+        async with conn.execute(
             "SELECT * FROM envelopes WHERE state = 'dead_letter' ORDER BY last_attempted DESC"
         ) as cur:
             rows = await cur.fetchall()
         return [_row_to_envelope(dict(r)) for r in rows]
 
     async def find_expired(self, *, now: datetime) -> list[Envelope]:
-        self._conn.row_factory = aiosqlite.Row
-        async with self._conn.execute(
+        conn = self._require_conn()
+        conn.row_factory = aiosqlite.Row
+        async with conn.execute(
             """SELECT * FROM envelopes
                WHERE expires_at IS NOT NULL
                  AND expires_at < ?
@@ -220,8 +238,9 @@ class Persistence:
         return [_row_to_envelope(dict(r)) for r in rows]
 
     async def find_in_flight_timeouts(self, *, now: datetime) -> list[Envelope]:
-        self._conn.row_factory = aiosqlite.Row
-        async with self._conn.execute(
+        conn = self._require_conn()
+        conn.row_factory = aiosqlite.Row
+        async with conn.execute(
             """SELECT * FROM envelopes
                WHERE state = 'in_flight'
                  AND in_flight_until IS NOT NULL
@@ -238,19 +257,21 @@ class Persistence:
         rows that never entered in_flight (e.g., dropped by pre_deliver hooks).
         Returns the number of rows deleted.
         """
-        cur = await self._conn.execute(
+        conn = self._require_conn()
+        cur = await conn.execute(
             """DELETE FROM envelopes
                WHERE state = 'dead_letter'
                  AND COALESCE(last_attempted, created_at) < ?""",
             (older_than.isoformat(),),
         )
-        await self._conn.commit()
+        await conn.commit()
         return cur.rowcount
 
     async def reset_for_replay(self, id_: str) -> bool:
         """Reset a dead_letter row to pending; reset delivery_count.
         Returns True if a row was changed."""
-        cur = await self._conn.execute(
+        conn = self._require_conn()
+        cur = await conn.execute(
             """UPDATE envelopes
                SET state = 'pending',
                    delivery_count = 0,
@@ -259,5 +280,5 @@ class Persistence:
                WHERE id = ? AND state = 'dead_letter'""",
             (id_,),
         )
-        await self._conn.commit()
+        await conn.commit()
         return cur.rowcount == 1

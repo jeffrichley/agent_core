@@ -1,7 +1,9 @@
 """Tests for agent_core Pydantic models."""
 
-from agent_core.models import ToolResult, ToolConfig, PipelineConfig
 import pytest
+from pydantic import ValidationError
+
+from agent_core.models import PipelineConfig, ToolConfig, ToolResult
 
 
 class TestToolResult:
@@ -11,11 +13,11 @@ class TestToolResult:
         assert result.content == "Test content here"
 
     def test_tool_result_requires_heading(self):
-        with pytest.raises(Exception):
+        with pytest.raises(ValidationError):
             ToolResult(content="no heading")
 
     def test_tool_result_requires_content(self):
-        with pytest.raises(Exception):
+        with pytest.raises(ValidationError):
             ToolResult(heading="no content")
 
 
@@ -33,7 +35,7 @@ class TestToolConfig:
         assert config.params == {"format": "%Y-%m-%d"}
 
     def test_tool_config_requires_tool(self):
-        with pytest.raises(Exception):
+        with pytest.raises(ValidationError):
             ToolConfig(params={"format": "%Y-%m-%d"})
 
 
