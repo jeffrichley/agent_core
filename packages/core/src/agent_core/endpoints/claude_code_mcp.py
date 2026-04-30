@@ -277,7 +277,12 @@ class ClaudeCodeMCPEndpoint:
     def queue_for_pickup(self, envelope: Envelope) -> None:
         """Add an envelope to this endpoint's pending pickup queue.
 
+        Idempotent on envelope id: the bus retries deliver() on
+        EndpointUnavailable, and we'd otherwise grow stale duplicates.
+
         Used by deliver() when no session is connected, and by tests."""
+        if any(e.id == envelope.id for e in self._pending):
+            return
         self._pending.append(envelope)
 
     # --- Internal ---

@@ -295,6 +295,42 @@ async def test_deliver_without_session_raises_endpoint_unavailable_and_queues():
         await ep.stop()
 
 
+def test_queue_for_pickup_dedups_by_envelope_id():
+    """queue_for_pickup is idempotent on envelope id.
+
+    The bus retries deliver() when it raises EndpointUnavailable. Each retry
+    calls queue_for_pickup with the same envelope. Without dedup, the inbox
+    grows stale duplicates: the live testbot saw 5x copies of envelopes that
+    had been retried before the relay was working.
+    """
+    ep = ClaudeCodeMCPEndpoint(name="a", mount="/mcp/a")
+    env = _make_envelope("env-dup")
+    ep.queue_for_pickup(env)
+    ep.queue_for_pickup(env)
+    ep.queue_for_pickup(env)
+    assert len(ep._pending) == 1
+    assert ep._pending[0].id == "env-dup"
+
+
+@pytest.mark.asyncio
+async def test_deliver_retried_with_same_envelope_does_not_duplicate():
+    """End-to-end: deliver() called repeatedly with the same envelope (the
+    bus's retry-on-EndpointUnavailable loop) leaves a single copy in _pending."""
+    from agent_core.bus.protocol import EndpointUnavailable
+
+    ep = ClaudeCodeMCPEndpoint(name="agent-test", mount="/mcp/agent-test")
+    handle = _RecordingHandleWithPending(pending=[])
+    await ep.start(handle)
+    try:
+        env = _make_envelope("env-retry")
+        for _ in range(5):
+            with pytest.raises(EndpointUnavailable):
+                await ep.deliver(env)
+        assert len(ep._pending) == 1
+    finally:
+        await ep.stop()
+
+
 @pytest.mark.asyncio
 async def test_session_active_flag_set_after_mcp_message():
     """SessionRegistry middleware sets _session_active=True after first MCP message.
