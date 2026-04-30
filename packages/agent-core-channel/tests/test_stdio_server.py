@@ -39,19 +39,32 @@ def test_initialization_options_declare_no_tools_resources_prompts():
 
 @pytest.mark.asyncio
 async def test_emit_channel_notification_writes_jsonrpc_to_stream():
-    """emit_channel_notification serializes a SessionMessage to the write stream."""
+    """emit_channel_notification serializes a SessionMessage to the write stream
+    and coerces meta values to strings per Claude Code's channel spec
+    (Record<string, string>)."""
     from agent_core_channel.stdio_server import emit_channel_notification
 
     send_stream, receive_stream = anyio.create_memory_object_stream(max_buffer_size=8)
 
     summary = {
         "content": "INBOX: 1 pending",
-        "meta": {"count": 1, "endpoint": "agent-a"},
+        "meta": {
+            "count": 1,  # int -> "1"
+            "endpoint": "agent-a",  # str passes through
+            "by_sender": [{"from": "x"}],  # complex -> json
+            "bad-key": "dropped",  # hyphen key dropped
+        },
     }
     await emit_channel_notification(send_stream, summary)
 
-    # Pull the SessionMessage and inspect it.
     msg = await receive_stream.receive()
     root = msg.message.root
     assert root.method == "notifications/claude/channel"
-    assert root.params == summary
+    assert root.params["content"] == "INBOX: 1 pending"
+    meta = root.params["meta"]
+    assert meta["count"] == "1"
+    assert meta["endpoint"] == "agent-a"
+    assert meta["by_sender"] == '[{"from": "x"}]'
+    assert "bad-key" not in meta
+    # All values are strings.
+    assert all(isinstance(v, str) for v in meta.values())

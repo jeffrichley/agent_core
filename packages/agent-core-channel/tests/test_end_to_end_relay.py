@@ -114,7 +114,9 @@ async def test_bus_arrival_reaches_relay_stdio_stream(tmp_path: Path) -> None:
                 assert root.method == "notifications/claude/channel"
                 assert root.params is not None
                 meta = root.params["meta"]
-                assert meta["count"] >= 1
+                # meta values are stringified per Claude Code's channel spec
+                # (Record<string, string>).
+                assert int(meta["count"]) >= 1
                 assert meta["endpoint"] == "agent"
             finally:
                 relay_task.cancel()

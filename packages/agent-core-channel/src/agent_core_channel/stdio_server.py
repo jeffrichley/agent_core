@@ -10,7 +10,9 @@ write stream that the SSE pump can use to emit
 
 from __future__ import annotations
 
+import json
 import logging
+import re
 from typing import TYPE_CHECKING, Any
 
 import anyio
@@ -27,6 +29,29 @@ if TYPE_CHECKING:
 log = logging.getLogger(__name__)
 
 
+_RELAY_INSTRUCTIONS = (
+    "Inbox wake notifications for an agent-core agent. "
+    'Messages arrive as JSON-RPC notifications with method "notifications/claude/channel". '
+    'The params object has "content" (a brief inbox summary string, '
+    'e.g. "INBOX: 3 pending - 2 from discord (TextMessage), 1 from email") '
+    'and "meta" (count, by_sender, urgency_counts, urgency_max, endpoint, fired_at). '
+    "When such a notification arrives, treat it as a wake signal: "
+    "call mcp__agent-core__list_pending to fetch the actual envelopes, "
+    "process each, and respond via mcp__agent-core__send when appropriate. "
+    "Higher urgency tiers (red > yellow > green) should be addressed first. "
+    "Do not wait for user input - the notification IS the prompt."
+)
+
+
+def _build_server(server_name: str = "agent-core-channel") -> Server:
+    """Construct the channel relay's MCP Server with name, version, instructions."""
+    return Server(
+        name=server_name,
+        version="0.1.0",
+        instructions=_RELAY_INSTRUCTIONS,
+    )
+
+
 def build_initialization_options(
     server_name: str = "agent-core-channel",
 ) -> InitializationOptions:
@@ -35,7 +60,7 @@ def build_initialization_options(
     No tools, resources, or prompts are advertised. Notification options are
     default (no list-changed tracking).
     """
-    server = Server(server_name)
+    server = _build_server(server_name)
     notification_options = NotificationOptions()
     experimental: dict[str, dict[str, Any]] = {"claude/channel": {}}
     return server.create_initialization_options(
@@ -44,15 +69,46 @@ def build_initialization_options(
     )
 
 
+_META_KEY_RE = re.compile(r"^[A-Za-z0-9_]+$")
+
+
+def _coerce_meta(meta: dict[str, Any]) -> dict[str, str]:
+    """Claude Code's channel spec requires meta to be Record<string, string>;
+    keys must be [A-Za-z0-9_]+ (others are silently dropped) and each value
+    becomes an XML attribute on the <channel> tag. Coerce non-string values
+    to JSON, drop bad keys."""
+    out: dict[str, str] = {}
+    for k, v in meta.items():
+        if not isinstance(k, str) or not _META_KEY_RE.match(k):
+            continue
+        if isinstance(v, str):
+            out[k] = v
+        elif isinstance(v, (int, float, bool)):
+            out[k] = str(v)
+        else:
+            out[k] = json.dumps(v, default=str)
+    return out
+
+
 async def emit_channel_notification(
     write_stream: anyio.abc.ObjectSendStream[SessionMessage],
     summary: dict,
 ) -> None:
-    """Write a notifications/claude/channel SessionMessage to the MCP stream."""
+    """Write a notifications/claude/channel SessionMessage to the MCP stream.
+
+    Per Claude Code's channels spec, params must have content (str) and
+    meta (Record<string, string>). We coerce meta values here so callers
+    can pass richer dicts to the broker; the channel wire format is the
+    constraint, not the broker's snapshot shape.
+    """
+    params: dict[str, Any] = {
+        "content": str(summary.get("content", "")),
+        "meta": _coerce_meta(summary.get("meta", {}) or {}),
+    }
     notification = JSONRPCNotification(
         jsonrpc="2.0",
         method="notifications/claude/channel",
-        params=summary,
+        params=params,
     )
     msg = SessionMessage(message=JSONRPCMessage(notification))
     await write_stream.send(msg)
@@ -83,12 +139,14 @@ async def run_relay(agent: str, daemon_url: str) -> None:
     task group cancels the SSE pump. When the SSE pump dies (which it shouldn't
     — it has its own retry loop), the task group cancels Server.run().
     """
-    server = Server("agent-core-channel")
-    init_options = build_initialization_options()
+    server = _build_server()
+    init_options = server.create_initialization_options(
+        notification_options=NotificationOptions(),
+        experimental_capabilities={"claude/channel": {}},
+    )
 
     async with stdio_server() as (read_stream, write_stream):
         async with anyio.create_task_group() as tg:
             tg.start_soon(_sse_pump, agent, daemon_url, write_stream)
             await server.run(read_stream, write_stream, init_options)
-            # Server.run returned (stdin closed). Cancel the SSE pump.
             tg.cancel_scope.cancel()
