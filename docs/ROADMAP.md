@@ -5,7 +5,7 @@ document — update as decisions land. For tactical items deferred from
 approved designs, see `BACKLOG.md`. For approved per-feature designs,
 see `superpowers/specs/`.
 
-> **Last updated:** 2026-04-29 (Sub-project E v1 DiscordEndpoint shipped — PR #8)
+> **Last updated:** 2026-04-30 (Sub-project I responsive inbox validated; PR pending)
 
 ---
 
@@ -91,6 +91,7 @@ across them.
 | F | Skills consolidation | 🔴 Not started | A (where the kept ones live) | Keep: creds, google (gog), scheduler. Drop the rest. |
 | G | Dashboard | 🔴 Not started | A, B, the bus | Manage agent instance — start/stop, view mailboxes, view scheduler, view logs. |
 | H | Claude plugin packaging | 🔴 Not started — far horizon | A | Bundle as a Claude plugin. Not mandatory near-term. |
+| I | Responsive inbox + channel relay | 🟡 Validated, PR pending — [`2026-04-29-responsive-inbox-design.md`](superpowers/specs/2026-04-29-responsive-inbox-design.md) (daemon side), [`2026-04-29-channel-relay-design.md`](superpowers/specs/2026-04-29-channel-relay-design.md) (relay side), [validation report](responsive-inbox-validation-2026-04-29.md). | B | Daemon-side urgency-aware inbox, push summaries, same-sender batching, and `agent-core-channel` stdio relay so plain Claude Code agents wake autonomously on bus arrivals. |
 
 ### Cross-cutting concerns to remember
 

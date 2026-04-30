@@ -129,8 +129,13 @@ class ClaudeCodeMCPEndpoint:
         self._pending: list[Envelope] = []
         self._session_active: bool = False  # set true when an MCP session is attached
         self._active_session: Any = None  # ServerSession, when connected
-        self._notify_debounce_seconds: float = 0.05
+        self._notify_debounce_seconds_by_urgency: dict[str, float] = {
+            "red": 0.05,
+            "yellow": 0.5,
+            "green": 1.0,
+        }
         self._debounce_task: asyncio.Task | None = None
+        self._debounce_deadline: float | None = None
         self._notify_broker = notify_broker
         self._mcp.add_middleware(SessionRegistry(self))
         self._register_tools()
@@ -249,7 +254,7 @@ class ClaudeCodeMCPEndpoint:
         _fire_after_debounce is already guarded by `if self._active_session is
         not None`, so this path is safe to take with no session attached."""
         self.queue_for_pickup(envelope)
-        await self._notify_mail_arrived()
+        await self._notify_mail_arrived(envelope.urgency)
         if not self._session_active:
             raise EndpointUnavailable(f"no MCP session connected for {self.name}")
 
@@ -345,23 +350,33 @@ class ClaudeCodeMCPEndpoint:
         )
         return SessionMessage(message=JSONRPCMessage(notification))
 
-    async def _notify_mail_arrived(self) -> None:
+    async def _notify_mail_arrived(self, urgency: str = "green") -> None:
         """Schedule a debounced push summarizing the current mailbox.
 
-        Called by `deliver()` on each arrival. Cancels any pending debounce
-        task and schedules a fresh one so a burst of arrivals coalesces into
-        one notification. The summary is rebuilt from `_pending` at fire time;
-        the per-envelope id is therefore not needed here.
+        Called by `deliver()` on each arrival. Red arrivals wake promptly,
+        yellow waits briefly, and green waits long enough to collect
+        human-paced bursts. A more urgent arrival shortens a pending timer;
+        less urgent arrivals never delay an already pending urgent push.
         """
-        if self._debounce_task is not None and not self._debounce_task.done():
-            self._debounce_task.cancel()
-        self._debounce_task = asyncio.create_task(self._fire_after_debounce())
+        delay = self._notify_debounce_seconds_by_urgency.get(urgency, 1.0)
+        loop = asyncio.get_running_loop()
+        deadline = loop.time() + delay
 
-    async def _fire_after_debounce(self) -> None:
+        if self._debounce_task is not None and not self._debounce_task.done():
+            if self._debounce_deadline is not None and deadline >= self._debounce_deadline:
+                return
+            self._debounce_task.cancel()
+        self._debounce_deadline = deadline
+        self._debounce_task = asyncio.create_task(self._fire_after_debounce(delay))
+
+    async def _fire_after_debounce(self, delay: float) -> None:
+        task = asyncio.current_task()
         try:
-            await asyncio.sleep(self._notify_debounce_seconds)
+            await asyncio.sleep(delay)
         except asyncio.CancelledError:
             return
+        if task is self._debounce_task:
+            self._debounce_deadline = None
         summary = self._build_summary()
 
         # Always publish to the broker so /notify/<agent> subscribers

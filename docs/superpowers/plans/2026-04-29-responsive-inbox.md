@@ -2057,6 +2057,15 @@ git commit -m "test(claude-mcp): real-MCP integration test for push notification
 
 ## Task 9: Live testbot validation
 
+> **2026-04-30 update:** Task 9 was completed after the channel relay landed.
+> With `agent-core-channel` registered in `~/.testbot/.mcp.json` and testbot
+> launched with `--dangerously-load-development-channels
+> server:agent-core-channel`, all 5 STEPS passed. During validation, the
+> daemon debounce was tuned to urgency-aware delays
+> (red=50ms, yellow=500ms, green=1000ms) so human-paced green bursts coalesce
+> into one post-idle autonomous wake. See
+> `docs/responsive-inbox-validation-2026-04-29.md` for the full report.
+
 **Files:**
 - (No code changes; daemon config + validation prompt only.)
 

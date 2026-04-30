@@ -56,11 +56,20 @@ def _extract_params(message) -> dict:
     return message.message.root.params
 
 
+def _speed_up_debounce(ep: ClaudeCodeMCPEndpoint) -> None:
+    ep._notify_debounce_seconds_by_urgency = {
+        "red": 0.01,
+        "yellow": 0.03,
+        "green": 0.05,
+    }
+
+
 @pytest.mark.asyncio
 async def test_notify_drops_silently_when_no_session():
     ep = ClaudeCodeMCPEndpoint(name="a", mount="/mcp/a")
+    _speed_up_debounce(ep)
     # No session registered.
-    await ep._notify_mail_arrived()
+    await ep._notify_mail_arrived("green")
     # Drain any debounce task so we don't hold a pending coroutine.
     await asyncio.sleep(0.1)
     # No assertion to make — must not raise.
@@ -69,11 +78,12 @@ async def test_notify_drops_silently_when_no_session():
 @pytest.mark.asyncio
 async def test_notify_pushes_summary_when_session_active():
     ep = ClaudeCodeMCPEndpoint(name="a", mount="/mcp/a")
+    _speed_up_debounce(ep)
     session = _RecordingSession()
     ep._register_session(session)
     ep._pending = [_env("e1", urgency="green")]
 
-    await ep._notify_mail_arrived()
+    await ep._notify_mail_arrived("green")
     await asyncio.sleep(0.1)  # let debounce fire
 
     assert len(session.sent) == 1
@@ -89,14 +99,15 @@ async def test_notify_pushes_summary_when_session_active():
 @pytest.mark.asyncio
 async def test_notify_debounces_burst_into_one_push():
     ep = ClaudeCodeMCPEndpoint(name="a", mount="/mcp/a")
+    _speed_up_debounce(ep)
     session = _RecordingSession()
     ep._register_session(session)
     ep._pending = [_env(f"e{i}") for i in range(3)]
 
     # Fire three arrivals back-to-back.
-    await ep._notify_mail_arrived()
-    await ep._notify_mail_arrived()
-    await ep._notify_mail_arrived()
+    await ep._notify_mail_arrived("green")
+    await ep._notify_mail_arrived("green")
+    await ep._notify_mail_arrived("green")
     await asyncio.sleep(0.1)  # let debounce fire
 
     assert len(session.sent) == 1
@@ -107,6 +118,7 @@ async def test_notify_debounces_burst_into_one_push():
 @pytest.mark.asyncio
 async def test_notify_summary_reports_max_urgency():
     ep = ClaudeCodeMCPEndpoint(name="a", mount="/mcp/a")
+    _speed_up_debounce(ep)
     session = _RecordingSession()
     ep._register_session(session)
     ep._pending = [
@@ -114,7 +126,7 @@ async def test_notify_summary_reports_max_urgency():
         _env("e2", urgency="yellow"),
         _env("e3", urgency="red"),
     ]
-    await ep._notify_mail_arrived()
+    await ep._notify_mail_arrived("red")
     await asyncio.sleep(0.1)
 
     params = _extract_params(session.sent[0])
@@ -125,6 +137,7 @@ async def test_notify_summary_reports_max_urgency():
 @pytest.mark.asyncio
 async def test_notify_summary_groups_by_sender():
     ep = ClaudeCodeMCPEndpoint(name="a", mount="/mcp/a")
+    _speed_up_debounce(ep)
     session = _RecordingSession()
     ep._register_session(session)
     ep._pending = [
@@ -132,7 +145,7 @@ async def test_notify_summary_groups_by_sender():
         _env("e2", frm="alice"),
         _env("e3", frm="bob"),
     ]
-    await ep._notify_mail_arrived()
+    await ep._notify_mail_arrived("green")
     await asyncio.sleep(0.1)
 
     params = _extract_params(session.sent[0])
@@ -143,16 +156,62 @@ async def test_notify_summary_groups_by_sender():
 @pytest.mark.asyncio
 async def test_notify_clears_session_slot_on_send_failure():
     ep = ClaudeCodeMCPEndpoint(name="a", mount="/mcp/a")
+    _speed_up_debounce(ep)
     session = _RecordingSession(fail_with=ConnectionError("stream closed"))
     ep._register_session(session)
     ep._pending = [_env("e1")]
 
-    await ep._notify_mail_arrived()
+    await ep._notify_mail_arrived("green")
     await asyncio.sleep(0.1)
 
     # Slot must have been cleared so future deliveries fall back to polling.
     assert ep._active_session is None
     assert ep._session_active is False
+
+
+def test_notify_debounce_defaults_are_urgency_aware():
+    ep = ClaudeCodeMCPEndpoint(name="a", mount="/mcp/a")
+    assert ep._notify_debounce_seconds_by_urgency == {
+        "red": 0.05,
+        "yellow": 0.5,
+        "green": 1.0,
+    }
+
+
+@pytest.mark.asyncio
+async def test_red_arrival_shortens_pending_green_debounce():
+    ep = ClaudeCodeMCPEndpoint(name="a", mount="/mcp/a")
+    _speed_up_debounce(ep)
+    session = _RecordingSession()
+    ep._register_session(session)
+    ep._pending = [_env("g1", urgency="green"), _env("r1", urgency="red")]
+
+    await ep._notify_mail_arrived("green")
+    await asyncio.sleep(0.02)
+    assert session.sent == []
+
+    await ep._notify_mail_arrived("red")
+    await asyncio.sleep(0.02)
+
+    assert len(session.sent) == 1
+    assert _extract_params(session.sent[0])["meta"]["urgency_max"] == "red"
+
+
+@pytest.mark.asyncio
+async def test_green_arrival_does_not_delay_pending_red_debounce():
+    ep = ClaudeCodeMCPEndpoint(name="a", mount="/mcp/a")
+    _speed_up_debounce(ep)
+    session = _RecordingSession()
+    ep._register_session(session)
+    ep._pending = [_env("r1", urgency="red"), _env("g1", urgency="green")]
+
+    await ep._notify_mail_arrived("red")
+    await asyncio.sleep(0.005)
+    await ep._notify_mail_arrived("green")
+    await asyncio.sleep(0.02)
+
+    assert len(session.sent) == 1
+    assert _extract_params(session.sent[0])["meta"]["urgency_max"] == "red"
 
 
 @pytest.mark.asyncio

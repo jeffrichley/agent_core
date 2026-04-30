@@ -13,7 +13,7 @@ from agent_core.bus.protocol import EndpointUnavailable
 from agent_core.endpoints.claude_code_mcp import ClaudeCodeMCPEndpoint
 
 
-def _env(eid: str = "e1") -> Envelope:
+def _env(eid: str = "e1", urgency: str = "green") -> Envelope:
     return Envelope(
         id=eid,
         correlation_id=f"c-{eid}",
@@ -21,7 +21,7 @@ def _env(eid: str = "e1") -> Envelope:
         to="agent",
         kind="TextMessage",
         payload=TextMessagePayload(text=eid),
-        urgency="green",
+        urgency=urgency,
         created_at=datetime.now(timezone.utc),
     )
 
@@ -37,9 +37,9 @@ async def test_endpoint_publishes_to_broker_when_session_active():
 
     ep = ClaudeCodeMCPEndpoint(name="agent-a", mount="/mcp/a", notify_broker=broker)
     ep._register_session(_RecordingSession())
-    ep._pending = [_env("e1")]
+    ep._pending = [_env("e1", urgency="red")]
 
-    await ep._notify_mail_arrived()
+    await ep._notify_mail_arrived("red")
     await asyncio.sleep(0.1)  # let debounce fire
 
     event = q.get_nowait()
@@ -63,7 +63,7 @@ async def test_endpoint_publishes_to_broker_even_when_no_session():
     # No session registered.
 
     with pytest.raises(EndpointUnavailable):
-        await ep.deliver(_env("e1"))
+        await ep.deliver(_env("e1", urgency="red"))
 
     event = await asyncio.wait_for(q.get(), timeout=1.0)
     assert event["meta"]["count"] == 1
@@ -84,7 +84,7 @@ async def test_deliver_publishes_to_broker_when_no_session_attached():
     # Notice: NO session attached. _session_active is False by default.
     assert ep._session_active is False
 
-    env = _env("e1")
+    env = _env("e1", urgency="red")
     env = env.model_copy(update={"to": "agent"})
 
     # deliver() should still raise EndpointUnavailable (HTTP push unavailable)
@@ -92,7 +92,7 @@ async def test_deliver_publishes_to_broker_when_no_session_attached():
     with pytest.raises(EndpointUnavailable):
         await ep.deliver(env)
 
-    # Wait for the debounce window to fire (default ~50ms; bound generously).
+    # Wait for the red debounce window to fire (default ~50ms; bound generously).
     summary = await asyncio.wait_for(queue.get(), timeout=1.0)
     assert summary["meta"]["count"] == 1
     assert summary["meta"]["endpoint"] == "agent"
@@ -102,8 +102,8 @@ async def test_deliver_publishes_to_broker_when_no_session_attached():
 async def test_endpoint_with_no_broker_still_works():
     """Back-compat: endpoint constructed without a broker is fine."""
     ep = ClaudeCodeMCPEndpoint(name="agent-a", mount="/mcp/a")  # no broker
-    ep._pending = [_env("e1")]
+    ep._pending = [_env("e1", urgency="red")]
 
     # Should not raise.
-    await ep._notify_mail_arrived()
+    await ep._notify_mail_arrived("red")
     await asyncio.sleep(0.1)
