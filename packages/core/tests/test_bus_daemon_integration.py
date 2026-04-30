@@ -71,8 +71,7 @@ endpoints:
                 # the call returns the stub has had deliver() called.
                 stub_ep = bus._endpoints_by_name["stub"].endpoint
                 assert any(
-                    isinstance(env.payload, TextMessagePayload)
-                    and env.payload.text == "hello-stub"
+                    isinstance(env.payload, TextMessagePayload) and env.payload.text == "hello-stub"
                     for env in stub_ep.inbox
                 )
 

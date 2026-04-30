@@ -15,6 +15,7 @@ import yaml
 
 from agent_core.bus.core import Bus, BusConfig, BusHookSpec, EndpointSpec
 from agent_core.bus.http_host import HTTPHost, MCPHostable
+from agent_core.bus.notify_broker import NotificationBroker
 from agent_core.bus.protocol import BusHook, Endpoint
 
 
@@ -65,6 +66,11 @@ async def build_bus_from_config(path: Path) -> tuple[Bus, HTTPHost | None]:
 
     bus = Bus(cfg)
 
+    # Broker for /notify/<agent> SSE fan-out. Created here so endpoints
+    # constructed below can be wired to publish push summaries through it,
+    # and HTTPHost can serve subscribers off the same instance.
+    notify_broker = NotificationBroker()
+
     # Hooks (no auth-aware filtering yet — Phase 2 will add it).
     # TODO(Phase 2): scan loaded hooks for auth-hook interface and set True.
     # Until then, non-loopback bind is always refused. See BACKLOG.md.
@@ -89,6 +95,11 @@ async def build_bus_from_config(path: Path) -> tuple[Bus, HTTPHost | None]:
     _validate_http(http_cfg, has_auth_hook)
 
     # Endpoints.
+    # Local import to avoid pulling FastMCP into module import time when the
+    # runner is imported in a context that doesn't construct endpoints (e.g.
+    # tooling that just wants BusBootError or _import_class).
+    from agent_core.endpoints.claude_code_mcp import ClaudeCodeMCPEndpoint
+
     for entry in raw.get("endpoints", []) or []:
         if "class" not in entry:
             raise BusBootError(f"endpoint entry missing required 'class' field: {entry!r}")
@@ -108,6 +119,12 @@ async def build_bus_from_config(path: Path) -> tuple[Bus, HTTPHost | None]:
             ) from exc
         if not isinstance(instance, Endpoint):
             raise BusBootError(f"{entry['class']!r} does not satisfy Endpoint protocol")
+        # Inject the notify broker into ClaudeCodeMCPEndpoint instances so
+        # they can fan-out push events to /notify/<agent> subscribers. Done
+        # post-construction (rather than as a kwarg) so the YAML-driven
+        # construction path stays uniform across endpoint classes.
+        if isinstance(instance, ClaudeCodeMCPEndpoint):
+            instance._notify_broker = notify_broker
         bus.register(EndpointSpec(endpoint=instance, description=entry.get("description", "")))
 
     hostable: list[MCPHostable] = [
@@ -119,7 +136,12 @@ async def build_bus_from_config(path: Path) -> tuple[Bus, HTTPHost | None]:
     if hostable:
         host = http_cfg.get("bind_host", "127.0.0.1")
         port = http_cfg.get("bind_port", 8788)
-        http_host = HTTPHost(bind_host=host, bind_port=port)
+        http_host = HTTPHost(
+            bind_host=host,
+            bind_port=port,
+            notify_broker=notify_broker,
+            notify_snapshot=bus.snapshot_for_agent,
+        )
         for h in hostable:
             http_host.mount(h)
 

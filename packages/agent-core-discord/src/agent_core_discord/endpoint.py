@@ -494,6 +494,22 @@ class DiscordEndpoint:
                 )
 
             # 6. Build and publish the envelope.
+            #    Apply the urgency-red regex rule. Empty string disables.
+            #    Per-message compile is fine for v1 throughput; a future v2
+            #    can pre-compile in start() if profiling shows it matters.
+            urgency: Any = "green"
+            regex = self._access.urgency_red_regex
+            if regex:
+                try:
+                    if re.search(regex, message.content or ""):
+                        urgency = "red"
+                except re.error:
+                    log.warning(
+                        "discord(%s): invalid urgency_red_regex %r — skipping",
+                        self.name,
+                        regex,
+                    )
+
             metadata: dict[str, Any] = {
                 "discord": {
                     "channel_id": str(message.channel.id),
@@ -514,6 +530,7 @@ class DiscordEndpoint:
                 kind="TextMessage",
                 payload=TextMessagePayload(text=message.content or ""),
                 metadata=metadata,
+                urgency=urgency,
                 created_at=datetime.now(timezone.utc),
             )
             assert self._handle is not None

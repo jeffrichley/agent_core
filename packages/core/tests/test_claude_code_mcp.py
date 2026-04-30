@@ -45,7 +45,8 @@ async def test_start_stop_lifecycle_no_session():
         async def publish(self, *a, **kw): ...
         async def ack(self, *a, **kw): ...
         async def nack(self, *a, **kw): ...
-        def endpoints(self): return []
+        def endpoints(self):
+            return []
 
     await ep.start(_FakeHandle())
     await ep.stop()
@@ -141,9 +142,7 @@ async def test_list_endpoints_tool_returns_directory():
 @pytest.mark.asyncio
 async def test_describe_endpoint_tool_finds_match():
     ep = ClaudeCodeMCPEndpoint(name="agent-test", mount="/mcp/agent-test")
-    handle = _RecordingHandle(
-        endpoints=[EndpointInfo(name="stub", description="echo")]
-    )
+    handle = _RecordingHandle(endpoints=[EndpointInfo(name="stub", description="echo")])
     await ep.start(handle)
     try:
         async with Client(ep._mcp) as client:
@@ -296,21 +295,64 @@ async def test_deliver_without_session_raises_endpoint_unavailable_and_queues():
         await ep.stop()
 
 
-@pytest.mark.asyncio
-async def test_session_active_flag_set_after_mcp_initialize():
-    """_SessionTracker middleware sets _session_active=True on MCP initialize.
+def test_queue_for_pickup_dedups_by_envelope_id():
+    """queue_for_pickup is idempotent on envelope id.
 
-    The in-memory Client fires the initialize request just like a real HTTP
-    session, so this test exercises the session-lifecycle hook without needing
-    a live HTTP server."""
+    The bus retries deliver() when it raises EndpointUnavailable. Each retry
+    calls queue_for_pickup with the same envelope. Without dedup, the inbox
+    grows stale duplicates: the live testbot saw 5x copies of envelopes that
+    had been retried before the relay was working.
+    """
+    ep = ClaudeCodeMCPEndpoint(name="a", mount="/mcp/a")
+    env = _make_envelope("env-dup")
+    ep.queue_for_pickup(env)
+    ep.queue_for_pickup(env)
+    ep.queue_for_pickup(env)
+    assert len(ep._pending) == 1
+    assert ep._pending[0].id == "env-dup"
+
+
+@pytest.mark.asyncio
+async def test_deliver_retried_with_same_envelope_does_not_duplicate():
+    """End-to-end: deliver() called repeatedly with the same envelope (the
+    bus's retry-on-EndpointUnavailable loop) leaves a single copy in _pending."""
+    from agent_core.bus.protocol import EndpointUnavailable
+
+    ep = ClaudeCodeMCPEndpoint(name="agent-test", mount="/mcp/agent-test")
+    handle = _RecordingHandleWithPending(pending=[])
+    await ep.start(handle)
+    try:
+        env = _make_envelope("env-retry")
+        for _ in range(5):
+            with pytest.raises(EndpointUnavailable):
+                await ep.deliver(env)
+        assert len(ep._pending) == 1
+    finally:
+        await ep.stop()
+
+
+@pytest.mark.asyncio
+async def test_session_active_flag_set_after_mcp_message():
+    """SessionRegistry middleware sets _session_active=True after first MCP message.
+
+    The new SessionRegistry middleware spawns a long-lived coroutine into
+    session._subscription_task_group on the first on_message; the coroutine
+    calls _register_session, which flips _session_active. Because the spawned
+    task only runs once the event loop yields to it, we exercise an actual
+    tool call (rather than relying on Client.__aenter__ alone) to ensure the
+    registration coroutine has had a chance to run."""
     ep = ClaudeCodeMCPEndpoint(name="agent-test", mount="/mcp/agent-test")
     handle = _RecordingHandleWithPending(pending=[])
     await ep.start(handle)
     try:
         assert ep._session_active is False
         async with Client(ep._mcp) as client:
-            # After entering the context manager, initialize has fired.
+            # Trigger a tool call so on_message fires and the spawned
+            # _claim_session coroutine has scheduling opportunities.
+            await client.call_tool("list_pending", {})
+            # After the tool call, the session has been registered.
             assert ep._session_active is True
+            assert ep._active_session is not None
             # deliver() must NOT raise while session is active.
             env = _make_envelope("env-active")
             await ep.deliver(env)
@@ -321,3 +363,4 @@ async def test_session_active_flag_set_after_mcp_initialize():
     finally:
         await ep.stop()
         assert ep._session_active is False
+        assert ep._active_session is None

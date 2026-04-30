@@ -10,6 +10,7 @@ resolution-markers = [
 [manifest]
 members = [
     "agent-core",
+    "agent-core-channel",
     "agent-core-credentials",
     "agent-core-discord",
     "agent-core-notify",
@@ -66,6 +67,25 @@ requires-dist = [
     { name = "typer", specifier = ">=0.12" },
     { name = "tzdata", specifier = ">=2024.1" },
     { name = "uvicorn", specifier = ">=0.30" },
+]
+
+[[package]]
+name = "agent-core-channel"
+version = "0.1.0"
+source = { editable = "packages/agent-core-channel" }
+dependencies = [
+    { name = "anyio" },
+    { name = "httpx" },
+    { name = "mcp" },
+    { name = "typer" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "anyio", specifier = ">=4.0" },
+    { name = "httpx", specifier = ">=0.27" },
+    { name = "mcp", specifier = ">=1.0" },
+    { name = "typer", specifier = ">=0.12" },
 ]
 
 [[package]]

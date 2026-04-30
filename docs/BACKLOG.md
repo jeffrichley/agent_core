@@ -182,56 +182,73 @@ on a quiet bus.
 
 ## FastMCP 3.x adapter gaps (`ClaudeCodeMCPEndpoint`)
 
-Two compromises in the `ClaudeCodeMCPEndpoint` adapter, both rooted in
-FastMCP 3.x's middleware/session API surface. Acceptable for v1; track
-here so the next person to touch the adapter has the context.
+The original v1 adapter gaps around `_session_active` disconnect cleanup and
+polling-only inbound mail were resolved by Sub-project I (PR #9 draft):
 
-### `_session_active` does not reset on HTTP disconnect
+- `SessionRegistry` now captures the active FastMCP session via the
+  session task-group lifecycle and releases it on disconnect.
+- `queue_for_pickup()` is idempotent by envelope id, avoiding duplicate
+  in-memory entries during bus retry paths.
+- `_notify_mail_arrived()` now pushes `notifications/claude/channel`
+  summaries with urgency-aware debounce.
+- `agent-core-channel` relays `/notify/<agent>` SSE events into Claude
+  Code's supported stdio channel mechanism, including initial wake-on-connect
+  snapshots.
 
-FastMCP's `Middleware` class exposes `on_initialize` (which the adapter
-hooks to flip `_session_active = True`) but no symmetric `on_disconnect`
-or session-end signal. The flag therefore stays `True` until
-`endpoint.stop()` is called, which only happens at daemon shutdown.
+Remaining follow-up: decide whether multi-session-per-agent should be
+strictly refused or remain most-recent-wins. The current implementation
+keeps one active HTTP MCP session slot with most-recent-wins replacement,
+while the broker can fan out to multiple relay subscribers. That is useful
+for local recovery but has not been designed as a multi-agent ownership model.
 
-After the first agent disconnect-without-teardown:
+---
 
-- `deliver()` no longer raises `EndpointUnavailable`. Envelopes queue
-  in `_pending`; bus considers delivery successful.
-- The bus's `redelivery_timeout_seconds` (default 300s) sweep will
-  re-dispatch unacked envelopes; on each redelivery the same envelope
-  is appended to `_pending` again, so `list_pending` shows duplicates
-  during the disconnect window.
-- `ack(envelope_id)` removes all `_pending` entries with that id, so
-  the duplicate window is bounded and self-correcting on the next
-  agent reconnect.
+## Heartbeat-checker endpoint (no-op heartbeat suppression)
 
-- **Source:** Bus daemon (sub-project B v1) implementation; see
-  `packages/core/src/agent_core/endpoints/claude_code_mcp.py` —
-  `_SessionTracker` and `deliver()`.
-- **Trigger:** FastMCP exposes a session-end / disconnect signal in a
-  later release, OR we observe duplicate `list_pending` entries
-  surfacing in real agent traffic. The fix is to flip `_session_active
-  = False` from a session-end hook (or wrap `_mcp.http_app(...)` in a
-  thin ASGI middleware that intercepts Streamable HTTP session close).
+Pepper's inbox-architecture spec (`C:\Users\jeffr\.pepper\Memory\projects\pepper\inbox-architecture.md`,
+2026-04-29) calls for producer-side suppression of heartbeats whose
+checks find nothing actionable. The "all clear, nothing to surface"
+case should never enter the agent's mailbox at all — Pepper measured
+~38–43/day eliminated and a corresponding cognitive-load drop.
 
-### `_notify_mail_arrived` is a no-op (polling-only inbound)
+In Pepper's current monolith the check logic (calendar / email /
+tasks / GitHub PRs / Discord-mentions) lives inside her prompt-and-tools
+so suppression is a 2-hour edit. In agent-core none of those check
+capabilities exist outside an agent context, so producer-side
+suppression needs its own infrastructure.
 
-The spec calls for inbound envelopes to be pushed to the connected
-Claude Code session as MCP notifications on the SSE stream. FastMCP
-3.x doesn't expose a clean API to send a server-initiated notification
-on a specific session from outside a tool-call context (`Context.send_notification` is only available inside tool handlers; the
-`StreamableHTTPSessionManager` session map is internal state).
+The intended shape: a `HeartbeatCheckerEndpoint` that registers on
+the bus and is the scheduler's heartbeat target instead of Pepper.
+The checker:
+- Wakes every 30 minutes via SchedulerEndpoint (existing bus surface).
+- Uses `agent-core-credentials` (already shipped) for API keys.
+- Runs the check rules from Pepper's spec § 3.5:
+  - 🟢 Calendar event in next 2h
+  - 🟢 Unread urgent email or new in last 1h from priority sender
+  - 🟢 Task overdue today
+  - 🟢 Project STATUS.md changed in last hour
+  - 🟢 GitHub PR awaiting review or CI failure on active repo
+  - 🟢 Unread @mention in any channel
+- If any signal fires, publishes a heartbeat envelope to Pepper with
+  the signal payload as metadata.
+- If all clean, logs "all clear" to a debug file and drops.
 
-Today the adapter relies on the agent calling `list_pending`
-periodically to drain mail. This works — verified in
-`tests/test_bus_daemon_integration.py` — but adds latency proportional
-to the polling interval.
+Each signal source is its own integration. v1 minimum is probably
+calendar + GitHub + filesystem (no Gmail/Discord-mention scan).
+Later versions add the rest as their respective MCP/API clients
+land in agent-core.
 
-- **Source:** Bus daemon (sub-project B v1) implementation; see
-  `_notify_mail_arrived` in
-  `packages/core/src/agent_core/endpoints/claude_code_mcp.py`.
-- **Trigger:** FastMCP exposes a public out-of-band notification API,
-  OR we accept latency as material and write a custom ASGI middleware
-  that holds the active session's response stream and pushes
-  `notifications/agent_core/mail_arrived` directly. Spec § Open
-  Questions already contemplated this fallback.
+The "always surface" jobs from Pepper's § 3.5 (`pepper_time`,
+`nightly_reflection`, `morning_briefing`, `evening_routine`,
+`daily_sync`, `weekly_digest`) are NOT heartbeats and don't need
+this endpoint — they keep going through the normal scheduler path.
+`github_backup` is the one outlier: surfaces only on failure
+(formalize the existing convention).
+
+- **Source:** Pepper inbox-architecture spec § 3.5 + § 4.1, 2026-04-29.
+- **Trigger:** After the responsive-inbox work (sub-project F or
+  similar) ships push notifications + same-sender batching + urgency.
+  Heartbeat suppression is a Pepper-readiness item; it doesn't make
+  sense to build it before the consumer side is in shape to use it.
+  Estimated 3–5 days for the v1 with calendar + GitHub + filesystem
+  checks; the long tail is per-source integrations.

@@ -30,12 +30,15 @@ hooks_app = typer.Typer(
 app.add_typer(hooks_app, name="hooks")
 
 from agent_core.email.cli import email_app
+
 app.add_typer(email_app, name="email")
 
 from agent_core.bus.cli import app as bus_app
+
 app.add_typer(bus_app, name="bus")
 
 from agent_core.daemon.cli import app as daemon_app
+
 app.add_typer(daemon_app, name="daemon")
 
 

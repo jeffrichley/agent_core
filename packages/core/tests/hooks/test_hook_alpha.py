@@ -1,4 +1,5 @@
 """Test hook that returns a known pattern of ~4K chars."""
+
 import json
 import sys
 

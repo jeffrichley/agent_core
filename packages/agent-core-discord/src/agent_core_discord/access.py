@@ -27,6 +27,11 @@ class AccessConfig:
     allow_from: list[str] = field(default_factory=list)
     channels: dict[str, dict[str, Any]] = field(default_factory=dict)
     ack_reaction: str = "👀"
+    # Regex applied to inbound message content. A match promotes the
+    # published TextMessage envelope's urgency to "red". Empty string
+    # disables the rule entirely. Operator-overridable via access JSON
+    # field `urgencyRedRegex`.
+    urgency_red_regex: str = r"(?i)\b(urgent|now|stop)\b"
 
 
 @dataclass
@@ -67,6 +72,7 @@ def load_access_config(path: Path | str | None) -> AccessConfig:
         allow_from=list(raw.get("allowFrom", [])),
         channels=dict(raw.get("channels", {})),
         ack_reaction=raw.get("ackReaction", "👀"),
+        urgency_red_regex=raw.get("urgencyRedRegex", r"(?i)\b(urgent|now|stop)\b"),
     )
 
 

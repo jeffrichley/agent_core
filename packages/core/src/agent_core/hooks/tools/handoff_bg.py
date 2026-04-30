@@ -14,6 +14,7 @@ from __future__ import annotations
 
 # Recursion prevention: set BEFORE any imports that might trigger Claude
 import os
+
 os.environ["CLAUDE_INVOKED_BY"] = "handoff_writer"
 
 import asyncio
@@ -217,10 +218,7 @@ def main():
     # Deduplication
     state_file = output_path.parent / "handoff-state.json"
     state = _load_state(state_file)
-    if (
-        state.get("session_id") == session_id
-        and time.time() - state.get("timestamp", 0) < 60
-    ):
+    if state.get("session_id") == session_id and time.time() - state.get("timestamp", 0) < 60:
         _debug(f"skipping duplicate handoff for session {session_id}")
         logging.info("Skipping duplicate handoff for session %s", session_id)
         context_file.unlink(missing_ok=True)
@@ -242,6 +240,7 @@ def main():
         _debug(f"SDK returned {len(llm_response)} chars, starts with: {llm_response[:100]!r}")
     except Exception as e:
         import traceback
+
         tb = traceback.format_exc()
         _debug(f"EXCEPTION {type(e).__name__}: {e}")
         _debug(f"traceback:\n{tb}")

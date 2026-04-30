@@ -28,6 +28,8 @@ CREATE TABLE IF NOT EXISTS envelopes (
     kind            TEXT NOT NULL,
     payload_json    TEXT NOT NULL,
     metadata_json   TEXT NOT NULL DEFAULT '{}',
+    urgency         TEXT NOT NULL DEFAULT 'green'
+        CHECK (urgency IN ('green','yellow','red')),
     expires_at      TIMESTAMP,
     created_at      TIMESTAMP NOT NULL,
 
@@ -61,6 +63,7 @@ def _row_to_envelope(row: dict[str, Any]) -> Envelope:
             "kind": row["kind"],
             "payload": json.loads(row["payload_json"]),
             "metadata": json.loads(row["metadata_json"]),
+            "urgency": row.get("urgency", "green"),
             "expires_at": row["expires_at"],
             "created_at": row["created_at"],
         }
@@ -81,6 +84,17 @@ class Persistence:
         await self._conn.execute("PRAGMA journal_mode=WAL")
         await self._conn.execute("PRAGMA foreign_keys=ON")
         await self._conn.executescript(_SCHEMA)
+        # Migrate legacy DBs that pre-date the urgency column. Using a
+        # PRAGMA-driven check keeps this idempotent without try/except
+        # OperationalError.
+        self._conn.row_factory = aiosqlite.Row
+        cur = await self._conn.execute("PRAGMA table_info(envelopes)")
+        cols = {row["name"] async for row in cur}
+        await cur.close()
+        if "urgency" not in cols:
+            await self._conn.execute(
+                "ALTER TABLE envelopes ADD COLUMN urgency TEXT NOT NULL DEFAULT 'green'"
+            )
         await self._conn.commit()
         if not existed and sys.platform != "win32":
             os.chmod(self.path, 0o600)
@@ -94,8 +108,9 @@ class Persistence:
         await self._conn.execute(
             """INSERT INTO envelopes
                (id, correlation_id, in_reply_to, from_endpoint, to_endpoint,
-                kind, payload_json, metadata_json, expires_at, created_at)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                kind, payload_json, metadata_json, urgency,
+                expires_at, created_at)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             (
                 env.id,
                 env.correlation_id,
@@ -105,6 +120,7 @@ class Persistence:
                 env.kind,
                 env.payload.model_dump_json(),
                 json.dumps(env.metadata),
+                env.urgency,
                 env.expires_at.isoformat() if env.expires_at else None,
                 env.created_at.isoformat(),
             ),

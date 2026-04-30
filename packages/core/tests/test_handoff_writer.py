@@ -182,7 +182,10 @@ class TestHandoffWriter:
         )
         assert "not found" in result.content.lower()
 
-    @patch("agent_core.hooks.tools.handoff_writer.subprocess.Popen", side_effect=OSError("spawn failed"))
+    @patch(
+        "agent_core.hooks.tools.handoff_writer.subprocess.Popen",
+        side_effect=OSError("spawn failed"),
+    )
     @patch("agent_core.hooks.tools.handoff_writer.shutil.which", return_value="/usr/bin/claude")
     def test_spawn_failure_returns_error(self, mock_which, mock_popen, tmp_path: Path):
         transcript = tmp_path / "transcript.jsonl"

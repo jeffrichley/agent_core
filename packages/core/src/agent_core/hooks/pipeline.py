@@ -60,7 +60,9 @@ class Pipeline:
 
         for event, tools in self.config.pipelines.items():
             tool_names = [t.tool.rsplit(".", 1)[-1] for t in tools]
-            logger.info("Event '%s': %d tool(s) registered — %s", event, len(tools), ", ".join(tool_names))
+            logger.info(
+                "Event '%s': %d tool(s) registered — %s", event, len(tools), ", ".join(tool_names)
+            )
 
     def _import_tool_class(self, class_path: str) -> type | None:
         """Dynamically import a tool class from its fully qualified path."""
@@ -96,7 +98,9 @@ class Pipeline:
 
             try:
                 instance = cls()
-                result = instance.execute(event=event, hook_input=hook_input, params=tool_config.params)
+                result = instance.execute(
+                    event=event, hook_input=hook_input, params=tool_config.params
+                )
                 results.append(result)
                 logger.info("Tool '%s' executed successfully", tool_config.tool.rsplit(".", 1)[-1])
             except Exception as e:

@@ -14,11 +14,17 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import json
 import logging
+from collections.abc import AsyncIterator, Callable
 from typing import Protocol, runtime_checkable
 
 import uvicorn
-from starlette.routing import Mount, Router
+from starlette.requests import Request
+from starlette.responses import StreamingResponse
+from starlette.routing import Mount, Route, Router
+
+from agent_core.bus.notify_broker import NotificationBroker
 
 log = logging.getLogger(__name__)
 
@@ -103,13 +109,22 @@ class HTTPHost:
     is available via `self.port` (useful when bind_port=0 for tests).
     """
 
-    def __init__(self, *, bind_host: str = "127.0.0.1", bind_port: int = 8788):
+    def __init__(
+        self,
+        *,
+        bind_host: str = "127.0.0.1",
+        bind_port: int = 8788,
+        notify_broker: NotificationBroker | None = None,
+        notify_snapshot: Callable[[str], dict | None] | None = None,
+    ):
         self._bind_host = bind_host
         self._requested_port = bind_port
         self._mounts: list[MCPHostable] = []
         self._server: uvicorn.Server | None = None
         self._serve_task: asyncio.Task | None = None
         self._started = False
+        self._notify_broker = notify_broker
+        self._notify_snapshot = notify_snapshot
 
     def mount(self, hostable: MCPHostable) -> None:
         if self._started:
@@ -148,8 +163,18 @@ class HTTPHost:
         sub_apps = [m.asgi_app() for m in self._mounts]
         mount_prefixes = {m.mount for m in self._mounts}
 
+        routes: list = [Mount(m.mount, app=app) for m, app in zip(self._mounts, sub_apps)]
+        if self._notify_broker is not None and self._notify_snapshot is not None:
+            routes.append(
+                Route(
+                    "/notify/{agent}",
+                    endpoint=self._make_notify_handler(),
+                    methods=["GET"],
+                )
+            )
+
         router = Router(
-            routes=[Mount(m.mount, app=app) for m, app in zip(self._mounts, sub_apps)],
+            routes=routes,
             redirect_slashes=False,
             lifespan=_make_lifespan(sub_apps),
         )
@@ -215,3 +240,33 @@ class HTTPHost:
         self._serve_task = None
         self._started = False
         log.info("HTTPHost stopped")
+
+    def _make_notify_handler(self):
+        """Build a Starlette endpoint that streams notification events as SSE.
+
+        The closure captures ``broker`` and ``snapshot`` directly so the inner
+        ``_notify`` async function does not depend on ``self`` at request time
+        (Starlette routes bind their endpoint at construction).
+        """
+        broker = self._notify_broker
+        snapshot = self._notify_snapshot
+        assert broker is not None and snapshot is not None  # guard for type-checker
+
+        async def _notify(request: Request) -> StreamingResponse:
+            agent = request.path_params["agent"]
+            queue = await broker.subscribe(agent)
+
+            async def event_stream() -> AsyncIterator[bytes]:
+                try:
+                    initial = snapshot(agent)
+                    if initial is not None and initial.get("meta", {}).get("count", 0) > 0:
+                        yield f"data: {json.dumps(initial)}\n\n".encode("utf-8")
+                    while True:
+                        event = await queue.get()
+                        yield f"data: {json.dumps(event)}\n\n".encode("utf-8")
+                finally:
+                    await broker.unsubscribe(agent, queue)
+
+            return StreamingResponse(event_stream(), media_type="text/event-stream")
+
+        return _notify
