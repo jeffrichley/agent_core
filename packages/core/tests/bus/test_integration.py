@@ -1,6 +1,6 @@
 """End-to-end integration test for Phase 1 — bus + stub endpoints + sweeps."""
 
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 import pytest
@@ -95,10 +95,11 @@ class TestE2E:
         bus, _ = await build_bus_from_config(cfg_path)
         await bus.start()
         try:
-            from agent_core.bus.envelope import Envelope
             import uuid
 
-            past = datetime.now(timezone.utc) - timedelta(hours=1)
+            from agent_core.bus.envelope import Envelope
+
+            past = datetime.now(UTC) - timedelta(hours=1)
             env = Envelope(
                 id=uuid.uuid4().hex,
                 correlation_id="c",
@@ -107,7 +108,7 @@ class TestE2E:
                 kind="TextMessage",
                 payload=TextMessagePayload(text="stale"),
                 expires_at=past,
-                created_at=datetime.now(timezone.utc),
+                created_at=datetime.now(UTC),
             )
             await bus._store.insert(env)
             await bus.run_ttl_sweep_once()
@@ -133,7 +134,7 @@ class TestE2E:
                 to="bob",
                 kind="TextMessage",
                 payload=TextMessagePayload(text="hello after restart"),
-                created_at=datetime.now(timezone.utc),
+                created_at=datetime.now(UTC),
             )
             # Bypass dispatch so the envelope lands as "pending" (not auto-acked).
             await bus1._store.insert(env)

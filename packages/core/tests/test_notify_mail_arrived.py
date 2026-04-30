@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import json
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Any
 
 import pytest
@@ -44,7 +44,7 @@ def _env(eid: str, frm: str = "src", urgency: str = "green") -> Envelope:
         kind="TextMessage",
         payload=TextMessagePayload(text=eid),
         urgency=urgency,
-        created_at=datetime.now(timezone.utc),
+        created_at=datetime.now(UTC),
     )
 
 

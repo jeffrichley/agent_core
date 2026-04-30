@@ -29,7 +29,6 @@ See Also:
 
 import importlib
 import logging
-
 from pathlib import Path
 
 import yaml

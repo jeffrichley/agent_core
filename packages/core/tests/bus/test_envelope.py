@@ -1,6 +1,6 @@
 """Tests for Envelope and payload models."""
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 import pytest
 from pydantic import ValidationError
@@ -18,7 +18,7 @@ from agent_core.bus.envelope import (
 
 
 def _now() -> datetime:
-    return datetime(2026, 4, 27, 12, 0, 0, tzinfo=timezone.utc)
+    return datetime(2026, 4, 27, 12, 0, 0, tzinfo=UTC)
 
 
 class TestEnvelopeRoundtrip:

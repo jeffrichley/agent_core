@@ -5,7 +5,7 @@ from pathlib import Path
 import pytest
 import yaml
 
-from agent_core.bus.runner import build_bus_from_config, BusBootError
+from agent_core.bus.runner import BusBootError, build_bus_from_config
 
 
 @pytest.fixture

@@ -1,6 +1,6 @@
 """Tests for BusHandle — the per-endpoint surface to the bus."""
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 from agent_core.bus.envelope import EndpointInfo, Envelope, TextMessagePayload
 from agent_core.bus.handle import BusHandle
@@ -36,7 +36,7 @@ def _envelope(**overrides) -> Envelope:
         to="agent-pepper",
         kind="TextMessage",
         payload=TextMessagePayload(text="hi"),
-        created_at=datetime(2026, 4, 27, 12, 0, 0, tzinfo=timezone.utc),
+        created_at=datetime(2026, 4, 27, 12, 0, 0, tzinfo=UTC),
     )
     fields.update(overrides)
     return Envelope(**fields)

@@ -6,7 +6,7 @@ import asyncio
 import logging
 import re
 import signal
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 import typer
@@ -305,7 +305,7 @@ async def _dlq_purge(older_than: str, config_path: Path) -> None:
     store = Persistence(bus.config.storage_path)
     await store.connect()
     try:
-        cutoff = datetime.now(timezone.utc) - _parse_duration(older_than)
+        cutoff = datetime.now(UTC) - _parse_duration(older_than)
         n = await store.purge_dlq(older_than=cutoff)
         console.print(f"[green]purged {n} envelope(s) older than {older_than}[/green]")
     finally:

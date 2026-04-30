@@ -1,7 +1,8 @@
 """Tests for agent_core Pydantic models."""
 
-from agent_core.models import ToolResult, ToolConfig, PipelineConfig
 import pytest
+
+from agent_core.models import PipelineConfig, ToolConfig, ToolResult
 
 
 class TestToolResult:

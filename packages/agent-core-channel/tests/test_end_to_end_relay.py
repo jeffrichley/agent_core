@@ -17,7 +17,7 @@ out to the broker so the relay's SSE subscription wakes the agent.
 from __future__ import annotations
 
 import asyncio
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 
 import anyio
@@ -94,7 +94,7 @@ async def test_bus_arrival_reaches_relay_stdio_stream(tmp_path: Path) -> None:
                     kind="TextMessage",
                     payload=TextMessagePayload(text="hello"),
                     urgency="green",
-                    created_at=datetime.now(timezone.utc),
+                    created_at=datetime.now(UTC),
                 )
                 assert stub._handle is not None
                 await stub._handle.publish(env)

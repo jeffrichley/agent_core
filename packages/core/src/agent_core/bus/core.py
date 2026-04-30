@@ -14,7 +14,7 @@ from __future__ import annotations
 import logging
 import uuid
 from dataclasses import dataclass, field
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Literal
 
@@ -200,7 +200,7 @@ class Bus:
         if spec is None:
             return  # shouldn't happen — caller already checked
         endpoint = spec.endpoint
-        in_flight_until = datetime.now(timezone.utc) + timedelta(
+        in_flight_until = datetime.now(UTC) + timedelta(
             seconds=self.config.redelivery_timeout_seconds
         )
         await self._store.mark_in_flight(envelope.id, in_flight_until)
@@ -241,7 +241,7 @@ class Bus:
         """Mark expired-and-undelivered envelopes as 'expired'. Returns count swept."""
         if self._store is None:
             return 0
-        now = now or datetime.now(timezone.utc)
+        now = now or datetime.now(UTC)
         expired = await self._store.find_expired(now=now)
         for env in expired:
             await self._store.expire(env.id)
@@ -252,7 +252,7 @@ class Bus:
         """Find in_flight envelopes whose timeout has lapsed; requeue or dead-letter."""
         if self._store is None:
             return 0
-        now = now or datetime.now(timezone.utc)
+        now = now or datetime.now(UTC)
         stale = await self._store.find_in_flight_timeouts(now=now)
         moved = 0
         for env in stale:

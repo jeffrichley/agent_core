@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-
 import pytest
 
 from agent_core.bus.runner import build_bus_from_config

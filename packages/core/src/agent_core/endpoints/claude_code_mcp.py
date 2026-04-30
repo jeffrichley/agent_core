@@ -22,7 +22,7 @@ import logging
 import re
 import uuid
 from collections import Counter
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING, Any
 
 import anyio
@@ -58,7 +58,7 @@ class SessionRegistry(Middleware):
     that genuinely open new logical sessions (most-recent-wins).
     """
 
-    def __init__(self, endpoint: "ClaudeCodeMCPEndpoint") -> None:
+    def __init__(self, endpoint: ClaudeCodeMCPEndpoint) -> None:
         self._endpoint = endpoint
         self._spawned_for: set[str] = set()
         self._lock = anyio.Lock()
@@ -109,14 +109,14 @@ class ClaudeCodeMCPEndpoint:
         *,
         name: str,
         mount: str,
-        notify_broker: "NotificationBroker | None" = None,
+        notify_broker: NotificationBroker | None = None,
     ):
         self.name = name
         self.mount = mount
         self._mcp: FastMCP = FastMCP(
             name,
             instructions=(
-                "You are agent '{name}'. The bus pushes you notifications with method "
+                f"You are agent '{name}'. The bus pushes you notifications with method "
                 '"notifications/claude/channel" when envelopes arrive in your mailbox. '
                 'Each notification\'s params contain "content" (a brief summary) and '
                 '"meta" (count, urgency_max, urgency_counts, by_sender, endpoint, '
@@ -126,9 +126,9 @@ class ClaudeCodeMCPEndpoint:
                 "on each to ack and remove from the queue. Send replies via the "
                 "send tool. Treat the notification's content as a hint, not the "
                 "message itself — list_pending is authoritative."
-            ).format(name=name),
+            ),
         )
-        self._handle: "BusHandle | None" = None
+        self._handle: BusHandle | None = None
         self._pending: list[Envelope] = []
         self._session_active: bool = False  # set true when an MCP session is attached
         self._active_session: Any = None  # ServerSession, when connected
@@ -240,7 +240,7 @@ class ClaudeCodeMCPEndpoint:
 
     # --- Endpoint Protocol ---
 
-    async def start(self, bus: "BusHandle") -> None:
+    async def start(self, bus: BusHandle) -> None:
         self._handle = bus
         log.info("ClaudeCodeMCPEndpoint(name=%s) started at mount=%s", self.name, self.mount)
 
@@ -332,7 +332,7 @@ class ClaudeCodeMCPEndpoint:
                 "urgency_counts": urg_full,
                 "by_sender": by_sender,
                 "endpoint": self.name,
-                "fired_at": datetime.now(timezone.utc).isoformat(),
+                "fired_at": datetime.now(UTC).isoformat(),
             },
         }
 
@@ -467,7 +467,7 @@ class ClaudeCodeMCPEndpoint:
                 metadata=metadata or {},
                 urgency=urgency,  # type: ignore[arg-type]  # validated by Pydantic
                 expires_at=datetime.fromisoformat(expires_at) if expires_at else None,
-                created_at=datetime.now(timezone.utc),
+                created_at=datetime.now(UTC),
             )
             await self._handle.publish(env)
             return {"status": "published", "id": env.id}

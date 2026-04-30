@@ -15,7 +15,7 @@ from __future__ import annotations
 import json
 import logging
 import uuid
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal
 
@@ -125,7 +125,7 @@ def load_seed_jobs(yaml_path: Path) -> dict[str, JobDef]:
 # Args passed to add_schedule() are pickled into the SQLAlchemy data store; a
 # live BusHandle isn't safely picklable (it holds the running Bus). _fire uses
 # this map to find the live endpoint by name at fire time.
-_active_endpoints: dict[str, "SchedulerEndpoint"] = {}
+_active_endpoints: dict[str, SchedulerEndpoint] = {}
 
 
 class SchedulerEndpoint:
@@ -141,10 +141,10 @@ class SchedulerEndpoint:
         self.name = name
         self.jobs_path: Path | None = Path(jobs_path).expanduser() if jobs_path else None
         self.db_path: Path = Path(db_path).expanduser() if db_path else _default_db_path()
-        self._handle: "BusHandle | None" = None
+        self._handle: BusHandle | None = None
         self._scheduler: AsyncScheduler | None = None
 
-    async def start(self, bus: "BusHandle") -> None:
+    async def start(self, bus: BusHandle) -> None:
         self._handle = bus
         self.db_path.parent.mkdir(parents=True, exist_ok=True)
         engine = create_async_engine(f"sqlite+aiosqlite:///{self.db_path}")
@@ -352,7 +352,7 @@ class SchedulerEndpoint:
             to=incoming.from_,
             kind="Acknowledgment",
             payload=AcknowledgmentPayload(of=incoming.id, note=note),
-            created_at=datetime.now(timezone.utc),
+            created_at=datetime.now(UTC),
         )
         try:
             await self._handle.publish(ack)
@@ -419,7 +419,7 @@ async def _fire(
         kind="TextMessage",
         payload=TextMessagePayload(text=prompt),
         metadata=md,
-        created_at=datetime.now(timezone.utc),
+        created_at=datetime.now(UTC),
     )
     try:
         await bus_handle.publish(env)

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 import sqlite3
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 import pytest
 
@@ -21,7 +21,7 @@ def _make_envelope(eid: str, urgency: str = "green") -> Envelope:
         kind="TextMessage",
         payload=TextMessagePayload(text="hi"),
         urgency=urgency,
-        created_at=datetime.now(timezone.utc),
+        created_at=datetime.now(UTC),
     )
 
 
@@ -83,7 +83,7 @@ async def test_persistence_alter_table_migrates_legacy_db(tmp_path):
             "dst",
             "TextMessage",
             json.dumps({"kind": "TextMessage", "text": "hi"}),
-            datetime.now(timezone.utc).isoformat(),
+            datetime.now(UTC).isoformat(),
         ),
     )
     conn.commit()

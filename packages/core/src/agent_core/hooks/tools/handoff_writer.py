@@ -44,7 +44,7 @@ import shutil
 import subprocess
 import sys
 import time
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
@@ -62,7 +62,7 @@ def _debug(msg: str) -> None:
     try:
         _DEBUG_LOG.parent.mkdir(parents=True, exist_ok=True)
         with open(_DEBUG_LOG, "a", encoding="utf-8") as f:
-            ts = datetime.now(timezone.utc).astimezone().strftime("%Y-%m-%d %H:%M:%S")
+            ts = datetime.now(UTC).astimezone().strftime("%Y-%m-%d %H:%M:%S")
             f.write(f"[{ts}] {msg}\n")
     except Exception:
         pass
@@ -201,11 +201,11 @@ class HandoffWriter:
             tz = ZoneInfo(tz_name)
         except Exception:
             tz = ZoneInfo("US/Eastern")
-        now = datetime.now(timezone.utc).astimezone(tz)
+        now = datetime.now(UTC).astimezone(tz)
         timestamp = now.strftime("%A, %B %d, %Y %I:%M %p %Z")
 
         # Write context to temp file for the claude process
-        ts_str = datetime.now(timezone.utc).astimezone().strftime("%Y%m%d-%H%M%S")
+        ts_str = datetime.now(UTC).astimezone().strftime("%Y%m%d-%H%M%S")
         context_file = output_path.parent / f"handoff-context-{session_id[:8]}-{ts_str}.md"
         context_file.write_text(transcript_context, encoding="utf-8")
         _debug(f"wrote context to {context_file}")

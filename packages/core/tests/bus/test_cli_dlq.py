@@ -1,6 +1,6 @@
 """Tests for `agent-core bus dlq`, `replay`, and `dlq purge`."""
 
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 import yaml
@@ -42,7 +42,7 @@ def _seed_dlq(tmp_path: Path):
                     to="stub",
                     kind="TextMessage",
                     payload=TextMessagePayload(text=f"failure {i}"),
-                    created_at=datetime(2026, 4, 27, 12, 0, 0, tzinfo=timezone.utc),
+                    created_at=datetime(2026, 4, 27, 12, 0, 0, tzinfo=UTC),
                 )
             )
             await store.mark_dead_letter(f"d{i}", reason=f"reason-{i}")
@@ -55,7 +55,7 @@ def _seed_dlq(tmp_path: Path):
                 to="stub",
                 kind="TextMessage",
                 payload=TextMessagePayload(text="ok"),
-                created_at=datetime(2026, 4, 27, 12, 0, 0, tzinfo=timezone.utc),
+                created_at=datetime(2026, 4, 27, 12, 0, 0, tzinfo=UTC),
             )
         )
         await store.close()
@@ -110,7 +110,7 @@ class TestDLQ:
         async def _backdate():
             store = Persistence(tmp_path / "bus.sqlite")
             await store.connect()
-            past = (datetime(2026, 4, 27, tzinfo=timezone.utc) - timedelta(days=10)).isoformat()
+            past = (datetime(2026, 4, 27, tzinfo=UTC) - timedelta(days=10)).isoformat()
             await store._conn.execute(
                 "UPDATE envelopes SET last_attempted = ? WHERE id = 'd0'", (past,)
             )

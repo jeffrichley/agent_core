@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import uuid
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 import pytest
 from fastmcp import Client
@@ -200,7 +200,7 @@ def _make_envelope(env_id: str, frm: str = "stub", to: str = "agent-test") -> En
         to=to,
         kind="TextMessage",
         payload=TextMessagePayload(text="hello"),
-        created_at=datetime.now(timezone.utc),
+        created_at=datetime.now(UTC),
     )
 
 

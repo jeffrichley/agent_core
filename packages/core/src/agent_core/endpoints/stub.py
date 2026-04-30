@@ -8,7 +8,7 @@ the stub's identity.
 from __future__ import annotations
 
 import uuid
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
 from agent_core.bus.envelope import Envelope, EnvelopePayload
@@ -24,9 +24,9 @@ class StubEndpoint:
         self.name = name
         self.auto_ack = auto_ack
         self.inbox: list[Envelope] = []
-        self._handle: "BusHandle | None" = None
+        self._handle: BusHandle | None = None
 
-    async def start(self, bus: "BusHandle") -> None:
+    async def start(self, bus: BusHandle) -> None:
         self._handle = bus
 
     async def deliver(self, envelope: Envelope) -> None:
@@ -60,6 +60,6 @@ class StubEndpoint:
             payload=payload,
             metadata=metadata or {},
             expires_at=expires_at,
-            created_at=datetime.now(timezone.utc),
+            created_at=datetime.now(UTC),
         )
         await self._handle.publish(env)

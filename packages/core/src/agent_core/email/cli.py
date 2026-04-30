@@ -1,6 +1,5 @@
 """Email CLI subcommands for managing an agentmail inbox."""
 
-from typing import Optional
 
 import typer
 from rich.console import Console
@@ -118,10 +117,10 @@ def read(
 def send(
     to: str = typer.Argument(help="Recipient email address."),
     subject: str = typer.Argument(help="Email subject line."),
-    body: Optional[str] = typer.Argument(None, help="Email body text."),
-    body_file: Optional[str] = typer.Option(None, help="Read body from file instead."),
+    body: str | None = typer.Argument(None, help="Email body text."),
+    body_file: str | None = typer.Option(None, help="Read body from file instead."),
     html: bool = typer.Option(False, help="Treat body as HTML."),
-    cc: Optional[str] = typer.Option(None, help="CC recipient."),
+    cc: str | None = typer.Option(None, help="CC recipient."),
     dry_run: bool = typer.Option(False, "--dry-run", help="Preview without sending."),
 ) -> None:
     """Send a new email."""
@@ -175,8 +174,8 @@ def send(
 @email_app.command("reply")
 def reply(
     message_id: str = typer.Argument(help="ID of the message to reply to."),
-    body: Optional[str] = typer.Argument(None, help="Reply body text."),
-    body_file: Optional[str] = typer.Option(None, help="Read body from file instead."),
+    body: str | None = typer.Argument(None, help="Reply body text."),
+    body_file: str | None = typer.Option(None, help="Read body from file instead."),
     dry_run: bool = typer.Option(False, "--dry-run", help="Preview without sending."),
 ) -> None:
     """Reply to an existing email."""

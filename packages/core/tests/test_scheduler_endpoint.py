@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 import textwrap
 import uuid
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 import pytest
 
@@ -416,7 +416,7 @@ def _make_envelope(env_id, frm, to, kind, payload, **kwargs):
         to=to,
         kind=kind,
         payload=payload,
-        created_at=datetime.now(timezone.utc),
+        created_at=datetime.now(UTC),
     )
 
 

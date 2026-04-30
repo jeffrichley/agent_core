@@ -8,7 +8,6 @@ import sys
 import time
 from pathlib import Path
 
-
 from agent_core.daemon.supervisor import (
     is_alive,
     kill_tree,

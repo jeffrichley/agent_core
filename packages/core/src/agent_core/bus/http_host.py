@@ -91,7 +91,7 @@ def _make_lifespan(apps: list[object]):
                     msg = await asyncio.wait_for(sq.get(), timeout=5.0)
                     if msg["type"] != "lifespan.shutdown.complete":
                         log.warning("Unexpected lifespan shutdown message: %s", msg)
-                except asyncio.TimeoutError:
+                except TimeoutError:
                     log.warning("Timed out waiting for lifespan.shutdown.complete")
                 task.cancel()
                 try:
@@ -230,7 +230,7 @@ class HTTPHost:
         if self._serve_task is not None:
             try:
                 await asyncio.wait_for(self._serve_task, timeout=10)
-            except asyncio.TimeoutError:
+            except TimeoutError:
                 self._serve_task.cancel()
                 try:
                     await self._serve_task
@@ -260,10 +260,10 @@ class HTTPHost:
                 try:
                     initial = snapshot(agent)
                     if initial is not None and initial.get("meta", {}).get("count", 0) > 0:
-                        yield f"data: {json.dumps(initial)}\n\n".encode("utf-8")
+                        yield f"data: {json.dumps(initial)}\n\n".encode()
                     while True:
                         event = await queue.get()
-                        yield f"data: {json.dumps(event)}\n\n".encode("utf-8")
+                        yield f"data: {json.dumps(event)}\n\n".encode()
                 finally:
                     await broker.unsubscribe(agent, queue)
 

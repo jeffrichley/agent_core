@@ -1,6 +1,6 @@
 """Tests for the pre_publish and pre_deliver hook pipeline."""
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 
 import pytest
@@ -53,7 +53,7 @@ def _envelope(id_="e1", to="x") -> Envelope:
         to=to,
         kind="TextMessage",
         payload=TextMessagePayload(text="hi"),
-        created_at=datetime(2026, 4, 27, 12, 0, 0, tzinfo=timezone.utc),
+        created_at=datetime(2026, 4, 27, 12, 0, 0, tzinfo=UTC),
     )
 
 

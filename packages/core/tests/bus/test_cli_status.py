@@ -1,6 +1,6 @@
 """Tests for `agent-core bus status` and `agent-core bus mailbox`."""
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 
 import yaml
@@ -50,7 +50,7 @@ def _seed(tmp_path: Path):
                     to="stub-b",
                     kind="TextMessage",
                     payload=TextMessagePayload(text=f"msg {i}"),
-                    created_at=datetime(2026, 4, 27, 12, 0, 0, tzinfo=timezone.utc),
+                    created_at=datetime(2026, 4, 27, 12, 0, 0, tzinfo=UTC),
                 )
             )
         await store.mark_dead_letter("e2", reason="test")
