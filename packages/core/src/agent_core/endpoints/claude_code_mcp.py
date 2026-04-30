@@ -143,6 +143,10 @@ class ClaudeCodeMCPEndpoint:
         self._mcp.add_middleware(SessionRegistry(self))
         self._register_tools()
 
+    def attach_notify_broker(self, broker: NotificationBroker) -> None:
+        """Optional runner hook: attach broker after endpoint construction."""
+        self._notify_broker = broker
+
     def _register_session(self, session: Any) -> None:
         """Capture the active ServerSession.
 

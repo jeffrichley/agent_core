@@ -16,7 +16,7 @@ import yaml
 from agent_core.bus.core import Bus, BusConfig, BusHookSpec, EndpointSpec
 from agent_core.bus.http_host import HTTPHost, MCPHostable
 from agent_core.bus.notify_broker import NotificationBroker
-from agent_core.bus.protocol import BusHook, Endpoint
+from agent_core.bus.protocol import BusHook, Endpoint, NotificationBrokerAwareEndpoint
 
 
 class BusBootError(Exception):
@@ -95,11 +95,6 @@ async def build_bus_from_config(path: Path) -> tuple[Bus, HTTPHost | None]:
     _validate_http(http_cfg, has_auth_hook)
 
     # Endpoints.
-    # Local import to avoid pulling FastMCP into module import time when the
-    # runner is imported in a context that doesn't construct endpoints (e.g.
-    # tooling that just wants BusBootError or _import_class).
-    from agent_core.endpoints.claude_code_mcp import ClaudeCodeMCPEndpoint
-
     for entry in raw.get("endpoints", []) or []:
         if "class" not in entry:
             raise BusBootError(f"endpoint entry missing required 'class' field: {entry!r}")
@@ -119,12 +114,8 @@ async def build_bus_from_config(path: Path) -> tuple[Bus, HTTPHost | None]:
             ) from exc
         if not isinstance(instance, Endpoint):
             raise BusBootError(f"{entry['class']!r} does not satisfy Endpoint protocol")
-        # Inject the notify broker into ClaudeCodeMCPEndpoint instances so
-        # they can fan-out push events to /notify/<agent> subscribers. Done
-        # post-construction (rather than as a kwarg) so the YAML-driven
-        # construction path stays uniform across endpoint classes.
-        if isinstance(instance, ClaudeCodeMCPEndpoint):
-            instance._notify_broker = notify_broker
+        if isinstance(instance, NotificationBrokerAwareEndpoint):
+            instance.attach_notify_broker(notify_broker)
         bus.register(EndpointSpec(endpoint=instance, description=entry.get("description", "")))
 
     hostable: list[MCPHostable] = [
