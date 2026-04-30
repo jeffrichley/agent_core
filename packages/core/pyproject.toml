@@ -20,6 +20,7 @@ dependencies = [
     "apscheduler>=4.0.0a5",
     "sqlalchemy>=2.0",
     "sniffio>=1.3",
+    "pluggy>=1.6",
 ]
 
 [project.scripts]

@@ -1,6 +1,7 @@
 """Tests for the Bus runner — load YAML, instantiate, start."""
 
 from pathlib import Path
+from typing import Any
 
 import pytest
 import yaml
@@ -97,3 +98,30 @@ class TestRunner:
         p.write_text(yaml.dump(config))
         with pytest.raises(BusBootError, match="missing required 'class'"):
             await build_bus_from_config(p)
+
+    async def test_plugin_can_resolve_endpoint_class(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+        class _PluginEndpoint:
+            def __init__(self, *, name: str, **_: Any):
+                self.name = name
+
+            async def start(self, bus): ...
+            async def deliver(self, envelope): ...
+            async def stop(self): ...
+
+        class _Hook:
+            @staticmethod
+            def resolve_class(*, class_path: str):
+                if class_path == "plugin.stub.Endpoint":
+                    return _PluginEndpoint
+                return None
+
+        class _PluginManager:
+            hook = _Hook()
+
+        monkeypatch.setattr("agent_core.bus.runner.create_plugin_manager", lambda: _PluginManager())
+
+        config = {"endpoints": [{"class": "plugin.stub.Endpoint", "name": "plug", "params": {}}]}
+        p = tmp_path / "plugin.yaml"
+        p.write_text(yaml.dump(config))
+        bus, _ = await build_bus_from_config(p)
+        assert "plug" in bus._endpoints_by_name
