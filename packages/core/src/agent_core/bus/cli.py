@@ -142,7 +142,8 @@ async def _status(config_path: Path) -> None:
         console.print(ep_table)
 
         # Aggregate counts
-        async with store._conn.execute(
+        conn = store._require_conn()
+        async with conn.execute(
             "SELECT state, COUNT(*) FROM envelopes GROUP BY state"
         ) as cur:
             rows = await cur.fetchall()
@@ -249,7 +250,8 @@ async def _dlq_list(config_path: Path) -> None:
         table.add_column("reason")
         for env in rows:
             row = await store.row(env.id)
-            table.add_row(env.id, env.from_, env.to, env.kind, row["nack_reason"] or "")
+            reason = row["nack_reason"] if row is not None else ""
+            table.add_row(env.id, env.from_, env.to, env.kind, reason or "")
         console.print(table)
     finally:
         await store.close()
