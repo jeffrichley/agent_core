@@ -7,6 +7,7 @@ from datetime import UTC, datetime
 
 import pytest
 from fastmcp import Client
+from mcp.shared.exceptions import McpError
 
 from agent_core.bus.envelope import EndpointInfo, Envelope, TextMessagePayload
 from agent_core.bus.http_host import MCPHostable
@@ -162,7 +163,7 @@ async def test_describe_endpoint_tool_finds_match():
 async def test_send_tool_errors_when_endpoint_not_started():
     ep = ClaudeCodeMCPEndpoint(name="agent-test", mount="/mcp/agent-test")
     async with Client(ep._mcp) as client:
-        with pytest.raises(Exception):
+        with pytest.raises(McpError):
             await client.call_tool(
                 "send",
                 {

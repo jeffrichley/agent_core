@@ -86,7 +86,7 @@ def _make_lifespan(apps: list[object]):
             for rq in receive_queues:
                 await rq.put({"type": "lifespan.shutdown"})
 
-            for sq, task in zip(send_queues, tasks):
+            for sq, task in zip(send_queues, tasks, strict=False):
                 try:
                     msg = await asyncio.wait_for(sq.get(), timeout=5.0)
                     if msg["type"] != "lifespan.shutdown.complete":
@@ -163,7 +163,7 @@ class HTTPHost:
         sub_apps = [m.asgi_app() for m in self._mounts]
         mount_prefixes = {m.mount for m in self._mounts}
 
-        routes: list = [Mount(m.mount, app=app) for m, app in zip(self._mounts, sub_apps)]
+        routes: list = [Mount(m.mount, app=app) for m, app in zip(self._mounts, sub_apps, strict=False)]
         if self._notify_broker is not None and self._notify_snapshot is not None:
             routes.append(
                 Route(

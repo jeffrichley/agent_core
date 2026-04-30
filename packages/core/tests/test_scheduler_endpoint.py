@@ -8,6 +8,7 @@ import uuid
 from datetime import UTC, datetime
 
 import pytest
+from pydantic import ValidationError
 
 from agent_core.bus.protocol import Endpoint
 from agent_core.endpoints.scheduler import (
@@ -46,7 +47,7 @@ def test_endpoint_jobs_path_optional():
 
 
 def test_jobdef_validates_required_fields():
-    with pytest.raises(Exception):  # pydantic ValidationError
+    with pytest.raises(ValidationError):
         JobDef(trigger="interval")  # missing target, prompt, schedule
 
 
@@ -95,7 +96,7 @@ def test_jobdef_metadata_defaults_empty():
 
 
 def test_jobdef_rejects_unknown_trigger():
-    with pytest.raises(Exception):
+    with pytest.raises(ValidationError):
         JobDef(
             trigger="weekly",  # not interval/cron/date
             schedule={"day": "fri"},
@@ -223,7 +224,7 @@ def test_load_seed_jobs_raises_on_malformed_entry(tmp_path):
         ).strip(),
         encoding="utf-8",
     )
-    with pytest.raises(Exception):  # pydantic ValidationError
+    with pytest.raises(ValidationError):
         load_seed_jobs(p)
 
 

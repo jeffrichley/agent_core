@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import pytest
 from fastmcp import Client
+from mcp.shared.exceptions import McpError
 
 from agent_core.bus.envelope import Envelope
 from agent_core.endpoints.claude_code_mcp import ClaudeCodeMCPEndpoint
@@ -71,7 +72,7 @@ async def test_send_tool_invalid_urgency_raises():
     await ep.start(handle)
     try:
         async with Client(ep._mcp) as client:
-            with pytest.raises(Exception):
+            with pytest.raises(McpError):
                 # The tool surface validates via Pydantic; "blue" is rejected.
                 await client.call_tool(
                     "send",

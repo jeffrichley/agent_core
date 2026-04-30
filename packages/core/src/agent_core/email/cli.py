@@ -89,7 +89,7 @@ def read(
         msg = client.inboxes.messages.get(inbox_id, message_id)
     except Exception as e:
         typer.echo(f"Error: Could not read message {message_id}: {e}", err=True)
-        raise typer.Exit(code=1)
+        raise typer.Exit(code=1) from e
 
     typer.echo(f"From: {msg.from_}")
     typer.echo(f"To: {', '.join(msg.to) if msg.to else ''}")
@@ -168,7 +168,7 @@ def send(
         typer.echo(f"Message ID: {response.message_id}")
     except Exception as e:
         typer.echo(f"Error: Failed to send: {e}", err=True)
-        raise typer.Exit(code=1)
+        raise typer.Exit(code=1) from e
 
 
 @email_app.command("reply")
@@ -202,7 +202,7 @@ def reply(
         original = client.inboxes.messages.get(inbox_id, message_id)
     except Exception as e:
         typer.echo(f"Error: Could not find message {message_id}: {e}", err=True)
-        raise typer.Exit(code=1)
+        raise typer.Exit(code=1) from e
 
     if dry_run:
         typer.echo("[DRY RUN] Would reply:")
@@ -219,4 +219,4 @@ def reply(
         typer.echo(f"Message ID: {response.message_id}")
     except Exception as e:
         typer.echo(f"Error: Failed to reply: {e}", err=True)
-        raise typer.Exit(code=1)
+        raise typer.Exit(code=1) from e

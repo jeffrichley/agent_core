@@ -20,17 +20,19 @@ app = typer.Typer(help="Bus operations: run, status, mailbox, trace, dlq, replay
 console = Console()
 log = logging.getLogger(__name__)
 
+_RUN_CONFIG_OPTION = typer.Option(
+    Path("./agent_core.yaml"),
+    "--config",
+    "-c",
+    help="Path to agent_core.yaml",
+    exists=True,
+    readable=True,
+)
+
 
 @app.command()
 def run(
-    config: Path = typer.Option(
-        Path("./agent_core.yaml"),
-        "--config",
-        "-c",
-        help="Path to agent_core.yaml",
-        exists=True,
-        readable=True,
-    ),
+    config: Path = _RUN_CONFIG_OPTION,
 ) -> None:
     """Start the bus and all configured endpoints. Runs until SIGINT/SIGTERM."""
     logging.basicConfig(
@@ -40,7 +42,7 @@ def run(
         asyncio.run(_run_bus(config))
     except BusBootError as exc:
         console.print(f"[red]boot error:[/red] {exc}")
-        raise typer.Exit(code=1)
+        raise typer.Exit(code=1) from exc
 
 
 async def _run_bus(config_path: Path) -> None:
@@ -119,7 +121,7 @@ def _config_option():
 
 
 @app.command()
-def status(config: Path = _config_option()):
+def status(config: Path = _RUN_CONFIG_OPTION):
     """Show endpoints, in-flight count, and DLQ depth."""
     asyncio.run(_status(config))
 
@@ -157,7 +159,7 @@ async def _status(config_path: Path) -> None:
 @app.command()
 def mailbox(
     endpoint: str = typer.Argument(..., help="Endpoint name to inspect"),
-    config: Path = _config_option(),
+    config: Path = _RUN_CONFIG_OPTION,
 ):
     """List pending envelopes for an endpoint."""
     asyncio.run(_mailbox(endpoint, config))
@@ -190,7 +192,7 @@ async def _mailbox(endpoint: str, config_path: Path) -> None:
 @app.command()
 def trace(
     correlation_id: str = typer.Argument(..., help="correlation_id to trace"),
-    config: Path = _config_option(),
+    config: Path = _RUN_CONFIG_OPTION,
 ):
     """Show all envelopes in a correlation_id thread, in arrival order."""
     asyncio.run(_trace(correlation_id, config))
@@ -224,7 +226,7 @@ app.add_typer(dlq_app, name="dlq")
 
 
 @dlq_app.callback(invoke_without_command=True)
-def _dlq_default(ctx: typer.Context, config: Path = _config_option()):
+def _dlq_default(ctx: typer.Context, config: Path = _RUN_CONFIG_OPTION):
     """List dead-letter envelopes (when `bus dlq` is invoked with no subcommand)."""
     if ctx.invoked_subcommand is None:
         asyncio.run(_dlq_list(config))
@@ -256,7 +258,7 @@ async def _dlq_list(config_path: Path) -> None:
 @app.command()
 def replay(
     envelope_id: str = typer.Argument(..., help="Envelope id to replay"),
-    config: Path = _config_option(),
+    config: Path = _RUN_CONFIG_OPTION,
 ):
     """Reset a dead-letter envelope to pending. The next bus startup will redeliver it via drain_for."""
     asyncio.run(_replay(envelope_id, config))
@@ -294,7 +296,7 @@ def _parse_duration(s: str) -> timedelta:
 @dlq_app.command("purge")
 def dlq_purge(
     older_than: str = typer.Option(..., "--older-than"),
-    config: Path = _config_option(),
+    config: Path = _RUN_CONFIG_OPTION,
 ):
     """Delete dead-letter envelopes older than the given duration (e.g. 7d, 24h)."""
     asyncio.run(_dlq_purge(older_than, config))
