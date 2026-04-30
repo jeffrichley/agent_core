@@ -26,6 +26,9 @@ dependencies = [
 [project.scripts]
 agent-core = "agent_core.cli:app"
 
+[project.entry-points."agent_core"]
+example = "agent_core.plugins.example_entrypoint"
+
 [build-system]
 requires = ["hatchling"]
 build-backend = "hatchling.build"
