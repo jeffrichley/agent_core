@@ -21,6 +21,12 @@ def _content_only(chunks: list[str]) -> str:
     return "".join(parts)
 
 
+def _without_marker(chunk: str) -> str:
+    if chunk.startswith("(") and ")\n" in chunk[:16]:
+        return chunk.split("\n", 1)[-1]
+    return chunk
+
+
 def test_short_message_no_split():
     text = "Hello, world!"
     result = smart_chunk_discord(text)
@@ -80,3 +86,37 @@ def test_too_many_chunks_raises():
     text = "x" * (DISCORD_CHUNK_TARGET * (MAX_CHUNKS + 3))
     with pytest.raises(ValueError, match="max"):
         smart_chunk_discord(text)
+
+
+def test_fenced_block_cross_boundary_closes_and_reopens():
+    text = "before\n```python\n" + ("print('hi')\n" * 120) + "```\nafter"
+    chunks = smart_chunk_discord(text, limit=240)
+    assert len(chunks) > 1
+    assert all(len(c) <= 2000 for c in chunks)
+    for i, chunk in enumerate(chunks):
+        body = _without_marker(chunk)
+        if i < len(chunks) - 1 and "```python" in chunk and "print('hi')" in chunk:
+            assert chunk.rstrip().endswith("```")
+        if i > 0 and "print('hi')" in body:
+            assert body.startswith("``` python\n") or body.startswith("```python\n")
+
+
+def test_inline_code_span_not_split():
+    inline = "`" + ("x" * 220) + "`"
+    text = f"start {inline} end"
+    chunks = smart_chunk_discord(text, limit=60)
+    assert len(chunks) > 1
+    assert all(len(c) <= 2000 for c in chunks)
+    assert sum(chunk.count("`") for chunk in chunks) == 2
+    assert _content_only(chunks).replace("\n```", "").replace("```", "") == text
+
+
+def test_markdown_link_and_image_not_split():
+    link = "[example link text](https://example.com/very/long/path)"
+    image = "![alt text](https://example.com/static/image.png)"
+    text = ("prefix " * 20) + link + " middle " + image + (" suffix" * 20)
+    chunks = smart_chunk_discord(text, limit=120)
+    assert len(chunks) > 1
+    assert all(len(c) <= 2000 for c in chunks)
+    assert sum(c.count(link) for c in chunks) == 1
+    assert sum(c.count(image) for c in chunks) == 1
