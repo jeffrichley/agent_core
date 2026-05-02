@@ -5,9 +5,18 @@
 #
 # How it works:
 #   1. SessionStart: TimeInjector tells Pepper what time it is,
-#      IdentityInjector loads her personality + preferences + last handoff note.
+#      then IdentityInjector runs in small, ordered blocks (critical first).
 #   2. PreCompact/SessionEnd: HandoffWriter enqueues a daemon job.
 #      The daemon worker generates handoff.md and writes handoff-status.json.
+#
+# Identity split rationale:
+#   Claude Code caps each injected SessionStart context string at ~10,000
+#   characters; larger values spill to a session temp file + short preview.
+#   Running one IdentityInjector per file keeps each block bounded and preserves
+#   priority order. Put non-negotiable identity first.
+#
+#   IdentityInjector also applies an extra safety cap for likely-fresh sessions
+#   (``source`` missing or ``startup``) — see ``sessionstart_context_char_cap``.
 #
 # .claude/settings.json hooks should point to:
 #   "command": "uv run agent-core hooks run SessionStart"
@@ -38,8 +47,36 @@ pipelines:
         base_path: "C:\\Users\\jeffr\\.pepper\\Memory"
         files:
           - "SOUL.md"
+        heading: "Identity — Critical Core"
+        missing_file_behavior: "error"
+        sessionstart_context_char_cap: 9800
+
+    - type: builtin.identity_injector
+      params:
+        base_path: "C:\\Users\\jeffr\\.pepper\\Memory"
+        files:
+          - "IDENTITY.md"
+        heading: "Identity — Self-model"
+        missing_file_behavior: "warn"
+        sessionstart_context_char_cap: 9800
+
+    - type: builtin.identity_injector
+      params:
+        base_path: "C:\\Users\\jeffr\\.pepper\\Memory"
+        files:
           - "pepper/preferences.md"
+        heading: "Identity — Preferences"
+        missing_file_behavior: "warn"
+        sessionstart_context_char_cap: 9800
+
+    - type: builtin.identity_injector
+      params:
+        base_path: "C:\\Users\\jeffr\\.pepper\\Memory"
+        files:
           - "pepper/handoff.md"
+        heading: "Identity — Continuity"
+        missing_file_behavior: "warn"
+        sessionstart_context_char_cap: 9800
 
   PreCompact:
     - type: builtin.handoff_writer
