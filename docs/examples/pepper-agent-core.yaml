@@ -6,15 +6,26 @@
 # How it works:
 #   1. SessionStart: TimeInjector tells Pepper what time it is,
 #      IdentityInjector loads her personality + preferences + last handoff note.
-#   2. PreCompact: Before context is compressed, HandoffWriter captures
-#      what was happening so the next session (or post-compaction) has continuity.
-#   3. SessionEnd: Same HandoffWriter runs again as a safety net —
-#      deduplication prevents writing twice if PreCompact already fired.
+#   2. PreCompact/SessionEnd: HandoffWriter enqueues a daemon job.
+#      The daemon worker generates handoff.md and writes handoff-status.json.
 #
 # .claude/settings.json hooks should point to:
 #   "command": "uv run agent-core hooks run SessionStart"
 #   "command": "uv run agent-core hooks run PreCompact"
 #   "command": "uv run agent-core hooks run SessionEnd"
+
+bus:
+  storage_path: "C:\\Users\\jeffr\\.pepper\\agent-core\\bus.sqlite"
+
+http:
+  bind_host: "127.0.0.1"
+  bind_port: 8788
+
+endpoints:
+  - type: builtin.handoff_jobs
+    name: handoff-jobs
+    params:
+      mount: /internal/handoff-jobs
 
 pipelines:
   SessionStart:
@@ -34,14 +45,16 @@ pipelines:
     - type: builtin.handoff_writer
       params:
         output_path: "C:\\Users\\jeffr\\.pepper\\Memory\\pepper\\handoff.md"
-        transcript_tail_lines: 200
-        timezone: "US/Eastern"
+        vault_root: "C:\\Users\\jeffr\\.pepper\\Memory\\pepper"
+        handoff_status_path: "C:\\Users\\jeffr\\.pepper\\Memory\\pepper\\handoff-status.json"
+        handoff_jobs_url: "http://127.0.0.1:8788/internal/handoff-jobs"
         agent_name: "Pepper"
 
   SessionEnd:
     - type: builtin.handoff_writer
       params:
         output_path: "C:\\Users\\jeffr\\.pepper\\Memory\\pepper\\handoff.md"
-        transcript_tail_lines: 200
-        timezone: "US/Eastern"
+        vault_root: "C:\\Users\\jeffr\\.pepper\\Memory\\pepper"
+        handoff_status_path: "C:\\Users\\jeffr\\.pepper\\Memory\\pepper\\handoff-status.json"
+        handoff_jobs_url: "http://127.0.0.1:8788/internal/handoff-jobs"
         agent_name: "Pepper"

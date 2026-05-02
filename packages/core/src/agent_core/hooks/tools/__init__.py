@@ -7,5 +7,5 @@ Available tools:
     TimeInjector: Injects the current date and time into session context.
     FileInjector: Reads a list of files and injects their contents into session context.
     IdentityInjector: FileInjector preset for agent identity/personality files.
-    HandoffWriter: Writes LLM-powered continuity notes before context is lost.
+    HandoffWriter: Enqueues daemon-owned handoff jobs.
 """

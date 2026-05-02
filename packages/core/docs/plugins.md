@@ -64,9 +64,43 @@ Core also ships an entrypoint-loaded alias plugin:
   - `builtin.discord` -> `agent_core_discord.endpoint.DiscordEndpoint`
   - `builtin.stub` -> `agent_core.endpoints.stub.StubEndpoint`
   - `builtin.scheduler` -> `agent_core.endpoints.scheduler.SchedulerEndpoint`
+  - `builtin.handoff_jobs` -> `agent_core.endpoints.handoff_jobs.HandoffJobsEndpoint`
 - hook tool aliases:
   - `builtin.handoff_writer` -> `agent_core.hooks.tools.handoff_writer.HandoffWriter`
   - `builtin.identity_injector` -> `agent_core.hooks.tools.identity_injector.IdentityInjector`
   - `builtin.time_injector` -> `agent_core.hooks.tools.time_injector.TimeInjector`
 
 Your plugin hooks run alongside these defaults.
+
+## Handoff daemon setup (default pattern)
+
+Use `builtin.handoff_jobs` to host the enqueue endpoint, then point
+`builtin.handoff_writer` at that endpoint. The hook remains enqueue-only.
+
+```yaml
+http:
+  bind_host: 127.0.0.1
+  bind_port: 8788
+
+endpoints:
+  - type: builtin.handoff_jobs
+    name: handoff-jobs
+    params:
+      mount: /internal/handoff-jobs
+
+pipelines:
+  SessionEnd:
+    - type: builtin.handoff_writer
+      params:
+        output_path: "C:\\Users\\you\\Memory\\agent\\handoff.md"
+        vault_root: "C:\\Users\\you\\Memory\\agent"
+        handoff_status_path: "C:\\Users\\you\\Memory\\agent\\handoff-status.json"
+        handoff_jobs_url: "http://127.0.0.1:8788/internal/handoff-jobs"
+        agent_name: "YourAgent"
+```
+
+With this setup:
+
+- hook writes no handoff files and runs no LLM extraction
+- daemon worker writes `handoff.md`
+- daemon worker is the single writer of `handoff-status.json`
