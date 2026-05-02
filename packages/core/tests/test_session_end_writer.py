@@ -2,7 +2,7 @@
 
 import json
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -156,11 +156,19 @@ class TestSessionEndWriter:
         )
         assert handoff.read_text(encoding="utf-8") == after_first
 
-    @patch("agent_core.hooks.tools.handoff_writer.subprocess.Popen")
-    @patch("agent_core.hooks.tools.handoff_writer.shutil.which", return_value="/bin/claude")
+    @patch("agent_core.hooks.tools.handoff_writer.HandoffWriter")
     def test_delegates_to_handoff_writer_when_no_session_handoff(
-        self, mock_which, mock_popen, tmp_path: Path
+        self, mock_hw_class, tmp_path: Path
     ):
+        instance = MagicMock()
+        instance.execute = MagicMock(
+            return_value=ToolResult(
+                heading="Handoff",
+                content="Spawned handoff writer in background.",
+            )
+        )
+        mock_hw_class.return_value = instance
+
         vault = tmp_path / "vault"
         transcript = tmp_path / "tr.jsonl"
         make_transcript(transcript, [("user", "Hello"), ("assistant", "Hey")])
@@ -176,7 +184,7 @@ class TestSessionEndWriter:
             },
         )
 
-        assert mock_popen.called
+        assert instance.execute.called
 
     def test_duration_from_transcript_timestamps(self, tmp_path: Path):
         from agent_core.hooks.tools.session_end_writer import _duration_hint

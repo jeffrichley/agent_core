@@ -121,7 +121,7 @@ class TestDLQ:
 
         runner = CliRunner()
         result = runner.invoke(
-            app, ["bus", "dlq", "purge", "--older-than", "7d", "--config", str(cfg)]
+            app, ["bus", "dlq", "--config", str(cfg), "purge", "--older-than", "7d"]
         )
         assert result.exit_code == 0
 

@@ -69,6 +69,8 @@ Core also ships an entrypoint-loaded alias plugin:
   - `builtin.handoff_writer` -> `agent_core.hooks.tools.handoff_writer.HandoffWriter`
   - `builtin.identity_injector` -> `agent_core.hooks.tools.identity_injector.IdentityInjector`
   - `builtin.time_injector` -> `agent_core.hooks.tools.time_injector.TimeInjector`
+- bus hook aliases:
+  - `builtin.daily_raw_jsonl` -> `agent_core.bus_hooks.daily_raw_jsonl.DailyRawJsonlHook`
 
 Your plugin hooks run alongside these defaults.
 

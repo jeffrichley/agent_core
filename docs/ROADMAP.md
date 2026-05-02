@@ -29,7 +29,7 @@ across these areas:
 | CLI / process | `cli.py`, `process.py` | 262 | `pepper init/start/stop/status`, PID-file lifecycle, kill-process-tree |
 | Runtime generator | `init/generator.py` + 6 Jinja2 templates | ~250 | Generates `~/.pepper/` workspace (CLAUDE.md, settings.json, mcp.json, .env). `--migrate` pulls existing `Memory/` vault |
 | Channel server | `channel/server.py`, `channel/router.py` | 681 | Low-level MCP server (custom `notifications/claude/channel`) + uvicorn HTTP (`/message`, `/events` SSE, `/register`, `/health`) + chat-id→source routing with TTL |
-| Pipeline hooks | `pipeline/` (model, runner, transcript hook) | 165 | Inbound/outbound transform chain. Today only writes JSONL transcripts to `Memory/daily/raw/` |
+| Pipeline hooks | `pipeline/` (model, runner, transcript hook) | 165 | Inbound/outbound transform chain. Bus: `builtin.daily_raw_jsonl` (`pre_publish`) appends envelopes to `Memory/daily/raw/` JSONL (cutover #04). |
 | Scheduler | `scheduler/` + `jobs.yaml` | 555 | APScheduler MCP server. SQLite-persisted jobs. Two job types: prompt (POSTs to channel) + function. Seed jobs: heartbeat 30min, morning brief 7am, nightly reflection 3am, vault backup 4am |
 | Discord integration | `integrations/discord/` (8 files) | ~2,200 | discord.py client. 16 MCP tools (send/edit/react, fetch, list channels, polls, scheduled events, threads, briefings, attachments, slash commands `/brief`, `/tasks`, `/focus`, `/status`). DM policy + channel allowlists. Smart chunking |
 | Credentials | `credentials/` | 296 | PyKeePass-wrapped AES-256 vault. CLI: `creds set/get/list/delete` |
@@ -53,7 +53,7 @@ across these areas:
 | Pepper component | New home | Status | Notes |
 |---|---|---|---|
 | Channel server | agent_core Channel Bus + MCP/SSE adapter endpoints | Bus core ✅ Phase 1 merged. Adapters not started. | Replaces hand-rolled MCP-notifications-via-low-level-server-API + cross-thread HTTP→MCP queue with the bus's single-loop fan-out |
-| Pipeline hooks (transcript) | `BusHook` in `pre_deliver` stage | Not started | Transcript writer becomes a generic bus hook |
+| Pipeline hooks (transcript) | `BusHook` in `pre_deliver` stage | Partial | Daily JSONL via `builtin.daily_raw_jsonl` at `pre_publish`; transcript-focused `pre_deliver` hook still open |
 | Scheduler | `agent_core.scheduler` (or its own pkg) | Not started | Generic. Job types stay (prompt/function); "POST to channel" becomes "publish to bus" |
 | Credentials | `agent_core.credentials` (or its own pkg) | Not started | Generic |
 | Discord adapter | Bus `Endpoint` (location TBD — see sub-project A) | Not started | The 16 Discord tools + access-control + chunking. **Attachment download is part of Discord, not generic** |

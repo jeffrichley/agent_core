@@ -10,6 +10,7 @@ from typing import Any
 
 import pluggy
 
+from agent_core.bus_hooks.daily_raw_jsonl import DailyRawJsonlHook
 from agent_core.endpoints.claude_code_mcp import ClaudeCodeMCPEndpoint
 from agent_core.endpoints.handoff_jobs import HandoffJobsEndpoint
 from agent_core.endpoints.scheduler import SchedulerEndpoint
@@ -36,6 +37,10 @@ _HOOK_TOOL_TYPES: dict[str, type[Any]] = {
     "builtin.time_injector": TimeInjector,
 }
 
+_BUS_HOOK_TYPES: dict[str, type[Any]] = {
+    "builtin.daily_raw_jsonl": DailyRawJsonlHook,
+}
+
 
 @hookimpl
 def register_endpoint_types() -> dict[str, type[Any]]:
@@ -53,3 +58,8 @@ def register_endpoint_types() -> dict[str, type[Any]]:
 @hookimpl
 def register_hook_tool_types() -> dict[str, type[Any]]:
     return dict(_HOOK_TOOL_TYPES)
+
+
+@hookimpl
+def register_bus_hook_types() -> dict[str, type[Any]]:
+    return dict(_BUS_HOOK_TYPES)

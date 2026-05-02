@@ -8,6 +8,7 @@ import re
 import signal
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
+from typing import Any
 
 import typer
 from rich.console import Console
@@ -229,6 +230,8 @@ app.add_typer(dlq_app, name="dlq")
 @dlq_app.callback(invoke_without_command=True)
 def _dlq_default(ctx: typer.Context, config: Path = _RUN_CONFIG_OPTION):
     """List dead-letter envelopes (when `bus dlq` is invoked with no subcommand)."""
+    ctx.ensure_object(dict)
+    ctx.obj["config"] = config
     if ctx.invoked_subcommand is None:
         asyncio.run(_dlq_list(config))
 
@@ -297,10 +300,12 @@ def _parse_duration(s: str) -> timedelta:
 
 @dlq_app.command("purge")
 def dlq_purge(
+    ctx: typer.Context,
     older_than: str = typer.Option(..., "--older-than"),
-    config: Path = _RUN_CONFIG_OPTION,
 ):
     """Delete dead-letter envelopes older than the given duration (e.g. 7d, 24h)."""
+    obj: dict[str, Any] = ctx.obj
+    config: Path = obj["config"]
     asyncio.run(_dlq_purge(older_than, config))
 
 

@@ -8,6 +8,8 @@
 #      IdentityInjector loads her personality + preferences + last handoff note.
 #   2. PreCompact/SessionEnd: HandoffWriter enqueues a daemon job.
 #      The daemon worker generates handoff.md and writes handoff-status.json.
+#   3. Bus (Discord, scheduler, relay): pre_publish hook appends each envelope to
+#      Memory/daily/raw/YYYY-MM-DD.jsonl (same JSONL shape as SessionEndWriter).
 #
 # .claude/settings.json hooks should point to:
 #   "command": "uv run agent-core hooks run SessionStart"
@@ -20,6 +22,16 @@ bus:
 http:
   bind_host: "127.0.0.1"
   bind_port: 8788
+
+bus_hooks:
+  pre_publish:
+    - type: builtin.daily_raw_jsonl
+      params:
+        vault_path: "C:\\Users\\jeffr\\.pepper\\Memory"
+        daily_log_dir: "daily/raw"
+        timezone: "US/Eastern"
+        default_sender: "bus"
+  pre_deliver: []
 
 endpoints:
   - type: builtin.handoff_jobs
