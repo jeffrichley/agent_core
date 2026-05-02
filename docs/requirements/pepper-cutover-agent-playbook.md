@@ -2,7 +2,7 @@
 
 **Purpose:** Tell any coding agent **how** to work on Pepper cutover tickets, **which specs exist**, and **how to record what it picked up**. Default **Assignee** names are filled below; Jeff (or **Cadence**) may reassign.
 
-**Index of this whole directory:** [`README.md`](README.md) — reading order, how to discover files without reading every spec, and a one-line summary of **already-implemented / partial** work (full rules in **§3b** below).
+**Index of this whole directory:** [`README.md`](README.md) — reading order, how to discover files without reading every spec, and a one-line summary of **already-implemented / partial** work (full rules in **§3b** below). **Copy-paste session prompts:** [`pepper-cutover-prompts.md`](pepper-cutover-prompts.md).
 
 **People model (named roster):**
 
@@ -272,6 +272,7 @@ For **how to navigate the whole `docs/requirements/` tree** (including files out
 | [`docs/ROADMAP.md`](../ROADMAP.md) | Discord / skills / pipeline roadmap references |
 | [`pepper-cutover-cadence-queue.md`](pepper-cutover-cadence-queue.md) | **Cadence** runbook — PR-only comms (legacy filename) |
 | [`README.md`](README.md) | **Directory index** — reading order + full file list |
+| [`pepper-cutover-prompts.md`](pepper-cutover-prompts.md) | **Copy-paste session prompts** for Vale / Locke / Folio and Cadence |
 
 **Dependency hints (not a substitute for reading specs):** #08 partially gates #02 (“ready” must be visible). #04 relates to #05 (summaries → skills). #07 references #01/#02 for content vs firing.
 

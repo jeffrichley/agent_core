@@ -8,8 +8,8 @@ Specs and runbooks for **Pepper / agent-core** behavior. Not every file applies 
 
 | If you are… | Start here |
 |-------------|--------------|
-| Vale, Locke, or Folio on a cutover ticket | [`pepper-cutover-agent-playbook.md`](pepper-cutover-agent-playbook.md) → your ticket’s `.md` → follow **Related** / **Parent** links inside that ticket |
-| Cadence (PR / merge) | Playbook + [`pepper-cutover-cadence-queue.md`](pepper-cutover-cadence-queue.md) (Cadence runbook) |
+| Vale, Locke, or Folio on a cutover ticket | **[Session prompt →](pepper-cutover-prompts.md#implementer-vale-locke-or-folio)** then [`pepper-cutover-agent-playbook.md`](pepper-cutover-agent-playbook.md) → your ticket’s `.md` → follow **Related** / **Parent** links inside that ticket |
+| Cadence (PR / merge) | **[Session prompt →](pepper-cutover-prompts.md#cadence-pr--merge-agent)** then playbook + [`pepper-cutover-cadence-queue.md`](pepper-cutover-cadence-queue.md) (Cadence runbook) |
 
 ---
 
@@ -36,6 +36,7 @@ Tickets can be **ahead of** or **behind** the code. Before large implementations
 | File | Role |
 |------|------|
 | [`README.md`](README.md) | This index — reading order and discovery |
+| [`pepper-cutover-prompts.md`](pepper-cutover-prompts.md) | Copy-paste **session prompts** for implementers and Cadence |
 | [`pepper-cutover-agent-playbook.md`](pepper-cutover-agent-playbook.md) | Cutover process, assignments, templates, §3b |
 | [`pepper-cutover-cadence-queue.md`](pepper-cutover-cadence-queue.md) | Cadence runbook (PR-only); legacy filename |
 | [`pepper-pre-cutover-must-haves.md`](pepper-pre-cutover-must-haves.md) | Epic parent + cutover gate |
