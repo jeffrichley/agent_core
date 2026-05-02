@@ -11,7 +11,9 @@ Tools (per the channel-bus spec § MCP transport implementation):
 
 Inbound envelopes flow to the connected Claude Code session via MCP
 notifications on the SSE stream. If no session is currently connected,
-deliver() raises EndpointUnavailable so the bus queues the envelope.
+deliver() usually raises EndpointUnavailable so the bus queues the envelope;
+routine green Acknowledgments for recent agent outbounds are auto-handled
+without requiring a session (see deliver() docstring).
 """
 
 from __future__ import annotations
@@ -31,7 +33,7 @@ from fastmcp.server.middleware import Middleware, MiddlewareContext
 from mcp.shared.session import SessionMessage
 from mcp.types import JSONRPCMessage, JSONRPCNotification
 
-from agent_core.bus.envelope import Envelope
+from agent_core.bus.envelope import AcknowledgmentPayload, Envelope
 from agent_core.bus.notify_broker import NotificationBroker
 from agent_core.bus.protocol import EndpointUnavailable
 
@@ -40,6 +42,11 @@ if TYPE_CHECKING:
 
 log = logging.getLogger(__name__)
 _META_KEY_RE = re.compile(r"^[A-Za-z0-9_]+$")
+
+# Missing-ack timers and registry TTL must stay bounded (YAML / metadata cannot DoS the loop).
+_MISSING_ACK_DELAY_MAX_SECONDS = 86400.0  # 24 hours
+_OUTBOUND_REGISTRY_TTL_MIN_SECONDS = 1.0
+_OUTBOUND_REGISTRY_TTL_MAX_SECONDS = 86400.0 * 366  # ~one year
 
 
 class SessionRegistry(Middleware):
@@ -110,9 +117,24 @@ class ClaudeCodeMCPEndpoint:
         name: str,
         mount: str,
         notify_broker: NotificationBroker | None = None,
+        wake_on_all_acknowledgments: bool = False,
+        outbound_registry_ttl_seconds: float = 900.0,
+        missing_ack_default_seconds: float = 30.0,
+        max_tracked_outbounds: int = 10_000,
     ):
         self.name = name
         self.mount = mount
+        self.wake_on_all_acknowledgments = wake_on_all_acknowledgments
+        ttl = float(outbound_registry_ttl_seconds)
+        self._outbound_registry_ttl_seconds = max(
+            _OUTBOUND_REGISTRY_TTL_MIN_SECONDS,
+            min(ttl, _OUTBOUND_REGISTRY_TTL_MAX_SECONDS),
+        )
+        self._missing_ack_default_seconds = max(
+            0.0,
+            min(float(missing_ack_default_seconds), _MISSING_ACK_DELAY_MAX_SECONDS),
+        )
+        self._max_tracked_outbounds = max(1, int(max_tracked_outbounds))
         self._mcp: FastMCP = FastMCP(
             name,
             instructions=(
@@ -125,7 +147,10 @@ class ClaudeCodeMCPEndpoint:
                 "from the same sender), process them, then call handle(envelope_id) "
                 "on each to ack and remove from the queue. Send replies via the "
                 "send tool. Treat the notification's content as a hint, not the "
-                "message itself — list_pending is authoritative."
+                "message itself — list_pending is authoritative. "
+                "Routine delivery Acknowledgments for your own recent outbounds may "
+                "be auto-cleared without a wake; you are still notified for failures, "
+                "urgent acks, other envelope kinds, and missing-ack timeouts."
             ),
         )
         self._handle: BusHandle | None = None
@@ -139,6 +164,8 @@ class ClaudeCodeMCPEndpoint:
         self._debounce_task: asyncio.Task | None = None
         self._debounce_deadline: float | None = None
         self._notify_broker = notify_broker
+        self._recent_outbound_ids: dict[str, float] = {}
+        self._missing_ack_tasks: dict[str, asyncio.Task[None]] = {}
         self._mcp.add_middleware(SessionRegistry(self))
         self._register_tools()
 
@@ -159,6 +186,106 @@ class ClaudeCodeMCPEndpoint:
         self._sessions.discard(session)
         if len(self._sessions) != before:
             log.debug("endpoint '%s' unregistered session count=%d", self.name, len(self._sessions))
+
+    def _clamp_missing_ack_delay(self, seconds: float) -> float:
+        s = float(seconds)
+        if s != s:  # NaN
+            s = self._missing_ack_default_seconds
+        return max(0.0, min(s, _MISSING_ACK_DELAY_MAX_SECONDS))
+
+    def _ack_timeout_seconds(self, metadata: dict[str, Any]) -> float:
+        ac = metadata.get("agent_core")
+        if isinstance(ac, dict):
+            raw = ac.get("ack_timeout_seconds")
+            if isinstance(raw, (int, float)) and not isinstance(raw, bool):
+                return self._clamp_missing_ack_delay(float(raw))
+        return self._clamp_missing_ack_delay(self._missing_ack_default_seconds)
+
+    def _evict_stale_outbounds(self, now: float) -> None:
+        ttl = self._outbound_registry_ttl_seconds
+        stale = [k for k, t in self._recent_outbound_ids.items() if now - t > ttl]
+        for k in stale:
+            self._recent_outbound_ids.pop(k, None)
+            self._cancel_missing_ack(k)
+        while len(self._recent_outbound_ids) > self._max_tracked_outbounds:
+            oldest_key = min(self._recent_outbound_ids.items(), key=lambda kv: kv[1])[0]
+            self._recent_outbound_ids.pop(oldest_key)
+            self._cancel_missing_ack(oldest_key)
+
+    def _is_routine_green_ack(self, envelope: Envelope, *, now: float) -> bool:
+        if self.wake_on_all_acknowledgments:
+            return False
+        if envelope.kind != "Acknowledgment":
+            return False
+        if not isinstance(envelope.payload, AcknowledgmentPayload):
+            return False
+        if envelope.urgency != "green":
+            return False
+        note = envelope.payload.note
+        if note is not None and note.startswith("error:"):
+            return False
+        irt = envelope.in_reply_to
+        if irt is None or envelope.payload.of != irt:
+            return False
+        registered_at = self._recent_outbound_ids.get(irt)
+        if registered_at is None:
+            return False
+        if now - registered_at > self._outbound_registry_ttl_seconds:
+            return False
+        return True
+
+    def _register_outbound_sent(self, env_id: str, metadata: dict[str, Any]) -> None:
+        loop = asyncio.get_running_loop()
+        now = loop.time()
+        self._evict_stale_outbounds(now)
+        self._recent_outbound_ids[env_id] = now
+        self._schedule_missing_ack(env_id, metadata)
+
+    def _cancel_missing_ack(self, outbound_id: str) -> None:
+        t = self._missing_ack_tasks.pop(outbound_id, None)
+        if t is not None and not t.done():
+            t.cancel()
+
+    def _schedule_missing_ack(self, outbound_id: str, metadata: dict[str, Any]) -> None:
+        self._cancel_missing_ack(outbound_id)
+        delay = self._ack_timeout_seconds(metadata)
+
+        async def _fire() -> None:
+            try:
+                await asyncio.sleep(delay)
+            except asyncio.CancelledError:
+                return
+            finally:
+                self._missing_ack_tasks.pop(outbound_id, None)
+            await self._missing_ack_outbound(outbound_id)
+
+        self._missing_ack_tasks[outbound_id] = asyncio.create_task(_fire())
+
+    async def _missing_ack_outbound(self, outbound_id: str) -> None:
+        if outbound_id not in self._recent_outbound_ids:
+            return
+        self._recent_outbound_ids.pop(outbound_id, None)
+        log.info(
+            "endpoint '%s': missing-ack timer fired outbound_id=%s (wake)",
+            self.name,
+            outbound_id,
+        )
+        await self._notify_mail_arrived("yellow")
+
+    def _release_outbound_registry_for_ack_envelope(self, env: Envelope) -> None:
+        if env.kind != "Acknowledgment":
+            return
+        if not isinstance(env.payload, AcknowledgmentPayload):
+            return
+        refs: set[str] = set()
+        if env.in_reply_to:
+            refs.add(env.in_reply_to)
+        of = env.payload.of
+        if of:
+            refs.add(of)
+        for rid in refs:
+            self._recent_outbound_ids.pop(rid, None)
+            self._cancel_missing_ack(rid)
 
     async def _call_list_pending(self, batch_window_seconds: int = 0) -> list[dict]:
         """Mailbox view sorted by urgency, optionally batched by sender.
@@ -238,20 +365,49 @@ class ClaudeCodeMCPEndpoint:
     async def deliver(self, envelope: Envelope) -> None:
         """Push the envelope to the connected agent.
 
-        Always queues for pickup and fans out to the NotificationBroker so the
-        stdio relay's SSE subscription on /notify/<agent> wakes the agent even
-        when no HTTP MCP session is attached. If no HTTP MCP session is
-        currently captured, additionally raise EndpointUnavailable so the bus
-        knows direct push isn't available and applies its retry/log semantics.
+        Most envelopes queue for pickup, fan out to the NotificationBroker, and
+        (when no HTTP MCP session is attached) raise EndpointUnavailable so the
+        bus redelivers. Routine green Acknowledgments matching a recent outbound
+        from this agent are auto-acked in persistence without queueing or push,
+        so bridges can confirm delivery without waking the agent (no session
+        required for that path).
 
-        The broker fan-out is unconditional; the HTTP push leg inside
-        _fire_after_debounce is guarded by the connected session set."""
+        The broker fan-out and HTTP push run only when ``_notify_mail_arrived``
+        fires; auto-handled acks skip it entirely.
+        """
+        now = asyncio.get_running_loop().time()
+        self._evict_stale_outbounds(now)
+        if self._is_routine_green_ack(envelope, now=now):
+            if self._handle is None:
+                raise RuntimeError(f"endpoint '{self.name}' is not started")
+            irt = envelope.in_reply_to
+            assert irt is not None
+            await self._handle.ack(envelope.id)
+            log.debug(
+                "endpoint '%s': auto-acked routine green acknowledgment inbound_id=%s "
+                "outbound_id=%s",
+                self.name,
+                envelope.id,
+                irt,
+            )
+            self._recent_outbound_ids.pop(irt, None)
+            self._cancel_missing_ack(irt)
+            return
         self.queue_for_pickup(envelope)
         await self._notify_mail_arrived(envelope.urgency)
         if not self._sessions:
             raise EndpointUnavailable(f"no MCP session connected for {self.name}")
 
     async def stop(self) -> None:
+        tasks = list(self._missing_ack_tasks.values())
+        self._missing_ack_tasks.clear()
+        for t in tasks:
+            if not t.done():
+                t.cancel()
+        if tasks:
+            await asyncio.gather(*tasks, return_exceptions=True)
+        self._recent_outbound_ids.clear()
+
         self._handle = None
         self._sessions.clear()
         if self._debounce_task is not None and not self._debounce_task.done():
@@ -463,6 +619,8 @@ class ClaudeCodeMCPEndpoint:
                 created_at=datetime.now(UTC),
             )
             await self._handle.publish(env)
+            if not self.wake_on_all_acknowledgments:
+                self._register_outbound_sent(env.id, env.metadata)
             return {"status": "published", "id": env.id}
 
         @self._mcp.tool()
@@ -502,7 +660,10 @@ class ClaudeCodeMCPEndpoint:
             """Acknowledge an envelope and remove it from the pickup queue."""
             if self._handle is None:
                 return {"status": "error", "message": "endpoint not started"}
+            env_before = next((e for e in self._pending if e.id == envelope_id), None)
             await self._handle.ack(envelope_id)
+            if env_before is not None:
+                self._release_outbound_registry_for_ack_envelope(env_before)
             self._pending = [e for e in self._pending if e.id != envelope_id]
             return {"status": "handled", "id": envelope_id}
 
@@ -511,7 +672,10 @@ class ClaudeCodeMCPEndpoint:
             """Direct ack via the BusHandle."""
             if self._handle is None:
                 return {"status": "error", "message": "endpoint not started"}
+            env_before = next((e for e in self._pending if e.id == envelope_id), None)
             await self._handle.ack(envelope_id)
+            if env_before is not None:
+                self._release_outbound_registry_for_ack_envelope(env_before)
             self._pending = [e for e in self._pending if e.id != envelope_id]
             return {"status": "acked", "id": envelope_id}
 
@@ -520,6 +684,9 @@ class ClaudeCodeMCPEndpoint:
             """Direct nack via the BusHandle."""
             if self._handle is None:
                 return {"status": "error", "message": "endpoint not started"}
+            env_before = next((e for e in self._pending if e.id == envelope_id), None)
             await self._handle.nack(envelope_id, requeue)
+            if env_before is not None:
+                self._release_outbound_registry_for_ack_envelope(env_before)
             self._pending = [e for e in self._pending if e.id != envelope_id]
             return {"status": "nacked", "id": envelope_id, "requeue": requeue}

@@ -17,6 +17,7 @@ agent-core-channel = { workspace = true }
 dev = [
     "pytest>=8.0",
     "pytest-asyncio>=0.23",
+    "looptime>=0.7",
     "freezegun>=1.5",
     "ruff>=0.14",
     "mypy>=1.11",
@@ -79,3 +80,6 @@ testpaths = [
 ]
 asyncio_mode = "auto"
 addopts = "--import-mode=importlib"
+markers = [
+    "looptime: virtual asyncio clock compaction (looptime plugin; see test docs)",
+]
