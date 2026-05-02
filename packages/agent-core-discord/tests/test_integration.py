@@ -20,9 +20,10 @@ import asyncio
 import json
 import os
 import uuid
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 import pytest
+from agent_core_discord.endpoint import DiscordEndpoint
 
 from agent_core.bus.core import Bus, BusConfig, EndpointSpec
 from agent_core.bus.envelope import (
@@ -30,8 +31,6 @@ from agent_core.bus.envelope import (
     Envelope,
     ToolInvocationPayload,
 )
-from agent_core_discord.endpoint import DiscordEndpoint
-
 
 REQUIRED_ENV = ("DISCORD_TEST_TOKEN", "DISCORD_TEST_CHANNEL_ID", "DISCORD_TEST_USER_ID")
 pytestmark = pytest.mark.skipif(
@@ -73,7 +72,7 @@ class _ProbeEndpoint:
             to=to,
             kind="ToolInvocation",
             payload=payload,
-            created_at=datetime.now(timezone.utc),
+            created_at=datetime.now(UTC),
         )
         await self._handle.publish(env)
         return env_id

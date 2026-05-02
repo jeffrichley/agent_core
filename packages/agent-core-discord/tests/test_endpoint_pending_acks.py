@@ -5,9 +5,9 @@ from __future__ import annotations
 import time
 
 import pytest
+from agent_core_discord.endpoint import DiscordEndpoint
 
 from agent_core.bus.envelope import EndpointInfo, Envelope
-from agent_core_discord.endpoint import DiscordEndpoint
 from tests.conftest import _FakeChannel, _FakeDiscordClient, _FakeMessage
 
 

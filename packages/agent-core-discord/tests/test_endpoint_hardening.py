@@ -4,15 +4,15 @@ add_listener routing, args caps, embed total cap."""
 from __future__ import annotations
 
 import uuid
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 import pytest
-from pydantic import ValidationError
-
-from agent_core.bus.envelope import EndpointInfo, Envelope, ToolInvocationPayload
 from agent_core_discord import endpoint as endpoint_mod
 from agent_core_discord.args import _DownloadAttachmentsArgs, _FetchArgs
 from agent_core_discord.endpoint import DiscordEndpoint, _check_embeds_within_caps
+from pydantic import ValidationError
+
+from agent_core.bus.envelope import EndpointInfo, Envelope, ToolInvocationPayload
 from tests.conftest import _FakeChannel, _FakeDiscordClient
 
 
@@ -41,7 +41,7 @@ def _envelope(env_id: str, frm: str, to: str, payload) -> Envelope:
         to=to,
         kind="ToolInvocation",
         payload=payload,
-        created_at=datetime.now(timezone.utc),
+        created_at=datetime.now(UTC),
     )
 
 

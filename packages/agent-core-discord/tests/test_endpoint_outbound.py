@@ -4,9 +4,10 @@ from __future__ import annotations
 
 import json
 import uuid
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 import pytest
+from agent_core_discord.endpoint import DiscordEndpoint
 
 from agent_core.bus.envelope import (
     EndpointInfo,
@@ -14,7 +15,6 @@ from agent_core.bus.envelope import (
     TextMessagePayload,
     ToolInvocationPayload,
 )
-from agent_core_discord.endpoint import DiscordEndpoint
 from tests.conftest import (
     _FakeChannel,
     _FakeDiscordClient,
@@ -63,7 +63,7 @@ def _envelope(env_id: str, frm: str, to: str, payload) -> Envelope:
         to=to,
         kind="ToolInvocation",
         payload=payload,
-        created_at=datetime.now(timezone.utc),
+        created_at=datetime.now(UTC),
     )
 
 
@@ -336,7 +336,7 @@ async def test_textmessage_long_payload_splits(monkeypatch):
             kind="TextMessage",
             payload=TextMessagePayload(text="z" * 2200),
             metadata={"discord": {"channel_id": "200"}},
-            created_at=datetime.now(timezone.utc),
+            created_at=datetime.now(UTC),
         )
         await ep.deliver(env)
         assert len(ch.sent) >= 2
@@ -364,7 +364,7 @@ async def test_textmessage_uses_discord_metadata_channel_and_replies(monkeypatch
             kind="TextMessage",
             payload=TextMessagePayload(text="hi"),
             metadata={"discord": {"channel_id": "200", "message_id": "m-in"}},
-            created_at=datetime.now(timezone.utc),
+            created_at=datetime.now(UTC),
         )
         await ep.deliver(env)
         assert len(ch.sent) == 1
@@ -401,7 +401,7 @@ async def test_textmessage_uses_default_outbound_channel(monkeypatch):
             to="discord-test",
             kind="TextMessage",
             payload=TextMessagePayload(text="fallback send"),
-            created_at=datetime.now(timezone.utc),
+            created_at=datetime.now(UTC),
         )
         await ep.deliver(env)
         assert len(ch.sent) == 1
@@ -425,7 +425,7 @@ async def test_textmessage_without_channel_returns_error(monkeypatch):
             to="discord-test",
             kind="TextMessage",
             payload=TextMessagePayload(text="hi"),
-            created_at=datetime.now(timezone.utc),
+            created_at=datetime.now(UTC),
         )
         await ep.deliver(env)
         ack = [e for e in handle.published if e.kind == "Acknowledgment"][0]
@@ -470,7 +470,7 @@ async def test_textmessage_in_reply_to_clears_ack_without_discord_message_id(mon
             kind="TextMessage",
             payload=TextMessagePayload(text="pong"),
             metadata={},
-            created_at=datetime.now(timezone.utc),
+            created_at=datetime.now(UTC),
         )
         await ep.deliver(out)
         assert "👀" not in user_msg.reactions
@@ -493,7 +493,7 @@ async def test_fetch_returns_recent_messages(monkeypatch):
         m.author = type(
             "A", (), {"id": "100", "name": "alice", "bot": False, "display_name": "Alice"}
         )()
-        m.created_at = datetime.now(timezone.utc)
+        m.created_at = datetime.now(UTC)
         m.embeds = []
         m.attachments = []
         ch._messages[m.id] = m
