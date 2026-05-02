@@ -31,7 +31,7 @@ def _config_yaml(tmp_path, jobs_yaml: str | None = None) -> str:
         "bus:",
         f"  storage_path: {bus_db}",
         "endpoints:",
-        "  - class: agent_core.endpoints.scheduler.SchedulerEndpoint",
+        "  - type: builtin.scheduler",
         "    name: scheduler",
         "    description: 'scheduler under test'",
         "    params:",
@@ -40,7 +40,7 @@ def _config_yaml(tmp_path, jobs_yaml: str | None = None) -> str:
     if jobs_yaml is not None:
         parts.append(f"      jobs_path: {jobs_yaml}")
     parts += [
-        "  - class: agent_core.endpoints.stub.StubEndpoint",
+        "  - type: builtin.stub",
         "    name: agent-test",
         "    description: 'fake test agent'",
     ]

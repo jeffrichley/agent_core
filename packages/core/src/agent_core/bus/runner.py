@@ -8,16 +8,18 @@ enforces v1 invariants: loopback-only bind unless an auth hook is configured
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any
 
-import pluggy
 import yaml
 
 from agent_core.bus.core import Bus, BusConfig, BusHookSpec, EndpointSpec
 from agent_core.bus.http_host import HTTPHost, MCPHostable
 from agent_core.bus.notify_broker import NotificationBroker
 from agent_core.bus.protocol import BusHook, Endpoint
-from agent_core.plugins.manager import create_plugin_manager
+from agent_core.plugins.manager import (
+    create_plugin_manager,
+    get_bus_hook_types,
+    get_endpoint_types,
+)
 from agent_core.plugins.specs import RunnerServices
 
 
@@ -26,29 +28,6 @@ class BusBootError(Exception):
 
 
 _LOOPBACK_HOSTS = {"127.0.0.1", "::1", "localhost"}
-
-
-def _import_class(
-    path: str,
-    plugin_manager: pluggy.PluginManager,
-    *,
-    kind: str = "generic",
-) -> Any:
-    resolved = None
-    if kind == "endpoint":
-        resolved = plugin_manager.hook.resolve_endpoint_class(endpoint_class=path)
-    elif kind == "bus_hook":
-        resolved = plugin_manager.hook.resolve_bus_hook_class(hook_class=path)
-    elif kind == "hook_tool":
-        resolved = plugin_manager.hook.resolve_hook_tool_class(tool_class=path)
-    if resolved is None:
-        resolved = plugin_manager.hook.resolve_class(class_path=path)
-    if resolved is not None:
-        return resolved
-    module_path, _, _ = path.rpartition(".")
-    if not module_path:
-        raise BusBootError(f"invalid class path: {path!r}")
-    raise BusBootError(f"could not resolve class: {path!r}")
 
 
 def _validate_http(http_cfg: dict, has_auth_hook: bool) -> None:
@@ -64,6 +43,8 @@ async def build_bus_from_config(path: Path) -> tuple[Bus, HTTPHost | None]:
     raw = yaml.safe_load(Path(path).read_text(encoding="utf-8")) or {}
     plugin_manager = create_plugin_manager()
     plugin_manager.hook.validate_config(raw_config=raw)
+    endpoint_types = get_endpoint_types(plugin_manager)
+    bus_hook_types = get_bus_hook_types(plugin_manager)
 
     bus_cfg_raw = raw.get("bus", {})
     storage_path = Path(bus_cfg_raw.get("storage_path", "~/.agent-core/bus.sqlite")).expanduser()
@@ -91,17 +72,20 @@ async def build_bus_from_config(path: Path) -> tuple[Bus, HTTPHost | None]:
     has_auth_hook = False
     for stage in ("pre_publish", "pre_deliver"):
         for entry in (raw.get("bus_hooks", {}) or {}).get(stage, []) or []:
-            if "class" not in entry:
-                raise BusBootError(f"hook entry missing required 'class' field: {entry!r}")
-            cls = _import_class(entry["class"], plugin_manager, kind="bus_hook")
+            if "type" not in entry:
+                raise BusBootError(f"hook entry missing required 'type' field: {entry!r}")
+            hook_type = str(entry["type"])
+            cls = bus_hook_types.get(hook_type)
+            if cls is None:
+                raise BusBootError(f"unknown bus hook type: {hook_type!r}")
             try:
                 instance = cls(**entry.get("params", {}))
             except Exception as exc:
                 raise BusBootError(
-                    f"{entry['class']!r} does not satisfy BusHook protocol: {exc}"
+                    f"bus hook type {hook_type!r} does not satisfy BusHook protocol: {exc}"
                 ) from exc
             if not isinstance(instance, BusHook):
-                raise BusBootError(f"{entry['class']!r} does not satisfy BusHook protocol")
+                raise BusBootError(f"bus hook type {hook_type!r} does not satisfy BusHook protocol")
             plugin_manager.hook.configure_bus_hook_instance(
                 instance=instance,
                 stage=stage,
@@ -116,11 +100,14 @@ async def build_bus_from_config(path: Path) -> tuple[Bus, HTTPHost | None]:
 
     # Endpoints.
     for entry in raw.get("endpoints", []) or []:
-        if "class" not in entry:
-            raise BusBootError(f"endpoint entry missing required 'class' field: {entry!r}")
+        if "type" not in entry:
+            raise BusBootError(f"endpoint entry missing required 'type' field: {entry!r}")
         if "name" not in entry:
             raise BusBootError(f"endpoint entry missing required 'name' field: {entry!r}")
-        cls = _import_class(entry["class"], plugin_manager, kind="endpoint")
+        endpoint_type = str(entry["type"])
+        cls = endpoint_types.get(endpoint_type)
+        if cls is None:
+            raise BusBootError(f"unknown endpoint type: {endpoint_type!r}")
         params = entry.get("params", {})
         # Runner-side convention (not enforced by the Endpoint Protocol):
         # every endpoint class must accept `name` as a constructor kwarg.
@@ -130,10 +117,10 @@ async def build_bus_from_config(path: Path) -> tuple[Bus, HTTPHost | None]:
             instance = cls(name=entry["name"], **params)
         except Exception as exc:
             raise BusBootError(
-                f"{entry['class']!r} does not satisfy Endpoint protocol: {exc}"
+                f"endpoint type {endpoint_type!r} does not satisfy Endpoint protocol: {exc}"
             ) from exc
         if not isinstance(instance, Endpoint):
-            raise BusBootError(f"{entry['class']!r} does not satisfy Endpoint protocol")
+            raise BusBootError(f"endpoint type {endpoint_type!r} does not satisfy Endpoint protocol")
         plugin_manager.hook.configure_endpoint_instance(
             instance=instance,
             endpoint_name=entry["name"],

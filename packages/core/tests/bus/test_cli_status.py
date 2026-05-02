@@ -16,13 +16,13 @@ def _write_config(tmp_path: Path) -> Path:
         "bus": {"storage_path": str(tmp_path / "bus.sqlite")},
         "endpoints": [
             {
-                "class": "agent_core.endpoints.stub.StubEndpoint",
+                "type": "builtin.stub",
                 "name": "stub-a",
                 "description": "first",
                 "params": {},
             },
             {
-                "class": "agent_core.endpoints.stub.StubEndpoint",
+                "type": "builtin.stub",
                 "name": "stub-b",
                 "description": "second",
                 "params": {},

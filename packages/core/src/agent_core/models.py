@@ -8,9 +8,8 @@ the pipeline runner, and the CLI configuration layer. There are three models:
   content (the actual payload injected into the hook response).
 
 - **ToolConfig**: A single entry in a pipeline configuration, identifying
-  which tool class to load and what parameters to pass to it. The ``tool``
-  field is a fully qualified Python class path that the pipeline runner
-  resolves at runtime via importlib.
+  which hook tool type to load and what parameters to pass to it. The ``type``
+  field is a plugin-registered type id resolved by the pipeline runner.
 
 - **PipelineConfig**: The root configuration object that maps Claude Code
   hook event names (e.g. ``"SessionStart"``, ``"PreToolUse"``) to ordered
@@ -27,9 +26,9 @@ Example usage::
     # Configure a pipeline from data
     config = PipelineConfig(pipelines={
         "SessionStart": [
-            ToolConfig(tool="agent_core.hooks.tools.time_injector.TimeInjector"),
+            ToolConfig(type="builtin.time_injector"),
             ToolConfig(
-                tool="agent_core.hooks.tools.kb_injector.KBInjector",
+                type="plugin.kb_injector",
                 params={"index_path": "knowledge/index.md"},
             ),
         ],
@@ -69,15 +68,12 @@ class ToolResult(BaseModel):
 class ToolConfig(BaseModel):
     """Configuration for a single tool in a hook pipeline.
 
-    Each ``ToolConfig`` tells the pipeline runner which tool class to
-    instantiate and what parameters to pass to it. The ``tool`` field is
-    a fully qualified Python class path (e.g.
-    ``"agent_core.hooks.tools.time_injector.TimeInjector"``) that the
-    runner resolves dynamically via ``importlib``.
+    Each ``ToolConfig`` tells the pipeline runner which hook tool type to
+    instantiate and what parameters to pass to it. The ``type`` field is
+    a plugin-registered type id (e.g. ``"builtin.time_injector"``).
 
     Attributes:
-        tool: Fully qualified Python class path to the hook tool
-            implementation. The referenced class must conform to the
+        type: Registered hook tool type id. The resolved class must conform to the
             ``HookTool`` protocol (see ``agent_core.protocol``).
         params: Optional dictionary of keyword arguments passed to the
             tool's constructor. Defaults to an empty dict. These let
@@ -87,12 +83,12 @@ class ToolConfig(BaseModel):
     Example::
 
         config = ToolConfig(
-            tool="agent_core.hooks.tools.time_injector.TimeInjector",
+            type="builtin.time_injector",
             params={"format": "%Y-%m-%d"},
         )
     """
 
-    tool: str
+    type: str
     params: dict = {}
 
 
@@ -118,11 +114,11 @@ class PipelineConfig(BaseModel):
 
         config = PipelineConfig(pipelines={
             "SessionStart": [
-                ToolConfig(tool="agent_core.hooks.tools.time_injector.TimeInjector"),
-                ToolConfig(tool="agent_core.hooks.tools.kb_injector.KBInjector"),
+                ToolConfig(type="builtin.time_injector"),
+                ToolConfig(type="plugin.kb_injector"),
             ],
             "PreToolUse": [
-                ToolConfig(tool="agent_core.hooks.tools.guard.GuardTool"),
+                ToolConfig(type="plugin.guard"),
             ],
         })
     """

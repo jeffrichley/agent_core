@@ -125,6 +125,7 @@ class DiscordEndpoint:
         name: str,
         target: str,
         token_env: str,
+        outbound_channel_id: str | None = None,
         env_file: str | Path | None = None,
         access_config_path: str | Path | None = None,
         attachments_dir: str | Path | None = None,
@@ -136,6 +137,7 @@ class DiscordEndpoint:
         self.name = name
         self.target = target
         self.token_env = token_env
+        self.outbound_channel_id = outbound_channel_id
         self.env_file: Path | None = Path(env_file).expanduser() if env_file else None
         self.access_config_path: Path | None = (
             Path(access_config_path).expanduser() if access_config_path else None
@@ -159,6 +161,12 @@ class DiscordEndpoint:
         # OrderedDict so the head is the oldest entry — used for both LRU
         # eviction at the cap and TTL eviction in the sweep loop.
         self._pending_acks: OrderedDict[str, tuple[str, str, float]] = OrderedDict()
+        # Inbound bus envelope id → (Discord message id, channel id) for
+        # outbound TextMessage replies that set in_reply_to but omit metadata.
+        self._inbound_envelope_discord: OrderedDict[str, tuple[str, str]] = OrderedDict()
+        # Discord message ids we published to the bus and have not "finished"
+        # yet (cleared when ack reaction is removed or TTL/LRU evicts).
+        self._awaiting_reply_ids: set[str] = set()
 
     def _add_listener(self, handler: Callable[..., Any], event_name: str) -> None:
         """Register an event handler against the discord.py client.
@@ -174,6 +182,35 @@ class DiscordEndpoint:
             # the @client.event protocol as a fallback.
             handler.__name__ = event_name  # type: ignore[attr-defined]
             self._client.event(handler)
+
+    def _remember_inbound_mapping(
+        self, envelope_id: str, discord_message_id: str, channel_id: str
+    ) -> None:
+        """Map a published inbound envelope id to Discord ids (LRU-capped)."""
+        self._inbound_envelope_discord[envelope_id] = (discord_message_id, channel_id)
+        while len(self._inbound_envelope_discord) > self.pending_acks_max:
+            self._inbound_envelope_discord.popitem(last=False)
+
+    async def _typing_while_pending(self, channel: Any, message_id: str) -> None:
+        """Hold Discord 'typing…' until this message is cleared from the awaiting set."""
+        typing_factory = getattr(channel, "typing", None)
+        if typing_factory is None:
+            return
+        try:
+            async with typing_factory():
+                while message_id in self._awaiting_reply_ids:
+                    # Short poll so ack clear / stop() drops the id promptly; the
+                    # typing context manager (discord.py) keeps the indicator fresh.
+                    await asyncio.sleep(0.2)
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            log.debug(
+                "discord(%s): typing loop for message %s ended",
+                self.name,
+                message_id,
+                exc_info=True,
+            )
 
     # --- Endpoint Protocol ---
 
@@ -345,10 +382,21 @@ class DiscordEndpoint:
         )
 
     async def deliver(self, envelope: Envelope) -> None:
-        """Handle ToolInvocation envelopes; warn on others."""
+        """Handle ToolInvocation and TextMessage envelopes."""
         if self._handle is None:
             raise EndpointUnavailable(f"discord '{self.name}' not started")
 
+        if envelope.kind == "TextMessage":
+            try:
+                result = await self._deliver_text_message(envelope)
+                await self._reply(envelope, json.dumps(result))
+            except _ToolError as exc:
+                await self._reply(envelope, f"error: {exc}")
+            except Exception as exc:
+                log.exception("discord TextMessage delivery raised")
+                await self._reply(envelope, f"error: {exc}")
+            await self._handle.ack(envelope.id)
+            return
         if envelope.kind != "ToolInvocation":
             await self._reply(envelope, f"warning: unsupported envelope kind '{envelope.kind}'")
             await self._handle.ack(envelope.id)
@@ -367,6 +415,45 @@ class DiscordEndpoint:
             await self._reply(envelope, f"error: {exc}")
 
         await self._handle.ack(envelope.id)
+
+    async def _deliver_text_message(self, envelope: Envelope) -> dict:
+        """Route a bus TextMessage to Discord send."""
+        if not isinstance(envelope.payload, TextMessagePayload):
+            raise _ToolError("TextMessage envelope payload is invalid")
+
+        discord_meta = envelope.metadata.get("discord", {})
+        channel_id = None
+        reply_to: str | None = None
+        if isinstance(discord_meta, dict):
+            channel_id = discord_meta.get("channel_id")
+            # Prefer explicit reply_to; else message_id (legacy); else resolve
+            # from bus in_reply_to → inbound envelope id (agent replies often
+            # only set in_reply_to).
+            reply_to = discord_meta.get("reply_to") or discord_meta.get("message_id")
+            if reply_to is not None:
+                reply_to = str(reply_to)
+        if (
+            not reply_to
+            and envelope.in_reply_to
+            and envelope.in_reply_to in self._inbound_envelope_discord
+        ):
+            mapped_mid, mapped_ch = self._inbound_envelope_discord[envelope.in_reply_to]
+            reply_to = mapped_mid
+            if not channel_id:
+                channel_id = mapped_ch
+        if not channel_id:
+            channel_id = self.outbound_channel_id
+        if not channel_id:
+            raise _ToolError(
+                "TextMessage requires metadata.discord.channel_id or endpoint outbound_channel_id"
+            )
+
+        args = _SendArgs(
+            channel_id=str(channel_id),
+            text=envelope.payload.text,
+            reply_to=reply_to,
+        )
+        return await self._send(args)
 
     async def _dispatch(self, tool: str, args: dict) -> Any:
         if tool == "send":
@@ -404,6 +491,9 @@ class DiscordEndpoint:
     async def stop(self) -> None:
         if _active_endpoints.get(self.name) is self:
             _active_endpoints.pop(self.name, None)
+        # Drop typing / threading state so background typing tasks exit promptly.
+        self._awaiting_reply_ids.clear()
+        self._inbound_envelope_discord.clear()
         if self._sweep_task is not None:
             self._sweep_task.cancel()
             try:
@@ -534,7 +624,21 @@ class DiscordEndpoint:
                 created_at=datetime.now(timezone.utc),
             )
             assert self._handle is not None
-            await self._handle.publish(env)
+            self._remember_inbound_mapping(
+                env.id, str(message.id), str(message.channel.id)
+            )
+            mid = str(message.id)
+            self._awaiting_reply_ids.add(mid)
+            try:
+                await self._handle.publish(env)
+            except BaseException:
+                self._awaiting_reply_ids.discard(mid)
+                self._inbound_envelope_discord.pop(env.id, None)
+                raise
+            asyncio.create_task(
+                self._typing_while_pending(message.channel, mid),
+                name=f"discord-{self.name}-typing-{mid}",
+            )
 
         return on_message
 
@@ -595,6 +699,7 @@ class DiscordEndpoint:
         self._pending_acks[message_id] = (emoji, channel_id, time.monotonic())
         while len(self._pending_acks) > self.pending_acks_max:
             old_id, (old_emoji, old_ch, _ts) = self._pending_acks.popitem(last=False)
+            self._awaiting_reply_ids.discard(old_id)
             asyncio.create_task(
                 self._remote_remove_ack(old_id, old_emoji, old_ch),
                 name=f"discord-endpoint-{self.name}-evict-ack",
@@ -636,6 +741,7 @@ class DiscordEndpoint:
             if ts >= cutoff:
                 break
             self._pending_acks.pop(head_id)
+            self._awaiting_reply_ids.discard(head_id)
             asyncio.create_task(
                 self._remote_remove_ack(head_id, emoji, channel_id),
                 name=f"discord-endpoint-{self.name}-ttl-ack",
@@ -656,12 +762,14 @@ class DiscordEndpoint:
             raise
 
     async def _clear_pending_ack(self, channel, message_id: str) -> None:
-        entry = self._pending_acks.pop(message_id, None)
+        mid = str(message_id)
+        self._awaiting_reply_ids.discard(mid)
+        entry = self._pending_acks.pop(mid, None)
         if entry is None:
             return
         emoji, _channel_id, _ts = entry
         try:
-            msg = await channel.fetch_message(message_id)
+            msg = await channel.fetch_message(mid)
         except Exception:
             return
         if msg is None:

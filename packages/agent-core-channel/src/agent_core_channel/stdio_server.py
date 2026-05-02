@@ -13,7 +13,8 @@ from __future__ import annotations
 import json
 import logging
 import re
-from typing import TYPE_CHECKING, Any, cast
+from types import TracebackType
+from typing import TYPE_CHECKING, Any, Self, cast
 
 import anyio
 from mcp.server.lowlevel.server import NotificationOptions, Server
@@ -134,6 +135,24 @@ class _InitializationGateWriteStream:
     ) -> None:
         self._inner = inner
         self._initialized = initialized
+
+    async def __aenter__(self) -> Self:
+        """MCP ``ServerSession`` uses ``async with read_stream, write_stream``; delegate."""
+        inner_enter = getattr(self._inner, "__aenter__", None)
+        if inner_enter is not None:
+            await inner_enter()
+        return self
+
+    async def __aexit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc_val: BaseException | None,
+        exc_tb: TracebackType | None,
+    ) -> bool | None:
+        inner_exit = getattr(self._inner, "__aexit__", None)
+        if inner_exit is not None:
+            return await inner_exit(exc_type, exc_val, exc_tb)
+        return None
 
     async def send(self, message: SessionMessage) -> None:
         await self._inner.send(message)

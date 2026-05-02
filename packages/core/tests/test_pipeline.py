@@ -15,12 +15,12 @@ def config_file(tmp_path: Path) -> Path:
         "pipelines": {
             "SessionStart": [
                 {
-                    "tool": "agent_core.hooks.tools.time_injector.TimeInjector",
+                    "type": "builtin.time_injector",
                     "params": {"format": "%Y-%m-%d"},
                 }
             ],
             "PreToolUse": [
-                {"tool": "agent_core.hooks.tools.time_injector.TimeInjector"},
+                {"type": "builtin.time_injector"},
             ],
         }
     }
@@ -81,11 +81,11 @@ class TestPipelineRun:
             "pipelines": {
                 "SessionStart": [
                     {
-                        "tool": "agent_core.hooks.tools.time_injector.TimeInjector",
+                        "type": "builtin.time_injector",
                         "params": {"format": "%Y"},
                     },
                     {
-                        "tool": "agent_core.hooks.tools.time_injector.TimeInjector",
+                        "type": "builtin.time_injector",
                         "params": {"format": "%m"},
                     },
                 ],
@@ -103,8 +103,8 @@ class TestPipelineRun:
         config = {
             "pipelines": {
                 "SessionStart": [
-                    {"tool": "nonexistent.module.FakeTool"},
-                    {"tool": "agent_core.hooks.tools.time_injector.TimeInjector"},
+                    {"type": "nonexistent.module.FakeTool"},
+                    {"type": "builtin.time_injector"},
                 ],
             }
         }

@@ -28,7 +28,7 @@ http:
   bind_port: 8788
 
 endpoints:
-  - class: agent_core.endpoints.stub.StubEndpoint
+  - type: builtin.stub
     name: dev-stub
     description: "Dev/test stub endpoint."
     params: {}
@@ -40,19 +40,19 @@ bus_hooks:
 # Existing — Claude Code lifecycle hooks (untouched).
 pipelines:
   SessionStart:
-    - tool: agent_core.hooks.tools.time_injector.TimeInjector
+    - type: builtin.time_injector
       params:
         format: "%A, %B %d, %Y %I:%M %p %Z"
         track_session: true
 
   UserPromptSubmit:
-    - tool: agent_core.hooks.tools.time_injector.TimeInjector
+    - type: builtin.time_injector
       params:
         format: "%A, %B %d, %Y %I:%M %p %Z"
         track_session: true
 
   SessionEnd:
-    - tool: agent_core.hooks.tools.handoff_writer.HandoffWriter
+    - type: builtin.handoff_writer
       params:
         output_path: ".agent-core/handoffs/test-handoff.md"
         transcript_tail_lines: 200

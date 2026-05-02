@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
-import importlib
 import logging
+from collections.abc import Iterable
 from typing import Any
 
 import pluggy
@@ -13,6 +13,10 @@ from agent_core.plugins.specs import AgentCoreSpecs
 
 log = logging.getLogger(__name__)
 hookimpl = pluggy.HookimplMarker("agent_core")
+
+
+class PluginRegistryError(Exception):
+    """Raised when plugin type registrations are invalid."""
 
 
 class BuiltinRuntimePlugin:
@@ -34,30 +38,45 @@ class BuiltinRuntimePlugin:
         return None
 
 
-class BuiltinImportResolverPlugin:
-    """Built-in fallback resolver for dotted import class paths."""
-
-    @hookimpl(trylast=True)
-    def resolve_class(self, class_path: str) -> type[Any] | None:
-        module_path, _, class_name = class_path.rpartition(".")
-        if not module_path:
-            return None
-        try:
-            module = importlib.import_module(module_path)
-        except ImportError:
-            return None
-        resolved = getattr(module, class_name, None)
-        return resolved if isinstance(resolved, type) else None
-
-
 def create_plugin_manager() -> pluggy.PluginManager:
     """Create and populate the agent_core Pluggy manager."""
     pm = pluggy.PluginManager("agent_core")
     pm.add_hookspecs(AgentCoreSpecs)
     pm.register(BuiltinRuntimePlugin(), name="agent_core_builtin_runtime")
-    pm.register(BuiltinImportResolverPlugin(), name="agent_core_builtin_import_resolver")
     try:
         pm.load_setuptools_entrypoints("agent_core")
     except Exception:
         log.warning("failed loading agent_core entry-point plugins", exc_info=True)
     return pm
+
+
+def _merge_type_maps(
+    groups: Iterable[dict[str, type[Any]]] | dict[str, type[Any]],
+    *,
+    kind: str,
+) -> dict[str, type[Any]]:
+    merged: dict[str, type[Any]] = {}
+    if isinstance(groups, dict):
+        groups_iterable: Iterable[dict[str, type[Any]]] = [groups]
+    else:
+        groups_iterable = groups
+    for mapping in groups_iterable:
+        for type_id, cls in mapping.items():
+            if type_id in merged and merged[type_id] is not cls:
+                raise PluginRegistryError(
+                    f"duplicate {kind} type id {type_id!r} registered by multiple plugins"
+                )
+            merged[type_id] = cls
+    return merged
+
+
+def get_endpoint_types(pm: pluggy.PluginManager) -> dict[str, type[Any]]:
+    return _merge_type_maps(pm.hook.register_endpoint_types(), kind="endpoint")
+
+
+def get_bus_hook_types(pm: pluggy.PluginManager) -> dict[str, type[Any]]:
+    return _merge_type_maps(pm.hook.register_bus_hook_types(), kind="bus-hook")
+
+
+def get_hook_tool_types(pm: pluggy.PluginManager) -> dict[str, type[Any]]:
+    return _merge_type_maps(pm.hook.register_hook_tool_types(), kind="hook-tool")

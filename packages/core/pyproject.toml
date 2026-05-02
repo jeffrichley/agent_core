@@ -27,6 +27,7 @@ dependencies = [
 agent-core = "agent_core.cli:app"
 
 [project.entry-points."agent_core"]
+aliases = "agent_core.plugins.builtin_aliases"
 example = "agent_core.plugins.example_entrypoint"
 
 [build-system]

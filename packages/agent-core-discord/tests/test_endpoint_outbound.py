@@ -15,7 +15,13 @@ from agent_core.bus.envelope import (
     ToolInvocationPayload,
 )
 from agent_core_discord.endpoint import DiscordEndpoint
-from tests.conftest import _FakeChannel, _FakeDiscordClient, _FakeGuild, _FakeMessage
+from tests.conftest import (
+    _FakeChannel,
+    _FakeDiscordClient,
+    _FakeGuild,
+    _FakeMessage,
+    _FakeUser,
+)
 
 
 class _Recording:
@@ -287,8 +293,72 @@ async def test_unknown_tool_returns_error(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_non_toolinvocation_returns_warning(monkeypatch):
+async def test_textmessage_uses_discord_metadata_channel_and_replies(monkeypatch):
     ep, handle, fake = await _started(monkeypatch)
+    ch = _FakeChannel(id="200")
+    incoming = _FakeMessage(id="m-in", channel_id="200", content="hello")
+    ch._messages["m-in"] = incoming
+    fake.add_channel(ch)
+    try:
+        env = Envelope(
+            id="e",
+            correlation_id=uuid.uuid4().hex,
+            from_="agent-test",
+            to="discord-test",
+            kind="TextMessage",
+            payload=TextMessagePayload(text="hi"),
+            metadata={"discord": {"channel_id": "200", "message_id": "m-in"}},
+            created_at=datetime.now(timezone.utc),
+        )
+        await ep.deliver(env)
+        assert len(ch.sent) == 1
+        assert ch.sent[0]["content"] == "hi"
+        assert ch.sent[0]["reference"] is not None
+        ack = [e for e in handle.published if e.kind == "Acknowledgment"][0]
+        result = json.loads(ack.payload.note)
+        assert result["status"] == "sent"
+    finally:
+        await ep.stop()
+
+
+@pytest.mark.asyncio
+async def test_textmessage_uses_default_outbound_channel(monkeypatch):
+    monkeypatch.setenv("X_TOK", "tok")
+    handle = _Recording()
+    fake = _FakeDiscordClient()
+    ch = _FakeChannel(id="200")
+    fake.add_channel(ch)
+    ep = DiscordEndpoint(
+        name="discord-test",
+        target="agent-test",
+        token_env="X_TOK",
+        outbound_channel_id="200",
+        _client_factory=lambda **kw: fake,
+    )
+    await ep.start(handle)
+    try:
+        env = Envelope(
+            id="e",
+            correlation_id=uuid.uuid4().hex,
+            from_="agent-test",
+            to="discord-test",
+            kind="TextMessage",
+            payload=TextMessagePayload(text="fallback send"),
+            created_at=datetime.now(timezone.utc),
+        )
+        await ep.deliver(env)
+        assert len(ch.sent) == 1
+        assert ch.sent[0]["content"] == "fallback send"
+        ack = [e for e in handle.published if e.kind == "Acknowledgment"][0]
+        result = json.loads(ack.payload.note)
+        assert result["status"] == "sent"
+    finally:
+        await ep.stop()
+
+
+@pytest.mark.asyncio
+async def test_textmessage_without_channel_returns_error(monkeypatch):
+    ep, handle, _fake = await _started(monkeypatch)
     try:
         env = Envelope(
             id="e",
@@ -301,8 +371,53 @@ async def test_non_toolinvocation_returns_warning(monkeypatch):
         )
         await ep.deliver(env)
         ack = [e for e in handle.published if e.kind == "Acknowledgment"][0]
-        assert "warning" in ack.payload.note.lower()
-        assert "TextMessage" in ack.payload.note
+        assert ack.payload.note.lower().startswith("error:")
+        assert "channel_id" in ack.payload.note
+    finally:
+        await ep.stop()
+
+
+@pytest.mark.asyncio
+async def test_textmessage_in_reply_to_clears_ack_without_discord_message_id(monkeypatch):
+    """Bus replies often only set in_reply_to; map inbound envelope id → Discord message."""
+    monkeypatch.setenv("X_TOK", "tok")
+    handle = _Recording()
+    fake = _FakeDiscordClient()
+    ch = _FakeChannel(id="200")
+    fake.add_channel(ch)
+    ep = DiscordEndpoint(
+        name="discord-test",
+        target="agent-test",
+        token_env="X_TOK",
+        outbound_channel_id="200",
+        _client_factory=lambda **kw: fake,
+    )
+    await ep.start(handle)
+    user_msg = _FakeMessage(id="m-user", channel_id="200", content="ping")
+    user_msg.author = _FakeUser(id="u1", name="alice", bot=False)
+    user_msg.guild = type("G", (), {"id": "g1"})()
+    user_msg.channel = ch
+    ch._messages[str(user_msg.id)] = user_msg
+    try:
+        await fake.fire("on_message", user_msg)
+        assert "👀" in user_msg.reactions
+        inbound_id = handle.published[0].id
+        out = Envelope(
+            id="out1",
+            correlation_id=uuid.uuid4().hex,
+            in_reply_to=inbound_id,
+            from_="agent-test",
+            to="discord-test",
+            kind="TextMessage",
+            payload=TextMessagePayload(text="pong"),
+            metadata={},
+            created_at=datetime.now(timezone.utc),
+        )
+        await ep.deliver(out)
+        assert "👀" not in user_msg.reactions
+        assert len(ch.sent) == 1
+        assert ch.sent[0]["content"] == "pong"
+        assert ch.sent[0]["reference"] is not None
     finally:
         await ep.stop()
 

@@ -47,12 +47,12 @@ http:
   bind_host: 127.0.0.1
   bind_port: 0
 endpoints:
-  - class: agent_core.endpoints.claude_code_mcp.ClaudeCodeMCPEndpoint
+  - type: builtin.claude_code_mcp
     name: agent
     description: "agent under test"
     params:
       mount: /mcp/agent
-  - class: agent_core.endpoints.stub.StubEndpoint
+  - type: builtin.stub
     name: stub
     description: "test publisher"
 """,
@@ -113,17 +113,18 @@ endpoints:
                     # Drive a tool call so the SessionRegistry middleware's
                     # spawned `_claim_session` coroutine actually gets a
                     # scheduling opportunity. (The same trick the unit test
-                    # `test_session_active_flag_set_after_mcp_message` uses.)
+                    # `test_session_registry_tracks_connected_sessions_after_mcp_message`
+                    # uses.)
                     await session.call_tool("list_pending", {})
 
                     # Wait briefly for SessionRegistry to claim the session.
                     agent_ep = bus._endpoints_by_name["agent"].endpoint
                     for _ in range(40):
-                        if agent_ep._active_session is not None:
+                        if agent_ep._sessions:
                             break
                         await asyncio.sleep(0.05)
-                    assert agent_ep._active_session is not None, (
-                        "SessionRegistry middleware did not capture the active session"
+                    assert agent_ep._sessions, (
+                        "SessionRegistry middleware did not capture any active session"
                     )
 
                     # Publish an envelope to the agent via the stub's BusHandle,

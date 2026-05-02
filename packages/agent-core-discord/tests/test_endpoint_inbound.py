@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import asyncio
+
 import pytest
 
 from agent_core.bus.envelope import EndpointInfo, Envelope, EventPayload, TextMessagePayload
@@ -109,6 +111,24 @@ async def test_on_message_adds_ack_reaction(monkeypatch):
     try:
         await fake.fire("on_message", msg)
         assert "👀" in msg.reactions
+    finally:
+        await ep.stop()
+
+
+@pytest.mark.asyncio
+async def test_on_message_holds_typing_until_ack_cleared(monkeypatch):
+    ep, handle, fake = await _start_endpoint(monkeypatch)
+    ch = _FakeChannel(id="200")
+    fake.add_channel(ch)
+    msg = _msg(id="m-typing")
+    msg.channel = ch
+    try:
+        await fake.fire("on_message", msg)
+        await asyncio.sleep(0.08)
+        assert ch._typing_count >= 1
+        await ep._clear_pending_ack(ch, "m-typing")
+        await asyncio.sleep(0.35)
+        assert ch._typing_count == 0
     finally:
         await ep.stop()
 

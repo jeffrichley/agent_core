@@ -21,13 +21,13 @@ def cfg_path(tmp_path: Path) -> Path:
         "http": {"bind_host": "127.0.0.1", "bind_port": 18788},
         "endpoints": [
             {
-                "class": "agent_core.endpoints.stub.StubEndpoint",
+                "type": "builtin.stub",
                 "name": "stub-a",
                 "description": "First stub.",
                 "params": {"auto_ack": True},
             },
             {
-                "class": "agent_core.endpoints.stub.StubEndpoint",
+                "type": "builtin.stub",
                 "name": "stub-b",
                 "description": "Second stub.",
                 "params": {},
@@ -56,7 +56,7 @@ class TestRunner:
         config = {
             "endpoints": [
                 {
-                    "class": "agent_core.endpoints.does_not_exist.Foo",
+                    "type": "does.not_exist.Foo",
                     "name": "x",
                     "params": {},
                 }
@@ -68,11 +68,11 @@ class TestRunner:
             await build_bus_from_config(p)
 
     async def test_class_not_endpoint_protocol(self, tmp_path: Path):
-        # Pick something that's importable but doesn't satisfy Endpoint.
-        config = {"endpoints": [{"class": "datetime.datetime", "name": "x", "params": {}}]}
+        # Unknown class aliases are rejected in strict plugin-resolution mode.
+        config = {"endpoints": [{"type": "datetime.datetime", "name": "x", "params": {}}]}
         p = tmp_path / "bad.yaml"
         p.write_text(yaml.dump(config))
-        with pytest.raises(BusBootError, match="does not satisfy Endpoint"):
+        with pytest.raises(BusBootError, match="unknown endpoint type"):
             await build_bus_from_config(p)
 
     async def test_non_loopback_bind_refused(self, tmp_path: Path):
@@ -86,17 +86,17 @@ class TestRunner:
             await build_bus_from_config(p)
 
     async def test_endpoint_missing_name_raises(self, tmp_path: Path):
-        config = {"endpoints": [{"class": "agent_core.endpoints.stub.StubEndpoint", "params": {}}]}
+        config = {"endpoints": [{"type": "builtin.stub", "params": {}}]}
         p = tmp_path / "bad.yaml"
         p.write_text(yaml.dump(config))
         with pytest.raises(BusBootError, match="missing required 'name'"):
             await build_bus_from_config(p)
 
-    async def test_endpoint_missing_class_raises(self, tmp_path: Path):
+    async def test_endpoint_missing_type_raises(self, tmp_path: Path):
         config = {"endpoints": [{"name": "x", "params": {}}]}
         p = tmp_path / "bad.yaml"
         p.write_text(yaml.dump(config))
-        with pytest.raises(BusBootError, match="missing required 'class'"):
+        with pytest.raises(BusBootError, match="missing required 'type'"):
             await build_bus_from_config(p)
 
     async def test_plugin_can_resolve_endpoint_class(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
@@ -110,26 +110,20 @@ class TestRunner:
 
         class _Hook:
             @staticmethod
-            def resolve_class(*, class_path: str):
-                if class_path == "plugin.stub.Endpoint":
-                    return _PluginEndpoint
-                return None
+            def register_endpoint_types():
+                return {"plugin.stub.Endpoint": _PluginEndpoint}
 
             @staticmethod
             def validate_config(*, raw_config):
                 return None
 
             @staticmethod
-            def resolve_endpoint_class(*, endpoint_class: str):
-                return None
+            def register_bus_hook_types():
+                return {}
 
             @staticmethod
-            def resolve_bus_hook_class(*, hook_class: str):
-                return None
-
-            @staticmethod
-            def resolve_hook_tool_class(*, tool_class: str):
-                return None
+            def register_hook_tool_types():
+                return {}
 
             @staticmethod
             def configure_endpoint_instance(*, instance, endpoint_name, endpoint_config, services):
@@ -144,7 +138,7 @@ class TestRunner:
 
         monkeypatch.setattr("agent_core.bus.runner.create_plugin_manager", lambda: _PluginManager())
 
-        config = {"endpoints": [{"class": "plugin.stub.Endpoint", "name": "plug", "params": {}}]}
+        config = {"endpoints": [{"type": "plugin.stub.Endpoint", "name": "plug", "params": {}}]}
         p = tmp_path / "plugin.yaml"
         p.write_text(yaml.dump(config))
         bus, _ = await build_bus_from_config(p)

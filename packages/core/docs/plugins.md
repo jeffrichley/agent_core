@@ -22,14 +22,12 @@ hookimpl = pluggy.HookimplMarker("agent_core")
 
 ## Hook surface
 
-- `resolve_endpoint_class(endpoint_class)`  
-  Return a class to construct an endpoint from YAML `endpoints[].class`.
-- `resolve_bus_hook_class(hook_class)`  
-  Return a class to construct a bus hook from YAML `bus_hooks`.
-- `resolve_hook_tool_class(tool_class)`  
-  Return a class for hook pipeline tools.
-- `resolve_class(class_path)`  
-  Generic fallback resolver; used after the specific `resolve_*` hooks.
+- `register_endpoint_types()`  
+  Return endpoint type registrations used for YAML `endpoints[].type`.
+- `register_bus_hook_types()`  
+  Return bus-hook type registrations used for YAML `bus_hooks[].type`.
+- `register_hook_tool_types()`  
+  Return hook-tool type registrations used for pipeline tool ids.
 - `configure_endpoint_instance(instance, endpoint_name, endpoint_config, services)`  
   Post-construction endpoint wiring.
 - `configure_bus_hook_instance(instance, stage, hook_config, services)`  
@@ -39,13 +37,8 @@ hookimpl = pluggy.HookimplMarker("agent_core")
 
 ## Resolution order
 
-Runtime class resolution uses this precedence:
-
-1. Specific resolver (`resolve_endpoint_class`, `resolve_bus_hook_class`, or `resolve_hook_tool_class`)
-2. Generic resolver (`resolve_class`)
-3. Dotted import fallback (`module.Class`)
-
-Returning `None` means "not handled".
+Runtime resolution uses the plugin registry maps built at startup.
+Unknown type ids fail startup/config load immediately.
 
 ## RunnerServices
 
@@ -63,5 +56,17 @@ Core ships with a built-in runtime plugin that:
 
 - attaches `notify_broker` to endpoints implementing `NotificationBrokerAwareEndpoint`
 - keeps bus-hook wiring and config validation as no-op defaults
+
+Core also ships an entrypoint-loaded alias plugin:
+
+- endpoint aliases:
+  - `builtin.claude_code_mcp` -> `agent_core.endpoints.claude_code_mcp.ClaudeCodeMCPEndpoint`
+  - `builtin.discord` -> `agent_core_discord.endpoint.DiscordEndpoint`
+  - `builtin.stub` -> `agent_core.endpoints.stub.StubEndpoint`
+  - `builtin.scheduler` -> `agent_core.endpoints.scheduler.SchedulerEndpoint`
+- hook tool aliases:
+  - `builtin.handoff_writer` -> `agent_core.hooks.tools.handoff_writer.HandoffWriter`
+  - `builtin.identity_injector` -> `agent_core.hooks.tools.identity_injector.IdentityInjector`
+  - `builtin.time_injector` -> `agent_core.hooks.tools.time_injector.TimeInjector`
 
 Your plugin hooks run alongside these defaults.

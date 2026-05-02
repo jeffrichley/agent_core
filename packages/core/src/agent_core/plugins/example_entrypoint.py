@@ -16,23 +16,18 @@ hookimpl = pluggy.HookimplMarker("agent_core")
 
 
 @hookimpl
-def resolve_class(class_path: str) -> type[Any] | None:
-    return None
+def register_endpoint_types() -> dict[str, type[Any]]:
+    return {}
 
 
 @hookimpl
-def resolve_endpoint_class(endpoint_class: str) -> type[Any] | None:
-    return None
+def register_bus_hook_types() -> dict[str, type[Any]]:
+    return {}
 
 
 @hookimpl
-def resolve_bus_hook_class(hook_class: str) -> type[Any] | None:
-    return None
-
-
-@hookimpl
-def resolve_hook_tool_class(tool_class: str) -> type[Any] | None:
-    return None
+def register_hook_tool_types() -> dict[str, type[Any]]:
+    return {}
 
 
 @hookimpl

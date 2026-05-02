@@ -35,7 +35,7 @@ from rich.logging import RichHandler
 
 from agent_core.hooks.protocol import HookTool
 from agent_core.models import PipelineConfig, ToolResult
-from agent_core.plugins.manager import create_plugin_manager
+from agent_core.plugins.manager import create_plugin_manager, get_hook_tool_types
 
 logging.basicConfig(
     level=logging.INFO,
@@ -57,28 +57,27 @@ class Pipeline:
         self.config = PipelineConfig(**raw)
         self.config_path = config_path
         self._plugin_manager = create_plugin_manager()
+        self._hook_tool_types = get_hook_tool_types(self._plugin_manager)
 
         for event, tools in self.config.pipelines.items():
-            tool_names = [t.tool.rsplit(".", 1)[-1] for t in tools]
+            tool_names = [t.type for t in tools]
             logger.info(
                 "Event '%s': %d tool(s) registered — %s", event, len(tools), ", ".join(tool_names)
             )
 
-    def _import_tool_class(self, class_path: str) -> type | None:
-        """Dynamically import a tool class from its fully qualified path."""
-        resolved = self._plugin_manager.hook.resolve_hook_tool_class(tool_class=class_path)
-        if resolved is None:
-            resolved = self._plugin_manager.hook.resolve_class(class_path=class_path)
+    def _import_tool_class(self, tool_type: str) -> type | None:
+        """Resolve a hook tool class from a registered tool type id."""
+        resolved = self._hook_tool_types.get(tool_type)
         if resolved is not None:
             cls = resolved
         else:
-            logger.error("Failed to import tool '%s': no plugin resolved class path", class_path)
+            logger.error("Failed to import tool '%s': unknown hook tool type", tool_type)
             return None
 
         if not isinstance(cls, type) or not issubclass(cls, HookTool):
             instance = cls()
             if not isinstance(instance, HookTool):
-                logger.error("Tool '%s' does not implement HookTool protocol", class_path)
+                logger.error("Tool '%s' does not implement HookTool protocol", tool_type)
                 return None
 
         return cls
@@ -93,7 +92,7 @@ class Pipeline:
         results: list[ToolResult] = []
 
         for tool_config in tool_configs:
-            cls = self._import_tool_class(tool_config.tool)
+            cls = self._import_tool_class(tool_config.type)
             if cls is None:
                 continue
 
@@ -103,9 +102,9 @@ class Pipeline:
                     event=event, hook_input=hook_input, params=tool_config.params
                 )
                 results.append(result)
-                logger.info("Tool '%s' executed successfully", tool_config.tool.rsplit(".", 1)[-1])
+                logger.info("Tool '%s' executed successfully", tool_config.type)
             except Exception as e:
-                logger.error("Tool '%s' failed during execution: %s", tool_config.tool, e)
+                logger.error("Tool '%s' failed during execution: %s", tool_config.type, e)
 
         return results
 

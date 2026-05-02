@@ -73,7 +73,7 @@ async def test_endpoint_publishes_to_broker_even_when_no_session():
 async def test_deliver_publishes_to_broker_when_no_session_attached():
     """deliver() must fan out to the broker even when no HTTP MCP session is connected.
 
-    The relay maintains its own SSE subscription independent of _session_active.
+    The relay maintains its own SSE subscription independent of direct HTTP push.
     Without this contract, an agent connected only via the stdio relay (not via
     HTTP MCP) would never wake on new arrivals.
     """
@@ -81,8 +81,7 @@ async def test_deliver_publishes_to_broker_when_no_session_attached():
     queue = await broker.subscribe("agent")
 
     ep = ClaudeCodeMCPEndpoint(name="agent", mount="/mcp/agent", notify_broker=broker)
-    # Notice: NO session attached. _session_active is False by default.
-    assert ep._session_active is False
+    assert not ep._sessions
 
     env = _env("e1", urgency="red")
     env = env.model_copy(update={"to": "agent"})
