@@ -2,11 +2,13 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 import uuid
 from datetime import UTC, datetime
 
 import pytest
+from agent_core_discord import send_retry as send_retry_mod
 from agent_core_discord.endpoint import DiscordEndpoint
 
 from agent_core.bus.envelope import (
@@ -35,6 +37,75 @@ class _Recording:
     async def nack(self, envelope_id: str, requeue: bool = True) -> None: ...
     def endpoints(self) -> list[EndpointInfo]:
         return []
+
+
+class _HTTP429Like(Exception):
+    """Minimal duck-typed stand-in for discord.HTTPException on rate limit."""
+
+    def __init__(self, *, retry_after: float = 0.0) -> None:
+        super().__init__("429")
+        self.status = 429
+        self.retry_after = retry_after
+
+
+class _Permanent429FromSecondSend(_FakeChannel):
+    """First ``send`` succeeds; every later ``send`` (including retries) raises 429."""
+
+    def __init__(
+        self,
+        *,
+        id: str,
+        name: str = "",
+        channel_type: str = "text",
+        guild_id: str | None = None,
+    ) -> None:
+        super().__init__(id=id, name=name, channel_type=channel_type, guild_id=guild_id)
+        self._send_calls = 0
+
+    async def send(  # type: ignore[override]
+        self,
+        content: str | None = None,
+        *,
+        embeds: list | None = None,
+        reference: object | None = None,
+        files: list | None = None,
+    ) -> _FakeMessage:
+        self._send_calls += 1
+        if self._send_calls >= 2:
+            raise _HTTP429Like(retry_after=0.0)
+        return await super().send(content, embeds=embeds, reference=reference, files=files)
+
+
+class _SecondSendFailsOnceChannel(_FakeChannel):
+    """The second ``send`` invocation fails once with 429; retries succeed."""
+
+    def __init__(
+        self,
+        *,
+        id: str,
+        name: str = "",
+        channel_type: str = "text",
+        guild_id: str | None = None,
+    ) -> None:
+        super().__init__(id=id, name=name, channel_type=channel_type, guild_id=guild_id)
+        self._send_calls = 0
+
+    async def send(  # type: ignore[override]
+        self,
+        content: str | None = None,
+        *,
+        embeds: list | None = None,
+        reference: object | None = None,
+        files: list | None = None,
+    ) -> _FakeMessage:
+        self._send_calls += 1
+        if self._send_calls == 2:
+            raise _HTTP429Like(retry_after=0.0)
+        return await super().send(content, embeds=embeds, reference=reference, files=files)
+
+
+async def _no_sleep(_: float) -> None:
+    return None
 
 
 async def _started(monkeypatch) -> tuple[DiscordEndpoint, _Recording, _FakeDiscordClient]:
@@ -318,6 +389,93 @@ async def test_send_splits_long_text_into_multiple_messages(monkeypatch):
         assert result["status"] == "sent"
         assert len(result["message_ids"]) == len(ch.sent)
         assert result["message_id"] == result["message_ids"][-1]
+    finally:
+        await ep.stop()
+
+
+@pytest.mark.asyncio
+async def test_send_multipart_partial_after_chunk_retries_exhausted(monkeypatch):
+    """Second chunk keeps failing with retryable errors → partial, earlier chunks kept."""
+    monkeypatch.setattr(asyncio, "sleep", _no_sleep)
+    monkeypatch.setattr(send_retry_mod, "DISCORD_SEND_MAX_ATTEMPTS", 2)
+    ep, handle, fake = await _started(monkeypatch)
+    ch = _Permanent429FromSecondSend(id="200")
+    fake.add_channel(ch)
+    long_text = "x" * 2500
+    try:
+        env = _envelope(
+            "e-partial",
+            "agent-test",
+            "discord-test",
+            _toolcall("send", {"channel_id": "200", "text": long_text}),
+        )
+        await ep.deliver(env)
+        assert len(ch.sent) == 1
+        ack = [e for e in handle.published if e.kind == "Acknowledgment"][0]
+        assert ack.urgency == "yellow"
+        result = json.loads(ack.payload.note)
+        assert result["status"] == "partial"
+        assert result["message_ids"] == [ch.sent[0]["message_id"]]
+        assert "error" in result
+    finally:
+        await ep.stop()
+
+
+@pytest.mark.asyncio
+async def test_send_multipart_retries_transient_429_then_succeeds(monkeypatch):
+    """One retryable failure on a later chunk, then success → full multi-message send."""
+    monkeypatch.setattr(asyncio, "sleep", _no_sleep)
+    ep, handle, fake = await _started(monkeypatch)
+    ch = _SecondSendFailsOnceChannel(id="200")
+    fake.add_channel(ch)
+    long_text = "x" * 2500
+    try:
+        env = _envelope(
+            "e-retry",
+            "agent-test",
+            "discord-test",
+            _toolcall("send", {"channel_id": "200", "text": long_text}),
+        )
+        await ep.deliver(env)
+        assert len(ch.sent) == 2
+        ack = [e for e in handle.published if e.kind == "Acknowledgment"][0]
+        assert ack.urgency == "green"
+        result = json.loads(ack.payload.note)
+        assert result["status"] == "sent"
+        assert len(result["message_ids"]) == 2
+    finally:
+        await ep.stop()
+
+
+@pytest.mark.asyncio
+async def test_send_partial_with_reply_to_does_not_clear_pending_ack(monkeypatch):
+    """Partial multi-chunk send must not drop 👀 / pending ack (reply not complete)."""
+    monkeypatch.setattr(asyncio, "sleep", _no_sleep)
+    monkeypatch.setattr(send_retry_mod, "DISCORD_SEND_MAX_ATTEMPTS", 2)
+    ep, handle, fake = await _started(monkeypatch)
+    ch = _Permanent429FromSecondSend(id="200")
+    original = _FakeMessage(id="m-orig", channel_id="200")
+    ch._messages["m-orig"] = original
+    await original.add_reaction("👀")
+    ep._track_pending_ack("m-orig", "👀", "200")
+    fake.add_channel(ch)
+    long_text = "x" * 2500
+    try:
+        env = _envelope(
+            "e-part-ack",
+            "agent-test",
+            "discord-test",
+            _toolcall(
+                "send",
+                {"channel_id": "200", "text": long_text, "reply_to": "m-orig"},
+            ),
+        )
+        await ep.deliver(env)
+        assert "👀" in original.reactions
+        assert "m-orig" in ep._pending_acks
+        ack = [e for e in handle.published if e.kind == "Acknowledgment"][0]
+        result = json.loads(ack.payload.note)
+        assert result["status"] == "partial"
     finally:
         await ep.stop()
 

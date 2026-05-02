@@ -44,6 +44,7 @@ from agent_core_discord.args import (
     _SendArgs,
 )
 from agent_core_discord.chunking import smart_chunk_discord
+from agent_core_discord.send_retry import channel_send_with_retries
 
 if TYPE_CHECKING:
     from agent_core.bus.handle import BusHandle
@@ -862,7 +863,7 @@ class DiscordEndpoint:
             send_kwargs["files"] = files
 
         if args.text is None:
-            new_msg = await ch.send(args.text, **send_kwargs)
+            new_msg = await channel_send_with_retries(ch, args.text, **send_kwargs)
             if args.reply_to:
                 await self._clear_pending_ack(ch, args.reply_to)
             mid = str(new_msg.id)
@@ -887,15 +888,15 @@ class DiscordEndpoint:
             if files is not None and is_first:
                 send_part["files"] = files
             try:
-                new_msg = await ch.send(part, **send_part)
+                new_msg = await channel_send_with_retries(ch, part, **send_part)
             except Exception as exc:
                 last_error = exc
                 break
             message_ids.append(str(new_msg.id))
 
         if last_error is not None and message_ids:
-            if args.reply_to:
-                await self._clear_pending_ack(ch, args.reply_to)
+            # Partial delivery: do not clear inbound ack — the conversation may still
+            # be awaiting a complete reply; callers get message_ids for what landed.
             return {
                 "status": "partial",
                 "message_ids": message_ids,
