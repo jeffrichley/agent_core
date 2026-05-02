@@ -4,11 +4,12 @@ from __future__ import annotations
 
 import asyncio
 import os
+from datetime import UTC
 
 import pytest
+from agent_core_discord.endpoint import DiscordEndpoint, _active_endpoints
 
 from agent_core.bus.protocol import Endpoint
-from agent_core_discord.endpoint import DiscordEndpoint, _active_endpoints
 from tests.conftest import _FakeBusHandle
 
 
@@ -126,7 +127,7 @@ async def test_stop_deregisters_and_closes_client(monkeypatch):
 @pytest.mark.asyncio
 async def test_deliver_raises_when_not_started():
     import uuid
-    from datetime import datetime, timezone
+    from datetime import datetime
 
     from agent_core.bus.envelope import Envelope, ToolInvocationPayload
     from agent_core.bus.protocol import EndpointUnavailable
@@ -138,7 +139,7 @@ async def test_deliver_raises_when_not_started():
         to="discord-test",
         kind="ToolInvocation",
         payload=ToolInvocationPayload(tool="send", args={}),
-        created_at=datetime.now(timezone.utc),
+        created_at=datetime.now(UTC),
     )
     with pytest.raises(EndpointUnavailable):
         await ep.deliver(env)
@@ -208,8 +209,8 @@ async def test_start_surfaces_connect_failure_quickly(monkeypatch):
 async def test_start_failure_resets_handle_so_deliver_raises_unavailable(monkeypatch):
     """If start() fails (e.g. token missing), deliver() must still raise
     EndpointUnavailable — start() must roll back self._handle on failure."""
-    from datetime import datetime, timezone
     import uuid
+    from datetime import datetime
 
     from agent_core.bus.envelope import Envelope, ToolInvocationPayload
     from agent_core.bus.protocol import EndpointUnavailable
@@ -230,7 +231,7 @@ async def test_start_failure_resets_handle_so_deliver_raises_unavailable(monkeyp
         to="discord-rollback-test",
         kind="ToolInvocation",
         payload=ToolInvocationPayload(tool="send", args={}),
-        created_at=datetime.now(timezone.utc),
+        created_at=datetime.now(UTC),
     )
     with pytest.raises(EndpointUnavailable):
         await ep.deliver(env)
