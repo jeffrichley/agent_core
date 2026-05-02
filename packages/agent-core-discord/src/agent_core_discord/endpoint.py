@@ -21,10 +21,12 @@ import time
 import uuid
 from collections import OrderedDict
 from collections.abc import Callable
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal
 from urllib.parse import unquote, urlparse
+
+from pydantic import ValidationError
 
 from agent_core.bus.envelope import (
     AcknowledgmentPayload,
@@ -35,14 +37,22 @@ from agent_core.bus.envelope import (
 from agent_core.bus.protocol import EndpointUnavailable
 from agent_core_discord.access import AccessConfig, InboundContext, gate_message, load_access_config
 from agent_core_discord.args import (
+    _CancelScheduledEventArgs,
+    _CreatePollArgs,
+    _CreateScheduledEventArgs,
+    _CreateThreadArgs,
     _DownloadAttachmentsArgs,
     _EditArgs,
     _FetchArgs,
     _GetChannelInfoArgs,
     _ListChannelsArgs,
+    _ListScheduledEventsArgs,
     _ReactArgs,
     _SendArgs,
+    _SendBriefingArgs,
+    _SendTypingArgs,
 )
+from agent_core_discord.briefing import build_briefing_embeds
 from agent_core_discord.chunking import smart_chunk_discord
 from agent_core_discord.send_retry import channel_send_with_retries
 
@@ -50,6 +60,29 @@ if TYPE_CHECKING:
     from agent_core.bus.handle import BusHandle
 
 log = logging.getLogger(__name__)
+
+# Pepper-facing tool names from cutover #03 map to the internal dispatcher keys.
+_TOOL_ALIASES: dict[str, str] = {
+    "send_discord_message": "send",
+    "edit_message": "edit",
+    "add_reaction": "react",
+    "fetch_messages": "fetch",
+}
+
+
+def _canonical_tool(tool: str) -> str:
+    return _TOOL_ALIASES.get(tool, tool)
+
+
+def _parse_iso_datetime(label: str, value: str) -> datetime:
+    raw = (value or "").strip().replace("Z", "+00:00")
+    try:
+        dt = datetime.fromisoformat(raw)
+    except ValueError as exc:
+        raise _ToolError(f"{label}: invalid datetime {value!r}") from exc
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=UTC)
+    return dt
 
 
 # Module-level registry. Lets discord.py event handlers look up the live
@@ -168,6 +201,7 @@ class DiscordEndpoint:
         # Discord message ids we published to the bus and have not "finished"
         # yet (cleared when ack reaction is removed or TTL/LRU evicts).
         self._awaiting_reply_ids: set[str] = set()
+        self._typing_tasks: set[asyncio.Task] = set()
 
     def _add_listener(self, handler: Callable[..., Any], event_name: str) -> None:
         """Register an event handler against the discord.py client.
@@ -467,20 +501,42 @@ class DiscordEndpoint:
         return await self._send(args)
 
     async def _dispatch(self, tool: str, args: dict) -> Any:
+        tool = _canonical_tool(tool)
+
+        def _v(model: Any, raw: dict) -> Any:
+            try:
+                return model(**raw)
+            except ValidationError as exc:
+                raise _ToolError(f"{tool}: {exc}") from exc
+
         if tool == "send":
-            return await self._send(_SendArgs(**args))
+            return await self._send(_v(_SendArgs, args))
         if tool == "edit":
-            return await self._edit(_EditArgs(**args))
+            return await self._edit(_v(_EditArgs, args))
         if tool == "react":
-            return await self._react(_ReactArgs(**args))
+            return await self._react(_v(_ReactArgs, args))
         if tool == "fetch":
-            return await self._fetch(_FetchArgs(**args))
+            return await self._fetch(_v(_FetchArgs, args))
         if tool == "download_attachments":
-            return await self._download_attachments(_DownloadAttachmentsArgs(**args))
+            return await self._download_attachments(_v(_DownloadAttachmentsArgs, args))
         if tool == "list_channels":
-            return await self._list_channels(_ListChannelsArgs(**args))
+            return await self._list_channels(_v(_ListChannelsArgs, args))
         if tool == "get_channel_info":
-            return await self._get_channel_info(_GetChannelInfoArgs(**args))
+            return await self._get_channel_info(_v(_GetChannelInfoArgs, args))
+        if tool == "send_briefing":
+            return await self._send_briefing(_v(_SendBriefingArgs, args))
+        if tool == "create_poll":
+            return await self._create_poll(_v(_CreatePollArgs, args))
+        if tool == "create_scheduled_event":
+            return await self._create_scheduled_event(_v(_CreateScheduledEventArgs, args))
+        if tool == "cancel_scheduled_event":
+            return await self._cancel_scheduled_event(_v(_CancelScheduledEventArgs, args))
+        if tool == "list_scheduled_events":
+            return await self._list_scheduled_events(_v(_ListScheduledEventsArgs, args))
+        if tool == "create_thread":
+            return await self._create_thread(_v(_CreateThreadArgs, args))
+        if tool == "send_typing":
+            return await self._send_typing(_v(_SendTypingArgs, args))
         raise _ToolError(f"unknown tool '{tool}'")
 
     async def _reply(
@@ -509,6 +565,9 @@ class DiscordEndpoint:
     async def stop(self) -> None:
         if _active_endpoints.get(self.name) is self:
             _active_endpoints.pop(self.name, None)
+        for t in list(self._typing_tasks):
+            t.cancel()
+        self._typing_tasks.clear()
         # Drop typing / threading state so background typing tasks exit promptly.
         self._awaiting_reply_ids.clear()
         self._inbound_envelope_discord.clear()
@@ -642,9 +701,7 @@ class DiscordEndpoint:
                 created_at=datetime.now(UTC),
             )
             assert self._handle is not None
-            self._remember_inbound_mapping(
-                env.id, str(message.id), str(message.channel.id)
-            )
+            self._remember_inbound_mapping(env.id, str(message.id), str(message.channel.id))
             mid = str(message.id)
             self._awaiting_reply_ids.add(mid)
             try:
@@ -1086,6 +1143,184 @@ class DiscordEndpoint:
             "topic": getattr(ch, "topic", "") or "",
             "nsfw": bool(getattr(ch, "nsfw", False)),
         }
+
+    async def _resolve_guild(self, guild_id: str) -> Any:
+        if self._client is None:
+            raise _ToolError("guild lookup: client not ready")
+        get_guild = getattr(self._client, "get_guild", None)
+        if get_guild is None:
+            raise _ToolError("client has no get_guild")
+        keys: list[Any] = [guild_id, str(guild_id)]
+        if guild_id.isdigit():
+            keys.insert(0, int(guild_id))
+        seen: set[Any] = set()
+        for key in keys:
+            if key in seen:
+                continue
+            seen.add(key)
+            try:
+                g = get_guild(key)
+            except TypeError:
+                continue
+            if g is not None:
+                return g
+        raise _ToolError(f"guild '{guild_id}' not found")
+
+    async def _send_briefing(self, args: _SendBriefingArgs) -> dict:
+        embeds = build_briefing_embeds(
+            date_line=args.date_line,
+            focus=args.focus,
+            calendar=args.calendar,
+            critical_items=list(args.critical_items),
+            warning_items=list(args.warning_items),
+        )
+        return await self._send(_SendArgs(channel_id=args.channel_id, text=None, embeds=embeds))
+
+    async def _create_poll(self, args: _CreatePollArgs) -> dict:
+        try:
+            import discord  # type: ignore
+        except ImportError as exc:
+            raise _ToolError("create_poll requires discord.py") from exc
+        ch = await self._resolve_channel(args.channel_id)
+        poll = discord.Poll(
+            args.question,
+            timedelta(hours=args.duration_hours),
+            multiple=args.multiple,
+        )
+        for ans in args.answers:
+            text = (ans or "").strip()
+            if not text:
+                raise _ToolError("create_poll: empty answer text")
+            poll = poll.add_answer(text=text[:300])
+        new_msg = await channel_send_with_retries(ch, None, poll=poll)
+        mid = str(new_msg.id)
+        return {"status": "sent", "message_id": mid, "message_ids": [mid]}
+
+    async def _create_scheduled_event(self, args: _CreateScheduledEventArgs) -> dict:
+        try:
+            import discord  # type: ignore
+        except ImportError as exc:
+            raise _ToolError("create_scheduled_event requires discord.py") from exc
+        guild = await self._resolve_guild(args.guild_id)
+        start = _parse_iso_datetime("start_time", args.start_time)
+        entity_map = {
+            "stage": discord.EntityType.stage_instance,
+            "voice": discord.EntityType.voice,
+            "external": discord.EntityType.external,
+        }
+        kwargs: dict[str, Any] = {
+            "name": args.name[:100],
+            "start_time": start,
+            "entity_type": entity_map[args.entity_type],
+            "privacy_level": discord.PrivacyLevel.guild_only,
+        }
+        if args.description:
+            kwargs["description"] = args.description[:1000]
+        if args.entity_type == "external":
+            kwargs["location"] = args.location.strip()
+            kwargs["end_time"] = _parse_iso_datetime("end_time", args.end_time or "")
+        else:
+            ch = await self._resolve_channel(args.channel_id or "")
+            kwargs["channel"] = ch
+            if args.end_time:
+                kwargs["end_time"] = _parse_iso_datetime("end_time", args.end_time)
+        ev = await guild.create_scheduled_event(**kwargs)
+        return {"status": "created", "event_id": str(ev.id), "name": ev.name}
+
+    async def _cancel_scheduled_event(self, args: _CancelScheduledEventArgs) -> dict:
+        guild = await self._resolve_guild(args.guild_id)
+        ev = None
+        if hasattr(guild, "get_scheduled_event"):
+            keys: list[Any] = [args.event_id, str(args.event_id)]
+            if args.event_id.isdigit():
+                keys.insert(0, int(args.event_id))
+            seen: set[Any] = set()
+            for key in keys:
+                if key in seen:
+                    continue
+                seen.add(key)
+                try:
+                    ev = guild.get_scheduled_event(key)  # type: ignore[arg-type]
+                except Exception:
+                    ev = None
+                if ev is not None:
+                    break
+        if ev is None and hasattr(guild, "fetch_scheduled_event"):
+            try:
+                lookup = int(args.event_id) if args.event_id.isdigit() else args.event_id
+                ev = await guild.fetch_scheduled_event(lookup)
+            except Exception:
+                ev = None
+        if ev is None:
+            raise _ToolError(f"cancel_scheduled_event: event '{args.event_id}' not found")
+        await ev.cancel()
+        return {"status": "cancelled", "event_id": str(args.event_id)}
+
+    async def _list_scheduled_events(self, args: _ListScheduledEventsArgs) -> list[dict[str, Any]]:
+        guild = await self._resolve_guild(args.guild_id)
+        if not hasattr(guild, "fetch_scheduled_events"):
+            return []
+        events = await guild.fetch_scheduled_events()
+        out: list[dict[str, Any]] = []
+        for ev in events:
+            st = getattr(ev, "start_time", None)
+            et = getattr(ev, "entity_type", None)
+            et_s = str(getattr(et, "name", et) or "")
+            out.append(
+                {
+                    "id": str(getattr(ev, "id", "")),
+                    "name": getattr(ev, "name", ""),
+                    "status": getattr(ev, "status", ""),
+                    "entity_type": et_s,
+                    "start_time": st.isoformat() if st is not None else "",
+                }
+            )
+        return out
+
+    async def _create_thread(self, args: _CreateThreadArgs) -> dict:
+        ch = await self._resolve_channel(args.channel_id)
+        create = getattr(ch, "create_thread", None)
+        if create is None:
+            raise _ToolError("create_thread: channel does not support threads")
+        msg = None
+        if args.message_id:
+            try:
+                msg = await ch.fetch_message(args.message_id)
+            except Exception as exc:
+                raise _ToolError(f"create_thread: message not found: {exc}") from exc
+            if msg is None:
+                raise _ToolError(f"create_thread: message '{args.message_id}' not found")
+        th = await create(name=args.name[:100], message=msg)
+        return {
+            "status": "created",
+            "thread_id": str(getattr(th, "id", "")),
+            "name": getattr(th, "name", args.name),
+        }
+
+    async def _send_typing(self, args: _SendTypingArgs) -> dict:
+        ch = await self._resolve_channel(args.channel_id)
+        seconds = float(args.duration_seconds)
+        typing_factory = getattr(ch, "typing", None)
+        if typing_factory is None:
+            raise _ToolError("send_typing: channel has no typing()")
+
+        async def _pulse() -> None:
+            try:
+                async with typing_factory():
+                    await asyncio.sleep(seconds)
+            except asyncio.CancelledError:
+                raise
+            except Exception:
+                log.debug("send_typing: pulse failed", exc_info=True)
+
+        task = asyncio.create_task(_pulse())
+        self._typing_tasks.add(task)
+
+        def _done(t: asyncio.Task) -> None:
+            self._typing_tasks.discard(task)
+
+        task.add_done_callback(_done)
+        return {"status": "typing_started", "duration_seconds": seconds}
 
 
 class _ToolError(Exception):

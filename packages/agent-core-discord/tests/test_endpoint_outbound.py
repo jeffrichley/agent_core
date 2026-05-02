@@ -1,4 +1,4 @@
-"""Tests for DiscordEndpoint outbound tool surface (8 tools)."""
+"""Tests for DiscordEndpoint outbound tool surface."""
 
 from __future__ import annotations
 
@@ -9,6 +9,11 @@ from datetime import UTC, datetime
 
 import pytest
 from agent_core_discord import send_retry as send_retry_mod
+from agent_core_discord.briefing import (
+    BRIEFING_COLOR_CRITICAL,
+    BRIEFING_COLOR_WARNING,
+    build_briefing_embeds,
+)
 from agent_core_discord.endpoint import DiscordEndpoint
 
 from agent_core.bus.envelope import (
@@ -69,11 +74,14 @@ class _Permanent429FromSecondSend(_FakeChannel):
         embeds: list | None = None,
         reference: object | None = None,
         files: list | None = None,
+        poll: object | None = None,
     ) -> _FakeMessage:
         self._send_calls += 1
         if self._send_calls >= 2:
             raise _HTTP429Like(retry_after=0.0)
-        return await super().send(content, embeds=embeds, reference=reference, files=files)
+        return await super().send(
+            content, embeds=embeds, reference=reference, files=files, poll=poll
+        )
 
 
 class _SecondSendFailsOnceChannel(_FakeChannel):
@@ -97,11 +105,14 @@ class _SecondSendFailsOnceChannel(_FakeChannel):
         embeds: list | None = None,
         reference: object | None = None,
         files: list | None = None,
+        poll: object | None = None,
     ) -> _FakeMessage:
         self._send_calls += 1
         if self._send_calls == 2:
             raise _HTTP429Like(retry_after=0.0)
-        return await super().send(content, embeds=embeds, reference=reference, files=files)
+        return await super().send(
+            content, embeds=embeds, reference=reference, files=files, poll=poll
+        )
 
 
 async def _no_sleep(_: float) -> None:
@@ -1061,5 +1072,206 @@ async def test_get_channel_info_unknown_returns_error(monkeypatch):
         await ep.deliver(env)
         ack = [e for e in handle.published if e.kind == "Acknowledgment"][0]
         assert "not found" in ack.payload.note.lower()
+    finally:
+        await ep.stop()
+
+
+# --- cutover #03: Pepper verb aliases + extra tools ---
+
+
+@pytest.mark.asyncio
+async def test_send_discord_message_alias(monkeypatch):
+    ep, handle, fake = await _started(monkeypatch)
+    ch = _FakeChannel(id="200")
+    fake.add_channel(ch)
+    try:
+        env = _envelope(
+            "e1",
+            "agent-test",
+            "discord-test",
+            _toolcall("send_discord_message", {"channel_id": "200", "text": "hi"}),
+        )
+        await ep.deliver(env)
+        assert ch.sent[0]["content"] == "hi"
+    finally:
+        await ep.stop()
+
+
+def test_build_briefing_embeds_order_and_colors():
+    embeds = build_briefing_embeds(
+        date_line="2026-05-02",
+        focus="Ship the cutover",
+        calendar="1:1 with Jeff",
+        critical_items=["Prod is down"],
+        warning_items=["Flaky test"],
+    )
+    assert embeds[0]["title"] == "Daily briefing"
+    names = [f["name"] for f in embeds[0]["fields"]]
+    assert names == ["Focus", "Calendar"]
+    assert embeds[1]["color"] == BRIEFING_COLOR_CRITICAL
+    assert embeds[2]["color"] == BRIEFING_COLOR_WARNING
+
+
+@pytest.mark.asyncio
+async def test_send_briefing_sends_embeds(monkeypatch):
+    ep, handle, fake = await _started(monkeypatch)
+    ch = _FakeChannel(id="200")
+    fake.add_channel(ch)
+    try:
+        env = _envelope(
+            "e1",
+            "agent-test",
+            "discord-test",
+            _toolcall(
+                "send_briefing",
+                {
+                    "channel_id": "200",
+                    "date_line": "Saturday — test",
+                    "focus": "A",
+                    "calendar": "B",
+                    "critical_items": ["c1"],
+                    "warning_items": ["w1"],
+                },
+            ),
+        )
+        await ep.deliver(env)
+        assert len(ch.sent) == 1
+        emb = ch.sent[0]["embeds"]
+        assert emb is not None and len(emb) == 3
+    finally:
+        await ep.stop()
+
+
+@pytest.mark.asyncio
+async def test_create_poll_passes_poll_to_send(monkeypatch):
+    ep, handle, fake = await _started(monkeypatch)
+    ch = _FakeChannel(id="200")
+    fake.add_channel(ch)
+    try:
+        env = _envelope(
+            "e1",
+            "agent-test",
+            "discord-test",
+            _toolcall(
+                "create_poll",
+                {
+                    "channel_id": "200",
+                    "question": "Pick one?",
+                    "answers": ["A", "B"],
+                    "duration_hours": 24,
+                },
+            ),
+        )
+        await ep.deliver(env)
+        assert ch.sent[0]["poll"] is not None
+    finally:
+        await ep.stop()
+
+
+@pytest.mark.asyncio
+async def test_create_thread_invokes_channel(monkeypatch):
+    ep, handle, fake = await _started(monkeypatch)
+    ch = _FakeChannel(id="200", guild_id="g1")
+    fake.add_channel(ch)
+    m = _FakeMessage(id="m1", channel_id="200", content="root")
+    ch._messages["m1"] = m
+    try:
+        env = _envelope(
+            "e1",
+            "agent-test",
+            "discord-test",
+            _toolcall(
+                "create_thread",
+                {"channel_id": "200", "name": "side-topic", "message_id": "m1"},
+            ),
+        )
+        await ep.deliver(env)
+        assert len(ch.threads_created) == 1
+        assert ch.threads_created[0]["name"] == "side-topic"
+        assert ch.threads_created[0]["message_id"] == "m1"
+    finally:
+        await ep.stop()
+
+
+@pytest.mark.asyncio
+async def test_send_typing_ack(monkeypatch):
+    ep, handle, fake = await _started(monkeypatch)
+    ch = _FakeChannel(id="200")
+    fake.add_channel(ch)
+    try:
+        env = _envelope(
+            "e1",
+            "agent-test",
+            "discord-test",
+            _toolcall("send_typing", {"channel_id": "200", "duration_seconds": 0.5}),
+        )
+        await ep.deliver(env)
+        ack = [e for e in handle.published if e.kind == "Acknowledgment"][-1]
+        body = json.loads(ack.payload.note)
+        assert body["status"] == "typing_started"
+        assert body["duration_seconds"] == 0.5
+    finally:
+        await ep.stop()
+
+
+@pytest.mark.asyncio
+async def test_scheduled_event_create_list_cancel(monkeypatch):
+    ep, handle, fake = await _started(monkeypatch)
+    ch = _FakeChannel(id="200", guild_id="g1")
+    g = _FakeGuild(id="g1", channels=[ch])
+    fake.add_guild(g)
+    try:
+        start = "2026-06-01T15:00:00+00:00"
+        end = "2026-06-01T16:00:00+00:00"
+        env = _envelope(
+            "e1",
+            "agent-test",
+            "discord-test",
+            _toolcall(
+                "create_scheduled_event",
+                {
+                    "guild_id": "g1",
+                    "name": "Standup",
+                    "start_time": start,
+                    "end_time": end,
+                    "entity_type": "external",
+                    "location": "https://example.com/meet",
+                },
+            ),
+        )
+        await ep.deliver(env)
+        ack = [e for e in handle.published if e.kind == "Acknowledgment"][-1]
+        created = json.loads(ack.payload.note)
+        eid = created["event_id"]
+
+        env2 = _envelope(
+            "e2",
+            "agent-test",
+            "discord-test",
+            _toolcall("list_scheduled_events", {"guild_id": "g1"}),
+        )
+        await ep.deliver(env2)
+        ack2 = [e for e in handle.published if e.kind == "Acknowledgment"][-1]
+        listed = json.loads(ack2.payload.note)
+        assert len(listed) == 1
+        assert listed[0]["id"] == eid
+
+        env3 = _envelope(
+            "e3",
+            "agent-test",
+            "discord-test",
+            _toolcall("cancel_scheduled_event", {"guild_id": "g1", "event_id": eid}),
+        )
+        await ep.deliver(env3)
+
+        env4 = _envelope(
+            "e4",
+            "agent-test",
+            "discord-test",
+            _toolcall("list_scheduled_events", {"guild_id": "g1"}),
+        )
+        await ep.deliver(env4)
+        ack4 = [e for e in handle.published if e.kind == "Acknowledgment"][-1]
+        assert json.loads(ack4.payload.note) == []
     finally:
         await ep.stop()

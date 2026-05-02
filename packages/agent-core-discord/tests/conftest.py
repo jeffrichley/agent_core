@@ -6,6 +6,7 @@ event dispatch, and outbound tool calls without a network."""
 from __future__ import annotations
 
 import asyncio
+import uuid
 from collections.abc import Callable
 from typing import Any
 
@@ -54,6 +55,8 @@ class _FakeChannel:
         self.sent: list[dict[str, Any]] = []
         self._messages: dict[str, _FakeMessage] = {}
         self._typing_count = 0
+        self.threads_created: list[dict[str, Any]] = []
+        self._fake_client: _FakeDiscordClient | None = None
 
     def typing(self):
         ch = self
@@ -76,6 +79,7 @@ class _FakeChannel:
         embeds: list | None = None,
         reference: Any = None,
         files: list | None = None,
+        poll: Any = None,
     ) -> _FakeMessage:
         new_id = f"new-{len(self.sent) + 1}"
         msg = _FakeMessage(id=new_id, channel_id=self.id, content=content or "")
@@ -86,10 +90,36 @@ class _FakeChannel:
                 "embeds": embeds,
                 "reference": reference,
                 "files": files,
+                "poll": poll,
                 "message_id": new_id,
             }
         )
         return msg
+
+    async def create_thread(
+        self,
+        *,
+        name: str,
+        message: Any = None,
+        auto_archive_duration: Any = None,
+        type: Any = None,
+        reason: str | None = None,
+        invitable: bool = True,
+        slowmode_delay: int | None = None,
+    ) -> _FakeChannel:
+        tid = f"th-{uuid.uuid4().hex[:10]}"
+        th = _FakeChannel(
+            id=tid,
+            name=name,
+            channel_type="public_thread",
+            guild_id=self.guild_id,
+        )
+        th._fake_client = self._fake_client
+        if self._fake_client is not None:
+            self._fake_client.add_channel(th)
+        mid = str(getattr(message, "id", "") or "") or None
+        self.threads_created.append({"name": name, "message_id": mid})
+        return th
 
     async def fetch_message(self, message_id: str) -> _FakeMessage | None:
         return self._messages.get(message_id)
@@ -106,6 +136,77 @@ class _FakeGuild:
     def __init__(self, *, id: str, channels: list[_FakeChannel]):
         self.id = id
         self.channels = channels
+        self._scheduled: dict[str, _FakeScheduledEvent] = {}
+        self._sched_seq = 0
+
+    async def create_scheduled_event(
+        self,
+        *,
+        name: str,
+        start_time: Any,
+        entity_type: Any = None,
+        privacy_level: Any = None,
+        channel: Any = None,
+        location: str = "",
+        end_time: Any = None,
+        description: str = "",
+        image: bytes = b"",
+        reason: str | None = None,
+        **_: Any,
+    ) -> _FakeScheduledEvent:
+        self._sched_seq += 1
+        sid = f"se-{self._sched_seq}"
+        et_name = getattr(entity_type, "name", str(entity_type))
+        ev = _FakeScheduledEvent(
+            id=sid,
+            name=name,
+            guild=self,
+            start_time=start_time,
+            end_time=end_time,
+            entity_type=et_name,
+        )
+        self._scheduled[sid] = ev
+        return ev
+
+    def get_scheduled_event(self, event_id: int | str) -> _FakeScheduledEvent | None:
+        key = str(event_id)
+        return self._scheduled.get(key)
+
+    async def fetch_scheduled_event(self, event_id: int | str) -> _FakeScheduledEvent:
+        ev = self.get_scheduled_event(event_id)
+        if ev is None:
+            raise LookupError(f"scheduled event {event_id!r} not found")
+        return ev
+
+    async def fetch_scheduled_events(self) -> list[_FakeScheduledEvent]:
+        return list(self._scheduled.values())
+
+
+class _FakeScheduledEvent:
+    def __init__(
+        self,
+        *,
+        id: str,
+        name: str,
+        guild: _FakeGuild,
+        start_time: Any = None,
+        end_time: Any = None,
+        entity_type: str = "external",
+    ) -> None:
+        self.id = id
+        self.name = name
+        self.guild = guild
+        self.start_time = start_time
+        self.end_time = end_time
+        self.entity_type = entity_type
+        self.status = "scheduled"
+        self._cancelled = False
+
+    async def cancel(self, *, reason: str | None = None) -> _FakeScheduledEvent:
+        self._cancelled = True
+        self.status = "cancelled"
+        self.guild._scheduled.pop(str(self.id), None)
+        return self
 
 
 class _FakeUser:
@@ -153,6 +254,9 @@ class _FakeDiscordClient:
     def get_channel(self, channel_id: int | str) -> _FakeChannel | None:
         return self._channels.get(str(channel_id))
 
+    def get_guild(self, guild_id: int | str) -> _FakeGuild | None:
+        return self._guilds.get(str(guild_id))
+
     async def fetch_channel(self, channel_id: int | str) -> _FakeChannel | None:
         return self._channels.get(str(channel_id))
 
@@ -196,11 +300,13 @@ class _FakeDiscordClient:
             await self._handlers["on_ready"]()
 
     def add_channel(self, ch: _FakeChannel) -> None:
+        ch._fake_client = self
         self._channels[ch.id] = ch
 
     def add_guild(self, g: _FakeGuild) -> None:
         self._guilds[g.id] = g
         for ch in g.channels:
+            ch._fake_client = self
             self._channels[ch.id] = ch
 
 
