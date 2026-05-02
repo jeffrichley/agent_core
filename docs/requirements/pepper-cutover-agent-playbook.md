@@ -9,22 +9,39 @@
 
 Assume **other implementers are touching the same repo**. Prefer small, reviewable diffs and communicate overlap early.
 
+**This playbook is on `main`.** Implementers always **`git pull` on `main`** then branch for their ticket. The old `feat/docs-pepper-cutover-agent-playbook` branch was only the vehicle to land this file — do not treat it as a shared development line.
+
 ---
 
-## Superpowers skills (use if present in your environment)
+## Who picks the ticket? (Agents do not “just know”)
 
-If your host loads the **Superpowers** plugin skills, treat them as the default engineering loop (invoke the skill tool / read the skill before improvising):
+- **Default:** an implementer only starts work after **Jeff fills the Assignment table** (`Assignee` + `Status`).
+- **Exception:** Jeff (or the PR agent) explicitly tells you in chat / issue which row is yours — then mirror that into the table when you **Claim** it.
+- The **dependency diagrams** below are for **merge sequencing and risk**, not for guessing ownership. If the table is empty, **stop and ask** rather than picking the “root” of the graph.
 
-| When | Skill (typical name) |
-|------|----------------------|
-| Start of substantive work | `using-superpowers` |
-| Multi-step / ambiguous scope | `writing-plans` |
+---
+
+## Superpowers skills (**required** when the plugin is available)
+
+**Policy:** If your environment has the **Superpowers** plugin, you **must** use it as the primary operating loop — not optional polish.
+
+1. **Start of session / substantive work:** read and follow **`using-superpowers`** (Skill tool / skill read) before writing code or “exploring.”
+2. **Multi-step or ambiguous work:** run **`writing-plans`** before large diffs.
+3. **Behavior change or bugfix:** prefer **`test-driven-development`**; use **`systematic-debugging`** for failures before speculative fixes.
+4. **Before claiming done or asking the PR agent to merge:** run **`verification-before-completion`** (evidence: commands + outcome).
+5. **Large or risky change before merge:** **`requesting-code-review`** (or equivalent host review).
+6. **Branch is green, need integration / merge guidance:** **`finishing-a-development-branch`**.
+
+| When | Skill (typical slug / folder name) |
+|------|-------------------------------------|
+| Session start / any real implementation | `using-superpowers` |
+| Multi-step / unclear scope | `writing-plans` |
 | Behavior change or bugfix | `test-driven-development` + `systematic-debugging` |
-| Before claiming “done” or asking for merge | `verification-before-completion` |
-| Large change or pre-merge confidence | `requesting-code-review` |
-| Branch is green and you need integration guidance | `finishing-a-development-branch` |
+| Before “done” / merge handoff | `verification-before-completion` |
+| Pre-merge confidence | `requesting-code-review` |
+| After CI green, integration choices | `finishing-a-development-branch` |
 
-If Superpowers is **not** installed, still follow the same **discipline**: plan for multi-step work, reproduce with a failing test when possible, run the real test/lint commands, and avoid “done” without evidence.
+If Superpowers is **not** installed in your host, still mirror the **same discipline** (plan → test-first when appropriate → debug with evidence → verify before done).
 
 ---
 
@@ -91,6 +108,74 @@ git branch -d feat/cutover-02-handoff-observability   # optional local cleanup
 4. If two tickets **must** touch the same hot files, **serialize** (one assignee / one PR at a time) instead of parallelizing.
 5. **PR agent owns merge order** for dependencies (e.g. notification surface vs handoff observability). Implementers should not “guess” landing order beyond what the specs say.
 6. **Conflict policy:** whoever is on the **child** branch in a stack usually rebases onto the updated parent after the parent merges; PR agent coordinates if unclear.
+
+---
+
+## Dependency diagrams (merge / stack hints — **not** for self-assigning)
+
+Use these with the **PR agent** to decide **landing order** or **stacked PR bases**. They do **not** replace the **Assignment table** for who works what.
+
+### Pepper cutover specs (#01–#08 + epic)
+
+```mermaid
+flowchart TB
+  EP["Epic: pre-cutover must-haves"]
+  EP --> C01["01 Identity fidelity"]
+  EP --> C02["02 Handoff observability"]
+  EP --> C03["03 Discord verb parity"]
+  EP --> C04["04 Daily JSONL pipeline"]
+  EP --> C05["05 Skills discovery"]
+  EP --> C06["06 Vault continuity"]
+  EP --> C07["07 Hook fidelity"]
+  EP --> C08["08 Notification surface"]
+  DC["Handoff daemon contract"]
+  DC --> C02
+  C08 -.->|"partially gates done: visible ready signal"| C02
+  C04 -.->|"summaries / JSONL feeds skills + context"| C05
+  C07 -.->|"SessionStart identity wiring"| C01
+  C07 -.->|"PreCompact / SessionEnd handoff wiring"| C02
+```
+
+- **Solid `EP -->`:** epic child ticket (all must close for cutover gate — see epic doc).
+- **Solid `DC -->`:** daemon contract is the handoff implementation shape for **#02**.
+- **Dashed `-.->`:** integration / sequencing coupling (land or scope the tail first when possible).
+
+### GitHub issues (`jeffrichley/agent_core`)
+
+Issues change; refresh with:
+
+`gh issue list --repo jeffrichley/agent_core --state open`
+
+Snapshot **2026-05-02** (edges = product / sequencing intuition, not GitHub “blocked by” metadata):
+
+```mermaid
+flowchart TB
+  subgraph discord["Discord bridge"]
+    i22["#22 OPEN partial-send / rate-limit"]
+    i23["#23 OPEN ack + chunk-limit semantics"]
+    i13["#13 OPEN typing TTL / placeholder"]
+  end
+  i23 --> i22
+  i20["#20 CLOSED auto-split >2000"]
+  i21["#21 CLOSED markdown-safe chunking"]
+  i20 --> i22
+  i21 --> i22
+  subgraph bus["Bus"]
+    i15["#15 OPEN heartbeats"]
+    i16["#16 OPEN read-only bus tail"]
+    i17["#17 OPEN DLQ / retry"]
+    i18["#18 OPEN expires_at enforcement"]
+    i19["#19 OPEN typed command envelopes"]
+  end
+  i18 -.-> i17
+  subgraph wakes["Wakes / notify"]
+    i14["#14 OPEN burst coalesce wakes"]
+    i12["#12 CLOSED auto-ack routine"]
+  end
+  i14 -.->|"coordination note in specs"| i12
+```
+
+**Cutover ↔ GitHub (theme only):** Cutover **#03** aligns with **Discord** issues; **#04 / #08** align with **Bus** + **notify** work; **#02 / #08** align with **Wakes**. There is **no strict 1:1** between cutover doc numbers and GitHub issue numbers — use both tables plus Jeff’s assignment.
 
 ---
 
