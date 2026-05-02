@@ -1,201 +1,104 @@
-"""Tests for the HandoffWriter hook tool (detached claude CLI launcher)."""
+"""Tests for HandoffWriter enqueue-only behavior."""
 
 import json
-import time
+from io import BytesIO
 from pathlib import Path
 from unittest.mock import patch
 
 import pytest
 
 from agent_core.hooks.protocol import HookTool
-from agent_core.hooks.tools.handoff_writer import HandoffWriter, _state_file_for
+from agent_core.hooks.tools.handoff_writer import HandoffWriter
 from agent_core.models import ToolResult
 
 
-def make_transcript(path: Path, turns: list[tuple[str, str]]) -> None:
-    """Create a JSONL transcript file with the given turns."""
-    with open(path, "w", encoding="utf-8") as f:
-        for role, content in turns:
-            f.write(json.dumps({"message": {"role": role, "content": content}}) + "\n")
+class _FakeResponse:
+    def __init__(self, body: dict):
+        self._stream = BytesIO(json.dumps(body).encode("utf-8"))
+
+    def read(self) -> bytes:
+        return self._stream.read()
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, exc_type, exc, tb):
+        return False
 
 
 class TestHandoffWriter:
-    """Tests for HandoffWriter — detached claude CLI launcher."""
-
     def test_implements_hook_tool_protocol(self):
         assert isinstance(HandoffWriter(), HookTool)
 
-    @patch("agent_core.hooks.tools.handoff_writer.subprocess.Popen")
-    @patch("agent_core.hooks.tools.handoff_writer.shutil.which", return_value="/usr/bin/claude")
-    def test_spawns_claude_process(self, mock_which, mock_popen, tmp_path: Path):
-        """Spawns claude -p with correct arguments."""
+    @patch("agent_core.hooks.tools.handoff_writer.urllib.request.urlopen")
+    def test_enqueues_daemon_job(self, mock_urlopen, tmp_path: Path):
+        mock_urlopen.return_value = _FakeResponse({"job_id": "job-123", "status": "accepted"})
         transcript = tmp_path / "transcript.jsonl"
-        make_transcript(transcript, [("user", "Hello"), ("assistant", "Hi")])
+        transcript.write_text("{}", encoding="utf-8")
         output = tmp_path / "handoff.md"
 
         tool = HandoffWriter()
         result = tool.execute(
-            event="PreCompact",
-            hook_input={"transcript_path": str(transcript), "session_id": "test-123"},
-            params={"output_path": str(output), "agent_name": "Pepper", "timezone": "US/Eastern"},
+            event="SessionEnd",
+            hook_input={"transcript_path": str(transcript), "session_id": "session-1"},
+            params={
+                "output_path": str(output),
+                "agent_name": "Pepper",
+                "handoff_jobs_url": "http://127.0.0.1:8788/internal/handoff-jobs",
+            },
         )
 
         assert isinstance(result, ToolResult)
-        assert "spawned" in result.content.lower() or "background" in result.content.lower()
-        assert mock_popen.called
-
-        cmd = mock_popen.call_args[0][0]
-        assert cmd[0] == "/usr/bin/claude"
-        assert "-p" in cmd
-        assert "--allowedTools" in cmd
-
-    @patch("agent_core.hooks.tools.handoff_writer.subprocess.Popen")
-    @patch("agent_core.hooks.tools.handoff_writer.shutil.which", return_value="/usr/bin/claude")
-    def test_writes_context_file(self, mock_which, mock_popen, tmp_path: Path):
-        """Writes transcript context to a temp file for the claude process."""
-        transcript = tmp_path / "transcript.jsonl"
-        make_transcript(transcript, [("user", "Hello world"), ("assistant", "Hi there")])
-        output = tmp_path / "handoff.md"
-
-        tool = HandoffWriter()
-        tool.execute(
-            event="PreCompact",
-            hook_input={"transcript_path": str(transcript), "session_id": "ctx-1"},
-            params={"output_path": str(output)},
-        )
-
-        context_files = list(tmp_path.glob("handoff-context-*.md"))
-        assert len(context_files) == 1
-        content = context_files[0].read_text(encoding="utf-8")
-        assert "Hello world" in content
-
-    @patch("agent_core.hooks.tools.handoff_writer.subprocess.Popen")
-    @patch("agent_core.hooks.tools.handoff_writer.shutil.which", return_value="/usr/bin/claude")
-    def test_prompt_contains_agent_name(self, mock_which, mock_popen, tmp_path: Path):
-        """Prompt passed to claude includes the agent name."""
-        transcript = tmp_path / "transcript.jsonl"
-        make_transcript(transcript, [("user", "Hello"), ("assistant", "Hi")])
-        output = tmp_path / "handoff.md"
-
-        tool = HandoffWriter()
-        tool.execute(
-            event="PreCompact",
-            hook_input={"transcript_path": str(transcript), "session_id": "s4"},
-            params={"output_path": str(output), "agent_name": "Pepper"},
-        )
-
-        cmd = mock_popen.call_args[0][0]
-        prompt_idx = cmd.index("-p") + 1
-        prompt = cmd[prompt_idx]
-        assert "Pepper" in prompt
-
-    def test_missing_transcript_returns_immediately(self, tmp_path: Path):
-        output = tmp_path / "handoff.md"
-
-        tool = HandoffWriter()
-        result = tool.execute(
-            event="SessionEnd",
-            hook_input={"transcript_path": str(tmp_path / "missing.jsonl"), "session_id": "s1"},
-            params={"output_path": str(output)},
-        )
-        assert "No transcript" in result.content
-
-    def test_empty_transcript_returns_immediately(self, tmp_path: Path):
-        transcript = tmp_path / "transcript.jsonl"
-        transcript.write_text("", encoding="utf-8")
-        output = tmp_path / "handoff.md"
-
-        tool = HandoffWriter()
-        result = tool.execute(
-            event="SessionEnd",
-            hook_input={"transcript_path": str(transcript), "session_id": "s2"},
-            params={"output_path": str(output)},
-        )
-        assert "empty" in result.content.lower() or "No transcript" in result.content
-
-    @patch("agent_core.hooks.tools.handoff_writer.subprocess.Popen")
-    @patch("agent_core.hooks.tools.handoff_writer.shutil.which", return_value="/usr/bin/claude")
-    def test_deduplication_skips_second_call(self, mock_which, mock_popen, tmp_path: Path):
-        """Same session_id within 60 seconds is skipped."""
-        transcript = tmp_path / "transcript.jsonl"
-        make_transcript(transcript, [("user", "Hello"), ("assistant", "Hi")])
-        output = tmp_path / "handoff.md"
-
-        # Write state simulating a recent handoff
-        state_file = output.parent / "handoff-state.json"
-        state_file.write_text(
-            json.dumps({"session_id": "dedup-1", "timestamp": time.time()}),
-            encoding="utf-8",
-        )
-
-        tool = HandoffWriter()
-        result = tool.execute(
-            event="SessionEnd",
-            hook_input={"transcript_path": str(transcript), "session_id": "dedup-1"},
-            params={"output_path": str(output)},
-        )
-        assert "already written" in result.content.lower()
-        assert not mock_popen.called
-
-    @patch("agent_core.hooks.tools.handoff_writer.subprocess.Popen")
-    @patch("agent_core.hooks.tools.handoff_writer.shutil.which", return_value="/usr/bin/claude")
-    def test_saves_state_after_spawn(self, mock_which, mock_popen, tmp_path: Path):
-        """State file is written after spawning to prevent duplicate spawns."""
-        transcript = tmp_path / "transcript.jsonl"
-        make_transcript(transcript, [("user", "Hello"), ("assistant", "Hi")])
-        output = tmp_path / "handoff.md"
-
-        tool = HandoffWriter()
-        tool.execute(
-            event="PreCompact",
-            hook_input={"transcript_path": str(transcript), "session_id": "state-1"},
-            params={"output_path": str(output)},
-        )
-
-        state_file = output.parent / "handoff-state.json"
-        assert state_file.exists()
-        state = json.loads(state_file.read_text(encoding="utf-8"))
-        assert state["session_id"] == "state-1"
-
-    def test_state_file_derived_from_output_path(self, tmp_path: Path):
-        output = tmp_path / "vault" / "handoff.md"
-        state = _state_file_for(output)
-        assert state == tmp_path / "vault" / "handoff-state.json"
+        assert "Enqueued daemon handoff job job-123" in result.content
+        assert mock_urlopen.called
+        req = mock_urlopen.call_args.args[0]
+        payload = json.loads(req.data.decode("utf-8"))
+        assert payload["session_id"] == "session-1"
+        assert payload["event"] == "SessionEnd"
+        assert payload["handoff_path"] == str(output)
 
     def test_missing_output_path_raises(self):
         tool = HandoffWriter()
         with pytest.raises(ValueError, match="output_path"):
             tool.execute(event="PreCompact", hook_input={}, params={})
 
-    @patch("agent_core.hooks.tools.handoff_writer.shutil.which", return_value=None)
-    def test_missing_claude_binary(self, mock_which, tmp_path: Path):
-        """Returns error if claude CLI is not found."""
-        transcript = tmp_path / "transcript.jsonl"
-        make_transcript(transcript, [("user", "Hello"), ("assistant", "Hi")])
+    def test_missing_session_id_returns_failure(self, tmp_path: Path):
         output = tmp_path / "handoff.md"
-
+        transcript = tmp_path / "transcript.jsonl"
+        transcript.write_text("{}", encoding="utf-8")
         tool = HandoffWriter()
         result = tool.execute(
-            event="PreCompact",
-            hook_input={"transcript_path": str(transcript), "session_id": "no-cli"},
+            event="SessionEnd",
+            hook_input={"transcript_path": str(transcript)},
             params={"output_path": str(output)},
         )
-        assert "not found" in result.content.lower()
+        assert result.heading == "Handoff Job Enqueue Failed"
+        assert "session_id" in result.content
+
+    def test_missing_transcript_path_returns_failure(self, tmp_path: Path):
+        output = tmp_path / "handoff.md"
+        tool = HandoffWriter()
+        result = tool.execute(
+            event="SessionEnd",
+            hook_input={"session_id": "s-1"},
+            params={"output_path": str(output)},
+        )
+        assert result.heading == "Handoff Job Enqueue Failed"
+        assert "transcript_path" in result.content
 
     @patch(
-        "agent_core.hooks.tools.handoff_writer.subprocess.Popen",
-        side_effect=OSError("spawn failed"),
+        "agent_core.hooks.tools.handoff_writer.urllib.request.urlopen",
+        side_effect=OSError("down"),
     )
-    @patch("agent_core.hooks.tools.handoff_writer.shutil.which", return_value="/usr/bin/claude")
-    def test_spawn_failure_returns_error(self, mock_which, mock_popen, tmp_path: Path):
+    def test_daemon_unreachable_returns_failure(self, mock_urlopen, tmp_path: Path):
         transcript = tmp_path / "transcript.jsonl"
-        make_transcript(transcript, [("user", "Hello"), ("assistant", "Hi")])
+        transcript.write_text("{}", encoding="utf-8")
         output = tmp_path / "handoff.md"
-
         tool = HandoffWriter()
         result = tool.execute(
-            event="PreCompact",
-            hook_input={"transcript_path": str(transcript), "session_id": "fail-1"},
+            event="SessionEnd",
+            hook_input={"transcript_path": str(transcript), "session_id": "s-2"},
             params={"output_path": str(output)},
         )
-        assert "failed" in result.content.lower() or "spawn" in result.content.lower()
+        assert result.heading == "Handoff Job Enqueue Failed"
+        assert "Cannot reach handoff daemon endpoint" in result.content

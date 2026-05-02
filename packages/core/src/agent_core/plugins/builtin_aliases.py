@@ -11,6 +11,7 @@ from typing import Any
 import pluggy
 
 from agent_core.endpoints.claude_code_mcp import ClaudeCodeMCPEndpoint
+from agent_core.endpoints.handoff_jobs import HandoffJobsEndpoint
 from agent_core.endpoints.scheduler import SchedulerEndpoint
 from agent_core.endpoints.stub import StubEndpoint
 from agent_core.hooks.tools.handoff_writer import HandoffWriter
@@ -24,6 +25,7 @@ _ENDPOINT_TYPES: dict[str, type[Any]] = {
     "builtin.claude_code_mcp": ClaudeCodeMCPEndpoint,
     "builtin.stub": StubEndpoint,
     "builtin.scheduler": SchedulerEndpoint,
+    "builtin.handoff_jobs": HandoffJobsEndpoint,
 }
 
 _HOOK_TOOL_TYPES: dict[str, type[Any]] = {
