@@ -16,6 +16,7 @@ from agent_core.endpoints.scheduler import SchedulerEndpoint
 from agent_core.endpoints.stub import StubEndpoint
 from agent_core.hooks.tools.handoff_writer import HandoffWriter
 from agent_core.hooks.tools.identity_injector import IdentityInjector
+from agent_core.hooks.tools.session_end_writer import SessionEndWriter
 from agent_core.hooks.tools.time_injector import TimeInjector
 
 hookimpl = pluggy.HookimplMarker("agent_core")
@@ -31,6 +32,7 @@ _ENDPOINT_TYPES: dict[str, type[Any]] = {
 _HOOK_TOOL_TYPES: dict[str, type[Any]] = {
     "builtin.handoff_writer": HandoffWriter,
     "builtin.identity_injector": IdentityInjector,
+    "builtin.session_end_writer": SessionEndWriter,
     "builtin.time_injector": TimeInjector,
 }
 

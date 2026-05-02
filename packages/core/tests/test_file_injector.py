@@ -1,5 +1,6 @@
 """Tests for the FileInjector hook tool."""
 
+import json
 from pathlib import Path
 
 import pytest
@@ -237,3 +238,94 @@ class TestIdentityInjector:
             },
         )
         assert result.heading == "Pepper Identity"
+
+    def test_handoff_pending_same_session_shows_banner_not_file(self, tmp_path: Path):
+        base = tmp_path
+        (base / "handoff.md").write_text("SECRET ON DISK", encoding="utf-8")
+        status = {
+            "schema_version": 1,
+            "state": "pending",
+            "session_id": "sid-a",
+            "correlation_id": "c1",
+            "updated_at": "2026-01-01T00:00:00+00:00",
+            "error": None,
+            "content_sha256": None,
+        }
+        (base / "handoff-status.json").write_text(json.dumps(status), encoding="utf-8")
+        tool = IdentityInjector()
+        result = tool.execute(
+            event="SessionStart",
+            hook_input={"session_id": "sid-a"},
+            params={"base_path": str(base), "files": ["handoff.md"]},
+        )
+        assert "pending" in result.content
+        assert "SECRET ON DISK" not in result.content
+
+    def test_handoff_pending_other_session_reads_file(self, tmp_path: Path):
+        base = tmp_path
+        (base / "handoff.md").write_text("GOOD CONTENT", encoding="utf-8")
+        status = {
+            "schema_version": 1,
+            "state": "pending",
+            "session_id": "old-session",
+            "correlation_id": "c1",
+            "updated_at": "2026-01-01T00:00:00+00:00",
+            "error": None,
+            "content_sha256": None,
+        }
+        (base / "handoff-status.json").write_text(json.dumps(status), encoding="utf-8")
+        tool = IdentityInjector()
+        result = tool.execute(
+            event="SessionStart",
+            hook_input={"session_id": "new-session"},
+            params={"base_path": str(base), "files": ["handoff.md"]},
+        )
+        assert "GOOD CONTENT" in result.content
+        assert "Handoff status: pending" not in result.content
+
+    def test_handoff_ready_loads_file(self, tmp_path: Path):
+        base = tmp_path
+        (base / "handoff.md").write_text("READY BODY", encoding="utf-8")
+        status = {
+            "schema_version": 1,
+            "state": "ready",
+            "session_id": "any",
+            "correlation_id": "c1",
+            "updated_at": "2026-01-01T00:00:00+00:00",
+            "error": None,
+            "content_sha256": "abc",
+        }
+        (base / "handoff-status.json").write_text(json.dumps(status), encoding="utf-8")
+        tool = IdentityInjector()
+        result = tool.execute(
+            event="SessionStart",
+            hook_input={"session_id": "x"},
+            params={"base_path": str(base), "files": ["handoff.md"]},
+        )
+        assert "READY BODY" in result.content
+
+    def test_skip_handoff_status_gate_reads_file(self, tmp_path: Path):
+        base = tmp_path
+        (base / "handoff.md").write_text("BODY", encoding="utf-8")
+        status = {
+            "schema_version": 1,
+            "state": "pending",
+            "session_id": "same",
+            "correlation_id": "c1",
+            "updated_at": "2026-01-01T00:00:00+00:00",
+            "error": None,
+            "content_sha256": None,
+        }
+        (base / "handoff-status.json").write_text(json.dumps(status), encoding="utf-8")
+        tool = IdentityInjector()
+        result = tool.execute(
+            event="SessionStart",
+            hook_input={"session_id": "same"},
+            params={
+                "base_path": str(base),
+                "files": ["handoff.md"],
+                "skip_handoff_status_gate": True,
+            },
+        )
+        assert "BODY" in result.content
+        assert "pending" not in result.content

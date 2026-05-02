@@ -71,20 +71,36 @@ class FileInjector:
         sections: list[str] = []
 
         for file_rel in files:
-            file_path = base_path / file_rel
-            file_name = Path(file_rel).name
-
-            if not file_path.exists():
-                if missing_behavior == "error":
-                    raise FileNotFoundError(f"Required file not found: {file_path}")
-                elif missing_behavior == "warn":
-                    sections.append(f"## {file_name}\n\n(file not found: {file_rel})")
-                continue
-
-            content = file_path.read_text(encoding="utf-8-sig")
-            sections.append(f"## {file_name}\n\n{content}")
+            section = self._build_section_for_file(
+                base_path, file_rel, missing_behavior, hook_input, params
+            )
+            if section is not None:
+                sections.append(section)
 
         return ToolResult(
             heading=heading,
             content="\n\n".join(sections),
         )
+
+    def _build_section_for_file(
+        self,
+        base_path: Path,
+        file_rel: str,
+        missing_behavior: str,
+        hook_input: dict,
+        params: dict,
+    ) -> str | None:
+        """Return one ``## filename`` markdown section, or ``None`` to skip."""
+        _ = hook_input, params
+        file_path = base_path / file_rel
+        file_name = Path(file_rel).name
+
+        if not file_path.exists():
+            if missing_behavior == "error":
+                raise FileNotFoundError(f"Required file not found: {file_path}")
+            if missing_behavior == "warn":
+                return f"## {file_name}\n\n(file not found: {file_rel})"
+            return None
+
+        content = file_path.read_text(encoding="utf-8-sig")
+        return f"## {file_name}\n\n{content}"
