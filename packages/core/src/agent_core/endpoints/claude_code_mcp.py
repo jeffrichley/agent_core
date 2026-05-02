@@ -163,6 +163,7 @@ class ClaudeCodeMCPEndpoint:
         }
         self._debounce_task: asyncio.Task | None = None
         self._debounce_deadline: float | None = None
+        self._debounce_urgency_floor: Literal["red", "yellow", "green"] | None = None
         self._notify_broker = notify_broker
         self._recent_outbound_ids: dict[str, float] = {}
         self._missing_ack_tasks: dict[str, asyncio.Task[None]] = {}
@@ -417,6 +418,8 @@ class ClaudeCodeMCPEndpoint:
             except (asyncio.CancelledError, Exception):
                 pass
         self._debounce_task = None
+        self._debounce_deadline = None
+        self._debounce_urgency_floor = None
         log.info("ClaudeCodeMCPEndpoint(name=%s) stopped", self.name)
 
     # --- MCPHostable Protocol ---
@@ -440,7 +443,7 @@ class ClaudeCodeMCPEndpoint:
 
     # --- Internal ---
 
-    def _build_summary(self) -> dict:
+    def _build_summary(self, urgency_floor: Literal["red", "yellow", "green"] | None = None) -> dict:
         """Snapshot the current mailbox into a notification summary."""
         pending = list(self._pending)
         count = len(pending)
@@ -457,6 +460,11 @@ class ClaudeCodeMCPEndpoint:
             if urg_full[urgency_key] > 0:
                 urgency_max = tier
                 break
+        if urgency_floor in self._URGENCY_RANK:
+            floor_rank = self._URGENCY_RANK[urgency_floor]
+            current_rank = self._URGENCY_RANK[urgency_max]
+            if floor_rank < current_rank:
+                urgency_max = urgency_floor
         # by_sender
         sender_index: dict[str, dict] = {}
         for env in pending:
@@ -532,6 +540,17 @@ class ClaudeCodeMCPEndpoint:
         delay = self._notify_debounce_seconds_by_urgency.get(urgency, 1.0)
         loop = asyncio.get_running_loop()
         deadline = loop.time() + delay
+        incoming_urgency = cast(
+            Literal["red", "yellow", "green"],
+            urgency if urgency in self._URGENCY_RANK else "green",
+        )
+        if self._debounce_urgency_floor is None:
+            self._debounce_urgency_floor = incoming_urgency
+        elif (
+            self._URGENCY_RANK[incoming_urgency]
+            < self._URGENCY_RANK[self._debounce_urgency_floor]
+        ):
+            self._debounce_urgency_floor = incoming_urgency
 
         if self._debounce_task is not None and not self._debounce_task.done():
             if self._debounce_deadline is not None and deadline >= self._debounce_deadline:
@@ -548,7 +567,11 @@ class ClaudeCodeMCPEndpoint:
             return
         if task is self._debounce_task:
             self._debounce_deadline = None
-        summary = self._build_summary()
+            urgency_floor = self._debounce_urgency_floor
+            self._debounce_urgency_floor = None
+        else:
+            urgency_floor = None
+        summary = self._build_summary(urgency_floor=urgency_floor)
 
         # Always publish to the broker so /notify/<agent> subscribers
         # (the channel relay) wake the agent regardless of whether the

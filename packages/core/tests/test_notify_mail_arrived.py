@@ -172,6 +172,40 @@ async def test_notify_summary_reports_max_urgency():
 
 
 @pytest.mark.asyncio
+async def test_notify_summary_uses_yellow_floor_for_empty_inbox_timeout_wake():
+    ep = ClaudeCodeMCPEndpoint(name="a", mount="/mcp/a")
+    _speed_up_debounce(ep)
+    session = _RecordingSession()
+    ep._register_session(session)
+    ep._pending = []
+
+    # Missing-ack timeout wake calls _notify_mail_arrived("yellow").
+    await ep._notify_mail_arrived("yellow")
+    await asyncio.sleep(0.1)
+
+    params = _extract_params(session.sent[0])
+    assert params["meta"]["count"] == "0"
+    assert params["meta"]["urgency_max"] == "yellow"
+    assert json.loads(params["meta"]["urgency_counts"]) == {"red": 0, "yellow": 0, "green": 0}
+
+
+@pytest.mark.asyncio
+async def test_notify_summary_keeps_red_when_yellow_floor_and_red_pending():
+    ep = ClaudeCodeMCPEndpoint(name="a", mount="/mcp/a")
+    _speed_up_debounce(ep)
+    session = _RecordingSession()
+    ep._register_session(session)
+    ep._pending = [_env("r1", urgency="red")]
+
+    # Even if wake floor is yellow, red pending should remain red.
+    await ep._notify_mail_arrived("yellow")
+    await asyncio.sleep(0.1)
+
+    params = _extract_params(session.sent[0])
+    assert params["meta"]["urgency_max"] == "red"
+
+
+@pytest.mark.asyncio
 async def test_notify_summary_groups_by_sender():
     ep = ClaudeCodeMCPEndpoint(name="a", mount="/mcp/a")
     _speed_up_debounce(ep)
