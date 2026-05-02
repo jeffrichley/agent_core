@@ -14,18 +14,18 @@
 
 ## Child tickets (the ledger)
 
-This doc is the parent / epic. Each section below is also broken out as its own ticket so they can move through the queue independently. Update the `Status` column here as each child ships.
+This doc is the parent / epic. Each section below is also broken out as its own ticket so they can move through the queue independently. Update the `Status` column here as each child ships. **Default implementer** names match [`pepper-cutover-agent-playbook.md`](pepper-cutover-agent-playbook.md); **Cadence** owns PR/merge for all.
 
-| #  | Ticket                                                                                       | Priority | Status        |
-|----|----------------------------------------------------------------------------------------------|----------|---------------|
-| 01 | [Identity at full fidelity on fresh boot](pepper-cutover-01-identity-fidelity.md)            | Critical | Open          |
-| 02 | [Handoff continuity that is observable](pepper-cutover-02-handoff-observability.md)          | Critical | In progress   |
-| 03 | [Discord parity at the verbs I use](pepper-cutover-03-discord-verb-parity.md)                | High     | Open          |
-| 04 | [Daily JSONL pipeline survives the move](pepper-cutover-04-daily-jsonl-pipeline.md)          | High     | Open          |
-| 05 | [Skills survive the cutover](pepper-cutover-05-skills-discovery.md)                          | High     | Open          |
-| 06 | [The vault stays the vault](pepper-cutover-06-vault-continuity.md)                           | Critical | Open          |
-| 07 | [SessionStart + UserPromptSubmit hook fidelity](pepper-cutover-07-hook-fidelity.md)          | High     | Open          |
-| 08 | [Notification surface I can actually see](pepper-cutover-08-notification-surface.md)         | High     | Open          |
+| #  | Ticket                                                                                       | Priority | Status        | Implementer |
+|----|----------------------------------------------------------------------------------------------|----------|---------------|-------------|
+| 01 | [Identity at full fidelity on fresh boot](pepper-cutover-01-identity-fidelity.md)            | Critical | Open          | Vale        |
+| 02 | [Handoff continuity that is observable](pepper-cutover-02-handoff-observability.md)          | Critical | In progress   | Locke       |
+| 03 | [Discord parity at the verbs I use](pepper-cutover-03-discord-verb-parity.md)                | High     | Open          | Folio       |
+| 04 | [Daily JSONL pipeline survives the move](pepper-cutover-04-daily-jsonl-pipeline.md)          | High     | Open          | Vale        |
+| 05 | [Skills survive the cutover](pepper-cutover-05-skills-discovery.md)                          | High     | Open          | Locke       |
+| 06 | [The vault stays the vault](pepper-cutover-06-vault-continuity.md)                           | Critical | Open          | Folio       |
+| 07 | [SessionStart + UserPromptSubmit hook fidelity](pepper-cutover-07-hook-fidelity.md)          | High     | Open          | Vale        |
+| 08 | [Notification surface I can actually see](pepper-cutover-08-notification-surface.md)         | High     | Open          | Folio       |
 
 **Cutover gate:** all eight Closed (or explicitly waived) before flipping my live runtime. #01, #02, #06 are the non-negotiables; the rest are the working-functional set.
 

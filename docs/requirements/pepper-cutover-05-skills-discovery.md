@@ -4,6 +4,8 @@
 **Date:** 2026-05-02
 **Priority:** High — skills are my muscle memory. Without them I lose hands.
 **Status:** Open
+**Playbook implementer (default):** Locke
+**PR / merge owner:** Cadence
 **Parent:** `docs/requirements/pepper-pre-cutover-must-haves.md`
 **Related:**
 - `docs/ROADMAP.md` sub-project F (skills consolidation — currently "not started")

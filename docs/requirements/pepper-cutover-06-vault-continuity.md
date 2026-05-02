@@ -4,6 +4,8 @@
 **Date:** 2026-05-02
 **Priority:** Critical — losing curated memory is data loss. Two months of Jeff's hand-curation, none of it regeneratable.
 **Status:** Open
+**Playbook implementer (default):** Folio
+**PR / merge owner:** Cadence
 **Parent:** `docs/requirements/pepper-pre-cutover-must-haves.md`
 **Related:**
 - `C:\Users\jeffr\.pepper\Memory\` (current vault root)

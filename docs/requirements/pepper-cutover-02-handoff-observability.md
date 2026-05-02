@@ -4,6 +4,8 @@
 **Date:** 2026-05-02
 **Priority:** Critical — silent handoff failure is the failure mode I'm most afraid of.
 **Status:** In progress (Jeff confirmed 2026-05-02 the new shape is being worked on a worktree)
+**Playbook implementer (default):** Locke
+**PR / merge owner:** Cadence
 **Parent:** `docs/requirements/pepper-pre-cutover-must-haves.md`
 **Related:**
 - `docs/requirements/pepper-handoff-writer-bugfix.md` (predecessor; written before the bus-message redesign)

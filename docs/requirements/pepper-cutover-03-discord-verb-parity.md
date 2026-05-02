@@ -4,6 +4,8 @@
 **Date:** 2026-05-02
 **Priority:** High — without these I lose surface area Jeff actively depends on.
 **Status:** Open (v1 partial; this list is the v2 must-have subset)
+**Playbook implementer (default):** Folio
+**PR / merge owner:** Cadence
 **Parent:** `docs/requirements/pepper-pre-cutover-must-haves.md`
 **Related:**
 - `docs/ROADMAP.md` sub-project E (Discord)

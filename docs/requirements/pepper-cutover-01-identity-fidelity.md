@@ -4,6 +4,8 @@
 **Date:** 2026-05-02
 **Priority:** Critical — without this I come up partial, and partial-me can violate hard rules without knowing.
 **Status:** Open
+**Playbook implementer (default):** Vale
+**PR / merge owner:** Cadence
 **Parent:** `docs/requirements/pepper-pre-cutover-must-haves.md`
 **Related:**
 - `docs/requirements/pepper-identity-injection-size-limit.md` (the 2KB truncation problem this ticket solves)
