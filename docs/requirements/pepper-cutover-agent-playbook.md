@@ -13,10 +13,22 @@ Assume **other implementers are touching the same repo**. Prefer small, reviewab
 
 ---
 
+## Communication with Cadence (**PR comments only**)
+
+There are **no side channels** for cutover coordination: no DM, no separate “tell Cadence in chat.”
+
+- **Default:** Vale, Locke, and Folio talk to **Cadence** only by posting on the **GitHub PR** (comments on the `feat/cutover-*` branch’s PR, including review threads).
+- **Fallback:** a **file in the repo** is allowed only when a PR thread truly cannot be used; if you do that, still link the commit or path in the PR once it exists so Cadence has one place to look.
+- **Cadence** replies on the same PR (approve, request changes, merge notes, stack instructions).
+
+Full protocol summary: [`pepper-cutover-cadence-queue.md`](pepper-cutover-cadence-queue.md) (Cadence runbook — name is legacy).
+
+---
+
 ## Who picks the ticket? (Agents do not “just know”)
 
 - **Default:** an implementer only starts work when **their name** is in **Assignee** for that row and they move **Status** to `Claimed` when they begin.
-- **Exception:** Jeff (or **Cadence**) explicitly reassigns in chat — update the table to match.
+- **Exception:** Jeff (or **Cadence**) reassigns by editing the playbook on **`main`** (doc PR) or by a **comment on the relevant cutover PR** — mirror that into the table.
 - The **dependency diagrams** below are for **merge sequencing and risk**, not for guessing ownership. If **your name** is not on any row you intend to work, **stop and ask** Jeff (or Cadence) to assign before coding.
 
 ---
@@ -80,17 +92,25 @@ Then install deps if needed (`uv sync` in `packages/core`, etc. — follow exist
 - Read the **ticket spec** linked in the table (source of truth for “done”).
 - Read **parent / related** docs linked from that ticket (especially the pre-cutover epic and daemon contract when touching handoff).
 
-### 4) Commit and push; hand off to **Cadence**
+### 4) Commit and push; hand off to **Cadence** (PR comment)
 
 - **Commit messages:** imperative mood, scoped prefix, explain *why* when non-obvious.
 - **Push** your `feat/cutover-NN-...` branch to `origin`.
 - **Do not merge** unless Jeff explicitly overrides this playbook.
-- **Signal Cadence (required):** append a row to **[`pepper-cutover-cadence-queue.md`](pepper-cutover-cadence-queue.md)** under **Open signals** (same PR as your change is best). Set playbook **Status** to `PR open` and put the PR URL in **Notes** once Cadence has opened the PR (Cadence can fill that).
-- Paste the **Handoff template** (below) to Cadence in chat if Jeff uses a side channel.
+- **Signal Cadence (required):** post **one top-level PR comment** on that branch’s PR using the **Implementer → Cadence handoff** template below (same PR as your commits — open a **draft PR** early if you need Cadence before you are “finished”). Cadence is not notified anywhere else.
+- **Cadence** will set playbook **Status** to `PR open` and **Notes** to the PR URL when she records the queue (small doc PR to `main` is fine).
+
+### 4b) After you finish a ticket — check your PRs (**required**)
+
+Before you **Claim** the next cutover row or start new work:
+
+1. List **your** open PRs for this workstream (`feat/cutover-*` heads you own).
+2. Read **every** comment thread from **Cadence** (reviews, “changes requested,” merge follow-ups). **Rework = new commits on the same PR** until Cadence merges or explicitly clears you.
+3. Only then treat the prior ticket as fully handed off.
 
 ### 5) After your PR merges
 
-- Mark the ticket row **Merged** (or clear Assignee) in the table below.
+- Mark the ticket row **Merged** (or clear Assignee) in the table below (Cadence or Jeff updates playbook via `main`).
 - Remove or archive the worktree when idle:
 
 ```powershell
@@ -107,8 +127,8 @@ git branch -d feat/cutover-02-handoff-observability   # optional local cleanup
 2. **Do not share branches** between implementers.
 3. **Partition by area** when you can (Discord vs hooks vs daily pipeline) to reduce merge conflicts.
 4. If two tickets **must** touch the same hot files, **serialize** (one assignee / one PR at a time) instead of parallelizing.
-5. **PR agent owns merge order** for dependencies (e.g. notification surface vs handoff observability). Implementers should not “guess” landing order beyond what the specs say.
-6. **Conflict policy:** whoever is on the **child** branch in a stack usually rebases onto the updated parent after the parent merges; PR agent coordinates if unclear.
+5. **Cadence** owns merge order for dependencies (e.g. notification surface vs handoff observability). Implementers should not “guess” landing order beyond what the specs say; Cadence states stack decisions **in PR comments**.
+6. **Conflict policy:** whoever is on the **child** branch in a stack usually rebases onto the updated parent after the parent merges; **Cadence** coordinates in the **child PR** comments.
 
 ---
 
@@ -211,7 +231,7 @@ flowchart TB
 | [`pepper-handoff-writer-bugfix.md`](pepper-handoff-writer-bugfix.md) | Predecessor notes for handoff — **#02** |
 | [`docs/examples/pepper-agent-core.yaml`](../examples/pepper-agent-core.yaml) | Example pipeline wiring — **#07**, parts of **#01** |
 | [`docs/ROADMAP.md`](../ROADMAP.md) | Discord / skills / pipeline roadmap references |
-| [`pepper-cutover-cadence-queue.md`](pepper-cutover-cadence-queue.md) | **Cadence** polling + implementer handoff signals |
+| [`pepper-cutover-cadence-queue.md`](pepper-cutover-cadence-queue.md) | **Cadence** runbook — PR-only comms (legacy filename) |
 
 **Dependency hints (not a substitute for reading specs):** #08 partially gates #02 (“ready” must be visible). #04 relates to #05 (summaries → skills). #07 references #01/#02 for content vs firing.
 
@@ -235,22 +255,26 @@ flowchart TB
 | 08 | [`pepper-cutover-08-notification-surface.md`](pepper-cutover-08-notification-surface.md) | `feat/cutover-08-notification-surface` | **Folio** | Unassigned | Partially gates **#02** “done” path |
 | Daemon contract | [`pepper-handoff-daemon-contract.md`](pepper-handoff-daemon-contract.md) | _(same branch as #02 unless split)_ | **Locke** | Unassigned | Same workstream as **#02** |
 
-**Rules:** Each implementer keeps **one** row in `Claimed` or `PR open` at a time unless Jeff expands WIP. **Cadence** polls **[`pepper-cutover-cadence-queue.md`](pepper-cutover-cadence-queue.md)** and open `feat/cutover-*` PRs (see that file for `gh` examples).
+**Rules:** Each implementer keeps **one** row in `Claimed` or `PR open` at a time unless Jeff expands WIP. **Cadence** polls **`gh pr list`** for `feat/cutover-*` and reads **PR comments** (see runbook for filter example).
 
 ---
 
 ## Cadence — PR agent checklist (**Cadence**)
 
-1. Poll **[`pepper-cutover-cadence-queue.md`](pepper-cutover-cadence-queue.md)** (`git pull`) and **`gh pr list`** for `feat/cutover-*` (see queue doc for a filter example).
-2. Confirm each PR has: ticket id, what changed, how to verify, and declared dependencies.
-3. Choose **merge vs stack** for dependent branches; retarget GitHub PR bases as needed.
-4. Land **parent-first** in a stack; ping implementer for rebase after each merge.
-5. After merge: move the implementer’s signal row to **Resolved** in the queue file; set playbook **Status** to `Merged` and clear or rotate **Assignee** per Jeff.
-6. Keep the **epic table** in [`pepper-pre-cutover-must-haves.md`](pepper-pre-cutover-must-haves.md) accurate when a child truly ships (per that doc’s intent).
+1. Poll open **`feat/cutover-*`** PRs (`gh pr list` — see [`pepper-cutover-cadence-queue.md`](pepper-cutover-cadence-queue.md)) and read **all new comments / reviews** on those PRs.
+2. Confirm each PR has (in body or an implementer comment): ticket id, what changed, how to verify, and declared dependencies — use the **Implementer → Cadence handoff** template if missing.
+3. Choose **merge vs stack** for dependent branches; state decisions **in a PR comment** on the affected PR(s).
+4. Land **parent-first** in a stack; ask for rebase **via comment** on the child PR.
+5. **If CI fails or the PR is not mergeable:** post the **Cadence → implementer rework** template (below) as a **PR comment** or formal **Request changes** review with the same fields in the body.
+6. After merge: update playbook **Status** / **Notes** / epic child **Status** (small PR to `main` or combined doc update per Jeff).
 
 ---
 
-## Handoff template (paste into PR description or chat to **Cadence**)
+## PR comment templates
+
+### Implementer → Cadence (handoff — post as a **PR comment**)
+
+Paste this into the **PR for `feat/cutover-NN-…`** (one comment per handoff is enough; you may also put a copy in the PR description when you first open it).
 
 ```text
 To: Cadence
@@ -263,6 +287,22 @@ Risk: (low / medium / high)
 Verified: (commands you ran, e.g. uv run pytest packages/core/tests/...)
 Cadence: (open PR | merge when green | retarget stack | other)
 Follow-ups: (optional)
+```
+
+### Cadence → implementer (rework / not ready to merge — post as **PR comment** or Request changes)
+
+Use when CI is red, review finds issues, conflicts need a rebase, or the PR does not meet the ticket’s “done.” Be specific so the implementer does not need a side channel.
+
+```text
+To: Vale | Locke | Folio
+From: Cadence
+PR: (number + link)
+Status: NOT MERGING | CHANGES REQUESTED
+Reason: (CI failed | failing tests | spec gap | conflict | risk — pick one or more)
+Details:
+- (bullet: what is wrong or what failed)
+- (bullet: expected fix or rebase target)
+Next: (push fixes on this branch | rebase onto main | split PR — be explicit)
 ```
 
 This file lives next to the specs: [`pepper-cutover-agent-playbook.md`](pepper-cutover-agent-playbook.md).

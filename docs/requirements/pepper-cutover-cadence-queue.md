@@ -1,43 +1,34 @@
-# Cadence queue — handoff signals for the PR agent
+# Pepper cutover — Cadence runbook (PR comments only)
 
-**PR agent:** **Cadence** (opens PRs, merge order, stacked bases, CI triage).  
-**Implementers:** **Vale**, **Locke**, **Folio** (code + tests; do not self-merge to `main`).
+**Cadence** = PR / merge agent. **Vale**, **Locke**, **Folio** = implementers.
 
-This file is the **pollable inbox** on `main`: Cadence runs `git pull` and reads **Open signals**. Implementers append a row when they need Cadence (see below).
+There are **no side channels** (no separate chat thread for cutover handoffs). The only supported surfaces are:
+
+1. **GitHub PR comments** on the relevant `feat/cutover-*` PR (**default — use this**).
+2. **A file in the repo** (only if PR discussion is impossible, e.g. no PR exists yet — rare; prefer opening a draft PR and commenting there).
+
+Day-to-day comms for this workstream stay **in the PR**: implementers post the **handoff** template as a comment; Cadence posts **merge / fail / rework** using the templates in [`pepper-cutover-agent-playbook.md`](pepper-cutover-agent-playbook.md).
 
 ---
 
 ## How Cadence polls
 
-Use any combination:
+1. **Open PRs:** `gh pr list` filtered to `feat/cutover-*` (see playbook for an example `jq` filter).
+2. **PR conversation:** read **comments and review threads** on those PRs — that is the inbox.
+3. **Playbook** [`pepper-cutover-agent-playbook.md`](pepper-cutover-agent-playbook.md): **Notes** / **Status** when Cadence updates the ledger after merge (via a small follow-up PR to `main`, or combined with another doc PR Jeff approves).
 
-1. **Open PRs (primary):** branches matching `feat/cutover-*` (and related stacks):
-
-   ```bash
-   gh pr list --repo jeffrichley/agent_core --state open --json number,title,headRefName,url \
-     --jq '.[] | select(.headRefName|test("cutover")) | "\(.number)\t\(.headRefName)\t\(.title)\t\(.url)"'
-   ```
-
-2. **This file:** after `git pull origin main`, read **Open signals** — newest rows first.
-
-3. **Playbook assignment table** in [`pepper-cutover-agent-playbook.md`](pepper-cutover-agent-playbook.md): **Notes** column when it contains `PR #…` or a GitHub PR URL (Cadence fills that in when the PR exists).
+Cadence does **not** maintain a separate queue table in this file.
 
 ---
 
-## Open signals (append new rows at the top)
+## Implementers (Vale / Locke / Folio)
 
-Implementer: when your branch is **pushed** and you need Cadence (open PR, retarget stack, merge after green CI, etc.), **add one row** in the same PR as your work (preferred: last commit before you hand off), or open a tiny docs-only PR that only appends here.
-
-| ISO UTC | Agent | Cutover | Branch | Need from Cadence |
-|---------|-------|---------|--------|-------------------|
-| _(none yet)_ | | | | |
-
-**Row contract:** `Need from Cadence` is one of: `open PR`, `merge when green`, `retarget stack to main`, `resolve conflict with …`, `draft ready for review`, etc.
+- When you need Cadence: open the PR (or draft), then post **one PR comment** using the **Implementer → Cadence handoff** block from the playbook (same text every time).
+- **After you think a ticket is “done”:** before you start the next ticket, **re-open every open PR you still have** under `feat/cutover-*` and read **all** comments from Cadence (reviews, change requests, merge notes). Rework lives in the same PR until Cadence merges or explicitly hands it back.
 
 ---
 
-## Resolved (Cadence moves rows here after handling)
+## Cadence
 
-| ISO UTC | Agent | Cutover | Branch / PR | Outcome |
-|---------|-------|---------|-------------|---------|
-| _(none yet)_ | | | | |
+- Reply on the PR: **approve / merge**, **request changes** (use the **Cadence → implementer rework** template from the playbook), or **comment** with stack / CI instructions.
+- After merge: update playbook assignment **Status** / **Notes** when you touch the ledger (per playbook checklist).
