@@ -9,6 +9,8 @@ There are **no side channels** (no separate chat thread for cutover handoffs). T
 
 Day-to-day comms for this workstream stay **in the PR**: implementers post the **handoff** template as a comment; Cadence posts **merge / fail / rework** using the templates in [`pepper-cutover-agent-playbook.md`](pepper-cutover-agent-playbook.md).
 
+**Finding requirement docs:** see [`README.md`](README.md) (reading order + directory index).
+
 ---
 
 ## How Cadence polls

@@ -2,6 +2,8 @@
 
 **Purpose:** Tell any coding agent **how** to work on Pepper cutover tickets, **which specs exist**, and **how to record what it picked up**. Default **Assignee** names are filled below; Jeff (or **Cadence**) may reassign.
 
+**Index of this whole directory:** [`README.md`](README.md) — reading order, how to discover files without reading every spec, and a one-line summary of **already-implemented / partial** work (full rules in **§3b** below).
+
 **People model (named roster):**
 
 - **Vale**, **Locke**, **Folio** — implementers (code, tests, PR-ready branches). They do **not** decide global merge order and do **not** merge to `main` unless Jeff explicitly overrides this playbook.
@@ -57,6 +59,21 @@ If Superpowers is **not** installed in your host, still mirror the **same discip
 
 ---
 
+## How to read `docs/requirements/` (you are not expected to memorize every file)
+
+Agents find the right specs by **following links**, not by reading the directory alphabetically.
+
+1. **Start with** [`README.md`](README.md) in this folder — it lists every requirements file and the **recommended reading order**.
+2. **Then this playbook** (you are here) for process and **§3b** when behavior may already exist on `main`.
+3. **Open only your assigned ticket** (e.g. `pepper-cutover-04-…md`). Treat it as the contract for “done.”
+4. **Open every doc linked from that ticket** — frontmatter **Related** / **Parent**, and any `…md` / `…yaml` links in the body. Those links are the project’s way of saying “read these before you ship.”
+5. **Skim the epic** [`pepper-pre-cutover-must-haves.md`](pepper-pre-cutover-must-haves.md) for your row’s context.
+6. **Optional:** list the `docs/requirements/` directory when you onboard or when specs change, so new filenames are visible — still **skip** files that are not linked and not listed as relevant in [`README.md`](README.md) unless Jeff or Cadence assigns them.
+
+If something looks relevant but is not linked, **ask in a PR comment** (Cadence or Jeff) before expanding scope.
+
+---
+
 ## Non-negotiable workflow — one ticket, one worktree, one branch
 
 Each implementer works **one active ticket at a time** from a **dedicated git worktree** so parallel agents do not stomp the same working tree.
@@ -95,6 +112,8 @@ Then install deps if needed (`uv sync` in `packages/core`, etc. — follow exist
 ### 3b) Already implemented or only partly done?
 
 Several cutover items may already be **partially or fully built** on `main` (example configs, hooks, or endpoints landed ahead of the doc). That is normal. **Do not re-implement** behavior that already satisfies the spec.
+
+This section is also summarized for quick orientation in [`README.md`](README.md) (“When work might already be on `main`”); the playbook here stays the **authoritative** checklist.
 
 **Before you write a lot of code:**
 
@@ -220,6 +239,8 @@ flowchart TB
 
 ## Ticket index — all specs in this workstream
 
+For **how to navigate the whole `docs/requirements/` tree** (including files outside this table), see [`README.md`](README.md).
+
 ### Epic (parent)
 
 | Id | Spec |
@@ -250,6 +271,7 @@ flowchart TB
 | [`docs/examples/pepper-agent-core.yaml`](../examples/pepper-agent-core.yaml) | Example pipeline wiring — **#07**, parts of **#01** |
 | [`docs/ROADMAP.md`](../ROADMAP.md) | Discord / skills / pipeline roadmap references |
 | [`pepper-cutover-cadence-queue.md`](pepper-cutover-cadence-queue.md) | **Cadence** runbook — PR-only comms (legacy filename) |
+| [`README.md`](README.md) | **Directory index** — reading order + full file list |
 
 **Dependency hints (not a substitute for reading specs):** #08 partially gates #02 (“ready” must be visible). #04 relates to #05 (summaries → skills). #07 references #01/#02 for content vs firing.
 
