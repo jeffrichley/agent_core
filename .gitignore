@@ -11,6 +11,9 @@ memory-compiler/scripts/flush-context-*.md
 # Handoff writer state (placed alongside handoff files)
 **/handoff-state.json
 
+# Git worktrees (superpowers / parallel feature work)
+.worktrees/
+
 # Agent-core runtime state (handoffs, bus.sqlite, transcripts, etc.)
 .agent-core/
 
