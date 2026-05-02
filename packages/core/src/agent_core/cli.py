@@ -3,6 +3,7 @@
 Commands:
     agent-core hooks run <event>    Execute all tools registered for a hook event.
     agent-core notify <title> <msg> Send a desktop toast notification.
+    agent-core vault plan-dry-run …  Dry-run vault + YAML path audit (cutover #06).
 
 See Also:
     agent_core.hooks.pipeline.Pipeline: The engine that runs the tools.
@@ -18,6 +19,7 @@ from agent_core.bus.cli import app as bus_app
 from agent_core.daemon.cli import app as daemon_app
 from agent_core.email.cli import email_app
 from agent_core.hooks.pipeline import Pipeline
+from agent_core.vault_migration_plan import vault_app
 
 app = typer.Typer(
     name="agent-core",
@@ -34,6 +36,7 @@ app.add_typer(hooks_app, name="hooks")
 app.add_typer(email_app, name="email")
 app.add_typer(bus_app, name="bus")
 app.add_typer(daemon_app, name="daemon")
+app.add_typer(vault_app, name="vault")
 
 _HOOK_CONFIG_OPTION = typer.Option(
     "agent_core.yaml",
