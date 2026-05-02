@@ -21,9 +21,9 @@ import time
 import uuid
 from collections import OrderedDict
 from collections.abc import Callable
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Literal
 from urllib.parse import unquote, urlparse
 
 from agent_core.bus.envelope import (
@@ -33,7 +33,6 @@ from agent_core.bus.envelope import (
     TextMessagePayload,
 )
 from agent_core.bus.protocol import EndpointUnavailable
-
 from agent_core_discord.access import AccessConfig, InboundContext, gate_message, load_access_config
 from agent_core_discord.args import (
     _DownloadAttachmentsArgs,
@@ -44,6 +43,7 @@ from agent_core_discord.args import (
     _ReactArgs,
     _SendArgs,
 )
+from agent_core_discord.chunking import smart_chunk_discord
 
 if TYPE_CHECKING:
     from agent_core.bus.handle import BusHandle
@@ -53,7 +53,7 @@ log = logging.getLogger(__name__)
 
 # Module-level registry. Lets discord.py event handlers look up the live
 # endpoint by name. Populated in start(), drained in stop().
-_active_endpoints: dict[str, "DiscordEndpoint"] = {}
+_active_endpoints: dict[str, DiscordEndpoint] = {}
 
 
 def _default_attachments_dir(endpoint_name: str) -> Path:
@@ -389,12 +389,17 @@ class DiscordEndpoint:
         if envelope.kind == "TextMessage":
             try:
                 result = await self._deliver_text_message(envelope)
-                await self._reply(envelope, json.dumps(result))
+                urg: Literal["green", "yellow", "red"] = (
+                    "yellow"
+                    if isinstance(result, dict) and result.get("status") == "partial"
+                    else "green"
+                )
+                await self._reply(envelope, json.dumps(result), urgency=urg)
             except _ToolError as exc:
-                await self._reply(envelope, f"error: {exc}")
+                await self._reply(envelope, f"error: {exc}", urgency="yellow")
             except Exception as exc:
                 log.exception("discord TextMessage delivery raised")
-                await self._reply(envelope, f"error: {exc}")
+                await self._reply(envelope, f"error: {exc}", urgency="yellow")
             await self._handle.ack(envelope.id)
             return
         if envelope.kind != "ToolInvocation":
@@ -407,12 +412,17 @@ class DiscordEndpoint:
 
         try:
             result = await self._dispatch(tool, args)
-            await self._reply(envelope, json.dumps(result))
+            urg2: Literal["green", "yellow", "red"] = (
+                "yellow"
+                if isinstance(result, dict) and result.get("status") == "partial"
+                else "green"
+            )
+            await self._reply(envelope, json.dumps(result), urgency=urg2)
         except _ToolError as exc:
-            await self._reply(envelope, f"error: {exc}")
+            await self._reply(envelope, f"error: {exc}", urgency="yellow")
         except Exception as exc:
             log.exception("discord tool '%s' raised", tool)
-            await self._reply(envelope, f"error: {exc}")
+            await self._reply(envelope, f"error: {exc}", urgency="yellow")
 
         await self._handle.ack(envelope.id)
 
@@ -472,7 +482,13 @@ class DiscordEndpoint:
             return await self._get_channel_info(_GetChannelInfoArgs(**args))
         raise _ToolError(f"unknown tool '{tool}'")
 
-    async def _reply(self, incoming: Envelope, note: str) -> None:
+    async def _reply(
+        self,
+        incoming: Envelope,
+        note: str,
+        *,
+        urgency: Literal["green", "yellow", "red"] = "green",
+    ) -> None:
         assert self._handle is not None
         ack = Envelope(
             id=uuid.uuid4().hex,
@@ -481,7 +497,8 @@ class DiscordEndpoint:
             to=incoming.from_,
             kind="Acknowledgment",
             payload=AcknowledgmentPayload(of=incoming.id, note=note),
-            created_at=datetime.now(timezone.utc),
+            urgency=urgency,
+            created_at=datetime.now(UTC),
         )
         try:
             await self._handle.publish(ack)
@@ -621,7 +638,7 @@ class DiscordEndpoint:
                 payload=TextMessagePayload(text=message.content or ""),
                 metadata=metadata,
                 urgency=urgency,
-                created_at=datetime.now(timezone.utc),
+                created_at=datetime.now(UTC),
             )
             assert self._handle is not None
             self._remember_inbound_mapping(
@@ -669,7 +686,7 @@ class DiscordEndpoint:
                 to=self.target,
                 kind="Event",
                 payload=EventPayload(type="discord.reaction_add", data=data),
-                created_at=datetime.now(timezone.utc),
+                created_at=datetime.now(UTC),
             )
             assert self._handle is not None
             await self._handle.publish(env)
@@ -843,13 +860,57 @@ class DiscordEndpoint:
             send_kwargs["reference"] = reference
         if files is not None:
             send_kwargs["files"] = files
-        new_msg = await ch.send(args.text, **send_kwargs)
 
-        # Clear the eyes if this was a reply to a tracked inbound.
+        if args.text is None:
+            new_msg = await ch.send(args.text, **send_kwargs)
+            if args.reply_to:
+                await self._clear_pending_ack(ch, args.reply_to)
+            mid = str(new_msg.id)
+            return {"status": "sent", "message_id": mid, "message_ids": [mid]}
+
+        try:
+            text_parts = smart_chunk_discord(args.text)
+        except ValueError as exc:
+            raise _ToolError(str(exc)) from exc
+
+        message_ids: list[str] = []
+        last_error: Exception | None = None
+        n = len(text_parts)
+        for i, part in enumerate(text_parts):
+            is_first = i == 0
+            is_last = i == n - 1
+            send_part: dict[str, Any] = {}
+            if embeds is not None and is_last:
+                send_part["embeds"] = embeds
+            if reference is not None and is_first:
+                send_part["reference"] = reference
+            if files is not None and is_first:
+                send_part["files"] = files
+            try:
+                new_msg = await ch.send(part, **send_part)
+            except Exception as exc:
+                last_error = exc
+                break
+            message_ids.append(str(new_msg.id))
+
+        if last_error is not None and message_ids:
+            if args.reply_to:
+                await self._clear_pending_ack(ch, args.reply_to)
+            return {
+                "status": "partial",
+                "message_ids": message_ids,
+                "error": str(last_error),
+            }
+        if last_error is not None:
+            raise _ToolError(f"send failed: {last_error}") from last_error
+
         if args.reply_to:
             await self._clear_pending_ack(ch, args.reply_to)
 
-        return {"status": "sent", "message_id": str(new_msg.id)}
+        out: dict[str, Any] = {"status": "sent", "message_ids": message_ids}
+        if message_ids:
+            out["message_id"] = message_ids[-1]
+        return out
 
     async def _edit(self, args: _EditArgs) -> dict:
         if args.text is None and not args.embeds:

@@ -90,6 +90,7 @@ async def test_send_publishes_text_to_channel(monkeypatch):
         result = json.loads(ack.payload.note)
         assert result["status"] == "sent"
         assert "message_id" in result
+        assert result["message_ids"] == [result["message_id"]]
     finally:
         await ep.stop()
 
@@ -180,6 +181,7 @@ async def test_send_validation_error_returns_error_ack(monkeypatch):
         await ep.deliver(env)
         ack = [e for e in handle.published if e.kind == "Acknowledgment"][0]
         assert ack.payload.note.lower().startswith("error:")
+        assert ack.urgency == "yellow"
     finally:
         await ep.stop()
 
@@ -288,6 +290,60 @@ async def test_unknown_tool_returns_error(monkeypatch):
         await ep.deliver(env)
         ack = [e for e in handle.published if e.kind == "Acknowledgment"][0]
         assert "unknown tool" in ack.payload.note.lower()
+        assert ack.urgency == "yellow"
+    finally:
+        await ep.stop()
+
+
+@pytest.mark.asyncio
+async def test_send_splits_long_text_into_multiple_messages(monkeypatch):
+    ep, handle, fake = await _started(monkeypatch)
+    ch = _FakeChannel(id="200")
+    fake.add_channel(ch)
+    long_text = "x" * 2500
+    try:
+        env = _envelope(
+            "e1",
+            "agent-test",
+            "discord-test",
+            _toolcall("send", {"channel_id": "200", "text": long_text}),
+        )
+        await ep.deliver(env)
+        assert len(ch.sent) >= 2
+        for row in ch.sent:
+            c = row.get("content") or ""
+            assert len(c) <= 2000
+        ack = [e for e in handle.published if e.kind == "Acknowledgment"][0]
+        result = json.loads(ack.payload.note)
+        assert result["status"] == "sent"
+        assert len(result["message_ids"]) == len(ch.sent)
+        assert result["message_id"] == result["message_ids"][-1]
+    finally:
+        await ep.stop()
+
+
+@pytest.mark.asyncio
+async def test_textmessage_long_payload_splits(monkeypatch):
+    ep, handle, fake = await _started(monkeypatch)
+    ch = _FakeChannel(id="200")
+    fake.add_channel(ch)
+    try:
+        env = Envelope(
+            id="e",
+            correlation_id=uuid.uuid4().hex,
+            from_="agent-test",
+            to="discord-test",
+            kind="TextMessage",
+            payload=TextMessagePayload(text="z" * 2200),
+            metadata={"discord": {"channel_id": "200"}},
+            created_at=datetime.now(timezone.utc),
+        )
+        await ep.deliver(env)
+        assert len(ch.sent) >= 2
+        ack = [e for e in handle.published if e.kind == "Acknowledgment"][0]
+        assert ack.urgency == "green"
+        result = json.loads(ack.payload.note)
+        assert len(result["message_ids"]) >= 2
     finally:
         await ep.stop()
 
@@ -317,6 +373,7 @@ async def test_textmessage_uses_discord_metadata_channel_and_replies(monkeypatch
         ack = [e for e in handle.published if e.kind == "Acknowledgment"][0]
         result = json.loads(ack.payload.note)
         assert result["status"] == "sent"
+        assert "message_ids" in result
     finally:
         await ep.stop()
 
@@ -352,6 +409,7 @@ async def test_textmessage_uses_default_outbound_channel(monkeypatch):
         ack = [e for e in handle.published if e.kind == "Acknowledgment"][0]
         result = json.loads(ack.payload.note)
         assert result["status"] == "sent"
+        assert "message_ids" in result
     finally:
         await ep.stop()
 
@@ -373,6 +431,7 @@ async def test_textmessage_without_channel_returns_error(monkeypatch):
         ack = [e for e in handle.published if e.kind == "Acknowledgment"][0]
         assert ack.payload.note.lower().startswith("error:")
         assert "channel_id" in ack.payload.note
+        assert ack.urgency == "yellow"
     finally:
         await ep.stop()
 
