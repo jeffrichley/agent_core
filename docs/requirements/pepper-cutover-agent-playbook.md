@@ -92,6 +92,24 @@ Then install deps if needed (`uv sync` in `packages/core`, etc. — follow exist
 - Read the **ticket spec** linked in the table (source of truth for “done”).
 - Read **parent / related** docs linked from that ticket (especially the pre-cutover epic and daemon contract when touching handoff).
 
+### 3b) Already implemented or only partly done?
+
+Several cutover items may already be **partially or fully built** on `main` (example configs, hooks, or endpoints landed ahead of the doc). That is normal. **Do not re-implement** behavior that already satisfies the spec.
+
+**Before you write a lot of code:**
+
+1. **Map the spec to the repo** — search packages and `docs/examples/` for the tools, events, and filenames the ticket names. Skim recent `main` history if helpful.
+2. **Check “Done looks like” literally** — list each acceptance bullet and mark it **met / partial / missing** with evidence (command output, file path, or test name). Put that matrix in the **PR description** or a **PR comment** so **Cadence** can review without guessing.
+3. Then choose one path:
+
+| Situation | What to do |
+|-----------|------------|
+| **All acceptance criteria met** on current `main` | Open a small PR (still `feat/cutover-NN-…`) that **only** adds or tightens **tests**, **docs**, or **status** updates (ticket + epic + playbook rows) so “done” is **auditable** and the ledger matches reality. Hand off to **Cadence** with **Verified** filled in; the PR may be merge-only after her review. |
+| **Partially met** | Same branch: implement **only the gaps**. Keep the PR description’s **gap list** in sync as you close items. Avoid scope creep beyond the ticket. |
+| **Wrong shape** (built behavior diverges from the spec) | Prefer **one PR** that aligns behavior to the spec (or propose a spec change in a **separate** doc PR Jeff agrees to) — do not silently redefine “done” in code only. |
+
+**Cadence:** treat “already done” PRs as first-class — verify the evidence matrix matches the ticket; merge if CI green and no spec drift. **Epic / ticket Status** should move to **Closed** (or equivalent) only when the spec and reality match, not when duplicate code lands.
+
 ### 4) Commit and push; hand off to **Cadence** (PR comment)
 
 - **Commit messages:** imperative mood, scoped prefix, explain *why* when non-obvious.
