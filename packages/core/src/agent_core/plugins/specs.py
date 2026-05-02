@@ -25,21 +25,20 @@ class RunnerServices:
 class AgentCoreSpecs:
     """Hook contracts for discovery and runtime wiring."""
 
-    @hookspec(firstresult=True)
-    def resolve_class(self, class_path: str) -> type[Any] | None:
-        """Return a class for `class_path`, or None to defer."""
+    @hookspec
+    def register_endpoint_types(self) -> dict[str, type[Endpoint]]:
+        """Return endpoint type-id -> class registrations."""
+        raise NotImplementedError
 
-    @hookspec(firstresult=True)
-    def resolve_endpoint_class(self, endpoint_class: str) -> type[Endpoint] | None:
-        """Return an endpoint class for `endpoint_class`, or None to defer."""
+    @hookspec
+    def register_bus_hook_types(self) -> dict[str, type[BusHook]]:
+        """Return bus-hook type-id -> class registrations."""
+        raise NotImplementedError
 
-    @hookspec(firstresult=True)
-    def resolve_bus_hook_class(self, hook_class: str) -> type[BusHook] | None:
-        """Return a bus-hook class for `hook_class`, or None to defer."""
-
-    @hookspec(firstresult=True)
-    def resolve_hook_tool_class(self, tool_class: str) -> type[HookTool] | None:
-        """Return a hook-tool class for `tool_class`, or None to defer."""
+    @hookspec
+    def register_hook_tool_types(self) -> dict[str, type[HookTool]]:
+        """Return hook-tool type-id -> class registrations."""
+        raise NotImplementedError
 
     @hookspec
     def configure_endpoint_instance(

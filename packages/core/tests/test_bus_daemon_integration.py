@@ -32,12 +32,12 @@ http:
   bind_host: 127.0.0.1
   bind_port: 0
 endpoints:
-  - class: agent_core.endpoints.claude_code_mcp.ClaudeCodeMCPEndpoint
+  - type: builtin.claude_code_mcp
     name: agent-test
     description: "test agent for integration"
     params:
       mount: /mcp/agent-test
-  - class: agent_core.endpoints.stub.StubEndpoint
+  - type: builtin.stub
     name: stub
     description: "echo for tests"
 """,

@@ -18,11 +18,11 @@
 
 pipelines:
   SessionStart:
-    - tool: agent_core.hooks.tools.time_injector.TimeInjector
+    - type: builtin.time_injector
       params:
         format: "%A, %B %d, %Y %I:%M %p %Z"
 
-    - tool: agent_core.hooks.tools.identity_injector.IdentityInjector
+    - type: builtin.identity_injector
       params:
         base_path: "C:\\Users\\jeffr\\.pepper\\Memory"
         files:
@@ -31,7 +31,7 @@ pipelines:
           - "pepper/handoff.md"
 
   PreCompact:
-    - tool: agent_core.hooks.tools.handoff_writer.HandoffWriter
+    - type: builtin.handoff_writer
       params:
         output_path: "C:\\Users\\jeffr\\.pepper\\Memory\\pepper\\handoff.md"
         transcript_tail_lines: 200
@@ -39,7 +39,7 @@ pipelines:
         agent_name: "Pepper"
 
   SessionEnd:
-    - tool: agent_core.hooks.tools.handoff_writer.HandoffWriter
+    - type: builtin.handoff_writer
       params:
         output_path: "C:\\Users\\jeffr\\.pepper\\Memory\\pepper\\handoff.md"
         transcript_tail_lines: 200

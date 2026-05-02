@@ -55,7 +55,7 @@ class SessionRegistry(Middleware):
     the spec-defined stable identifier across HTTP requests in a streamable-
     HTTP session; `id(session)` happens to also be stable in stateful mode
     but isn't load-bearing — and using the string makes us robust to clients
-    that genuinely open new logical sessions (most-recent-wins).
+    that genuinely open new logical sessions.
     """
 
     def __init__(self, endpoint: ClaudeCodeMCPEndpoint) -> None:
@@ -130,8 +130,7 @@ class ClaudeCodeMCPEndpoint:
         )
         self._handle: BusHandle | None = None
         self._pending: list[Envelope] = []
-        self._session_active: bool = False  # set true when an MCP session is attached
-        self._active_session: Any = None  # ServerSession, when connected
+        self._sessions: set[Any] = set()
         self._notify_debounce_seconds_by_urgency: dict[str, float] = {
             "red": 0.05,
             "yellow": 0.5,
@@ -148,30 +147,18 @@ class ClaudeCodeMCPEndpoint:
         self._notify_broker = broker
 
     def _register_session(self, session: Any) -> None:
-        """Capture the active ServerSession.
-
-        Most-recent-wins: a new session replaces any prior one. The previous
-        session's `_claim_session.finally:` will eventually run (when its
-        task group cancels) and call `_unregister_session(old_session)`,
-        which is identity-checked and will no-op against the new slot.
-        """
-        replaced = self._active_session is not None and self._active_session is not session
-        self._active_session = session
-        self._session_active = True
-        if replaced:
-            log.info(
-                "endpoint '%s': replaced active session with newer connection",
-                self.name,
-            )
-        else:
-            log.debug("endpoint '%s' captured active session", self.name)
+        """Register a connected ServerSession."""
+        before = len(self._sessions)
+        self._sessions.add(session)
+        if len(self._sessions) != before:
+            log.debug("endpoint '%s' registered session count=%d", self.name, len(self._sessions))
 
     def _unregister_session(self, session: Any) -> None:
-        """Clear the slot if the session matches the one we hold."""
-        if self._active_session is session:
-            self._active_session = None
-            self._session_active = False
-            log.debug("endpoint '%s' released active session", self.name)
+        """Unregister a ServerSession."""
+        before = len(self._sessions)
+        self._sessions.discard(session)
+        if len(self._sessions) != before:
+            log.debug("endpoint '%s' unregistered session count=%d", self.name, len(self._sessions))
 
     async def _call_list_pending(self, batch_window_seconds: int = 0) -> list[dict]:
         """Mailbox view sorted by urgency, optionally batched by sender.
@@ -258,17 +245,15 @@ class ClaudeCodeMCPEndpoint:
         knows direct push isn't available and applies its retry/log semantics.
 
         The broker fan-out is unconditional; the HTTP push leg inside
-        _fire_after_debounce is already guarded by `if self._active_session is
-        not None`, so this path is safe to take with no session attached."""
+        _fire_after_debounce is guarded by the connected session set."""
         self.queue_for_pickup(envelope)
         await self._notify_mail_arrived(envelope.urgency)
-        if not self._session_active:
+        if not self._sessions:
             raise EndpointUnavailable(f"no MCP session connected for {self.name}")
 
     async def stop(self) -> None:
         self._handle = None
-        self._session_active = False
-        self._active_session = None
+        self._sessions.clear()
         if self._debounce_task is not None and not self._debounce_task.done():
             self._debounce_task.cancel()
             try:
@@ -418,32 +403,32 @@ class ClaudeCodeMCPEndpoint:
             except Exception:
                 log.warning("endpoint '%s': broker publish failed", self.name, exc_info=True)
 
-        session = self._active_session
-        if session is None:
+        sessions = list(self._sessions)
+        if not sessions:
             log.info(
                 "endpoint '%s': debounce fired; no active session, skipping HTTP push",
                 self.name,
             )
             return
-        try:
-            message = self._make_channel_notification(summary)
-            log.info(
-                "endpoint '%s': pushing notifications/claude/channel to session %d (count=%d)",
-                self.name,
-                id(session),
-                summary["meta"]["count"],
-            )
-            await session.send_message(message)
-            log.info("endpoint '%s': push to session %d returned", self.name, id(session))
-        except Exception:
-            log.warning(
-                "endpoint '%s': push to active session failed; clearing slot",
-                self.name,
-                exc_info=True,
-            )
-            if self._active_session is session:
-                self._active_session = None
-                self._session_active = False
+        message = self._make_channel_notification(summary)
+        for session in sessions:
+            try:
+                log.info(
+                    "endpoint '%s': pushing notifications/claude/channel to session %d (count=%d)",
+                    self.name,
+                    id(session),
+                    summary["meta"]["count"],
+                )
+                await session.send_message(message)
+                log.info("endpoint '%s': push to session %d returned", self.name, id(session))
+            except Exception:
+                log.warning(
+                    "endpoint '%s': push to session %d failed; unregistering",
+                    self.name,
+                    id(session),
+                    exc_info=True,
+                )
+                self._unregister_session(session)
 
     def _register_tools(self) -> None:
         """Register the bus's MCP tool surface on the FastMCP server."""

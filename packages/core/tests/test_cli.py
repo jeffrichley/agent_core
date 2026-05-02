@@ -16,7 +16,7 @@ def make_config(tmp_path: Path) -> Path:
         "pipelines": {
             "SessionStart": [
                 {
-                    "tool": "agent_core.hooks.tools.time_injector.TimeInjector",
+                    "type": "builtin.time_injector",
                     "params": {"format": "%Y-%m-%d"},
                 }
             ],

@@ -104,6 +104,35 @@ async def test_initialization_gate_opens_after_initialize_response_is_sent():
 
 
 @pytest.mark.asyncio
+async def test_initialization_gate_supports_async_context_manager():
+    """MCP session enters the write stream with ``async with``; wrapper must delegate."""
+
+    class _InnerWithAcm:
+        def __init__(self) -> None:
+            self.entered = False
+            self.exited = False
+
+        async def __aenter__(self) -> _InnerWithAcm:
+            self.entered = True
+            return self
+
+        async def __aexit__(self, *_args: object) -> None:
+            self.exited = True
+
+        async def send(self, _msg: object) -> None:
+            pass
+
+    inner = _InnerWithAcm()
+    initialized = anyio.Event()
+    gated = _InitializationGateWriteStream(inner, initialized)  # type: ignore[arg-type]
+
+    async with gated:
+        assert inner.entered is True
+        assert inner.exited is False
+    assert inner.exited is True
+
+
+@pytest.mark.asyncio
 async def test_sse_pump_waits_for_initialization_before_consuming_events(monkeypatch):
     async def fake_iter_notify_events(*, agent: str, daemon_url: str):
         yield {"content": "INBOX: 1 pending", "meta": {"count": 1}}

@@ -98,6 +98,25 @@ async def test_notify_pushes_summary_when_session_active():
 
 
 @pytest.mark.asyncio
+async def test_notify_push_fans_out_to_all_registered_sessions():
+    ep = ClaudeCodeMCPEndpoint(name="a", mount="/mcp/a")
+    _speed_up_debounce(ep)
+    session_a = _RecordingSession()
+    session_b = _RecordingSession()
+    ep._register_session(session_a)
+    ep._register_session(session_b)
+    ep._pending = [_env("e1", urgency="green")]
+
+    await ep._notify_mail_arrived("green")
+    await asyncio.sleep(0.1)
+
+    assert len(session_a.sent) == 1
+    assert len(session_b.sent) == 1
+    assert _extract_method(session_a.sent[0]) == "notifications/claude/channel"
+    assert _extract_method(session_b.sent[0]) == "notifications/claude/channel"
+
+
+@pytest.mark.asyncio
 async def test_notify_channel_meta_values_are_strings_on_http_push_path():
     ep = ClaudeCodeMCPEndpoint(name="a", mount="/mcp/a")
     _speed_up_debounce(ep)
@@ -172,7 +191,7 @@ async def test_notify_summary_groups_by_sender():
 
 
 @pytest.mark.asyncio
-async def test_notify_clears_session_slot_on_send_failure():
+async def test_notify_unregisters_failed_session_on_send_failure():
     ep = ClaudeCodeMCPEndpoint(name="a", mount="/mcp/a")
     _speed_up_debounce(ep)
     session = _RecordingSession(fail_with=ConnectionError("stream closed"))
@@ -182,9 +201,7 @@ async def test_notify_clears_session_slot_on_send_failure():
     await ep._notify_mail_arrived("green")
     await asyncio.sleep(0.1)
 
-    # Slot must have been cleared so future deliveries fall back to polling.
-    assert ep._active_session is None
-    assert ep._session_active is False
+    assert session not in ep._sessions
 
 
 def test_notify_debounce_defaults_are_urgency_aware():

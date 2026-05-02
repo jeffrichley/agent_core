@@ -55,7 +55,7 @@ def test_start_writes_pid_file_and_stop_kills(tmp_path: Path, monkeypatch: pytes
 bus:
   storage_path: {tmp_path / "bus.sqlite"}
 endpoints:
-  - class: agent_core.endpoints.stub.StubEndpoint
+  - type: builtin.stub
     name: stub
 """,
         encoding="utf-8",

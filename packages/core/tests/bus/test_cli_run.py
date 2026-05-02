@@ -18,7 +18,7 @@ def cfg_path(tmp_path: Path) -> Path:
         "bus": {"storage_path": str(tmp_path / "bus.sqlite")},
         "endpoints": [
             {
-                "class": "agent_core.endpoints.stub.StubEndpoint",
+                "type": "builtin.stub",
                 "name": "stub",
                 "description": "test",
                 "params": {},

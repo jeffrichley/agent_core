@@ -23,18 +23,18 @@ class TestToolResult:
 
 class TestToolConfig:
     def test_create_tool_config(self):
-        config = ToolConfig(tool="agent_core.hooks.tools.time_injector.TimeInjector")
-        assert config.tool == "agent_core.hooks.tools.time_injector.TimeInjector"
+        config = ToolConfig(type="builtin.time_injector")
+        assert config.type == "builtin.time_injector"
         assert config.params == {}
 
     def test_tool_config_with_params(self):
         config = ToolConfig(
-            tool="agent_core.hooks.tools.time_injector.TimeInjector",
+            type="builtin.time_injector",
             params={"format": "%Y-%m-%d"},
         )
         assert config.params == {"format": "%Y-%m-%d"}
 
-    def test_tool_config_requires_tool(self):
+    def test_tool_config_requires_type(self):
         with pytest.raises(ValidationError):
             ToolConfig(params={"format": "%Y-%m-%d"})
 
@@ -44,7 +44,7 @@ class TestPipelineConfig:
         config = PipelineConfig(
             pipelines={
                 "SessionStart": [
-                    ToolConfig(tool="agent_core.hooks.tools.time_injector.TimeInjector"),
+                    ToolConfig(type="builtin.time_injector"),
                 ],
             }
         )
@@ -56,7 +56,7 @@ class TestPipelineConfig:
         assert config.pipelines == {}
 
     def test_multiple_events(self):
-        tool = ToolConfig(tool="some.tool.Class")
+        tool = ToolConfig(type="some.tool.Class")
         config = PipelineConfig(
             pipelines={
                 "SessionStart": [tool, tool],

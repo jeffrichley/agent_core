@@ -23,13 +23,13 @@ def cfg_path(tmp_path: Path) -> Path:
         },
         "endpoints": [
             {
-                "class": "agent_core.endpoints.stub.StubEndpoint",
+                "type": "builtin.stub",
                 "name": "alice",
                 "description": "First test endpoint.",
                 "params": {},
             },
             {
-                "class": "agent_core.endpoints.stub.StubEndpoint",
+                "type": "builtin.stub",
                 "name": "bob",
                 "description": "Second test endpoint.",
                 "params": {},

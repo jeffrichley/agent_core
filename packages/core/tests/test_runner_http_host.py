@@ -16,7 +16,7 @@ async def test_runner_returns_none_http_host_when_no_mcp_endpoints(tmp_path):
 bus:
   storage_path: {tmp_path / "bus.sqlite"}
 endpoints:
-  - class: agent_core.endpoints.stub.StubEndpoint
+  - type: builtin.stub
     name: stub
 """,
         encoding="utf-8",
@@ -38,7 +38,7 @@ http:
   bind_host: 127.0.0.1
   bind_port: 0
 endpoints:
-  - class: agent_core.endpoints.claude_code_mcp.ClaudeCodeMCPEndpoint
+  - type: builtin.claude_code_mcp
     name: agent-test
     params:
       mount: /mcp/agent-test
@@ -60,15 +60,15 @@ async def test_runner_constructs_http_host_with_multiple_mcp_endpoints(tmp_path)
 bus:
   storage_path: {tmp_path / "bus.sqlite"}
 endpoints:
-  - class: agent_core.endpoints.claude_code_mcp.ClaudeCodeMCPEndpoint
+  - type: builtin.claude_code_mcp
     name: agent-pepper
     params:
       mount: /mcp/agent-pepper
-  - class: agent_core.endpoints.claude_code_mcp.ClaudeCodeMCPEndpoint
+  - type: builtin.claude_code_mcp
     name: agent-deb
     params:
       mount: /mcp/agent-deb
-  - class: agent_core.endpoints.stub.StubEndpoint
+  - type: builtin.stub
     name: stub
 """,
         encoding="utf-8",
