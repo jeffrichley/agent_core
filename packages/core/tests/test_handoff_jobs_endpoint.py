@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import json
 from datetime import UTC, datetime
+from unittest.mock import AsyncMock
 
 import httpx
 import pytest
@@ -47,8 +48,10 @@ endpoints:
         await bus.start()
         try:
             endpoint = bus._endpoints_by_name["handoff-jobs"].endpoint
+
             async def _fake_extract(self, req, transcript_text):
                 return "# Handoff\n"
+
             monkeypatch.setattr(
                 type(endpoint),
                 "_extract_handoff",
@@ -147,8 +150,10 @@ endpoints:
         await bus.start()
         try:
             endpoint = bus._endpoints_by_name["handoff-jobs"].endpoint
+
             async def _fake_extract(self, req, transcript_text):
                 return extracted
+
             monkeypatch.setattr(
                 type(endpoint),
                 "_extract_handoff",
@@ -250,10 +255,8 @@ async def test_extract_handoff_success_uses_model_output(monkeypatch):
     )
     expected = "# Handoff Note\n\n- extracted: yes"
 
-    async def _fake_call(self, *, req, transcript_text):
-        return expected
-
-    monkeypatch.setattr(HandoffJobsEndpoint, "_call_agent_sdk", _fake_call)
+    fake_sdk = AsyncMock(return_value=expected)
+    monkeypatch.setattr(endpoint, "_call_agent_sdk", fake_sdk)
 
     actual = await endpoint._extract_handoff(req, "transcript text")
     assert actual == expected
@@ -273,10 +276,8 @@ async def test_extract_handoff_fallback_on_exception(monkeypatch):
         requested_at=datetime.now(UTC),
     )
 
-    async def _raise(*args, **kwargs):
-        raise RuntimeError("sdk boom")
-
-    monkeypatch.setattr(HandoffJobsEndpoint, "_call_agent_sdk", _raise)
+    fake_sdk = AsyncMock(side_effect=RuntimeError("sdk boom"))
+    monkeypatch.setattr(endpoint, "_call_agent_sdk", fake_sdk)
 
     fallback = await endpoint._extract_handoff(req, "transcript text")
     assert fallback.startswith("# Handoff (pepper)")
@@ -382,4 +383,3 @@ endpoints:
             await bus.stop()
     finally:
         await http_host.stop()
-

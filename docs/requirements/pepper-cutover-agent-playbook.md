@@ -287,7 +287,7 @@ For **how to navigate the whole `docs/requirements/` tree** (including files out
 |--------|------|------------------|----------|--------|-------|
 | Pre-cutover epic | [`pepper-pre-cutover-must-haves.md`](pepper-pre-cutover-must-haves.md) | _(n/a — tracking doc)_ | **Cadence** | | Cadence keeps epic child statuses accurate |
 | 01 | [`pepper-cutover-01-identity-fidelity.md`](pepper-cutover-01-identity-fidelity.md) | `feat/cutover-01-identity-fidelity` | **Vale** | Unassigned | |
-| 02 | [`pepper-cutover-02-handoff-observability.md`](pepper-cutover-02-handoff-observability.md) | `feat/cutover-02-handoff-observability` | **Locke** | Unassigned | Pair with daemon row; coordinate **#08** with Folio |
+| 02 | [`pepper-cutover-02-handoff-observability.md`](pepper-cutover-02-handoff-observability.md) | `feat/cutover-02-handoff-observability` | **Locke** | Claimed | Pair with daemon row; coordinate **#08** with Folio |
 | 03 | [`pepper-cutover-03-discord-verb-parity.md`](pepper-cutover-03-discord-verb-parity.md) | `feat/cutover-03-discord-verb-parity` | **Folio** | Unassigned | |
 | 04 | [`pepper-cutover-04-daily-jsonl-pipeline.md`](pepper-cutover-04-daily-jsonl-pipeline.md) | `feat/cutover-04-daily-jsonl-pipeline` | **Vale** | Unassigned | |
 | 05 | [`pepper-cutover-05-skills-discovery.md`](pepper-cutover-05-skills-discovery.md) | `feat/cutover-05-skills-discovery` | **Locke** | Unassigned | |

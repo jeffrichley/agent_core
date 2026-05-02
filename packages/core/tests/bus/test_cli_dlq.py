@@ -102,28 +102,34 @@ class TestDLQ:
 
     def test_purge_older_than(self, tmp_path: Path):
         import asyncio
+        import os
 
-        cfg = _write_config(tmp_path)
-        _seed_dlq(tmp_path)
+        # Nested `bus dlq` callback resolves `--config` before `purge`; default is
+        # ./agent_core.yaml — run CLI from tmp_path so that path exists.
+        old_cwd = os.getcwd()
+        try:
+            os.chdir(tmp_path)
+            _write_config(tmp_path)
+            _seed_dlq(tmp_path)
 
-        # Backdate one of the dead-letter rows.
-        async def _backdate():
-            store = Persistence(tmp_path / "bus.sqlite")
-            await store.connect()
-            past = (datetime(2026, 4, 27, tzinfo=UTC) - timedelta(days=10)).isoformat()
-            await store._conn.execute(
-                "UPDATE envelopes SET last_attempted = ? WHERE id = 'd0'", (past,)
-            )
-            await store._conn.commit()
-            await store.close()
+            # Backdate one of the dead-letter rows.
+            async def _backdate():
+                store = Persistence(tmp_path / "bus.sqlite")
+                await store.connect()
+                past = (datetime(2026, 4, 27, tzinfo=UTC) - timedelta(days=10)).isoformat()
+                await store._conn.execute(
+                    "UPDATE envelopes SET last_attempted = ? WHERE id = 'd0'", (past,)
+                )
+                await store._conn.commit()
+                await store.close()
 
-        asyncio.run(_backdate())
+            asyncio.run(_backdate())
 
-        runner = CliRunner()
-        result = runner.invoke(
-            app, ["bus", "dlq", "purge", "--older-than", "7d", "--config", str(cfg)]
-        )
-        assert result.exit_code == 0
+            runner = CliRunner()
+            result = runner.invoke(app, ["bus", "dlq", "purge", "--older-than", "7d"])
+            assert result.exit_code == 0
+        finally:
+            os.chdir(old_cwd)
 
         async def _check():
             store = Persistence(tmp_path / "bus.sqlite")

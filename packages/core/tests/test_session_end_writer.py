@@ -1,6 +1,7 @@
 """Tests for SessionEndWriter — JSONL daily log + handoff end section."""
 
 import json
+from io import BytesIO
 from pathlib import Path
 from unittest.mock import patch
 
@@ -29,9 +30,7 @@ class TestSessionEndWriter:
                 params={},
             )
 
-    def test_appends_jsonl_and_end_section_when_handoff_matches_session(
-        self, tmp_path: Path
-    ):
+    def test_appends_jsonl_and_end_section_when_handoff_matches_session(self, tmp_path: Path):
         vault = tmp_path / "Memory"
         handoff_rel = Path("pepper") / "handoff.md"
         handoff = vault / handoff_rel
@@ -57,9 +56,7 @@ class TestSessionEndWriter:
 
         assert isinstance(result, ToolResult)
         assert result.heading == "Session End Captured"
-        assert result.content == (
-            "Session summary appended to daily log. Handoff note updated."
-        )
+        assert result.content == ("Session summary appended to daily log. Handoff note updated.")
 
         daily_dir = vault / "daily" / "raw"
         logs = list(daily_dir.glob("*.jsonl"))
@@ -156,11 +153,24 @@ class TestSessionEndWriter:
         )
         assert handoff.read_text(encoding="utf-8") == after_first
 
-    @patch("agent_core.hooks.tools.handoff_writer.subprocess.Popen")
-    @patch("agent_core.hooks.tools.handoff_writer.shutil.which", return_value="/bin/claude")
+    @patch("agent_core.hooks.tools.handoff_writer.urllib.request.urlopen")
     def test_delegates_to_handoff_writer_when_no_session_handoff(
-        self, mock_which, mock_popen, tmp_path: Path
+        self, mock_urlopen, tmp_path: Path
     ):
+        class _FakeResp:
+            def __init__(self, body: dict):
+                self._stream = BytesIO(json.dumps(body).encode("utf-8"))
+
+            def read(self) -> bytes:
+                return self._stream.read()
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, exc_type, exc, tb):
+                return False
+
+        mock_urlopen.return_value = _FakeResp({"job_id": "job-xyz", "status": "accepted"})
         vault = tmp_path / "vault"
         transcript = tmp_path / "tr.jsonl"
         make_transcript(transcript, [("user", "Hello"), ("assistant", "Hey")])
@@ -176,7 +186,12 @@ class TestSessionEndWriter:
             },
         )
 
-        assert mock_popen.called
+        assert mock_urlopen.called
+        st_path = vault / "pepper" / "handoff-status.json"
+        assert st_path.exists()
+        st = json.loads(st_path.read_text(encoding="utf-8"))
+        assert st["state"] == "pending"
+        assert st["session_id"] == "new-s"
 
     def test_duration_from_transcript_timestamps(self, tmp_path: Path):
         from agent_core.hooks.tools.session_end_writer import _duration_hint
@@ -185,9 +200,12 @@ class TestSessionEndWriter:
         t0 = 1_700_000_000.0
         t1 = t0 + 125.0
         with open(p, "w", encoding="utf-8") as f:
-            f.write(json.dumps({"timestamp": t0, "message": {"role": "user", "content": "a"}}) + "\n")
             f.write(
-                json.dumps({"timestamp": t1, "message": {"role": "assistant", "content": "b"}}) + "\n"
+                json.dumps({"timestamp": t0, "message": {"role": "user", "content": "a"}}) + "\n"
+            )
+            f.write(
+                json.dumps({"timestamp": t1, "message": {"role": "assistant", "content": "b"}})
+                + "\n"
             )
         hint = _duration_hint(p)
         assert hint is not None

@@ -261,9 +261,10 @@ class TestIdentityInjector:
         assert "pending" in result.content
         assert "SECRET ON DISK" not in result.content
 
-    def test_handoff_pending_other_session_reads_file(self, tmp_path: Path):
+    def test_handoff_pending_other_session_shows_continuity_placeholder(self, tmp_path: Path):
+        """Cutover #02 (b): new session must not read stale handoff while prior session pending."""
         base = tmp_path
-        (base / "handoff.md").write_text("GOOD CONTENT", encoding="utf-8")
+        (base / "handoff.md").write_text("STALE ON DISK", encoding="utf-8")
         status = {
             "schema_version": 1,
             "state": "pending",
@@ -280,8 +281,78 @@ class TestIdentityInjector:
             hook_input={"session_id": "new-session"},
             params={"base_path": str(base), "files": ["handoff.md"]},
         )
-        assert "GOOD CONTENT" in result.content
-        assert "Handoff status: pending" not in result.content
+        assert "STALE ON DISK" not in result.content
+        assert "Continuity not ready yet" in result.content
+        assert "MEMORY.md" in result.content
+        assert "HandoffReady" in result.content
+
+    def test_handoff_pending_no_hook_session_shows_placeholder(self, tmp_path: Path):
+        base = tmp_path
+        (base / "handoff.md").write_text("DO NOT LEAK", encoding="utf-8")
+        status = {
+            "schema_version": 1,
+            "state": "pending",
+            "session_id": "any-sid",
+            "correlation_id": "c1",
+            "updated_at": "2026-01-01T00:00:00+00:00",
+            "error": None,
+            "content_sha256": None,
+        }
+        (base / "handoff-status.json").write_text(json.dumps(status), encoding="utf-8")
+        tool = IdentityInjector()
+        result = tool.execute(
+            event="SessionStart",
+            hook_input={},
+            params={"base_path": str(base), "files": ["handoff.md"]},
+        )
+        assert "DO NOT LEAK" not in result.content
+        assert "Continuity not ready yet" in result.content
+
+    def test_handoff_failed_shows_guidance_and_optional_body(self, tmp_path: Path):
+        base = tmp_path
+        (base / "handoff.md").write_text("LAST ATTEMPT SNIPPET", encoding="utf-8")
+        status = {
+            "schema_version": 1,
+            "state": "failed",
+            "session_id": "sid-x",
+            "correlation_id": "c1",
+            "updated_at": "2026-01-01T00:00:00+00:00",
+            "error": "worker exploded",
+            "content_sha256": None,
+        }
+        (base / "handoff-status.json").write_text(json.dumps(status), encoding="utf-8")
+        tool = IdentityInjector()
+        result = tool.execute(
+            event="SessionStart",
+            hook_input={"session_id": "sid-x"},
+            params={"base_path": str(base), "files": ["handoff.md"]},
+        )
+        assert "failed" in result.content.lower()
+        assert "worker exploded" in result.content
+        assert "MEMORY.md" in result.content
+        assert "LAST ATTEMPT SNIPPET" in result.content
+
+    def test_handoff_failed_without_file_shows_guidance_only(self, tmp_path: Path):
+        base = tmp_path
+        status = {
+            "schema_version": 1,
+            "state": "failed",
+            "session_id": "sid-y",
+            "correlation_id": "c1",
+            "updated_at": "2026-01-01T00:00:00+00:00",
+            "error": "no transcript",
+            "content_sha256": None,
+        }
+        (base / "handoff-status.json").write_text(json.dumps(status), encoding="utf-8")
+        tool = IdentityInjector()
+        result = tool.execute(
+            event="SessionStart",
+            hook_input={"session_id": "sid-y"},
+            params={"base_path": str(base), "files": ["handoff.md"]},
+        )
+        assert "no transcript" in result.content
+        assert "MEMORY.md" in result.content
+        assert "handoff.md" in result.content  # prose mentions path
 
     def test_handoff_ready_loads_file(self, tmp_path: Path):
         base = tmp_path

@@ -11,7 +11,7 @@ from agent_core.hooks.tools.handoff_writer import HandoffWriter
 
 
 @pytest.mark.asyncio
-async def test_enqueue_hook_to_daemon_end_to_end(tmp_path):
+async def test_enqueue_hook_to_daemon_end_to_end(tmp_path, monkeypatch):
     vault_root = tmp_path / "vault"
     vault_root.mkdir(parents=True, exist_ok=True)
     transcript_path = vault_root / "transcript.jsonl"
@@ -45,10 +45,11 @@ endpoints:
         await bus.start()
         try:
             endpoint = bus._endpoints_by_name["handoff-jobs"].endpoint
+
             async def _fake_extract(self, req, transcript_text):
                 return "# Handoff\n"
 
-            setattr(type(endpoint), "_extract_handoff", _fake_extract)
+            monkeypatch.setattr(type(endpoint), "_extract_handoff", _fake_extract)
 
             hook = HandoffWriter()
             result = await asyncio.to_thread(

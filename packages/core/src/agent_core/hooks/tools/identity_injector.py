@@ -10,7 +10,8 @@ When the file list includes ``handoff.md``, this injector reads
 does not load a stale handoff while SessionEnd / HandoffWriter still has work
 in flight. States:
 
-- ``pending`` — inject a short notice; do not load ``handoff.md`` body.
+- ``pending`` — inject a legible notice; do not load ``handoff.md`` as authoritative
+  (same session: in-flight finalize; other session: prior continuity still summarizing).
 - ``ready`` — load ``handoff.md`` as usual.
 - ``failed`` — inject the error; optionally append on-disk file as possibly stale.
 - (no status file) — same behavior as FileInjector for ``handoff.md``.
@@ -88,19 +89,30 @@ class IdentityInjector(FileInjector):
             st = status.get("state")
             updated = status.get("updated_at", "unknown")
             sid = status.get("session_id", "unknown")
+            same_session = bool(current_sid and sid == current_sid)
 
-            if (
-                st == "pending"
-                and current_sid
-                and sid == current_sid
-            ):
+            if st == "pending":
+                if same_session:
+                    return (
+                        f"## {file_name}\n\n"
+                        "**Handoff status: pending** — this session's handoff is still being "
+                        "finalized (or the handoff daemon has not marked it ready yet). "
+                        "Do not treat any existing `handoff.md` on disk as authoritative until "
+                        "state becomes `ready` or you receive a `HandoffReady` bus notification.\n\n"
+                        f"- Last lifecycle touch: session `{sid}`, updated `{updated}`\n"
+                    )
+                # Prior session's continuity still in flight (Cutover #02 scenario b).
                 return (
                     f"## {file_name}\n\n"
-                    "**Handoff status: pending** — this session's handoff is still being "
-                    "finalized (or a background writer has not marked it ready yet). "
-                    "Do not treat any existing `handoff.md` on disk as authoritative until "
-                    "state becomes `ready` or you receive a `HandoffReady` bus notification.\n\n"
-                    f"- Last lifecycle touch: session `{sid}`, updated `{updated}`\n"
+                    "**Continuity not ready yet** — the previous session's continuity is still "
+                    "summarizing. You will receive a **continuity ready** notification (via the "
+                    "Cutover #08 surface — e.g. `HandoffReady` on the bus routed to your inbox) "
+                    "when it is available.\n\n"
+                    "Until then, work from **current MEMORY.md** and **recent daily summaries**; "
+                    "do **not** confabulate state from prior sessions or treat `handoff.md` on "
+                    "disk as authoritative.\n\n"
+                    f"- Status sidecar: session `{sid}` (not this boot), state `pending`, "
+                    f"updated `{updated}`\n"
                 )
 
             if st == "failed":
@@ -108,12 +120,15 @@ class IdentityInjector(FileInjector):
                 parts = [
                     f"## {file_name}\n\n",
                     f"**Handoff status: failed** — `{err}`\n\n",
+                    "The summarizer or handoff daemon could not produce continuity for the last "
+                    "cycle. Prefer **MEMORY.md** and **recent daily summaries** as ground truth. "
+                    "If `handoff.md` exists below, treat it as the **most recent on-disk attempt** "
+                    "(it may be partial, empty, or from an earlier successful run — not a silent "
+                    "success).\n\n",
                 ]
                 if handoff_path.exists():
                     body = handoff_path.read_text(encoding="utf-8-sig")
-                    parts.append(
-                        "*The file below may be stale or partial (last on-disk copy).*\n\n"
-                    )
+                    parts.append("*Last on-disk `handoff.md` (possibly stale or partial):*\n\n")
                     parts.append(body)
                 return "".join(parts)
 

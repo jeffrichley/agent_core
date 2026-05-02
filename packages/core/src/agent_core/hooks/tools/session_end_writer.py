@@ -240,8 +240,8 @@ class SessionEndWriter:
                     hw_params,
                 )
                 hw_lower = hw_result.content.lower()
-                if "spawned" in hw_lower or "background" in hw_lower:
-                    pass  # leave pending; detached claude should flip to ready
+                if "enqueued" in hw_lower or "spawned" in hw_lower or "background" in hw_lower:
+                    pass  # daemon owns ready/failed; keep pending from above
                 elif "already written" in hw_lower:
                     note2 = _read_handoff(handoff_path)
                     if _handoff_has_session_note(note2, session_id) and not _already_finalized(
