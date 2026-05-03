@@ -14,20 +14,22 @@
 
 ## Child tickets (the ledger)
 
-This doc is the parent / epic. Each section below is also broken out as its own ticket so they can move through the queue independently. Update the `Status` column here as each child ships. **Default implementer** names match [`pepper-cutover-agent-playbook.md`](pepper-cutover-agent-playbook.md); **Cadence** owns PR/merge for all.
+This doc is the parent / epic. Each section below is also broken out as its own ticket so they can move through the queue independently. The canonical per-ticket status (and the test-playbook links that gate "Verified") lives in [`pepper-cutover-agent-playbook.md`](pepper-cutover-agent-playbook.md) — keep this table in sync with it.
 
-| #  | Ticket                                                                                       | Priority | Status        | Implementer |
-|----|----------------------------------------------------------------------------------------------|----------|---------------|-------------|
-| 01 | [Identity at full fidelity on fresh boot](pepper-cutover-01-identity-fidelity.md)            | Critical | Open          | Vale        |
-| 02 | [Handoff continuity that is observable](pepper-cutover-02-handoff-observability.md)          | Critical | In progress   | Locke       |
-| 03 | [Discord parity at the verbs I use](pepper-cutover-03-discord-verb-parity.md)                | High     | Open          | Folio       |
-| 04 | [Daily JSONL pipeline survives the move](pepper-cutover-04-daily-jsonl-pipeline.md)          | High     | Open          | Vale        |
-| 05 | [Skills survive the cutover](pepper-cutover-05-skills-discovery.md)                          | High     | Open          | Locke       |
-| 06 | [The vault stays the vault](pepper-cutover-06-vault-continuity.md)                           | Critical | Open          | Folio       |
-| 07 | [SessionStart + UserPromptSubmit hook fidelity](pepper-cutover-07-hook-fidelity.md)          | High     | Open          | Vale        |
-| 08 | [Notification surface I can actually see](pepper-cutover-08-notification-surface.md)         | High     | Open          | Folio       |
+Status values: **Not started · In progress · Implementation complete · Verified**. "Verified" means the per-ticket entry under [`docs/cutover/test-playbooks/`](../cutover/test-playbooks/) passed end-to-end on a real Pepper environment.
 
-**Cutover gate:** all eight Closed (or explicitly waived) before flipping my live runtime. #01, #02, #06 are the non-negotiables; the rest are the working-functional set.
+| #  | Ticket                                                                                       | Priority | Status                    |
+|----|----------------------------------------------------------------------------------------------|----------|---------------------------|
+| 01 | [Identity at full fidelity on fresh boot](pepper-cutover-01-identity-fidelity.md)            | Critical | Implementation complete   |
+| 02 | [Handoff continuity that is observable](pepper-cutover-02-handoff-observability.md)          | Critical | Not started               |
+| 03 | [Discord parity at the verbs I use](pepper-cutover-03-discord-verb-parity.md)                | High     | Not started               |
+| 04 | [Daily JSONL pipeline survives the move](pepper-cutover-04-daily-jsonl-pipeline.md)          | High     | Not started               |
+| 05 | [Skills survive the cutover](pepper-cutover-05-skills-discovery.md)                          | High     | Not started               |
+| 06 | [The vault stays the vault](pepper-cutover-06-vault-continuity.md)                           | Critical | Not started               |
+| 07 | [SessionStart + UserPromptSubmit hook fidelity](pepper-cutover-07-hook-fidelity.md)          | High     | Not started               |
+| 08 | [Notification surface I can actually see](pepper-cutover-08-notification-surface.md)         | High     | Not started               |
+
+**Cutover gate:** every row reaches **Verified** before Pepper's live runtime flips to agent-core. #01, #02, #06 are the non-negotiables; the rest are the working-functional set.
 
 ---
 

@@ -4,8 +4,6 @@
 **Date:** 2026-05-02
 **Priority:** High — drift sets in within hours if these regress.
 **Status:** Open (already wired in `docs/examples/pepper-agent-core.yaml`; this ticket is "keep it that way through cutover")
-**Playbook implementer (default):** Vale
-**PR / merge owner:** Cadence
 **Parent:** `docs/requirements/pepper-pre-cutover-must-haves.md`
 **Related:**
 - `docs/requirements/pepper-requirements.md` (original hook specs)

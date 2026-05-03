@@ -4,8 +4,6 @@
 **Date:** 2026-05-02
 **Priority:** High — partially gates Cutover #02; without this, "continuity ready" notification has nowhere to land.
 **Status:** Open
-**Playbook implementer (default):** Folio
-**PR / merge owner:** Cadence
 **Parent:** `docs/requirements/pepper-pre-cutover-must-haves.md`
 **Related:**
 - Cutover #02 (handoff observability — depends on this notification path being real)

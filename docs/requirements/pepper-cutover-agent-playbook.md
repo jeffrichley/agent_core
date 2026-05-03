@@ -1,177 +1,64 @@
-# Pepper cutover — agent playbook (multi-agent + PR owner)
+# Pepper cutover — playbook
 
-**Purpose:** Tell any coding agent **how** to work on Pepper cutover tickets, **which specs exist**, and **how to record what it picked up**. Default **Assignee** names are filled below; Jeff (or **Cadence**) may reassign.
+**Purpose:** how to work each Pepper cutover ticket, where the specs live, and how the per-ticket state is tracked.
 
-**Index of this whole directory:** [`README.md`](README.md) — reading order, how to discover files without reading every spec, and a one-line summary of **already-implemented / partial** work (full rules in **§3b** below). **Copy-paste session prompts:** [`pepper-cutover-prompts.md`](pepper-cutover-prompts.md).
+**Mode of work:** solo coding agent + adversarial subagent reviews + direct commits to `main`. The earlier multi-implementer roster (Vale / Locke / Folio) and the Cadence PR agent are gone — that flow is no longer used.
 
-**People model (named roster):**
-
-- **Vale**, **Locke**, **Folio** — implementers (code, tests, PR-ready branches). They do **not** decide global merge order and do **not** merge to `main` unless Jeff explicitly overrides this playbook.
-- **Cadence** — PR / integration agent: **opening/updating PRs**, **merge sequencing**, **retargeting stacked PRs**, **conflict triage**, **CI**. Implementers hand off branches; Cadence lands them.
-
-Assume **other implementers are touching the same repo**. Prefer small, reviewable diffs and communicate overlap early.
-
-**This playbook is on `main`.** Implementers always **`git pull` on `main`** then branch for their ticket. The old `feat/docs-pepper-cutover-agent-playbook` branch was only the vehicle to land this file — do not treat it as a shared development line.
+**Index of this directory:** [`README.md`](README.md). **Test playbooks (deferred verification):** [`docs/cutover/test-playbooks/`](../cutover/test-playbooks/).
 
 ---
 
-## Communication with Cadence (**PR comments only**)
+## Per-ticket flow
 
-There are **no side channels** for cutover coordination: no DM, no separate “tell Cadence in chat.”
+For every cutover ticket:
 
-- **Default:** Vale, Locke, and Folio talk to **Cadence** only by posting on the **GitHub PR** (comments on the `feat/cutover-*` branch’s PR, including review threads).
-- **Fallback:** a **file in the repo** is allowed only when a PR thread truly cannot be used; if you do that, still link the commit or path in the PR once it exists so Cadence has one place to look.
-- **Cadence** replies on the same PR (approve, request changes, merge notes, stack instructions).
-
-Full protocol summary: [`pepper-cutover-cadence-queue.md`](pepper-cutover-cadence-queue.md) (Cadence runbook — name is legacy).
-
----
-
-## Who picks the ticket? (Agents do not “just know”)
-
-- **Default:** an implementer only starts work when **their name** is in **Assignee** for that row and they move **Status** to `Claimed` when they begin.
-- **Exception:** Jeff (or **Cadence**) reassigns by editing the playbook on **`main`** (doc PR) or by a **comment on the relevant cutover PR** — mirror that into the table.
-- The **dependency diagrams** below are for **merge sequencing and risk**, not for guessing ownership. If **your name** is not on any row you intend to work, **stop and ask** Jeff (or Cadence) to assign before coding.
+1. **Read the spec.** Open the ticket's `pepper-cutover-NN-…md` first. Then open every doc linked from its **Related** / **Parent** frontmatter and any in-body `…md` / `…yaml` links. The links are the project's way of saying "read this before you implement."
+2. **Map spec to repo (§3b below).** Some behavior may already be on `main`. Before writing code, list each acceptance bullet and mark **met / partial / missing** with evidence. Only implement the gaps.
+3. **Implement.** One ticket at a time. Branching is optional for solo — direct edits on `main` are acceptable; use a feature branch if the change is large enough that a wrong commit would be costly to revert.
+4. **Adversarial review.** Dispatch the `superpowers:code-reviewer` subagent with full context (what changed, what to attack, files to read). Apply must-fix and should-fix findings. Re-run tests + lint.
+5. **Commit to `main`** with a focused message. One concern per commit (per repo `CLAUDE.md`).
+6. **Write the test playbook entry** at `docs/cutover/test-playbooks/NN-slug.md`. This is **deferred verification** — describes what to verify at the end-of-cutover gate, not something to run incrementally.
+7. **Update the per-ticket status table** at the bottom of this playbook.
 
 ---
 
-## Superpowers skills (**required** when the plugin is available)
+## Superpowers skills (use the plugin where it fits)
 
-**Policy:** If your environment has the **Superpowers** plugin, you **must** use it as the primary operating loop — not optional polish.
+The Superpowers skills cover the disciplines this work expects. Use them by name:
 
-1. **Start of session / substantive work:** read and follow **`using-superpowers`** (Skill tool / skill read) before writing code or “exploring.”
-2. **Multi-step or ambiguous work:** run **`writing-plans`** before large diffs.
-3. **Behavior change or bugfix:** prefer **`test-driven-development`**; use **`systematic-debugging`** for failures before speculative fixes.
-4. **Before claiming done or asking the PR agent to merge:** run **`verification-before-completion`** (evidence: commands + outcome).
-5. **Large or risky change before merge:** **`requesting-code-review`** (or equivalent host review).
-6. **Branch is green, need integration / merge guidance:** **`finishing-a-development-branch`**.
+| When | Skill |
+|------|-------|
+| Multi-step / unclear scope before code | `superpowers:writing-plans` |
+| Behavior change or bugfix | `superpowers:test-driven-development` + `superpowers:systematic-debugging` |
+| Before claiming done | `superpowers:verification-before-completion` |
+| Adversarial review of a finished slice | `superpowers:code-reviewer` (subagent) |
+| Branch is green, deciding integration shape | `superpowers:finishing-a-development-branch` |
 
-| When | Skill (typical slug / folder name) |
-|------|-------------------------------------|
-| Session start / any real implementation | `using-superpowers` |
-| Multi-step / unclear scope | `writing-plans` |
-| Behavior change or bugfix | `test-driven-development` + `systematic-debugging` |
-| Before “done” / merge handoff | `verification-before-completion` |
-| Pre-merge confidence | `requesting-code-review` |
-| After CI green, integration choices | `finishing-a-development-branch` |
-
-If Superpowers is **not** installed in your host, still mirror the **same discipline** (plan → test-first when appropriate → debug with evidence → verify before done).
+If Superpowers is not available in the host, mirror the same discipline (plan → test-first when appropriate → debug with evidence → verify before done → adversarial review).
 
 ---
 
-## How to read `docs/requirements/` (you are not expected to memorize every file)
+## §3b — When work might already be on `main`
 
-Agents find the right specs by **following links**, not by reading the directory alphabetically.
+Cutover items can be ahead of, behind, or wrong-shape vs. their spec. Do this before any large diff:
 
-1. **Start with** [`README.md`](README.md) in this folder — it lists every requirements file and the **recommended reading order**.
-2. **Then this playbook** (you are here) for process and **§3b** when behavior may already exist on `main`.
-3. **Open only your assigned ticket** (e.g. `pepper-cutover-04-…md`). Treat it as the contract for “done.”
-4. **Open every doc linked from that ticket** — frontmatter **Related** / **Parent**, and any `…md` / `…yaml` links in the body. Those links are the project’s way of saying “read these before you ship.”
-5. **Skim the epic** [`pepper-pre-cutover-must-haves.md`](pepper-pre-cutover-must-haves.md) for your row’s context.
-6. **Optional:** list the `docs/requirements/` directory when you onboard or when specs change, so new filenames are visible — still **skip** files that are not linked and not listed as relevant in [`README.md`](README.md) unless Jeff or Cadence assigns them.
+1. **Map spec to repo.** Search packages and `docs/examples/` for the tools, events, and filenames the ticket names. Skim recent `main` history if helpful.
+2. **Score acceptance literally.** For each "Done looks like" bullet, mark **met / partial / missing** with evidence (command output, file path, test name).
+3. **Choose a path:**
 
-If something looks relevant but is not linked, **ask in a PR comment** (Cadence or Jeff) before expanding scope.
+| Situation | Action |
+|-----------|--------|
+| All acceptance criteria met on `main` | Small commit that adds or tightens **tests**, **docs**, or **status** so "done" is auditable. Then write the test playbook entry and update the status table. |
+| Partially met | Implement only the gaps. Keep the gap list alive in the commit message until closed. Avoid scope creep. |
+| Wrong shape | Prefer one commit that aligns behavior to the spec. If the spec itself is what needs to change, do that as a separate doc commit first. Do not silently redefine "done" in code only. |
 
----
-
-## Non-negotiable workflow — one ticket, one worktree, one branch
-
-Each implementer works **one active ticket at a time** from a **dedicated git worktree** so parallel agents do not stomp the same working tree.
-
-### 1) Pick your ticket from the assignment table below
-
-Only work on a row that lists **your roster name** (`Vale` / `Locke` / `Folio`) in **Assignee**. Keep **at most one** row in `Claimed` or `PR open` per implementer at a time unless Jeff says otherwise.
-
-### 2) Create a worktree + branch from current `main`
-
-Naming convention:
-
-- **Branch:** `feat/cutover-NN-short-slug` (match the ticket number `NN`).
-- **Worktree folder:** `.worktrees/cutover-NN-short-slug` under the repo root (keeps them grouped and out of the way).
-
-**PowerShell (Windows) example** — run from the repo root `agent_core/` (not inside another worktree unless you mean to):
-
-```powershell
-cd E:\workspaces\ai\agents\agent_core
-git fetch origin
-git switch main
-git pull origin main
-
-$slug = "cutover-02-handoff-observability"   # change per ticket
-git worktree add .worktrees\$slug -b feat/cutover-02-handoff-observability origin/main
-cd .worktrees\$slug
-```
-
-Then install deps if needed (`uv sync` in `packages/core`, etc. — follow existing repo docs).
-
-### 3) Implement against the ticket spec
-
-- Read the **ticket spec** linked in the table (source of truth for “done”).
-- Read **parent / related** docs linked from that ticket (especially the pre-cutover epic and daemon contract when touching handoff).
-
-### 3b) Already implemented or only partly done?
-
-Several cutover items may already be **partially or fully built** on `main` (example configs, hooks, or endpoints landed ahead of the doc). That is normal. **Do not re-implement** behavior that already satisfies the spec.
-
-This section is also summarized for quick orientation in [`README.md`](README.md) (“When work might already be on `main`”); the playbook here stays the **authoritative** checklist.
-
-**Before you write a lot of code:**
-
-1. **Map the spec to the repo** — search packages and `docs/examples/` for the tools, events, and filenames the ticket names. Skim recent `main` history if helpful.
-2. **Check “Done looks like” literally** — list each acceptance bullet and mark it **met / partial / missing** with evidence (command output, file path, or test name). Put that matrix in the **PR description** or a **PR comment** so **Cadence** can review without guessing.
-3. Then choose one path:
-
-| Situation | What to do |
-|-----------|------------|
-| **All acceptance criteria met** on current `main` | Open a small PR (still `feat/cutover-NN-…`) that **only** adds or tightens **tests**, **docs**, or **status** updates (ticket + epic + playbook rows) so “done” is **auditable** and the ledger matches reality. Hand off to **Cadence** with **Verified** filled in; the PR may be merge-only after her review. |
-| **Partially met** | Same branch: implement **only the gaps**. Keep the PR description’s **gap list** in sync as you close items. Avoid scope creep beyond the ticket. |
-| **Wrong shape** (built behavior diverges from the spec) | Prefer **one PR** that aligns behavior to the spec (or propose a spec change in a **separate** doc PR Jeff agrees to) — do not silently redefine “done” in code only. |
-
-**Cadence:** treat “already done” PRs as first-class — verify the evidence matrix matches the ticket; merge if CI green and no spec drift. **Epic / ticket Status** should move to **Closed** (or equivalent) only when the spec and reality match, not when duplicate code lands.
-
-### 4) Commit and push; hand off to **Cadence** (PR comment)
-
-- **Commit messages:** imperative mood, scoped prefix, explain *why* when non-obvious.
-- **Push** your `feat/cutover-NN-...` branch to `origin`.
-- **Do not merge** unless Jeff explicitly overrides this playbook.
-- **Signal Cadence (required):** post **one top-level PR comment** on that branch’s PR using the **Implementer → Cadence handoff** template below (same PR as your commits — open a **draft PR** early if you need Cadence before you are “finished”). Cadence is not notified anywhere else.
-- **Cadence** will set playbook **Status** to `PR open` and **Notes** to the PR URL when she records the queue (small doc PR to `main` is fine).
-
-### 4b) After you finish a ticket — check your PRs (**required**)
-
-Before you **Claim** the next cutover row or start new work:
-
-1. List **your** open PRs for this workstream (`feat/cutover-*` heads you own).
-2. Read **every** comment thread from **Cadence** (reviews, “changes requested,” merge follow-ups). **Rework = new commits on the same PR** until Cadence merges or explicitly clears you.
-3. Only then treat the prior ticket as fully handed off.
-
-### 5) After your PR merges
-
-- Mark the ticket row **Merged** (or clear Assignee) in the table below (Cadence or Jeff updates playbook via `main`).
-- Remove or archive the worktree when idle:
-
-```powershell
-cd E:\workspaces\ai\agents\agent_core
-git worktree remove .worktrees\cutover-02-handoff-observability
-git branch -d feat/cutover-02-handoff-observability   # optional local cleanup
-```
+Status moves to **Implementation complete** only when the spec and reality match — not when adjacent code lands.
 
 ---
 
-## Coordination rules (keep three agents + one PR agent coherent)
+## Dependency diagrams (sequencing hints)
 
-1. **One ticket → one branch → one PR** unless two tickets are truly inseparable. If they depend on each other, use a **stack** (child branch based on parent branch) and tell the PR agent explicitly.
-2. **Do not share branches** between implementers.
-3. **Partition by area** when you can (Discord vs hooks vs daily pipeline) to reduce merge conflicts.
-4. If two tickets **must** touch the same hot files, **serialize** (one assignee / one PR at a time) instead of parallelizing.
-5. **Cadence** owns merge order for dependencies (e.g. notification surface vs handoff observability). Implementers should not “guess” landing order beyond what the specs say; Cadence states stack decisions **in PR comments**.
-6. **Conflict policy:** whoever is on the **child** branch in a stack usually rebases onto the updated parent after the parent merges; **Cadence** coordinates in the **child PR** comments.
-
----
-
-## Dependency diagrams (merge / stack hints — **not** for self-assigning)
-
-Use these with the **PR agent** to decide **landing order** or **stacked PR bases**. They do **not** replace the **Assignment table** for who works what.
+Use these to choose the next ticket, not to skip prerequisites.
 
 ### Pepper cutover specs (#01–#08 + epic)
 
@@ -194,30 +81,26 @@ flowchart TB
   C07 -.->|"PreCompact / SessionEnd handoff wiring"| C02
 ```
 
-- **Solid `EP -->`:** epic child ticket (all must close for cutover gate — see epic doc).
-- **Solid `DC -->`:** daemon contract is the handoff implementation shape for **#02**.
-- **Dashed `-.->`:** integration / sequencing coupling (land or scope the tail first when possible).
+- Solid `EP -->`: epic child (all must close for the cutover gate).
+- Solid `DC -->`: daemon contract is the handoff implementation shape for **#02**.
+- Dashed `-.->`: integration / sequencing coupling.
 
-### GitHub issues (`jeffrichley/agent_core`)
+### Related GitHub issues
 
-Issues change; refresh with:
+The bus / Discord / wakes issues sit alongside the cutover specs but are **not** part of the cutover gate. Pull a fresh snapshot when needed:
 
-`gh issue list --repo jeffrichley/agent_core --state open`
+```bash
+gh issue list --repo jeffrichley/agent_core --state open
+```
 
-Snapshot **2026-05-02** (edges = product / sequencing intuition, not GitHub “blocked by” metadata):
+Snapshot **2026-05-02** (edges = product / sequencing intuition):
 
 ```mermaid
 flowchart TB
   subgraph discord["Discord bridge"]
-    i22["#22 OPEN partial-send / rate-limit"]
     i23["#23 OPEN ack + chunk-limit semantics"]
     i13["#13 OPEN typing TTL / placeholder"]
   end
-  i23 --> i22
-  i20["#20 CLOSED auto-split >2000"]
-  i21["#21 CLOSED markdown-safe chunking"]
-  i20 --> i22
-  i21 --> i22
   subgraph bus["Bus"]
     i15["#15 OPEN heartbeats"]
     i16["#16 OPEN read-only bus tail"]
@@ -225,29 +108,25 @@ flowchart TB
     i18["#18 OPEN expires_at enforcement"]
     i19["#19 OPEN typed command envelopes"]
   end
-  i18 -.-> i17
   subgraph wakes["Wakes / notify"]
     i14["#14 OPEN burst coalesce wakes"]
-    i12["#12 CLOSED auto-ack routine"]
   end
-  i14 -.->|"coordination note in specs"| i12
+  i18 -.-> i17
 ```
 
-**Cutover ↔ GitHub (theme only):** Cutover **#03** aligns with **Discord** issues; **#04 / #08** align with **Bus** + **notify** work; **#02 / #08** align with **Wakes**. There is **no strict 1:1** between cutover doc numbers and GitHub issue numbers — use both tables plus Jeff’s assignment.
+Cutover **#03** aligns thematically with the Discord issues; **#04 / #08** with bus + notify; **#02 / #08** with wakes. There is no strict 1:1 mapping.
 
 ---
 
-## Ticket index — all specs in this workstream
-
-For **how to navigate the whole `docs/requirements/` tree** (including files outside this table), see [`README.md`](README.md).
+## Spec index
 
 ### Epic (parent)
 
 | Id | Spec |
 |----|------|
-| Pre-cutover epic | [`pepper-pre-cutover-must-haves.md`](pepper-pre-cutover-must-haves.md) — child table + cutover gate |
+| Pre-cutover epic | [`pepper-pre-cutover-must-haves.md`](pepper-pre-cutover-must-haves.md) |
 
-### Cutover tickets (the numbered queue)
+### Cutover tickets
 
 | # | Spec |
 |---|------|
@@ -260,90 +139,47 @@ For **how to navigate the whole `docs/requirements/` tree** (including files out
 | 07 | [`pepper-cutover-07-hook-fidelity.md`](pepper-cutover-07-hook-fidelity.md) |
 | 08 | [`pepper-cutover-08-notification-surface.md`](pepper-cutover-08-notification-surface.md) |
 
-### Supporting / adjacent specs (read when relevant)
+### Supporting / adjacent specs
 
 | Spec | When to read |
 |------|----------------|
-| [`pepper-handoff-daemon-contract.md`](pepper-handoff-daemon-contract.md) | Handoff bus, daemon writer, hook-minimal enqueue — **tight coupling to #02** |
+| [`pepper-handoff-daemon-contract.md`](pepper-handoff-daemon-contract.md) | Handoff bus, daemon writer, hook-minimal enqueue — tight coupling to **#02** |
 | [`pepper-requirements.md`](pepper-requirements.md) | Original hook + tool expectations |
 | [`pepper-identity-injection-size-limit.md`](pepper-identity-injection-size-limit.md) | Identity truncation / injection limits — **#01** |
 | [`pepper-handoff-writer-bugfix.md`](pepper-handoff-writer-bugfix.md) | Predecessor notes for handoff — **#02** |
 | [`docs/examples/pepper-agent-core.yaml`](../examples/pepper-agent-core.yaml) | Example pipeline wiring — **#07**, parts of **#01** |
 | [`docs/ROADMAP.md`](../ROADMAP.md) | Discord / skills / pipeline roadmap references |
-| [`pepper-cutover-cadence-queue.md`](pepper-cutover-cadence-queue.md) | **Cadence** runbook — PR-only comms (legacy filename) |
-| [`README.md`](README.md) | **Directory index** — reading order + full file list |
-| [`pepper-cutover-prompts.md`](pepper-cutover-prompts.md) | **Copy-paste session prompts** for Vale / Locke / Folio and Cadence |
+| [`README.md`](README.md) | Directory index + reading order |
 
-**Dependency hints (not a substitute for reading specs):** #08 partially gates #02 (“ready” must be visible). #04 relates to #05 (summaries → skills). #07 references #01/#02 for content vs firing.
+**Sequencing hints (not a substitute for reading specs):** #08 partially gates #02 (the "ready" signal must be visible). #04 relates to #05 (summaries → skills). #07 references #01/#02 for content vs firing.
 
 ---
 
-## Assignment table — default owners (Jeff may reassign)
+## Per-ticket status
 
-**Roster:** Vale, Locke, Folio (implementers) · **Cadence** (PR / merge).  
-**Statuses:** `Unassigned` · `Claimed` · `PR open` · `Merged` · `Blocked`
+Update this table whenever a ticket moves. Status values: **Not started · In progress · Implementation complete · Verified**. "Verified" means the test playbook entry passed end-to-end on a real Pepper environment.
 
-| Ticket | Spec | Suggested branch | Assignee | Status | Notes |
-|--------|------|------------------|----------|--------|-------|
-| Pre-cutover epic | [`pepper-pre-cutover-must-haves.md`](pepper-pre-cutover-must-haves.md) | _(n/a — tracking doc)_ | **Cadence** | | Cadence keeps epic child statuses accurate |
-| 01 | [`pepper-cutover-01-identity-fidelity.md`](pepper-cutover-01-identity-fidelity.md) | `feat/cutover-01-identity-fidelity` | **Vale** | Unassigned | |
-| 02 | [`pepper-cutover-02-handoff-observability.md`](pepper-cutover-02-handoff-observability.md) | `feat/cutover-02-handoff-observability` | **Locke** | Unassigned | Pair with daemon row; coordinate **#08** with Folio |
-| 03 | [`pepper-cutover-03-discord-verb-parity.md`](pepper-cutover-03-discord-verb-parity.md) | `feat/cutover-03-discord-verb-parity` | **Folio** | Unassigned | |
-| 04 | [`pepper-cutover-04-daily-jsonl-pipeline.md`](pepper-cutover-04-daily-jsonl-pipeline.md) | `feat/cutover-04-daily-jsonl-pipeline` | **Vale** | Unassigned | |
-| 05 | [`pepper-cutover-05-skills-discovery.md`](pepper-cutover-05-skills-discovery.md) | `feat/cutover-05-skills-discovery` | **Locke** | Unassigned | |
-| 06 | [`pepper-cutover-06-vault-continuity.md`](pepper-cutover-06-vault-continuity.md) | `feat/cutover-06-vault-continuity` | **Folio** | Unassigned | |
-| 07 | [`pepper-cutover-07-hook-fidelity.md`](pepper-cutover-07-hook-fidelity.md) | `feat/cutover-07-hook-fidelity` | **Vale** | Unassigned | Touches wiring for #01 / #02 |
-| 08 | [`pepper-cutover-08-notification-surface.md`](pepper-cutover-08-notification-surface.md) | `feat/cutover-08-notification-surface` | **Folio** | Unassigned | Partially gates **#02** “done” path |
-| Daemon contract | [`pepper-handoff-daemon-contract.md`](pepper-handoff-daemon-contract.md) | _(same branch as #02 unless split)_ | **Locke** | Unassigned | Same workstream as **#02** |
+| # | Ticket | Status | Notes |
+|---|--------|--------|-------|
+| 01 | [Identity fidelity](pepper-cutover-01-identity-fidelity.md) | **Implementation complete** | Originally PR #29 (`7269dba`); corrected by `5c287f8` (thin IdentityInjector + new HandoffInjector). Test playbook: [`01-identity-fidelity.md`](../cutover/test-playbooks/01-identity-fidelity.md). Verification deferred to end-of-cutover. |
+| 02 | [Handoff observability](pepper-cutover-02-handoff-observability.md) | Not started (locally) | Stranded PR #30 has good message-improvement work that may be cherry-picked; its target file moved from `identity_injector.py` to `handoff_injector.py` after `5c287f8`. |
+| 03 | [Discord verb parity](pepper-cutover-03-discord-verb-parity.md) | Not started (locally) | Stranded PR #31 — partial implementation of the verb list; evidence matrix admitted gaps. Cherry-pick or restart from spec. |
+| 04 | [Daily JSONL pipeline](pepper-cutover-04-daily-jsonl-pipeline.md) | Not started | |
+| 05 | [Skills discovery](pepper-cutover-05-skills-discovery.md) | Not started | |
+| 06 | [Vault continuity](pepper-cutover-06-vault-continuity.md) | Not started (locally) | Stranded PR #32 — `agent-core vault plan-dry-run` CLI + runbook; well-scoped slice, may be cherry-picked. |
+| 07 | [Hook fidelity](pepper-cutover-07-hook-fidelity.md) | Not started | Touches wiring for #01 / #02. |
+| 08 | [Notification surface](pepper-cutover-08-notification-surface.md) | Not started | Closes #02 scenario (b). |
 
-**Rules:** Each implementer keeps **one** row in `Claimed` or `PR open` at a time unless Jeff expands WIP. **Cadence** polls **`gh pr list`** for `feat/cutover-*` and reads **PR comments** (see runbook for filter example).
+**Cutover gate** (per the epic): every row reaches **Verified**. **#01, #02, #06 are non-negotiable**; the others are the working-functional set.
 
 ---
 
-## Cadence — PR agent checklist (**Cadence**)
+## Stranded GitHub PRs
 
-1. Poll open **`feat/cutover-*`** PRs (`gh pr list` — see [`pepper-cutover-cadence-queue.md`](pepper-cutover-cadence-queue.md)) and read **all new comments / reviews** on those PRs.
-2. Confirm each PR has (in body or an implementer comment): ticket id, what changed, how to verify, and declared dependencies — use the **Implementer → Cadence handoff** template if missing.
-3. Choose **merge vs stack** for dependent branches; state decisions **in a PR comment** on the affected PR(s).
-4. Land **parent-first** in a stack; ask for rebase **via comment** on the child PR.
-5. **If CI fails or the PR is not mergeable:** post the **Cadence → implementer rework** template (below) as a **PR comment** or formal **Request changes** review with the same fields in the body.
-6. After merge: update playbook **Status** / **Notes** / epic child **Status** (small PR to `main` or combined doc update per Jeff).
+Three PRs were opened by removed agents and never merged. They will not be rebased by their original authors. For each, the choice is: cherry-pick the salvageable parts onto a fresh local branch, or close the PR and reimplement against the spec.
 
----
-
-## PR comment templates
-
-### Implementer → Cadence (handoff — post as a **PR comment**)
-
-Paste this into the **PR for `feat/cutover-NN-…`** (one comment per handoff is enough; you may also put a copy in the PR description when you first open it).
-
-```text
-To: Cadence
-From: Vale | Locke | Folio
-Ticket: Cutover #NN
-Branch: feat/cutover-NN-slug
-Worktree: .worktrees/cutover-NN-slug
-Depends on: (none | branch name / PR link)
-Risk: (low / medium / high)
-Verified: (commands you ran, e.g. uv run pytest packages/core/tests/...)
-Cadence: (open PR | merge when green | retarget stack | other)
-Follow-ups: (optional)
-```
-
-### Cadence → implementer (rework / not ready to merge — post as **PR comment** or Request changes)
-
-Use when CI is red, review finds issues, conflicts need a rebase, or the PR does not meet the ticket’s “done.” Be specific so the implementer does not need a side channel.
-
-```text
-To: Vale | Locke | Folio
-From: Cadence
-PR: (number + link)
-Status: NOT MERGING | CHANGES REQUESTED
-Reason: (CI failed | failing tests | spec gap | conflict | risk — pick one or more)
-Details:
-- (bullet: what is wrong or what failed)
-- (bullet: expected fix or rebase target)
-Next: (push fixes on this branch | rebase onto main | split PR — be explicit)
-```
-
-This file lives next to the specs: [`pepper-cutover-agent-playbook.md`](pepper-cutover-agent-playbook.md).
+| PR | Ticket | State at last check | Action |
+|----|--------|---------------------|--------|
+| [#30](https://github.com/jeffrichley/agent_core/pull/30) | Cutover #02 | Open, draft, conflicting after `7269dba` merged | Likely cherry-pick the message-text improvements; rebase target moved to `handoff_injector.py`. |
+| [#31](https://github.com/jeffrichley/agent_core/pull/31) | Cutover #03 | Open, draft, mergeable but evidence matrix marks `send_briefing` partial and real-guild smoke missing | Decide per spec when working #03. |
+| [#32](https://github.com/jeffrichley/agent_core/pull/32) | Cutover #06 | Open, draft, mergeable | Cherry-pick the `vault plan-dry-run` CLI + runbook if quality holds; otherwise close and redo. |

@@ -3,8 +3,7 @@
 **Author:** Pepper + Jeff alignment
 **Date:** 2026-05-02
 **Priority:** Critical
-**Playbook implementer (default):** Locke (same workstream as [Cutover #02](pepper-cutover-02-handoff-observability.md))
-**PR / merge owner:** Cadence
+**Workstream:** [Cutover #02](pepper-cutover-02-handoff-observability.md)
 **Related:** `docs/requirements/pepper-requirements.md`, `packages/core/src/agent_core/hooks/tools/handoff_writer.py`, `packages/core/src/agent_core/bus/`
 
 ---

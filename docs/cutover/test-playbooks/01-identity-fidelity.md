@@ -100,4 +100,4 @@ The framework currently has no cap. If the smoke test reveals systematic truncat
 
 - Empirical truncation limit unknown — Step 4 above resolves.
 - `pepper-cutover-02-handoff-observability.md` still references "the next session's IdentityInjector" in spec text; should be updated to point at `HandoffInjector` when #02 is worked.
-- Stranded PR #30 (Locke's #02 work) needs to retarget edits from `identity_injector.py` to `handoff_injector.py` if cherry-picked.
+- Stranded PR #30 (cutover #02 work) needs to retarget edits from `identity_injector.py` to `handoff_injector.py` if cherry-picked.
