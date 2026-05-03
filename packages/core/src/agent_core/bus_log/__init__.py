@@ -13,6 +13,7 @@ from agent_core.bus_log.projectors import (
     get_projector,
     register_projector,
 )
+from agent_core.bus_log.reader import iter_envelopes
 
 __all__ = [
     "Projector",
@@ -20,4 +21,5 @@ __all__ = [
     "fallback_projector",
     "get_projector",
     "register_projector",
+    "iter_envelopes",
 ]
