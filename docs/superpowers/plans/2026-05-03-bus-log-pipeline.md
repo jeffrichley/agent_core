@@ -542,7 +542,7 @@ class _FallbackProjector:
         }
 ```
 
-Add `TextMessageProjector` to the `__init__.py` re-exports:
+Add `TextMessageProjector` to the `__init__.py` re-exports (note: `reset_registry` is intentionally not re-exported here — tests import it from `agent_core.bus_log.projectors` directly because it's a test-only helper):
 
 ```python
 from agent_core.bus_log.projectors import (
@@ -551,7 +551,6 @@ from agent_core.bus_log.projectors import (
     fallback_projector,
     get_projector,
     register_projector,
-    reset_registry,
 )
 
 __all__ = [
@@ -560,7 +559,6 @@ __all__ = [
     "fallback_projector",
     "get_projector",
     "register_projector",
-    "reset_registry",
 ]
 ```
 
@@ -1238,11 +1236,10 @@ from agent_core.bus_log.projectors import (
     fallback_projector,
     get_projector,
     register_projector,
-    reset_registry,
 )
 ```
 
-Add the new names to `__all__`.
+Add the new projector class names to `__all__` (do not add `reset_registry` — it's intentionally kept module-private to `agent_core.bus_log.projectors`).
 
 - [ ] **Step 4: Run tests to verify they pass**
 
@@ -1610,11 +1607,8 @@ from datetime import UTC, datetime
 import pytest
 
 from agent_core.bus.envelope import Envelope, EventPayload, TextMessagePayload
-from agent_core.bus_log import (
-    bootstrap_default_projectors,
-    get_projector,
-    reset_registry,
-)
+from agent_core.bus_log import bootstrap_default_projectors, get_projector
+from agent_core.bus_log.projectors import reset_registry
 
 
 def _ts() -> datetime:

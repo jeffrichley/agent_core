@@ -11,7 +11,6 @@ from agent_core.bus_log.projectors import (
     fallback_projector,
     get_projector,
     register_projector,
-    reset_registry,
 )
 
 __all__ = [
@@ -19,5 +18,4 @@ __all__ = [
     "fallback_projector",
     "get_projector",
     "register_projector",
-    "reset_registry",
 ]

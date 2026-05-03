@@ -80,9 +80,13 @@ class _FallbackProjector:
         perspective: str,
         timezone: str,
     ) -> dict | None:
-        # Implemented in Task 2 once we have rendering helpers; for now
-        # return a placeholder dict so the registry tests pass.
-        return {"placeholder": True}
+        # Real body lands in Task 2 (TextMessage + real fallback).
+        # Raise instead of returning a placeholder dict so any caller that
+        # tries to render via the fallback before Task 2 ships fails loudly
+        # rather than producing a wrong-shaped summary row silently.
+        raise NotImplementedError(
+            "fallback_projector.render lands in Task 2 of the bus log pipeline plan"
+        )
 
 
 fallback_projector: Projector = _FallbackProjector()
