@@ -487,7 +487,7 @@ agent-core bus stop                      # graceful shutdown
 agent-core bus status                    # endpoints, in-flight count, dlq depth
 agent-core bus mailbox <endpoint>        # list pending envelopes for endpoint
 agent-core bus trace <correlation_id>    # full thread of envelopes
-agent-core bus dlq                       # list dead-letter envelopes
+agent-core bus dlq list                  # list dead-letter envelopes
 agent-core bus replay <envelope_id>      # re-queue a dead-letter envelope
 agent-core bus dlq purge --older-than 7d
 ```

@@ -68,7 +68,7 @@ class TestDLQ:
         cfg = _write_config(tmp_path)
         _seed_dlq(tmp_path)
         runner = CliRunner()
-        result = runner.invoke(app, ["bus", "dlq", "--config", str(cfg)])
+        result = runner.invoke(app, ["bus", "dlq", "list", "--config", str(cfg)])
         assert result.exit_code == 0
         for eid in ("d0", "d1", "d2"):
             assert eid in result.output

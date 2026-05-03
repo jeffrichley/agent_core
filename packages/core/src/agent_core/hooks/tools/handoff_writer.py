@@ -14,11 +14,15 @@ import urllib.error
 import urllib.request
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any
 
 from agent_core.models import ToolResult
 
 logger = logging.getLogger("agent_core.hooks.tools.handoff_writer")
+
+# ToolResult headings — exported so callers (e.g. SessionEndWriter) can
+# discriminate on the structured signal instead of substring-matching on content.
+HANDOFF_ENQUEUED_HEADING = "Handoff Job Enqueued"
+HANDOFF_ENQUEUE_FAILED_HEADING = "Handoff Job Enqueue Failed"
 
 
 class HandoffWriter:
@@ -39,12 +43,12 @@ class HandoffWriter:
         transcript_path_str = str(hook_input.get("transcript_path", "")).strip()
         if not session_id:
             return ToolResult(
-                heading="Handoff Job Enqueue Failed",
+                heading=HANDOFF_ENQUEUE_FAILED_HEADING,
                 content="Missing session_id in hook payload.",
             )
         if not transcript_path_str:
             return ToolResult(
-                heading="Handoff Job Enqueue Failed",
+                heading=HANDOFF_ENQUEUE_FAILED_HEADING,
                 content="Missing transcript_path in hook payload.",
             )
 
@@ -73,12 +77,12 @@ class HandoffWriter:
         except urllib.error.HTTPError as exc:
             logger.warning("handoff enqueue rejected: %s", exc)
             return ToolResult(
-                heading="Handoff Job Enqueue Failed",
+                heading=HANDOFF_ENQUEUE_FAILED_HEADING,
                 content=f"Daemon rejected handoff job ({exc.code}).",
             )
         except (urllib.error.URLError, OSError):
             return ToolResult(
-                heading="Handoff Job Enqueue Failed",
+                heading=HANDOFF_ENQUEUE_FAILED_HEADING,
                 content="Cannot reach handoff daemon endpoint.",
             )
 
@@ -89,6 +93,6 @@ class HandoffWriter:
 
         job_id = parsed.get("job_id", "unknown")
         return ToolResult(
-            heading="Handoff Job Enqueued",
+            heading=HANDOFF_ENQUEUED_HEADING,
             content=f"Enqueued daemon handoff job {job_id} for session {session_id}.",
         )

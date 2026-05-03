@@ -224,7 +224,10 @@ class SessionEndWriter:
                 handoff_path.write_text(note.rstrip() + end_block, encoding="utf-8")
                 hs.write_ready(status_path, session_id, _read_handoff(handoff_path))
             else:
-                from agent_core.hooks.tools.handoff_writer import HandoffWriter
+                from agent_core.hooks.tools.handoff_writer import (
+                    HANDOFF_ENQUEUED_HEADING,
+                    HandoffWriter,
+                )
 
                 handoff_path.parent.mkdir(parents=True, exist_ok=True)
                 hw_params: dict = {
@@ -239,29 +242,15 @@ class SessionEndWriter:
                     hook_input,
                     hw_params,
                 )
-                hw_lower = hw_result.content.lower()
-                if "spawned" in hw_lower or "background" in hw_lower:
-                    pass  # leave pending; detached claude should flip to ready
-                elif "already written" in hw_lower:
-                    note2 = _read_handoff(handoff_path)
-                    if _handoff_has_session_note(note2, session_id) and not _already_finalized(
-                        note2, session_id
-                    ):
-                        handoff_path.write_text(note2.rstrip() + end_block, encoding="utf-8")
-                        hs.write_ready(status_path, session_id, _read_handoff(handoff_path))
-                    elif note2.strip():
-                        hs.write_ready(status_path, session_id, note2)
-                    else:
-                        hs.write_failed(
-                            status_path,
-                            session_id,
-                            hw_result.content.strip()[:500] or "HandoffWriter dedupe without file",
-                        )
+                if hw_result.heading == HANDOFF_ENQUEUED_HEADING:
+                    # Daemon accepted the job; status remains `pending` (set above)
+                    # until the daemon worker flips it to `ready` after writing.
+                    pass
                 else:
                     hs.write_failed(
                         status_path,
                         session_id,
-                        hw_result.content.strip()[:500] or "HandoffWriter did not start",
+                        hw_result.content.strip()[:500] or "HandoffWriter did not enqueue",
                     )
 
         return ToolResult(

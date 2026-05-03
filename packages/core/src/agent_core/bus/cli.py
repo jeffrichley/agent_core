@@ -110,16 +110,6 @@ async def _run_bus(config_path: Path) -> None:
         console.print("[yellow]bus stopped[/yellow]")
 
 
-def _config_option():
-    return typer.Option(
-        Path("./agent_core.yaml"),
-        "--config",
-        "-c",
-        exists=True,
-        readable=True,
-    )
-
-
 @app.command()
 def status(config: Path = _RUN_CONFIG_OPTION):
     """Show endpoints, in-flight count, and DLQ depth."""
@@ -221,16 +211,20 @@ async def _trace(correlation_id: str, config_path: Path) -> None:
         await store.close()
 
 
-# Sub-app for `bus dlq` and `bus dlq purge`.
-dlq_app = typer.Typer(help="Dead-letter operations.", invoke_without_command=True)
+# Sub-app for `bus dlq list` and `bus dlq purge`. We deliberately do NOT
+# declare a parent callback that consumes --config: Click attaches options
+# to the most-specific command they appear under, so a parent --config plus
+# a child --config conflict (parent eats the value, child gets its
+# `exists=True` default which doesn't exist in cwd). Each subcommand owns
+# its own --config; `bus dlq` with no subcommand shows help.
+dlq_app = typer.Typer(help="Dead-letter operations: list, purge.")
 app.add_typer(dlq_app, name="dlq")
 
 
-@dlq_app.callback(invoke_without_command=True)
-def _dlq_default(ctx: typer.Context, config: Path = _RUN_CONFIG_OPTION):
-    """List dead-letter envelopes (when `bus dlq` is invoked with no subcommand)."""
-    if ctx.invoked_subcommand is None:
-        asyncio.run(_dlq_list(config))
+@dlq_app.command("list")
+def dlq_list(config: Path = _RUN_CONFIG_OPTION):
+    """List dead-letter envelopes."""
+    asyncio.run(_dlq_list(config))
 
 
 async def _dlq_list(config_path: Path) -> None:

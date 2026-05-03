@@ -156,27 +156,66 @@ class TestSessionEndWriter:
         )
         assert handoff.read_text(encoding="utf-8") == after_first
 
-    @patch("agent_core.hooks.tools.handoff_writer.subprocess.Popen")
-    @patch("agent_core.hooks.tools.handoff_writer.shutil.which", return_value="/bin/claude")
-    def test_delegates_to_handoff_writer_when_no_session_handoff(
-        self, mock_which, mock_popen, tmp_path: Path
-    ):
+    def test_delegates_to_handoff_writer_when_no_session_handoff(self, tmp_path: Path):
         vault = tmp_path / "vault"
         transcript = tmp_path / "tr.jsonl"
         make_transcript(transcript, [("user", "Hello"), ("assistant", "Hey")])
 
-        SessionEndWriter().execute(
-            "SessionEnd",
-            hook_input={"session_id": "new-s", "transcript_path": str(transcript)},
-            params={
-                "vault_path": str(vault),
-                "handoff_file": "pepper/handoff.md",
-                "timezone": "US/Eastern",
-                "agent_name": "Pepper",
-            },
-        )
+        with patch("agent_core.hooks.tools.handoff_writer.HandoffWriter") as mock_cls:
+            mock_cls.return_value.execute.return_value = ToolResult(
+                heading="Handoff Job Enqueued",
+                content="Enqueued daemon handoff job j-1 for session new-s.",
+            )
 
-        assert mock_popen.called
+            SessionEndWriter().execute(
+                "SessionEnd",
+                hook_input={"session_id": "new-s", "transcript_path": str(transcript)},
+                params={
+                    "vault_path": str(vault),
+                    "handoff_file": "pepper/handoff.md",
+                    "timezone": "US/Eastern",
+                    "agent_name": "Pepper",
+                },
+            )
+
+            assert mock_cls.return_value.execute.called
+            event_arg = mock_cls.return_value.execute.call_args.args[0]
+            assert event_arg == "SessionEnd"
+
+        # Status sidecar must remain `pending` (set before delegation) — the
+        # daemon worker is responsible for flipping it to `ready`.
+        status_path = vault / "pepper" / "handoff-status.json"
+        assert status_path.exists()
+        st = json.loads(status_path.read_text(encoding="utf-8"))
+        assert st["state"] == "pending"
+        assert st["session_id"] == "new-s"
+
+    def test_marks_handoff_failed_when_enqueue_fails(self, tmp_path: Path):
+        """If HandoffWriter returns a non-enqueued result, sidecar must flip to failed."""
+        vault = tmp_path / "vault"
+        transcript = tmp_path / "tr.jsonl"
+        make_transcript(transcript, [("user", "Hello")])
+
+        with patch("agent_core.hooks.tools.handoff_writer.HandoffWriter") as mock_cls:
+            mock_cls.return_value.execute.return_value = ToolResult(
+                heading="Handoff Job Enqueue Failed",
+                content="Cannot reach handoff daemon endpoint.",
+            )
+
+            SessionEndWriter().execute(
+                "SessionEnd",
+                hook_input={"session_id": "fail-s", "transcript_path": str(transcript)},
+                params={
+                    "vault_path": str(vault),
+                    "handoff_file": "pepper/handoff.md",
+                    "timezone": "US/Eastern",
+                },
+            )
+
+        status_path = vault / "pepper" / "handoff-status.json"
+        st = json.loads(status_path.read_text(encoding="utf-8"))
+        assert st["state"] == "failed"
+        assert "daemon endpoint" in (st.get("error") or "")
 
     def test_duration_from_transcript_timestamps(self, tmp_path: Path):
         from agent_core.hooks.tools.session_end_writer import _duration_hint
