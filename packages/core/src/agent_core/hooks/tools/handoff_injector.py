@@ -4,10 +4,16 @@ Thin FileInjector subclass that reads a handoff sidecar status file
 (``handoff-status.json`` next to ``handoff.md`` by default) before loading
 the handoff body. This avoids racing the daemon writer / summarizer:
 
-- ``pending`` — inject a notice; do not load ``handoff.md`` body.
+- ``pending`` (same session) — inject a notice that this session's own
+  handoff is in flight; do not load ``handoff.md`` as authoritative.
+- ``pending`` (other session) — inject a Cutover #02 (b) placeholder
+  saying the prior session's continuity is still summarizing; the agent
+  should work from MEMORY.md / dailies until a ``HandoffReady`` bus
+  notification arrives via the Cutover #08 perception surface.
 - ``ready`` — load ``handoff.md`` as usual.
-- ``failed`` — inject the error; optionally append the on-disk file as
-  possibly stale.
+- ``failed`` — inject a Cutover #02 (c) placeholder pointing the agent
+  at MEMORY.md / dailies as ground truth; append the on-disk file (if
+  any) labeled as a possibly-stale prior attempt.
 - (no status file) — same behavior as FileInjector.
 
 This tool is purpose-built for the handoff sidecar protocol. Each file it
@@ -78,20 +84,42 @@ class HandoffInjector(FileInjector):
         if status is not None:
             st = status.get("state")
             updated = status.get("updated_at", "unknown")
-            sid = status.get("session_id", "unknown")
+            sid = status.get("session_id")
+            sid_display = sid if sid else "unknown"
+            # Require both sides non-empty before claiming same-session — guards
+            # against a missing/empty status sid colliding with a literal
+            # ``"unknown"`` hook session id.
+            same_session = bool(current_sid and sid and sid == current_sid)
 
-            if (
-                st == "pending"
-                and current_sid
-                and sid == current_sid
-            ):
+            if st == "pending":
+                if same_session:
+                    return (
+                        f"## {file_name}\n\n"
+                        "**Handoff status: pending** — this session's handoff is still "
+                        "being finalized (or the handoff daemon has not marked it ready "
+                        "yet). Do not treat any existing `handoff.md` on disk as "
+                        "authoritative until state becomes `ready` or you receive a "
+                        "`HandoffReady` bus notification.\n\n"
+                        f"- Last lifecycle touch: session `{sid_display}`, updated "
+                        f"`{updated}`\n"
+                    )
+                # Cross-session pending — Cutover #02 scenario (b). The previous
+                # session's continuity is still summarizing; do not silently load
+                # whatever is on disk.
                 return (
                     f"## {file_name}\n\n"
-                    "**Handoff status: pending** — this session's handoff is still being "
-                    "finalized (or a background writer has not marked it ready yet). "
-                    "Do not treat any existing `handoff.md` on disk as authoritative until "
-                    "state becomes `ready` or you receive a `HandoffReady` bus notification.\n\n"
-                    f"- Last lifecycle touch: session `{sid}`, updated `{updated}`\n"
+                    "**Continuity not ready yet** — the previous session's continuity "
+                    "is still summarizing. You will receive a **continuity ready** "
+                    "notification (via the Cutover #08 surface — e.g. `HandoffReady` on "
+                    "the bus routed to your notification surface) when it is "
+                    "available.\n\n"
+                    "Until then, work from **current MEMORY.md** and **recent daily "
+                    "summaries**; do **not** confabulate state from prior sessions or "
+                    "treat `handoff.md` on disk as authoritative. If continuity does "
+                    "not arrive shortly, ask the user where you left off rather than "
+                    "guessing.\n\n"
+                    f"- Status sidecar: session `{sid_display}` (not this boot), state "
+                    f"`pending`, updated `{updated}`\n"
                 )
 
             if st == "failed":
@@ -103,9 +131,24 @@ class HandoffInjector(FileInjector):
                 if handoff_path.exists():
                     body = handoff_path.read_text(encoding="utf-8-sig")
                     parts.append(
-                        "*The file below may be stale or partial (last on-disk copy).*\n\n"
+                        "The summarizer could not produce continuity for the most "
+                        "recent cycle. The `handoff.md` below is the **last-known-good "
+                        "continuity** from an earlier successful cycle (not the failed "
+                        "run) — treat it as your starting point, but verify against "
+                        "**MEMORY.md** and **recent daily summaries** as ultimate "
+                        "ground truth.\n\n"
+                        "*Last-known-good `handoff.md` (from an earlier successful "
+                        "cycle):*\n\n"
                     )
                     parts.append(body)
+                else:
+                    parts.append(
+                        "The summarizer could not produce continuity for the most "
+                        "recent cycle and no prior `handoff.md` exists on disk. Work "
+                        "from **MEMORY.md** and **recent daily summaries** as ground "
+                        "truth; ask the user for context if anything load-bearing is "
+                        "missing.\n"
+                    )
                 return "".join(parts)
 
             if st == "ready":

@@ -41,9 +41,13 @@ class TestHandoffInjector:
         assert "pending" in result.content
         assert "SECRET ON DISK" not in result.content
 
-    def test_handoff_pending_other_session_reads_file(self, tmp_path: Path):
+    def test_handoff_pending_other_session_shows_continuity_placeholder(
+        self, tmp_path: Path
+    ):
+        """Cutover #02 (b): a fresh session must not silently load stale handoff
+        content while the prior session's continuity is still summarizing."""
         base = tmp_path
-        (base / "handoff.md").write_text("GOOD CONTENT", encoding="utf-8")
+        (base / "handoff.md").write_text("STALE ON DISK", encoding="utf-8")
         status = {
             "schema_version": 1,
             "state": "pending",
@@ -60,8 +64,120 @@ class TestHandoffInjector:
             hook_input={"session_id": "new-session"},
             params={"base_path": str(base), "files": ["handoff.md"]},
         )
-        assert "GOOD CONTENT" in result.content
-        assert "Handoff status: pending" not in result.content
+        assert "STALE ON DISK" not in result.content
+        assert "Continuity not ready yet" in result.content
+        assert "MEMORY.md" in result.content
+        assert "HandoffReady" in result.content
+
+    def test_handoff_pending_no_hook_session_shows_placeholder(self, tmp_path: Path):
+        """No `session_id` in hook_input → cannot prove same-session, treat as
+        cross-session. The placeholder must protect against silent stale read."""
+        base = tmp_path
+        (base / "handoff.md").write_text("DO NOT LEAK", encoding="utf-8")
+        status = {
+            "schema_version": 1,
+            "state": "pending",
+            "session_id": "any-sid",
+            "correlation_id": "c1",
+            "updated_at": "2026-01-01T00:00:00+00:00",
+            "error": None,
+            "content_sha256": None,
+        }
+        (base / "handoff-status.json").write_text(json.dumps(status), encoding="utf-8")
+        tool = HandoffInjector()
+        result = tool.execute(
+            event="SessionStart",
+            hook_input={},
+            params={"base_path": str(base), "files": ["handoff.md"]},
+        )
+        assert "DO NOT LEAK" not in result.content
+        assert "Continuity not ready yet" in result.content
+
+    def test_handoff_failed_includes_guidance_and_stale_body_label(
+        self, tmp_path: Path
+    ):
+        """Cutover #02 (c): failed-state placeholder must direct the agent at
+        MEMORY.md / dailies as ground truth, and label the on-disk file as a
+        possibly-stale prior attempt rather than a silent success."""
+        base = tmp_path
+        (base / "handoff.md").write_text("LAST ATTEMPT SNIPPET", encoding="utf-8")
+        status = {
+            "schema_version": 1,
+            "state": "failed",
+            "session_id": "sid-x",
+            "correlation_id": "c1",
+            "updated_at": "2026-01-01T00:00:00+00:00",
+            "error": "worker exploded",
+            "content_sha256": None,
+        }
+        (base / "handoff-status.json").write_text(json.dumps(status), encoding="utf-8")
+        tool = HandoffInjector()
+        result = tool.execute(
+            event="SessionStart",
+            hook_input={"session_id": "sid-x"},
+            params={"base_path": str(base), "files": ["handoff.md"]},
+        )
+        assert "Handoff status: failed" in result.content
+        assert "worker exploded" in result.content
+        assert "MEMORY.md" in result.content
+        assert "ground truth" in result.content
+        assert "last-known-good" in result.content
+        assert "LAST ATTEMPT SNIPPET" in result.content
+
+    def test_handoff_failed_with_no_on_disk_body_still_shows_guidance(
+        self, tmp_path: Path
+    ):
+        """Failed-state placeholder must include guidance even when handoff.md
+        is absent from disk (no last-known-good attribution applies)."""
+        base = tmp_path
+        status = {
+            "schema_version": 1,
+            "state": "failed",
+            "session_id": "sid-x",
+            "correlation_id": "c1",
+            "updated_at": "2026-01-01T00:00:00+00:00",
+            "error": "summarizer crashed",
+            "content_sha256": None,
+        }
+        (base / "handoff-status.json").write_text(json.dumps(status), encoding="utf-8")
+        tool = HandoffInjector()
+        result = tool.execute(
+            event="SessionStart",
+            hook_input={"session_id": "sid-x"},
+            params={"base_path": str(base), "files": ["handoff.md"]},
+        )
+        assert "Handoff status: failed" in result.content
+        assert "summarizer crashed" in result.content
+        assert "MEMORY.md" in result.content
+        assert "ground truth" in result.content
+        # No on-disk body, so the last-known-good attribution must not be claimed.
+        assert "last-known-good" not in result.content.lower()
+
+    def test_handoff_ready_missing_file_warn_emits_placeholder(self, tmp_path: Path):
+        """Status says ready but handoff.md is gone from disk → warn placeholder."""
+        base = tmp_path
+        status = {
+            "schema_version": 1,
+            "state": "ready",
+            "session_id": "x",
+            "correlation_id": "c1",
+            "updated_at": "2026-01-01T00:00:00+00:00",
+            "error": None,
+            "content_sha256": "abc",
+        }
+        (base / "handoff-status.json").write_text(json.dumps(status), encoding="utf-8")
+        tool = HandoffInjector()
+        result = tool.execute(
+            event="SessionStart",
+            hook_input={"session_id": "x"},
+            params={
+                "base_path": str(base),
+                "files": ["handoff.md"],
+                "missing_file_behavior": "warn",
+            },
+        )
+        assert "ready" in result.content
+        assert "missing on disk" in result.content
 
     def test_handoff_ready_loads_file(self, tmp_path: Path):
         base = tmp_path

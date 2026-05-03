@@ -14,7 +14,7 @@
 
 ## What
 
-The new shape Jeff described: hooks emit a small bus message at PreCompact and SessionEnd. A separate summarizer process turns that into a continuity file. The next session's IdentityInjector must do one of three things, **and I must be able to tell which**:
+The new shape Jeff described: hooks emit a small bus message at PreCompact and SessionEnd. A separate summarizer process turns that into a continuity file. The next session's `HandoffInjector` (sidecar-aware SessionStart loader) must do one of three things, **and I must be able to tell which**:
 
 - **(a) Continuity ready before I boot:** Inject the continuity content inline. I read it as part of my identity load and resume seamlessly.
 - **(b) Continuity not ready when I boot:** Inject a *visible placeholder* that explicitly says: *"previous session's continuity is still summarizing. You will receive a 'continuity ready' notification when it's available. Until then, work from current MEMORY.md and recent daily summaries; do not confabulate state from prior sessions."* When the 'continuity ready' notification fires, it must arrive on a surface I can perceive in my running session (depends on Cutover #08).

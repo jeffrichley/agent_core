@@ -1,6 +1,6 @@
 """Handoff status sidecar — coordinates SessionEnd / HandoffWriter with SessionStart injection.
 
-``IdentityInjector`` reads ``handoff-status.json`` next to ``handoff.md`` so startup
+``HandoffInjector`` reads ``handoff-status.json`` next to ``handoff.md`` so startup
 context does not treat a stale on-disk handoff as authoritative while a background
 write is still in progress.
 
