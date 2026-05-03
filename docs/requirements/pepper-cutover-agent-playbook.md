@@ -162,7 +162,7 @@ Update this table whenever a ticket moves. Status values: **Not started · In pr
 | # | Ticket | Status | Notes |
 |---|--------|--------|-------|
 | 01 | [Identity fidelity](pepper-cutover-01-identity-fidelity.md) | **Implementation complete** | Originally PR #29 (`7269dba`); corrected by `5c287f8` (thin IdentityInjector + new HandoffInjector). Test playbook: [`01-identity-fidelity.md`](../cutover/test-playbooks/01-identity-fidelity.md). Verification deferred to end-of-cutover. |
-| 02 | [Handoff observability](pepper-cutover-02-handoff-observability.md) | Not started (locally) | Stranded PR #30 has good message-improvement work that may be cherry-picked; its target file moved from `identity_injector.py` to `handoff_injector.py` after `5c287f8`. |
+| 02 | [Handoff observability](pepper-cutover-02-handoff-observability.md) | **Implementation complete** | Landed in `028ddcb` (placeholders for cross-session pending + failed; basename guard already in `5c287f8`). Daemon-side `HandoffReady`/`HandoffFailed` publication already shipped pre-#02. Test playbook: [`02-handoff-observability.md`](../cutover/test-playbooks/02-handoff-observability.md). Mid-session perception of bus events is **#08**. |
 | 03 | [Discord verb parity](pepper-cutover-03-discord-verb-parity.md) | Not started (locally) | Stranded PR #31 — partial implementation of the verb list; evidence matrix admitted gaps. Cherry-pick or restart from spec. |
 | 04 | [Daily JSONL pipeline](pepper-cutover-04-daily-jsonl-pipeline.md) | Not started | |
 | 05 | [Skills discovery](pepper-cutover-05-skills-discovery.md) | Not started | |
@@ -180,6 +180,6 @@ Three PRs were opened by removed agents and never merged. They will not be rebas
 
 | PR | Ticket | State at last check | Action |
 |----|--------|---------------------|--------|
-| [#30](https://github.com/jeffrichley/agent_core/pull/30) | Cutover #02 | Open, draft, conflicting after `7269dba` merged | Likely cherry-pick the message-text improvements; rebase target moved to `handoff_injector.py`. |
+| [#30](https://github.com/jeffrichley/agent_core/pull/30) | Cutover #02 | Open, draft, conflicting | **Superseded by `028ddcb`** — placeholder text was lifted nearly verbatim. PR can be closed. |
 | [#31](https://github.com/jeffrichley/agent_core/pull/31) | Cutover #03 | Open, draft, mergeable but evidence matrix marks `send_briefing` partial and real-guild smoke missing | Decide per spec when working #03. |
 | [#32](https://github.com/jeffrichley/agent_core/pull/32) | Cutover #06 | Open, draft, mergeable | Cherry-pick the `vault plan-dry-run` CLI + runbook if quality holds; otherwise close and redo. |
