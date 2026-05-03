@@ -3,7 +3,7 @@
 **Author:** Pepper
 **Date:** 2026-05-02
 **Priority:** High — partially gates Cutover #02; without this, "continuity ready" notification has nowhere to land.
-**Status:** Open
+**Status:** Implementation complete (verification deferred to end-of-cutover gate; see [`docs/cutover/test-playbooks/08-notification-surface.md`](../cutover/test-playbooks/08-notification-surface.md))
 **Parent:** `docs/requirements/pepper-pre-cutover-must-haves.md`
 **Related:**
 - Cutover #02 (handoff observability — depends on this notification path being real)
