@@ -6,7 +6,12 @@ from datetime import UTC, datetime
 
 import pytest
 
-from agent_core.bus.envelope import Envelope, EventPayload, TextMessagePayload
+from agent_core.bus.envelope import (
+    AcknowledgmentPayload,
+    Envelope,
+    EventPayload,
+    TextMessagePayload,
+)
 from agent_core.bus_log.projectors import (
     TextMessageProjector,
     fallback_projector,
@@ -120,3 +125,44 @@ class TestFallbackProjector:
         assert row["dir"] == "in"
         assert row["src"] == "some-source"
         assert row["cid"] == "cx"
+
+    def test_renders_non_event_envelope_with_kind_id_content(self):
+        """Non-Event envelopes (e.g., Acknowledgment) take the else branch
+        in _FallbackProjector.render and render content as ``{kind}:{id}``.
+        Production envelope kinds beyond TextMessage/Event hit this path."""
+        env = Envelope(
+            id="ack-1",
+            correlation_id="c-ack",
+            from_="discord",
+            to="pepper",
+            kind="Acknowledgment",
+            payload=AcknowledgmentPayload(of="other-id"),
+            created_at=_ts(),
+        )
+        row = fallback_projector.render(env, perspective="pepper", timezone="UTC")
+        assert row is not None
+        assert row["content"] == "Acknowledgment:ack-1"
+        assert row["dir"] == "in"
+        assert row["src"] == "discord"
+
+    def test_truncates_oversized_event_data_to_max_chars_with_ellipsis(self):
+        """Event data that exceeds _MAX_DATA_CHARS (200) when JSON-serialized
+        is truncated to exactly 200 chars including a trailing single-char
+        ellipsis. Boundary lock-in: the truncation guarantee must hold so
+        rotated daily files stay roughly bounded in line length."""
+        big = {f"key{i}": "x" * 50 for i in range(20)}  # ~1200 chars after json.dumps
+        env = Envelope(
+            id="big-1",
+            correlation_id="c-big",
+            from_="src",
+            to="pepper",
+            kind="Event",
+            payload=EventPayload(type="BigEvent", data=big),
+            created_at=_ts(),
+        )
+        row = fallback_projector.render(env, perspective="pepper", timezone="UTC")
+        prefix = "event:BigEvent data="
+        assert row["content"].startswith(prefix)
+        truncated = row["content"][len(prefix):]
+        assert len(truncated) == 200
+        assert truncated.endswith("…")
