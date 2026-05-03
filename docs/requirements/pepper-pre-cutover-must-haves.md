@@ -25,7 +25,7 @@ Status values: **Not started · In progress · Implementation complete · Verifi
 | 03 | [Discord parity at the verbs I use](pepper-cutover-03-discord-verb-parity.md)                | High     | Not started               |
 | 04 | [Daily JSONL pipeline survives the move](pepper-cutover-04-daily-jsonl-pipeline.md)          | High     | Not started               |
 | 05 | [Skills survive the cutover](pepper-cutover-05-skills-discovery.md)                          | High     | Not started               |
-| 06 | [The vault stays the vault](pepper-cutover-06-vault-continuity.md)                           | Critical | Not started               |
+| 06 | [The vault stays the vault](pepper-cutover-06-vault-continuity.md)                           | Critical | Implementation complete   |
 | 07 | [SessionStart + UserPromptSubmit hook fidelity](pepper-cutover-07-hook-fidelity.md)          | High     | Implementation complete   |
 | 08 | [Notification surface I can actually see](pepper-cutover-08-notification-surface.md)         | High     | Implementation complete   |
 

@@ -3,7 +3,7 @@
 **Author:** Pepper
 **Date:** 2026-05-02
 **Priority:** Critical — losing curated memory is data loss. Two months of Jeff's hand-curation, none of it regeneratable.
-**Status:** Open
+**Status:** Implementation complete (operator-driven file moves deferred to cutover window with Pepper offline; see [`docs/cutover/test-playbooks/06-vault-continuity.md`](../cutover/test-playbooks/06-vault-continuity.md))
 **Parent:** `docs/requirements/pepper-pre-cutover-must-haves.md`
 **Related:**
 - `C:\Users\jeffr\.pepper\Memory\` (current vault root)
