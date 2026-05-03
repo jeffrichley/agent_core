@@ -80,3 +80,17 @@ def get_bus_hook_types(pm: pluggy.PluginManager) -> dict[str, type[Any]]:
 
 def get_hook_tool_types(pm: pluggy.PluginManager) -> dict[str, type[Any]]:
     return _merge_type_maps(pm.hook.register_hook_tool_types(), kind="hook-tool")
+
+
+def get_bus_log_projectors(pm: pluggy.PluginManager) -> dict[str, Any]:
+    """Discover projector registrations from all loaded plugins.
+
+    Last-write-wins on duplicate keys (intentional override semantics —
+    contrast with ``_merge_type_maps`` which raises on conflict because
+    type-id duplicates are programming errors, not configurations).
+    """
+    merged: dict[str, Any] = {}
+    for mapping in pm.hook.register_bus_log_projectors():
+        if mapping:
+            merged.update(mapping)
+    return merged

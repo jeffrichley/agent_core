@@ -26,9 +26,26 @@ __all__ = [
     "Projector",
     "SchedulerHeartbeatSkipProjector",
     "TextMessageProjector",
+    "bootstrap_default_projectors",
     "fallback_projector",
     "get_projector",
     "iter_envelopes",
     "iter_for_agent",
     "register_projector",
 ]
+
+
+def bootstrap_default_projectors() -> None:
+    """Discover projectors via pluggy and load them into the registry.
+
+    Called once at runtime startup (CLI entry, daemon boot, MCP endpoint
+    init). Safe to call multiple times — re-registering replaces.
+    """
+    from agent_core.plugins.manager import (
+        create_plugin_manager,
+        get_bus_log_projectors,
+    )
+
+    pm = create_plugin_manager()
+    for key, projector in get_bus_log_projectors(pm).items():
+        register_projector(key, projector)

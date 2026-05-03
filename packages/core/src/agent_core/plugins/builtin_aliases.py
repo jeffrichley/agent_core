@@ -55,3 +55,23 @@ def register_endpoint_types() -> dict[str, type[Any]]:
 @hookimpl
 def register_hook_tool_types() -> dict[str, type[Any]]:
     return dict(_HOOK_TOOL_TYPES)
+
+
+@hookimpl
+def register_bus_log_projectors() -> dict[str, Any]:
+    """Default projector registrations for built-in envelope shapes."""
+    from agent_core.bus_log.projectors import (
+        AcknowledgmentSkipProjector,
+        HandoffFailedProjector,
+        HandoffReadyProjector,
+        SchedulerHeartbeatSkipProjector,
+    )
+    return {
+        # SchedulerHeartbeatSkipProjector replaces the plain TextMessage
+        # projector: it filters scheduler heartbeats to None and
+        # delegates everything else to TextMessageProjector.
+        "TextMessage": SchedulerHeartbeatSkipProjector(),
+        "Acknowledgment": AcknowledgmentSkipProjector(),
+        "HandoffReady": HandoffReadyProjector(),
+        "HandoffFailed": HandoffFailedProjector(),
+    }

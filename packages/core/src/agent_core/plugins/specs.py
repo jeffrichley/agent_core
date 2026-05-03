@@ -63,3 +63,13 @@ class AgentCoreSpecs:
     @hookspec
     def validate_config(self, raw_config: dict[str, Any]) -> None:
         """Validate or normalize top-level runner config."""
+
+    @hookspec
+    def register_bus_log_projectors(self) -> dict[str, Any]:
+        """Return projector key -> instance registrations.
+
+        Keys are either ``EventPayload.type`` strings (e.g., "HandoffReady")
+        or envelope ``kind`` strings (e.g., "TextMessage"). Last-write-wins
+        on duplicate keys across plugins (intentional override semantics).
+        """
+        raise NotImplementedError
