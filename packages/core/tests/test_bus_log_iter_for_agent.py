@@ -54,6 +54,7 @@ def test_filter_includes_envelopes_where_agent_is_to(tmp_path: Path):
     rows = list(iter_for_agent(path, agent="pepper"))
     assert len(rows) == 1
     assert rows[0]["cid"] == "c-a"
+    assert rows[0]["dir"] == "in"
 
 
 def test_filter_includes_envelopes_where_agent_is_from(tmp_path: Path):
@@ -77,6 +78,18 @@ def test_filter_excludes_envelopes_touching_neither(tmp_path: Path):
     _write_jsonl(path, envs)
     rows = list(iter_for_agent(path, agent="pepper"))
     assert rows == []
+
+
+def test_filter_includes_self_loop_envelope_once_with_dir_self(tmp_path: Path):
+    """A self-loop envelope (from_=to=agent) must appear exactly once with dir='self'.
+    It must not be deduped (dropped) or double-yielded by the from_/to filter."""
+    base = datetime(2026, 5, 3, 12, 0, 0, tzinfo=UTC)
+    env = _text_env("a", frm="pepper", to="pepper", created=base)
+    path = tmp_path / "day.jsonl"
+    _write_jsonl(path, [env])
+    rows = list(iter_for_agent(path, agent="pepper"))
+    assert len(rows) == 1
+    assert rows[0]["dir"] == "self"
 
 
 def test_projected_default_returns_tool3_rows(tmp_path: Path):
@@ -148,3 +161,29 @@ def test_iter_for_agent_honors_time_range(tmp_path: Path):
     rows = list(iter_for_agent(path, agent="pepper", since=base + timedelta(seconds=5)))
     assert len(rows) == 1
     assert rows[0]["cid"] == "c-b"
+
+
+def test_projector_raising_does_not_poison_iteration(tmp_path: Path, caplog):
+    """A projector that raises must be logged + skipped — one bad envelope
+    does not crash the day's reflection. Mirrors iter_envelopes' tolerance
+    for malformed JSON lines."""
+    class _Boom:
+        def render(self, envelope, *, perspective, timezone):
+            raise RuntimeError("projector boom")
+
+    register_projector("TextMessage", _Boom())
+
+    base = datetime(2026, 5, 3, 12, 0, 0, tzinfo=UTC)
+    envs = [
+        _text_env("a", frm="discord", to="pepper", created=base),
+        _text_env("b", frm="discord", to="pepper", created=base + timedelta(seconds=1)),
+    ]
+    path = tmp_path / "day.jsonl"
+    _write_jsonl(path, envs)
+    with caplog.at_level("WARNING"):
+        rows = list(iter_for_agent(path, agent="pepper"))
+    # Both envelopes were filtered through and both projector calls raised; rows is empty.
+    assert rows == []
+    # Operator got TWO warnings — one per failed projector call.
+    boom_warnings = [r for r in caplog.records if "projector" in r.message.lower()]
+    assert len(boom_warnings) == 2

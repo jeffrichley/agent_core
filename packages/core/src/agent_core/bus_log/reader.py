@@ -11,6 +11,7 @@ import logging
 from collections.abc import Iterator
 from datetime import UTC, datetime
 from pathlib import Path
+from typing import Literal, overload
 
 from pydantic import ValidationError
 
@@ -70,6 +71,30 @@ def iter_envelopes(
         yield env
 
 
+@overload
+def iter_for_agent(
+    path: Path,
+    *,
+    agent: str,
+    projected: Literal[True] = True,
+    timezone: str = "US/Eastern",
+    since: datetime | None = None,
+    until: datetime | None = None,
+) -> Iterator[dict]: ...
+
+
+@overload
+def iter_for_agent(
+    path: Path,
+    *,
+    agent: str,
+    projected: Literal[False],
+    timezone: str = "US/Eastern",
+    since: datetime | None = None,
+    until: datetime | None = None,
+) -> Iterator[Envelope]: ...
+
+
 def iter_for_agent(
     path: Path,
     *,
@@ -87,6 +112,9 @@ def iter_for_agent(
 
     ``timezone`` is forwarded to projectors for ``ts`` rendering and
     is ignored when ``projected=False``.
+
+    If a projector raises, the failure is logged at WARNING and the
+    envelope is skipped — one bad projector does not poison the day.
     """
     for env in iter_envelopes(path, since=since, until=until):
         if env.to != agent and env.from_ != agent:
@@ -95,6 +123,15 @@ def iter_for_agent(
             yield env
             continue
         projector = get_projector(env)
-        row = projector.render(env, perspective=agent, timezone=timezone)
+        try:
+            row = projector.render(env, perspective=agent, timezone=timezone)
+        except Exception:
+            log.warning(
+                "bus_log: projector %s failed for envelope %s",
+                type(projector).__name__,
+                env.id,
+                exc_info=True,
+            )
+            continue
         if row is not None:
             yield row
