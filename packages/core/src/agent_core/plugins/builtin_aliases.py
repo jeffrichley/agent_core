@@ -10,6 +10,7 @@ from typing import Any
 
 import pluggy
 
+from agent_core.bus_hooks.daily_raw_jsonl import DailyRawJsonlHook
 from agent_core.bus_log.projectors import (
     AcknowledgmentSkipProjector,
     HandoffFailedProjector,
@@ -44,6 +45,10 @@ _HOOK_TOOL_TYPES: dict[str, type[Any]] = {
     "builtin.time_injector": TimeInjector,
 }
 
+_BUS_HOOK_TYPES: dict[str, type[Any]] = {
+    "builtin.daily_raw_jsonl": DailyRawJsonlHook,
+}
+
 _BUS_LOG_PROJECTORS: dict[str, Any] = {
     # SchedulerHeartbeatSkipProjector replaces the plain TextMessage
     # projector: it filters scheduler heartbeats to None and delegates
@@ -53,6 +58,11 @@ _BUS_LOG_PROJECTORS: dict[str, Any] = {
     "HandoffReady": HandoffReadyProjector(),
     "HandoffFailed": HandoffFailedProjector(),
 }
+
+
+@hookimpl
+def register_bus_hook_types() -> dict[str, type[Any]]:
+    return dict(_BUS_HOOK_TYPES)
 
 
 @hookimpl

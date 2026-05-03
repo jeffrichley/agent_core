@@ -176,3 +176,12 @@ async def test_hook_writes_lf_only_terminators_on_all_platforms(tmp_path: Path):
     raw_bytes = files[0].read_bytes()
     assert b"\r\n" not in raw_bytes
     assert raw_bytes.endswith(b"\n")
+
+
+def test_daily_raw_jsonl_registered_as_builtin_bus_hook_type():
+    """The hook is discoverable under its yaml alias `builtin.daily_raw_jsonl`."""
+    from agent_core.plugins.manager import create_plugin_manager, get_bus_hook_types
+    pm = create_plugin_manager()
+    types = get_bus_hook_types(pm)
+    assert "builtin.daily_raw_jsonl" in types
+    assert types["builtin.daily_raw_jsonl"] is DailyRawJsonlHook
