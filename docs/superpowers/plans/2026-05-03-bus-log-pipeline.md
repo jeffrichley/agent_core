@@ -671,7 +671,7 @@ def test_iter_envelopes_skips_blank_and_malformed_lines(tmp_path: Path, caplog):
     assert len(parsed) == 1
     assert parsed[0].id == "e1"
     # Malformed line was reported (operator visibility), not silently ignored.
-    assert any("malformed" in r.message.lower() or "parse" in r.message.lower() for r in caplog.records)
+    assert any("malformed" in r.message.lower() for r in caplog.records)
 
 
 def test_iter_envelopes_filters_by_time_range(tmp_path: Path):
@@ -740,13 +740,15 @@ def iter_envelopes(
     """Yield envelopes from a daily JSONL file.
 
     Missing files yield nothing (a quiet day, not an error). Blank lines
-    are skipped silently. Lines that fail JSON parsing or Envelope
-    validation are logged at WARNING and skipped — operator gets a signal
-    without losing the rest of the day.
+    are skipped silently. Lines that fail Envelope validation (including
+    invalid JSON syntax — ``ValidationError`` subclasses ``ValueError``
+    so it covers both shapes) are logged at WARNING and skipped — operator
+    gets a signal without losing the rest of the day.
 
     ``since`` is inclusive, ``until`` is exclusive (matches Python
-    range/slice conventions). Both are compared against
-    ``envelope.created_at`` after coercing it to UTC.
+    range/slice conventions). Both bounds and ``envelope.created_at`` are
+    coerced to UTC before comparison so naive datetimes from any side
+    don't trigger ``TypeError``.
     """
     if not path.exists():
         return
@@ -755,6 +757,13 @@ def iter_envelopes(
     except OSError:
         log.exception("bus_log: failed to read %s", path)
         return
+
+    def _to_utc(dt: datetime) -> datetime:
+        return dt if dt.tzinfo else dt.replace(tzinfo=UTC)
+
+    since_utc = _to_utc(since) if since is not None else None
+    until_utc = _to_utc(until) if until is not None else None
+
     for lineno, raw in enumerate(text.splitlines(), start=1):
         line = raw.strip()
         if not line:
@@ -764,13 +773,10 @@ def iter_envelopes(
         except ValidationError as exc:
             log.warning("bus_log: malformed envelope at %s:%d (%s)", path, lineno, exc)
             continue
-        except ValueError as exc:
-            log.warning("bus_log: parse error at %s:%d (%s)", path, lineno, exc)
+        ts = _to_utc(env.created_at)
+        if since_utc is not None and ts < since_utc:
             continue
-        ts = env.created_at if env.created_at.tzinfo else env.created_at.replace(tzinfo=UTC)
-        if since is not None and ts < since:
-            continue
-        if until is not None and ts >= until:
+        if until_utc is not None and ts >= until_utc:
             continue
         yield env
 ```
@@ -786,7 +792,7 @@ And add `"iter_envelopes"` to `__all__`.
 - [ ] **Step 4: Run tests to verify they pass**
 
 Run: `uv run pytest packages/core/tests/test_bus_log_reader.py -v`
-Expected: 5 passed.
+Expected: 7 passed.
 
 - [ ] **Step 5: Commit**
 

@@ -79,7 +79,7 @@ def test_iter_envelopes_skips_blank_and_malformed_lines(tmp_path: Path, caplog):
     assert len(parsed) == 1
     assert parsed[0].id == "e1"
     # Malformed line was reported (operator visibility), not silently ignored.
-    assert any("malformed" in r.message.lower() or "parse" in r.message.lower() for r in caplog.records)
+    assert any("malformed" in r.message.lower() for r in caplog.records)
 
 
 def test_iter_envelopes_filters_by_time_range(tmp_path: Path):
@@ -106,3 +106,37 @@ def test_iter_envelopes_inclusive_since_exclusive_until(tmp_path: Path):
     parsed = list(iter_envelopes(path, since=base, until=base + timedelta(seconds=5)))
     # since is inclusive (a included), until is exclusive (b excluded).
     assert [e.id for e in parsed] == ["a"]
+
+
+def test_iter_envelopes_accepts_naive_bounds_without_typeerror(tmp_path: Path):
+    """Bounds passed as naive datetimes (no tzinfo) must not raise
+    TypeError when compared against tz-aware envelope timestamps. The
+    reader coerces both sides to UTC before comparison.
+
+    Real callers (Typer's --since flag, MCP tool args) may pass naive
+    datetimes if the caller forgets a timezone — we should accept and
+    treat them as UTC, not crash."""
+    base = datetime(2026, 5, 3, 12, 0, 0, tzinfo=UTC)
+    envs = [
+        _text_env("a", created=base),
+        _text_env("b", created=base + timedelta(seconds=10)),
+    ]
+    path = tmp_path / "day.jsonl"
+    _write_jsonl(path, envs)
+    naive_since = datetime(2026, 5, 3, 12, 0, 5)  # no tzinfo — coerced to UTC
+    parsed = list(iter_envelopes(path, since=naive_since))
+    assert [e.id for e in parsed] == ["b"]
+
+
+def test_iter_envelopes_yields_empty_when_all_lines_malformed(tmp_path: Path, caplog):
+    """A day file containing only malformed lines yields nothing and logs
+    one WARNING per bad line. Operator visibility for the 'your day was
+    100% corrupted' failure mode — should never crash the reflection
+    pipeline."""
+    path = tmp_path / "all-bad.jsonl"
+    path.write_text("{not json}\n{also not}\n", encoding="utf-8")
+    with caplog.at_level("WARNING"):
+        parsed = list(iter_envelopes(path))
+    assert parsed == []
+    malformed_warnings = [r for r in caplog.records if "malformed" in r.message.lower()]
+    assert len(malformed_warnings) == 2
