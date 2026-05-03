@@ -8,6 +8,7 @@ from __future__ import annotations
 
 from agent_core.bus_log.projectors import (
     Projector,
+    TextMessageProjector,
     fallback_projector,
     get_projector,
     register_projector,
@@ -15,6 +16,7 @@ from agent_core.bus_log.projectors import (
 
 __all__ = [
     "Projector",
+    "TextMessageProjector",
     "fallback_projector",
     "get_projector",
     "register_projector",

@@ -12,9 +12,30 @@ Lookup priority:
 
 from __future__ import annotations
 
+import json
+from datetime import UTC
 from typing import Protocol, runtime_checkable
+from zoneinfo import ZoneInfo
 
-from agent_core.bus.envelope import Envelope, EventPayload
+from agent_core.bus.envelope import Envelope, EventPayload, TextMessagePayload
+
+
+def _render_ts(envelope: Envelope, timezone: str) -> str:
+    """Render envelope.created_at in the requested IANA timezone."""
+    src_dt = envelope.created_at
+    if src_dt.tzinfo is None:
+        src_dt = src_dt.replace(tzinfo=UTC)
+    return src_dt.astimezone(ZoneInfo(timezone)).isoformat()
+
+
+def _render_dir(envelope: Envelope, perspective: str) -> str:
+    is_to = envelope.to == perspective
+    is_from = envelope.from_ == perspective
+    if is_to and is_from:
+        return "self"
+    if is_to:
+        return "in"
+    return "out"
 
 
 @runtime_checkable
@@ -65,12 +86,12 @@ def get_projector(envelope: Envelope) -> Projector:
     return fallback_projector
 
 
-class _FallbackProjector:
-    """Last-resort projector — renders any envelope into a generic row.
+class TextMessageProjector:
+    """Default projector for ``kind="TextMessage"`` envelopes.
 
-    Never returns None: keeps unknown envelope kinds visible in summaries
-    instead of silently dropping them. Concrete projectors should override
-    by registering against a specific kind / type id.
+    Maps Discord/relay/scheduler text traffic into the Tool 3 row shape.
+    Sender display name is taken from envelope metadata when present
+    (e.g., ``discord_user_display_name`` set by DiscordEndpoint).
     """
 
     def render(
@@ -80,13 +101,51 @@ class _FallbackProjector:
         perspective: str,
         timezone: str,
     ) -> dict | None:
-        # Real body lands in Task 2 (TextMessage + real fallback).
-        # Raise instead of returning a placeholder dict so any caller that
-        # tries to render via the fallback before Task 2 ships fails loudly
-        # rather than producing a wrong-shaped summary row silently.
-        raise NotImplementedError(
-            "fallback_projector.render lands in Task 2 of the bus log pipeline plan"
-        )
+        if not isinstance(envelope.payload, TextMessagePayload):
+            return None
+        sender = envelope.metadata.get("discord_user_display_name") or envelope.from_
+        return {
+            "ts": _render_ts(envelope, timezone),
+            "dir": _render_dir(envelope, perspective),
+            "src": envelope.from_,
+            "cid": envelope.correlation_id,
+            "sender": sender,
+            "content": envelope.payload.text,
+        }
+
+
+class _FallbackProjector:
+    """Last-resort projector — renders any envelope into a generic row.
+
+    Never returns None: keeps unknown envelope kinds visible in summaries
+    instead of silently dropping them. Specific projectors should override
+    by registering against a specific kind / type id.
+    """
+
+    _MAX_DATA_CHARS = 200
+
+    def render(
+        self,
+        envelope: Envelope,
+        *,
+        perspective: str,
+        timezone: str,
+    ) -> dict | None:
+        if isinstance(envelope.payload, EventPayload):
+            data_str = json.dumps(envelope.payload.data, sort_keys=True, default=str)
+            if len(data_str) > self._MAX_DATA_CHARS:
+                data_str = data_str[: self._MAX_DATA_CHARS - 1] + "…"
+            content = f"event:{envelope.payload.type} data={data_str}"
+        else:
+            content = f"{envelope.kind}:{envelope.id}"
+        return {
+            "ts": _render_ts(envelope, timezone),
+            "dir": _render_dir(envelope, perspective),
+            "src": envelope.from_,
+            "cid": envelope.correlation_id,
+            "sender": envelope.from_,
+            "content": content,
+        }
 
 
 fallback_projector: Projector = _FallbackProjector()
