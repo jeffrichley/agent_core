@@ -7,7 +7,11 @@ Public API used by reflection jobs, the agent-core CLI, and the in-session
 from __future__ import annotations
 
 from agent_core.bus_log.projectors import (
+    AcknowledgmentSkipProjector,
+    HandoffFailedProjector,
+    HandoffReadyProjector,
     Projector,
+    SchedulerHeartbeatSkipProjector,
     TextMessageProjector,
     fallback_projector,
     get_projector,
@@ -16,11 +20,15 @@ from agent_core.bus_log.projectors import (
 from agent_core.bus_log.reader import iter_envelopes, iter_for_agent
 
 __all__ = [
+    "AcknowledgmentSkipProjector",
+    "HandoffFailedProjector",
+    "HandoffReadyProjector",
     "Projector",
+    "SchedulerHeartbeatSkipProjector",
     "TextMessageProjector",
     "fallback_projector",
     "get_projector",
-    "register_projector",
     "iter_envelopes",
     "iter_for_agent",
+    "register_projector",
 ]

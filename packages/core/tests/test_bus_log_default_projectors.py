@@ -13,6 +13,10 @@ from agent_core.bus.envelope import (
     TextMessagePayload,
 )
 from agent_core.bus_log.projectors import (
+    AcknowledgmentSkipProjector,
+    HandoffFailedProjector,
+    HandoffReadyProjector,
+    SchedulerHeartbeatSkipProjector,
     TextMessageProjector,
     fallback_projector,
     reset_registry,
@@ -166,3 +170,90 @@ class TestFallbackProjector:
         truncated = row["content"][len(prefix):]
         assert len(truncated) == 200
         assert truncated.endswith("…")
+
+
+class TestHandoffReadyProjector:
+    def test_renders_continuity_ready_with_path(self):
+        env = Envelope(
+            id="h1",
+            correlation_id="c-h1",
+            from_="handoff-jobs",
+            to="pepper",
+            kind="Event",
+            payload=EventPayload(
+                type="HandoffReady",
+                data={
+                    "job_id": "j-1",
+                    "session_id": "s-1",
+                    "handoff_path": "/x/handoff.md",
+                    "content_sha256": "abc",
+                },
+            ),
+            created_at=_ts(),
+        )
+        row = HandoffReadyProjector().render(env, perspective="pepper", timezone="US/Eastern")
+        assert row is not None
+        assert "continuity ready" in row["content"].lower()
+        assert "/x/handoff.md" in row["content"]
+        assert row["src"] == "handoff-jobs"
+        assert row["dir"] == "in"
+
+
+class TestHandoffFailedProjector:
+    def test_renders_continuity_failed_with_error(self):
+        env = Envelope(
+            id="f1",
+            correlation_id="c-f1",
+            from_="handoff-jobs",
+            to="pepper",
+            kind="Event",
+            payload=EventPayload(
+                type="HandoffFailed",
+                data={"job_id": "j-2", "error": "boom"},
+            ),
+            created_at=_ts(),
+        )
+        row = HandoffFailedProjector().render(env, perspective="pepper", timezone="US/Eastern")
+        assert row is not None
+        assert "continuity failed" in row["content"].lower()
+        assert "boom" in row["content"]
+        assert row["src"] == "handoff-jobs"
+
+
+class TestAcknowledgmentSkipProjector:
+    def test_returns_none(self):
+        env = Envelope(
+            id="ack-1",
+            correlation_id="c-ack",
+            from_="discord",
+            to="pepper",
+            kind="Acknowledgment",
+            payload=AcknowledgmentPayload(of="other-id"),
+            created_at=_ts(),
+        )
+        row = AcknowledgmentSkipProjector().render(env, perspective="pepper", timezone="US/Eastern")
+        assert row is None
+
+
+class TestSchedulerHeartbeatSkipProjector:
+    def test_skips_when_metadata_marks_heartbeat(self):
+        env = _text_env(metadata={"scheduler_job": "heartbeat"})
+        row = SchedulerHeartbeatSkipProjector().render(env, perspective="pepper", timezone="US/Eastern")
+        assert row is None
+
+    def test_passes_through_non_heartbeat_text_messages(self):
+        env = _text_env(metadata={"scheduler_job": "daily-briefing"})
+        # Non-heartbeat scheduler jobs are not this projector's concern.
+        # It should defer (return a sentinel? or fall through?). Per the
+        # spec we want this projector to ONLY skip exact heartbeat jobs;
+        # otherwise the TextMessage projector handles it. Implementation:
+        # return None means "skip from summary". To delegate, this
+        # projector should NOT be registered against TextMessage globally;
+        # it's only registered when it would skip. So passing it a
+        # non-heartbeat returns the same Tool 3 row a generic TextMessage
+        # projector would produce, OR returns None and we register it
+        # selectively. We pick: this projector returns None ONLY for
+        # heartbeats, else falls through to TextMessageProjector logic.
+        row = SchedulerHeartbeatSkipProjector().render(env, perspective="pepper", timezone="US/Eastern")
+        assert row is not None
+        assert row["content"] == "hi"  # the default _text_env text

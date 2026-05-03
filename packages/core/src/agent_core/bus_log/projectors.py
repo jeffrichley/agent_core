@@ -149,3 +149,102 @@ class _FallbackProjector:
 
 
 fallback_projector: Projector = _FallbackProjector()
+
+
+class HandoffReadyProjector:
+    """Projector for ``Event/HandoffReady`` envelopes published by the
+    handoff daemon when continuity has been written."""
+
+    def render(
+        self,
+        envelope: Envelope,
+        *,
+        perspective: str,
+        timezone: str,
+    ) -> dict | None:
+        if not isinstance(envelope.payload, EventPayload):
+            return None
+        if envelope.payload.type != "HandoffReady":
+            return None
+        path = envelope.payload.data.get("handoff_path", "?")
+        return {
+            "ts": _render_ts(envelope, timezone),
+            "dir": _render_dir(envelope, perspective),
+            "src": envelope.from_,
+            "cid": envelope.correlation_id,
+            "sender": envelope.from_,
+            "content": f"continuity ready: handoff.md → {path}",
+        }
+
+
+class HandoffFailedProjector:
+    """Projector for ``Event/HandoffFailed`` envelopes."""
+
+    def render(
+        self,
+        envelope: Envelope,
+        *,
+        perspective: str,
+        timezone: str,
+    ) -> dict | None:
+        if not isinstance(envelope.payload, EventPayload):
+            return None
+        if envelope.payload.type != "HandoffFailed":
+            return None
+        err = envelope.payload.data.get("error", "unknown")
+        return {
+            "ts": _render_ts(envelope, timezone),
+            "dir": _render_dir(envelope, perspective),
+            "src": envelope.from_,
+            "cid": envelope.correlation_id,
+            "sender": envelope.from_,
+            "content": f"continuity failed: {err}",
+        }
+
+
+class AcknowledgmentSkipProjector:
+    """Skip Acknowledgment envelopes from projected summaries.
+
+    The hook also filters them at write time by default (see
+    ``DailyRawJsonlHook.skip_kinds``), but if an operator opts to log
+    acks too, this projector ensures they don't pollute the summary.
+    """
+
+    def render(
+        self,
+        envelope: Envelope,
+        *,
+        perspective: str,
+        timezone: str,
+    ) -> dict | None:
+        return None
+
+
+class SchedulerHeartbeatSkipProjector:
+    """Skip scheduler-heartbeat envelopes from projected summaries while
+    letting other scheduler-job text traffic through.
+
+    Recognized as: TextMessage with ``metadata.scheduler_job == "heartbeat"``
+    (set by ``SchedulerEndpoint._fire``).
+
+    Registered against ``"TextMessage"`` *replacing* the plain
+    ``TextMessageProjector`` — internally delegates to it for non-heartbeat
+    traffic so we keep the registry a single key per envelope shape.
+    """
+
+    _HEARTBEAT_JOB_NAMES = frozenset({"heartbeat"})
+
+    def __init__(self) -> None:
+        self._delegate = TextMessageProjector()
+
+    def render(
+        self,
+        envelope: Envelope,
+        *,
+        perspective: str,
+        timezone: str,
+    ) -> dict | None:
+        job = envelope.metadata.get("scheduler_job")
+        if job in self._HEARTBEAT_JOB_NAMES:
+            return None
+        return self._delegate.render(envelope, perspective=perspective, timezone=timezone)
