@@ -15,6 +15,7 @@ from pathlib import Path
 from pydantic import ValidationError
 
 from agent_core.bus.envelope import Envelope
+from agent_core.bus_log.projectors import get_projector
 
 log = logging.getLogger(__name__)
 
@@ -67,3 +68,33 @@ def iter_envelopes(
         if until_utc is not None and ts >= until_utc:
             continue
         yield env
+
+
+def iter_for_agent(
+    path: Path,
+    *,
+    agent: str,
+    projected: bool = True,
+    timezone: str = "US/Eastern",
+    since: datetime | None = None,
+    until: datetime | None = None,
+) -> Iterator[Envelope | dict]:
+    """Yield envelopes from ``path`` that touch ``agent`` (to or from_).
+
+    With ``projected=True`` (default), yield Tool 3 rows produced by
+    registered projectors; envelopes whose projector returns None are
+    skipped. With ``projected=False``, yield raw ``Envelope`` instances.
+
+    ``timezone`` is forwarded to projectors for ``ts`` rendering and
+    is ignored when ``projected=False``.
+    """
+    for env in iter_envelopes(path, since=since, until=until):
+        if env.to != agent and env.from_ != agent:
+            continue
+        if not projected:
+            yield env
+            continue
+        projector = get_projector(env)
+        row = projector.render(env, perspective=agent, timezone=timezone)
+        if row is not None:
+            yield row
