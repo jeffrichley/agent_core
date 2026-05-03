@@ -8,11 +8,15 @@
 #      one IdentityInjector per identity file (critical first), then a
 #      HandoffInjector that consults the sidecar status file before loading
 #      handoff.md.
-#   2. PreCompact/SessionEnd: HandoffWriter enqueues a daemon job. The daemon
+#   2. UserPromptSubmit: TimeInjector fires again with track_session=true so
+#      the current time stays fresh on every turn (re-anchors against drift)
+#      and emits "Session started Xm ago" / "Last user turn Ym ago" deltas.
+#   3. PreCompact/SessionEnd: HandoffWriter enqueues a daemon job. The daemon
 #      worker generates handoff.md and writes handoff-status.json.
 #
 # .claude/settings.json hooks should point to:
 #   "command": "uv run agent-core hooks run SessionStart"
+#   "command": "uv run agent-core hooks run UserPromptSubmit"
 #   "command": "uv run agent-core hooks run PreCompact"
 #   "command": "uv run agent-core hooks run SessionEnd"
 
@@ -66,6 +70,15 @@ pipelines:
           - "pepper/handoff.md"
         heading: "Continuity"
         missing_file_behavior: "warn"
+
+  UserPromptSubmit:
+    # Re-fires every turn so the current time stays fresh and the agent
+    # gets relative-time deltas to re-anchor against drift. track_session
+    # persists per-session timestamps to ~/.agent_core/time-state.json.
+    - type: builtin.time_injector
+      params:
+        format: "%A, %B %d, %Y %I:%M %p %Z"
+        track_session: true
 
   PreCompact:
     - type: builtin.handoff_writer
