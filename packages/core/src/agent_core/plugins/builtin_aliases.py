@@ -10,6 +10,12 @@ from typing import Any
 
 import pluggy
 
+from agent_core.bus_log.projectors import (
+    AcknowledgmentSkipProjector,
+    HandoffFailedProjector,
+    HandoffReadyProjector,
+    SchedulerHeartbeatSkipProjector,
+)
 from agent_core.endpoints.claude_code_mcp import ClaudeCodeMCPEndpoint
 from agent_core.endpoints.handoff_jobs import HandoffJobsEndpoint
 from agent_core.endpoints.scheduler import SchedulerEndpoint
@@ -38,6 +44,16 @@ _HOOK_TOOL_TYPES: dict[str, type[Any]] = {
     "builtin.time_injector": TimeInjector,
 }
 
+_BUS_LOG_PROJECTORS: dict[str, Any] = {
+    # SchedulerHeartbeatSkipProjector replaces the plain TextMessage
+    # projector: it filters scheduler heartbeats to None and delegates
+    # everything else to TextMessageProjector.
+    "TextMessage": SchedulerHeartbeatSkipProjector(),
+    "Acknowledgment": AcknowledgmentSkipProjector(),
+    "HandoffReady": HandoffReadyProjector(),
+    "HandoffFailed": HandoffFailedProjector(),
+}
+
 
 @hookimpl
 def register_endpoint_types() -> dict[str, type[Any]]:
@@ -60,18 +76,4 @@ def register_hook_tool_types() -> dict[str, type[Any]]:
 @hookimpl
 def register_bus_log_projectors() -> dict[str, Any]:
     """Default projector registrations for built-in envelope shapes."""
-    from agent_core.bus_log.projectors import (
-        AcknowledgmentSkipProjector,
-        HandoffFailedProjector,
-        HandoffReadyProjector,
-        SchedulerHeartbeatSkipProjector,
-    )
-    return {
-        # SchedulerHeartbeatSkipProjector replaces the plain TextMessage
-        # projector: it filters scheduler heartbeats to None and
-        # delegates everything else to TextMessageProjector.
-        "TextMessage": SchedulerHeartbeatSkipProjector(),
-        "Acknowledgment": AcknowledgmentSkipProjector(),
-        "HandoffReady": HandoffReadyProjector(),
-        "HandoffFailed": HandoffFailedProjector(),
-    }
+    return dict(_BUS_LOG_PROJECTORS)

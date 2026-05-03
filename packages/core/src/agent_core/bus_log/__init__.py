@@ -40,6 +40,11 @@ def bootstrap_default_projectors() -> None:
 
     Called once at runtime startup (CLI entry, daemon boot, MCP endpoint
     init). Safe to call multiple times — re-registering replaces.
+
+    The plugin-manager imports are deferred so that
+    ``import agent_core.bus_log`` doesn't transitively load pluggy and
+    run entry-point discovery as a side effect — a real cost for tests
+    and library callers that don't need the runtime plugin surface.
     """
     from agent_core.plugins.manager import (
         create_plugin_manager,

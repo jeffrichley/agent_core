@@ -91,6 +91,5 @@ def get_bus_log_projectors(pm: pluggy.PluginManager) -> dict[str, Any]:
     """
     merged: dict[str, Any] = {}
     for mapping in pm.hook.register_bus_log_projectors():
-        if mapping:
-            merged.update(mapping)
+        merged.update(mapping)
     return merged

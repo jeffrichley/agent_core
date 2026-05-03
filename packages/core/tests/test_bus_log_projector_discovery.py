@@ -6,7 +6,12 @@ from datetime import UTC, datetime
 
 import pytest
 
-from agent_core.bus.envelope import Envelope, EventPayload, TextMessagePayload
+from agent_core.bus.envelope import (
+    AcknowledgmentPayload,
+    Envelope,
+    EventPayload,
+    TextMessagePayload,
+)
 from agent_core.bus_log import bootstrap_default_projectors, get_projector
 from agent_core.bus_log.projectors import reset_registry
 
@@ -63,7 +68,6 @@ def test_bootstrap_registers_handoff_failed_projector():
 
 
 def test_bootstrap_registers_acknowledgment_skip_projector():
-    from agent_core.bus.envelope import AcknowledgmentPayload
     bootstrap_default_projectors()
     env = Envelope(
         id="a1", correlation_id="ca1", from_="discord", to="pepper",
