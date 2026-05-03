@@ -16,6 +16,7 @@ from pathlib import Path
 import typer
 
 from agent_core.bus.cli import app as bus_app
+from agent_core.bus_log.cli import bus_log_app
 from agent_core.daemon.cli import app as daemon_app
 from agent_core.email.cli import email_app
 from agent_core.hooks.pipeline import Pipeline
@@ -35,6 +36,7 @@ hooks_app = typer.Typer(
 app.add_typer(hooks_app, name="hooks")
 app.add_typer(email_app, name="email")
 app.add_typer(bus_app, name="bus")
+app.add_typer(bus_log_app, name="bus-log")
 app.add_typer(daemon_app, name="daemon")
 app.add_typer(vault_app, name="vault")
 
