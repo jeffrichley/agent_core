@@ -21,6 +21,7 @@ incrementally as each ticket lands.
 |---|----------|--------|
 | 01 | [Identity fidelity](01-identity-fidelity.md) | Implementation complete; verification pending end-of-cutover run |
 | 02 | [Handoff observability](02-handoff-observability.md) | Implementation complete; verification pending end-of-cutover run (mid-session perception step now backed by #08 evidence) |
+| 07 | [Hook fidelity](07-hook-fidelity.md) | Implementation complete; verification pending end-of-cutover run. UserPromptSubmit pipeline added; `test_pepper_example_yaml.py` is the wiring tripwire. |
 | 08 | [Notification surface](08-notification-surface.md) | Implementation complete; verification pending end-of-cutover run. Closes the perception side of #02 scenario (b). |
 
 ## Scope of "verification"
