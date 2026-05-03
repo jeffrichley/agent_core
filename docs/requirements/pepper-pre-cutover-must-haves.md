@@ -27,7 +27,7 @@ Status values: **Not started · In progress · Implementation complete · Verifi
 | 05 | [Skills survive the cutover](pepper-cutover-05-skills-discovery.md)                          | High     | Not started               |
 | 06 | [The vault stays the vault](pepper-cutover-06-vault-continuity.md)                           | Critical | Not started               |
 | 07 | [SessionStart + UserPromptSubmit hook fidelity](pepper-cutover-07-hook-fidelity.md)          | High     | Not started               |
-| 08 | [Notification surface I can actually see](pepper-cutover-08-notification-surface.md)         | High     | Not started               |
+| 08 | [Notification surface I can actually see](pepper-cutover-08-notification-surface.md)         | High     | Implementation complete   |
 
 **Cutover gate:** every row reaches **Verified** before Pepper's live runtime flips to agent-core. #01, #02, #06 are the non-negotiables; the rest are the working-functional set.
 

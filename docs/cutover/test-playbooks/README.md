@@ -20,7 +20,8 @@ incrementally as each ticket lands.
 | # | Playbook | Status |
 |---|----------|--------|
 | 01 | [Identity fidelity](01-identity-fidelity.md) | Implementation complete; verification pending end-of-cutover run |
-| 02 | [Handoff observability](02-handoff-observability.md) | Implementation complete; verification pending end-of-cutover run (mid-session perception step gates on #08) |
+| 02 | [Handoff observability](02-handoff-observability.md) | Implementation complete; verification pending end-of-cutover run (mid-session perception step now backed by #08 evidence) |
+| 08 | [Notification surface](08-notification-surface.md) | Implementation complete; verification pending end-of-cutover run. Closes the perception side of #02 scenario (b). |
 
 ## Scope of "verification"
 
