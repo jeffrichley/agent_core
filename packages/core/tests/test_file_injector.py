@@ -329,3 +329,63 @@ class TestIdentityInjector:
         )
         assert "BODY" in result.content
         assert "pending" not in result.content
+
+    def test_sessionstart_startup_caps_oversized_identity(self, tmp_path: Path):
+        """Fresh SessionStart sources must not exceed Claude Code hook context caps."""
+        huge = "A" * 20_000
+        base = make_files(tmp_path, {"soul.md": huge})
+        tool = IdentityInjector()
+        result = tool.execute(
+            event="SessionStart",
+            hook_input={"source": "startup"},
+            params={
+                "base_path": str(base),
+                "files": ["soul.md"],
+                "sessionstart_context_char_cap": 1200,
+            },
+        )
+        assert len(result.content) <= 1200
+        assert "Identity boot anchor" in result.content
+        assert "Claude Code SessionStart" in result.content
+
+    def test_sessionstart_missing_source_caps_by_default(self, tmp_path: Path):
+        huge = "Z" * 20_000
+        base = make_files(tmp_path, {"soul.md": huge})
+        tool = IdentityInjector()
+        result = tool.execute(
+            event="SessionStart",
+            hook_input={},
+            params={
+                "base_path": str(base),
+                "files": ["soul.md"],
+                "sessionstart_context_char_cap": 900,
+            },
+        )
+        assert len(result.content) <= 900
+
+    def test_sessionstart_resume_does_not_cap_by_default(self, tmp_path: Path):
+        huge = "B" * 20_000
+        base = make_files(tmp_path, {"soul.md": huge})
+        tool = IdentityInjector()
+        result = tool.execute(
+            event="SessionStart",
+            hook_input={"source": "resume"},
+            params={"base_path": str(base), "files": ["soul.md"]},
+        )
+        assert len(result.content) == len(huge) + len("## soul.md\n\n")
+
+    def test_sessionstart_cap_can_include_resume(self, tmp_path: Path):
+        huge = "C" * 20_000
+        base = make_files(tmp_path, {"soul.md": huge})
+        tool = IdentityInjector()
+        result = tool.execute(
+            event="SessionStart",
+            hook_input={"source": "resume"},
+            params={
+                "base_path": str(base),
+                "files": ["soul.md"],
+                "sessionstart_context_char_cap": 900,
+                "sessionstart_cap_sources": ["startup", "resume"],
+            },
+        )
+        assert len(result.content) <= 900
