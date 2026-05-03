@@ -31,28 +31,89 @@ RECOMMENDED_ROOT_FILES = (
 )
 RECOMMENDED_DIRS = ("projects", "daily", "ideas", "playbooks", "pepper")
 
+# YAML keys whose string values are URL routes / mount paths, not filesystem
+# paths. These never need rewriting on a home-directory rename, and including
+# them in the absolute-paths report wastes the operator's attention.
+_URL_ROUTE_KEYS = frozenset(
+    (
+        "mount",
+        "route",
+        "bind_host",
+        "host",
+        "endpoint",
+        "url",
+        "daemon_url",
+        "handoff_jobs_url",
+    )
+)
 
-def iter_string_values(node: Any) -> Iterator[str]:
+# POSIX absolute-path prefixes that are *real* filesystem roots (not URL
+# routes). Used to distinguish ``/home/me/.pepper`` (a path that breaks on
+# home-dir rename) from ``/internal/handoff-jobs`` (a URL mount that doesn't).
+# Conservative list — extend as needed for non-Linux POSIX systems.
+_POSIX_FS_ROOTS = (
+    "/home/",
+    "/Users/",
+    "/etc/",
+    "/var/",
+    "/tmp/",
+    "/opt/",
+    "/root/",
+    "/srv/",
+    "/mnt/",
+    "/media/",
+    "/usr/",
+    "/data/",
+)
+
+
+def iter_string_values(node: Any, parent_key: str | None = None) -> Iterator[str]:
+    """Yield every string value in a YAML tree, paired (implicitly) with the
+    parent dict-key it sits under. Values whose key is in ``_URL_ROUTE_KEYS``
+    are skipped — those are URL routes, not filesystem paths."""
     if isinstance(node, str):
+        if parent_key in _URL_ROUTE_KEYS:
+            return
         yield node
     elif isinstance(node, dict):
-        for v in node.values():
-            yield from iter_string_values(v)
+        for k, v in node.items():
+            yield from iter_string_values(v, parent_key=k if isinstance(k, str) else None)
     elif isinstance(node, list):
         for item in node:
-            yield from iter_string_values(item)
+            yield from iter_string_values(item, parent_key=parent_key)
 
 
 def is_probable_absolute_path(s: str) -> bool:
+    """Heuristic: does this string look like a filesystem absolute path that
+    would break on a home-directory rename or machine move?
+
+    Recognized shapes:
+      - Windows drive-letter:  ``C:\\…`` / ``D:/…``
+      - UNC:                    ``\\\\server\\share\\…``
+      - User-relative:          ``~/…`` or ``~user/…``
+      - POSIX with known root:  ``/home/…``, ``/Users/…``, ``/etc/…``, etc.
+
+    Rejects:
+      - URL routes / mount paths starting with ``/`` but lacking a real fs
+        root prefix (e.g., ``/internal/handoff-jobs``).
+      - ``file://``-style scheme URLs.
+      - Strings shorter than 3 chars.
+    """
     t = s.strip().strip("'\"")
     if len(t) < 3:
         return False
+    # Windows drive letter: C:\ or C:/
     if t[0].isalpha() and t[1] == ":" and t[2] in "\\/":
         return True
+    # UNC
     if t.startswith("\\\\"):
         return True
-    if t.startswith("/") and len(t) >= 2 and t[1] != "/":
+    # User-relative (~/foo or ~user/foo)
+    if t.startswith("~") and len(t) >= 2 and (t[1] in "/\\" or t[1].isalnum()):
         return True
+    # POSIX: only count strings that look like real fs paths, not URL routes.
+    if t.startswith("/") and len(t) >= 2 and t[1] != "/":
+        return any(t.startswith(root) for root in _POSIX_FS_ROOTS)
     return False
 
 

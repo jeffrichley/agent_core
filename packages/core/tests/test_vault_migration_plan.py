@@ -16,12 +16,52 @@ from agent_core.vault_migration_plan import (
 
 
 def test_is_probable_absolute_path() -> None:
+    # Real filesystem paths — break on home-dir rename.
     assert is_probable_absolute_path(r"C:\Users\me\.pepper\Memory")
     assert is_probable_absolute_path("C:/Users/me/x")
     assert is_probable_absolute_path(r"\\server\share\vault")
     assert is_probable_absolute_path("/home/me/vault")
+    assert is_probable_absolute_path("/Users/me/vault")
+    assert is_probable_absolute_path("/etc/agent-core/config")
+    # User-relative paths are also home-bound and need rewriting on rename.
+    assert is_probable_absolute_path("~/.pepper/Memory")
+    assert is_probable_absolute_path("~jeffr/.pepper/Memory")
+
+    # Non-paths: relatives, bare filenames, scheme URLs.
     assert not is_probable_absolute_path("relative/path")
     assert not is_probable_absolute_path("SOUL.md")
+
+    # URL routes / mount paths that *look* POSIX but don't break on rename.
+    # Without the fs-root prefix check, these would false-positive.
+    assert not is_probable_absolute_path("/internal/handoff-jobs")
+    assert not is_probable_absolute_path("/api/v1/users")
+    assert not is_probable_absolute_path("/mcp/agent-a")
+
+
+def test_absolute_paths_in_yaml_skips_url_route_keys() -> None:
+    """A YAML value under a URL-route key (e.g. ``mount``) must not appear in
+    the absolute-paths report — those are routes, not filesystem paths,
+    and they don't break on a home-dir rename."""
+    doc = {
+        "endpoints": [
+            {
+                "type": "builtin.handoff_jobs",
+                "params": {
+                    "mount": "/internal/handoff-jobs",
+                },
+            }
+        ],
+        "http": {"bind_host": "127.0.0.1"},
+        "pipelines": {
+            "SessionStart": [
+                {"params": {"base_path": r"C:\Users\jeffr\.pepper\Memory"}}
+            ]
+        },
+    }
+    paths = absolute_paths_in_yaml(yaml.safe_dump(doc))
+    assert paths == [r"C:\Users\jeffr\.pepper\Memory"]
+    # And specifically, the URL mount must not have leaked in.
+    assert "/internal/handoff-jobs" not in paths
 
 
 def test_absolute_paths_in_yaml_finds_base_path() -> None:
