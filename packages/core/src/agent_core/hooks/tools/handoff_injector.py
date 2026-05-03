@@ -44,7 +44,6 @@ from pathlib import Path
 from agent_core.hooks.handoff_status import path_for_handoff, read_status
 from agent_core.hooks.tools.file_injector import FileInjector
 
-
 _HANDOFF_BASENAME = "handoff.md"
 
 

@@ -119,7 +119,7 @@ class HandoffJobsEndpoint:
 
         try:
             vault_root = Path(job_req.vault_root).expanduser().resolve(strict=False)
-            handoff_path = self._resolve_under_root(job_req.handoff_path, vault_root)
+            self._resolve_under_root(job_req.handoff_path, vault_root)
             status_path = self._resolve_under_root(job_req.handoff_status_path, vault_root)
             self._resolve_under_root(job_req.transcript_path, vault_root)
         except ValueError as exc:
