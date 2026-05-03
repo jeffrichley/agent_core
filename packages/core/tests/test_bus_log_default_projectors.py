@@ -193,7 +193,7 @@ class TestHandoffReadyProjector:
         )
         row = HandoffReadyProjector().render(env, perspective="pepper", timezone="US/Eastern")
         assert row is not None
-        assert "continuity ready" in row["content"].lower()
+        assert row["content"].startswith("continuity ready: ")
         assert "/x/handoff.md" in row["content"]
         assert row["src"] == "handoff-jobs"
         assert row["dir"] == "in"
@@ -215,7 +215,7 @@ class TestHandoffFailedProjector:
         )
         row = HandoffFailedProjector().render(env, perspective="pepper", timezone="US/Eastern")
         assert row is not None
-        assert "continuity failed" in row["content"].lower()
+        assert row["content"].startswith("continuity failed: ")
         assert "boom" in row["content"]
         assert row["src"] == "handoff-jobs"
 
@@ -241,19 +241,24 @@ class TestSchedulerHeartbeatSkipProjector:
         row = SchedulerHeartbeatSkipProjector().render(env, perspective="pepper", timezone="US/Eastern")
         assert row is None
 
-    def test_passes_through_non_heartbeat_text_messages(self):
-        env = _text_env(metadata={"scheduler_job": "daily-briefing"})
-        # Non-heartbeat scheduler jobs are not this projector's concern.
-        # It should defer (return a sentinel? or fall through?). Per the
-        # spec we want this projector to ONLY skip exact heartbeat jobs;
-        # otherwise the TextMessage projector handles it. Implementation:
-        # return None means "skip from summary". To delegate, this
-        # projector should NOT be registered against TextMessage globally;
-        # it's only registered when it would skip. So passing it a
-        # non-heartbeat returns the same Tool 3 row a generic TextMessage
-        # projector would produce, OR returns None and we register it
-        # selectively. We pick: this projector returns None ONLY for
-        # heartbeats, else falls through to TextMessageProjector logic.
+    def test_passes_through_when_no_scheduler_job_metadata(self):
+        """Most common production case: a TextMessage with no scheduler
+        metadata at all. Confirms `metadata.get("scheduler_job") == None`
+        is not in the heartbeat set, so it delegates."""
+        env = _text_env()  # default metadata={}
         row = SchedulerHeartbeatSkipProjector().render(env, perspective="pepper", timezone="US/Eastern")
         assert row is not None
-        assert row["content"] == "hi"  # the default _text_env text
+        assert row["content"] == "hi"
+
+    def test_passes_through_non_heartbeat_text_messages(self):
+        """Non-heartbeat scheduler jobs delegate to TextMessageProjector.
+        Asserts the delegate is doing real work by checking the
+        display-name-from-metadata branch unique to TextMessageProjector."""
+        env = _text_env(metadata={
+            "scheduler_job": "daily-briefing",
+            "discord_user_display_name": "Jeff",
+        })
+        row = SchedulerHeartbeatSkipProjector().render(env, perspective="pepper", timezone="US/Eastern")
+        assert row is not None
+        assert row["sender"] == "Jeff"  # only TextMessageProjector resolves display_name
+        assert row["content"] == "hi"
