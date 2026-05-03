@@ -14,6 +14,7 @@ from agent_core.endpoints.claude_code_mcp import ClaudeCodeMCPEndpoint
 from agent_core.endpoints.handoff_jobs import HandoffJobsEndpoint
 from agent_core.endpoints.scheduler import SchedulerEndpoint
 from agent_core.endpoints.stub import StubEndpoint
+from agent_core.hooks.tools.handoff_injector import HandoffInjector
 from agent_core.hooks.tools.handoff_writer import HandoffWriter
 from agent_core.hooks.tools.identity_injector import IdentityInjector
 from agent_core.hooks.tools.session_end_writer import SessionEndWriter
@@ -30,6 +31,7 @@ _ENDPOINT_TYPES: dict[str, type[Any]] = {
 }
 
 _HOOK_TOOL_TYPES: dict[str, type[Any]] = {
+    "builtin.handoff_injector": HandoffInjector,
     "builtin.handoff_writer": HandoffWriter,
     "builtin.identity_injector": IdentityInjector,
     "builtin.session_end_writer": SessionEndWriter,
