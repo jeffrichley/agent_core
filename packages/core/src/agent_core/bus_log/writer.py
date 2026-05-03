@@ -48,8 +48,14 @@ def append_envelope_jsonl(path: Path, envelope: Envelope) -> None:
     the wire. Reading is symmetric — ``Envelope.model_validate_json``
     accepts both the alias and the field name because of
     ``populate_by_name=True``.
+
+    Note: this is sync I/O called from the bus async publish path. On
+    fast local storage the cost is sub-millisecond and acceptable; on
+    slow filesystems (NFS, network-synced home dirs) it would block
+    the event loop. If profiling shows it matters, the minimal upgrade
+    is ``asyncio.to_thread(...)`` at the call site — no new deps.
     """
     path.parent.mkdir(parents=True, exist_ok=True)
     line = envelope.model_dump_json(by_alias=True)
-    with path.open("a", encoding="utf-8") as f:
+    with path.open("a", encoding="utf-8", newline="") as f:
         f.write(line + "\n")

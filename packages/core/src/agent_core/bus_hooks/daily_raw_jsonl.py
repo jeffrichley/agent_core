@@ -20,23 +20,25 @@ from agent_core.bus_log import writer as _writer
 log = logging.getLogger(__name__)
 
 
-_DEFAULT_SKIP_KINDS = ("Acknowledgment", "Progress", "Cancellation")
+_DEFAULT_SKIP_KINDS: frozenset[str] = frozenset({"Acknowledgment", "Progress", "Cancellation"})
 
 
 class DailyRawJsonlHook:
     """Append every published envelope to a dated daemon-owned JSONL.
 
-    Configuration (via ``agent_core.yaml`` ``bus_hooks.pre_publish`` block):
+    Configuration (once registered as ``builtin.daily_raw_jsonl`` in
+    Task 8 of the bus log pipeline plan, via ``agent_core.yaml``
+    ``bus_hooks.pre_publish`` block):
 
-    ```yaml
-    bus_hooks:
-      pre_publish:
-        - type: builtin.daily_raw_jsonl
-          params:
-            log_root: "~/.agent-core/bus/raw"  # default
-            timezone: "US/Eastern"              # default
-            skip_kinds: ["Acknowledgment", "Progress", "Cancellation"]
-    ```
+    .. code-block:: yaml
+
+        bus_hooks:
+          pre_publish:
+            - type: builtin.daily_raw_jsonl
+              params:
+                log_root: "~/.agent-core/bus/raw"  # default
+                timezone: "US/Eastern"              # default
+                skip_kinds: ["Acknowledgment", "Progress", "Cancellation"]
     """
 
     def __init__(
@@ -48,8 +50,8 @@ class DailyRawJsonlHook:
     ) -> None:
         self._log_root = Path(log_root).expanduser() if log_root else _writer.default_log_root()
         self._timezone = timezone
-        self._skip_kinds = frozenset(
-            _DEFAULT_SKIP_KINDS if skip_kinds is None else skip_kinds
+        self._skip_kinds = (
+            _DEFAULT_SKIP_KINDS if skip_kinds is None else frozenset(skip_kinds)
         )
 
     async def execute(

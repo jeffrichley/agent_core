@@ -78,6 +78,12 @@ async def test_hook_round_trips_event_envelope_with_payload_data(tmp_path: Path)
     assert written[0].payload.type == "HandoffReady"
     assert written[0].payload.data["job_id"] == "j-1"
     assert written[0].payload.data["handoff_path"] == "/x/handoff.md"
+    # Confirm the on-disk shape uses the "from" alias, not the field
+    # name "from_". Read-side parses either because populate_by_name=True,
+    # but external tools and cross-language consumers expect the alias.
+    raw = files[0].read_text(encoding="utf-8")
+    assert '"from":' in raw
+    assert '"from_":' not in raw
 
 
 @pytest.mark.asyncio
@@ -119,7 +125,7 @@ async def test_hook_does_not_abort_publish_on_oserror(tmp_path: Path, monkeypatc
     def _boom(*args, **kwargs):
         raise OSError("disk full")
 
-    monkeypatch.setattr("agent_core.bus_log.writer.append_envelope_jsonl", _boom)
+    monkeypatch.setattr("agent_core.bus_hooks.daily_raw_jsonl._writer.append_envelope_jsonl", _boom)
 
     with caplog.at_level("ERROR"):
         out = await hook.execute(stage="pre_publish", envelope=_text_env(), params={})
@@ -156,3 +162,17 @@ async def test_hook_creates_log_root_if_missing(tmp_path: Path):
     await hook.execute(stage="pre_publish", envelope=_text_env(), params={})
     assert nested.exists()
     assert any(nested.glob("*.jsonl"))
+
+
+@pytest.mark.asyncio
+async def test_hook_writes_lf_only_terminators_on_all_platforms(tmp_path: Path):
+    """JSONL spec requires \\n line terminators. With Python's default
+    text-mode newline translation, Windows would write \\r\\n. The writer
+    opens with newline='' to disable translation. Cross-machine sync
+    (Windows desktop ↔ Mac laptop) and external tooling rely on \\n."""
+    hook = DailyRawJsonlHook(log_root=str(tmp_path), timezone="UTC")
+    await hook.execute(stage="pre_publish", envelope=_text_env(), params={})
+    files = list(tmp_path.glob("*.jsonl"))
+    raw_bytes = files[0].read_bytes()
+    assert b"\r\n" not in raw_bytes
+    assert raw_bytes.endswith(b"\n")
