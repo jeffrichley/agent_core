@@ -95,15 +95,33 @@ packages/agent-core-briefs/
 
 ### Configuration locations
 
-Three tiers:
+Three tiers, all paths configurable in `agent_core.yaml` under the briefs plugin block. Path values support `${var}` substitution against a `vars:` map (config-load-time, not delivery-time — distinct from the `{{when.date}}` templating used in destination paths):
 
-| Tier | Location | Authored by | Format |
+```yaml
+# In agent_core.yaml
+plugins:
+  briefs:
+    vars:
+      agent_root: ~/.pepper                         # operator-defined; convention is "agent_root"
+    playbook_paths:
+      - ${agent_root}/Memory/playbooks/             # framework scans for *.md, brief_type from metadata
+    fetcher_paths:
+      - ${agent_root}/agent/fetchers/
+    destination_paths:
+      - ${agent_root}/agent/destinations/
+    extension_paths:
+      - ${agent_root}/agent/extensions/
+```
+
+| Tier | Location example | Authored by | Format |
 |---|---|---|---|
-| Per-brief playbook | `<agent_memory>/playbooks/<brief_type>.md` | Agent, solo | YAML in MD |
-| Gather config (per brief) | `<agent_memory>/gather/<brief_type>.yaml` | Agent, solo | YAML |
-| Custom fetchers / destinations / extensions | `<agent_memory>/agent/{fetchers,destinations,extensions}/*.py` | Agent (no PR gate) | Python |
+| Per-brief playbook | `${agent_root}/Memory/playbooks/<brief_type>.md` | Agent, solo | YAML in MD |
+| Gather config (per brief) | `${agent_root}/Memory/gather/<brief_type>.yaml` | Agent, solo | YAML |
+| Custom fetchers / destinations / extensions | `${agent_root}/agent/{fetchers,destinations,extensions}/*.py` | Agent (no PR gate) | Python |
 
-For Pepper, `<agent_memory>` is `~/.pepper/Memory`. For another agent, it's whatever their memory root is — declared in their `agent_core.yaml` ClaudeCodeMCPEndpoint config (new param: `memory_root`).
+`vars:` is general-purpose (Pepper can define `external_data_root`, `secrets_root`, anything she needs) — `agent_root` is the documented-best-practice convention, not a special name. Substitution applies to every framework-read config (the briefs plugin block, playbooks, gather YAML), so a single var change at the top propagates through the whole tree.
+
+Both `${var}` substitution and standard `~/` user-home expansion are applied at load time. `${agent_root}` defined as `~/.pepper` becomes `/home/jeffr/.pepper` (or `C:\Users\jeffr\.pepper` on Windows) once both passes run.
 
 ---
 
@@ -187,23 +205,29 @@ The framework scans configured fetcher paths at gather time, imports each `.py` 
 Duplicate `type_id` across files raises `BriefBootError` — fail loud, surface conflicts.
 
 ```yaml
-# ~/.pepper/Memory/gather/morning.yaml
-fetcher_paths:
-  - ~/.pepper/agent/fetchers/
-  - ~/.pepper/agent/fetchers/experimental/
-
+# ${agent_root}/Memory/gather/morning.yaml
+# (note: fetcher_paths can also be configured globally in agent_core.yaml's
+#  briefs plugin block; per-gather-config paths add to that set)
 fetchers:
   - type: filesystem_read
     namespace: tasks
     config:
-      path: ~/.pepper/Memory/TASKS.md
+      path: ${agent_root}/Memory/TASKS.md
 
   - type: pepper.daily_log_streak
     namespace: streaks.eod_log
     timeout_seconds: 300
     config:
-      log_path: ~/.pepper/Memory/health/eod-log/
+      log_path: ${agent_root}/Memory/health/eod-log/
       streak_threshold: 7
+
+  - type: cli
+    namespace: github.prs_awaiting_review
+    config:
+      command: ["gh", "pr", "list", "--state", "open", "--json", "number,title,url,author"]
+      cwd: ${agent_root}/code/agent_core
+      parse: json
+      timeout_seconds: 60
 ```
 
 ### Async-concurrent gather
@@ -457,16 +481,17 @@ A full morning_brief example with all 8 sections + conditionals lands as part of
 # Metadata
 brief_type: morning_brief
 voice: pepper
-schedule: { cron: "...", scheduler: "pepper-scheduler" }
-gather_config: ~/.pepper/Memory/gather/morning.yaml
-extensions: ~/.pepper/agent/extensions/
+schedule: { cron: "0 7 * * *", scheduler: "pepper-scheduler" }
+gather_config: ${agent_root}/Memory/gather/morning.yaml
+extensions: ${agent_root}/agent/extensions/
 
 # Destinations
 destinations:
   - type: discord_embed
     config: { channel_id: "..." }
   - type: markdown_file
-    config: { path: "~/.pepper/Memory/daily/briefs/{{when.date}}-morning.md" }
+    config: { path: "${agent_root}/Memory/daily/briefs/{{when.date}}-morning.md" }
+                       #     ${var}: load-time              {{ var }}: delivery-time
 
 # Color palette (named handles, not decimals)
 colors:
@@ -606,15 +631,28 @@ Same shape as the bus log audit pattern from cutover #04. Operator can grep, `jq
 
 ---
 
-## Open decisions
-
-These can settle during implementation or in the plan review:
-
-- **`memory_root` config on `ClaudeCodeMCPEndpoint`.** The framework needs to know where each agent's memory lives to find their playbooks/gather configs/fetchers. New constructor param. Defaults to `~/.<agent_name>/Memory` if unset.
-- **Field-level `guidance` storage.** Inline YAML strings for short guidance, separate per-section markdown blocks if guidance grows long. v1: inline only; revisit if Pepper's playbooks accumulate paragraphs of guidance.
-
-### Decided (during spec drafting)
+## Decided (during spec drafting and review)
 
 - **Expression language:** `simpleeval`. Small, sandboxed, no transitive deps, exactly the right size.
 - **`scope` substitution / path templating:** small custom regex+dot-attribute formatter (~20 lines), no library. Handles `{{when.date}}`, `{{scope.channel_id}}`, etc. — flat var substitution with dot-attribute access. If v2+ needs loops/conditionals/filters in templates, escalate to jinja2 then. YAGNI for v1.
 - **Production fetchers v1:** `filesystem_read` and `cli` only. `fake_calendar` lives under `tests/fixtures/` and is never imported by production code.
+- **Path-var substitution in briefs config (`${var}`).** The briefs plugin block in `agent_core.yaml` supports a `vars:` map; references like `${agent_root}/Memory/playbooks/` resolve before the framework consumes paths. Convention: define `agent_root` in `vars`, reference it everywhere a path lives under the agent's memory. Move the memory dir → change one line. Mechanism is general (any var name, not magical); convention is documented in the authoring skill. Implementation: ~10 lines walking the config tree, fail-loud on undefined refs. **Distinct from** the `{{when.date}}`-style templating that runs at *delivery* time on destination paths — `${var}` is config-load-time substitution.
+- **Field-level `guidance` storage — both shapes supported from v1.** Inline string for short guidance (most fields), file reference for long guidance (voice-critical sections that need paragraphs, examples, counterexamples). The skill documents the rule of thumb: inline if it fits in a sentence or two; file-ref if it needs paragraphs or examples.
+
+  ```yaml
+  # Short — inline (most fields)
+  fields:
+    - name: "Top 3"
+      guidance: "Highest-priority items for today. 3 max. Bullet format."
+
+  # Long — file ref (voice-critical sections)
+  fields:
+    - name: "Today"
+      guidance: { file: greeting-today-guidance.md }   # path relative to playbook
+  ```
+
+  Cost is trivial (~5 lines to resolve), benefit is preserving voice on the sections where guidance complexity matters most.
+
+## Open decisions
+
+(None blocking the implementation plan. The two formerly-open items above settled during spec review; field-level guidance storage and path resolution are both decided. Further decisions emerge during plan/implementation as concrete questions.)
