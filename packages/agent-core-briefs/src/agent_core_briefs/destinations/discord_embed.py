@@ -32,6 +32,20 @@ Failure semantics
 ``Destination.deliver`` is best-effort per the brief framework spec — a bus
 publish failure must not propagate into the orchestrator. Publish errors
 land in the returned ``DeliveryResult(success=False, error=...)``.
+
+Success semantics
+-----------------
+``DeliveryResult.success=True`` here means the envelope was successfully
+*enqueued* for delivery to the DiscordEndpoint. The actual Discord API
+call happens asynchronously inside the endpoint; failures there (rate
+limits, malformed embed, channel not found) surface as Acknowledgments
+on the bus, NOT on the ``DeliveryResult`` returned here.
+
+``DeliveryResult.ref`` is the bus envelope id, NOT the Discord message
+id. Audit / replay paths that need the actual message id should
+correlate via ``envelope.correlation_id`` to the eventual
+Acknowledgment from the DiscordEndpoint, whose payload note carries
+the Discord message id(s) once the API call lands.
 """
 
 from __future__ import annotations
@@ -77,7 +91,16 @@ class DiscordEmbedDestination:
         if not sections:
             return DeliveryResult(success=True, ref=None)
 
-        channel_id = str(config["channel_id"])
+        try:
+            channel_id = str(config["channel_id"])
+        except KeyError:
+            # Symmetric with the publish-failure path: surface config
+            # errors as a DeliveryResult instead of propagating, so a
+            # misconfigured destination doesn't crash the orchestrator.
+            return DeliveryResult(
+                success=False,
+                error="discord_embed: config missing 'channel_id'",
+            )
         target_name = config.get("discord_endpoint_name", "discord")
 
         embeds: list[dict[str, Any]] = [

@@ -4,12 +4,14 @@ from __future__ import annotations
 
 from datetime import datetime
 
+import pytest
 from agent_core_briefs.protocol import (
     DeliveryResult,
     Destination,
     Fetcher,
     PlaybookRef,
     SectionSpec,
+    validate_destination_signature,
 )
 
 
@@ -56,6 +58,43 @@ class TestDestinationProtocol:
             type_id = "x"
 
         assert not isinstance(_Bad(), Destination)
+
+
+class TestValidateDestinationSignature:
+    def test_validate_destination_signature_accepts_correct_shape(self):
+        class _Good:
+            type_id = "good"
+
+            async def deliver(self, sections, playbook, scope, when, config, bus_handle):
+                pass
+
+        # Should not raise.
+        validate_destination_signature(_Good())
+
+    def test_validate_destination_signature_rejects_missing_bus_handle(self):
+        """Old-style ``deliver`` without ``bus_handle`` passes
+        ``runtime_checkable`` but fails the explicit signature check.
+
+        This is the gap that motivated the helper: ``runtime_checkable``
+        only validates attribute presence, so a destination written
+        against the pre-T11 protocol shape would silently pass
+        ``isinstance`` and then explode at first publish with a
+        ``TypeError`` about positional argument count. The helper turns
+        that into a loud, named failure at registration time.
+        """
+
+        class _OldStyle:
+            type_id = "old"
+
+            async def deliver(self, sections, playbook, scope, when, config):
+                pass
+
+        # Confirms the runtime_checkable gap (informational — this is
+        # exactly why the helper exists).
+        assert isinstance(_OldStyle(), Destination)
+        # And confirms the explicit check catches the missing parameter.
+        with pytest.raises(TypeError, match="bus_handle"):
+            validate_destination_signature(_OldStyle())
 
 
 class TestDeliveryResult:

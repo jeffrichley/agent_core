@@ -239,6 +239,32 @@ async def test_publish_failure_returns_delivery_result_with_error(tmp_path: Path
 
 
 @pytest.mark.asyncio
+async def test_missing_channel_id_returns_delivery_failure(tmp_path: Path) -> None:
+    """Config missing ``channel_id`` returns a failed DeliveryResult, not a KeyError.
+
+    Symmetric with the publish-failure path: the destination converts
+    config errors into ``DeliveryResult(success=False, error=...)`` so
+    the orchestrator sees a structured failure rather than an uncaught
+    exception. No envelope is published in this case.
+    """
+    dest = DiscordEmbedDestination()
+    handle = _RecordingHandle()
+    result = await dest.deliver(
+        sections=[_section()],
+        playbook=_playbook(tmp_path),
+        scope=None,
+        when=datetime.now(UTC),
+        config={},  # no channel_id
+        bus_handle=handle,
+    )
+    assert result.success is False
+    assert result.ref is None
+    assert result.error is not None
+    assert "channel_id" in result.error
+    assert handle.published == []
+
+
+@pytest.mark.asyncio
 async def test_no_sections_publishes_no_envelope(tmp_path: Path) -> None:
     """Empty sections list short-circuits — no envelope, success, ref=None."""
     dest = DiscordEmbedDestination()

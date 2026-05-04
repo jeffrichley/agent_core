@@ -7,6 +7,7 @@ section in a playbook. A PlaybookRef is the framework-loaded playbook handle.
 
 from __future__ import annotations
 
+import inspect
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
@@ -59,6 +60,42 @@ class Destination(Protocol):
         config: dict,
         bus_handle: BusHandle,
     ) -> DeliveryResult: ...
+
+
+def validate_destination_signature(destination: object) -> None:
+    """Verify a Destination instance's ``deliver()`` has the required parameter shape.
+
+    The ``runtime_checkable`` Protocol check only confirms attribute
+    presence; it does NOT validate parameter names or count. An old-style
+    ``deliver(self, sections, playbook, scope, when, config)`` (without
+    ``bus_handle``) passes ``isinstance(d, Destination)`` and then blows
+    up at first publish with::
+
+        TypeError: deliver() takes 6 positional arguments but 7 were given
+
+    This helper closes that gap. T13's submit handler calls it once at
+    orchestrator-config-load time for each registered destination so
+    plugin authors discover signature drift before any brief delivery
+    attempt.
+
+    Required signature:
+    ``deliver(self, sections, playbook, scope, when, config, bus_handle)``.
+
+    Raises:
+        TypeError: if any required parameter is missing from the
+            ``deliver`` signature. The error names the destination class
+            and the missing parameters so the fix is obvious.
+    """
+    sig = inspect.signature(destination.deliver)  # type: ignore[attr-defined]
+    required = {"sections", "playbook", "scope", "when", "config", "bus_handle"}
+    actual = set(sig.parameters.keys())
+    missing = required - actual
+    if missing:
+        raise TypeError(
+            f"{type(destination).__name__}.deliver() missing required "
+            f"parameters: {sorted(missing)}. Required: "
+            f"deliver(self, sections, playbook, scope, when, config, bus_handle)"
+        )
 
 
 @dataclass(frozen=True)

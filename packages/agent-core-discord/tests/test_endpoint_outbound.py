@@ -605,6 +605,56 @@ async def test_textmessage_with_embeds_and_text_sends_both(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_textmessage_with_long_text_and_embeds_attaches_to_last_chunk(monkeypatch):
+    """Long text + embeds: chunked text, embeds ride only on the LAST chunk.
+
+    Regression coverage for the chunked-with-embeds path. Discord's
+    content cap is 2000 chars, so 4500 chars of text forces multiple
+    chunks. The pre-existing ``_send`` logic only attaches embeds to
+    the final chunk — verifying that holds when the embeds come in
+    via ``metadata.discord.embeds`` rather than via the ``send`` tool.
+    """
+    ep, handle, fake = await _started(monkeypatch)
+    ch = _FakeChannel(id="200")
+    fake.add_channel(ch)
+    long_text = "x" * 4500  # forces multiple chunks at the 1900 chunk-target
+    try:
+        env = Envelope(
+            id="e-long-embed",
+            correlation_id=uuid.uuid4().hex,
+            from_="agent-test",
+            to="discord-test",
+            kind="TextMessage",
+            payload=TextMessagePayload(text=long_text),
+            metadata={
+                "discord": {
+                    "channel_id": "200",
+                    "embeds": [{"title": "T", "color": 1, "fields": []}],
+                },
+            },
+            created_at=datetime.now(UTC),
+        )
+        await ep.deliver(env)
+        assert len(ch.sent) >= 2
+        # All non-final chunks must NOT carry embeds (None or empty list).
+        for row in ch.sent[:-1]:
+            assert not row["embeds"], (
+                f"non-final chunk should not carry embeds, got {row['embeds']!r}"
+            )
+        # Final chunk carries the embed.
+        last = ch.sent[-1]
+        assert last["embeds"] is not None
+        assert len(last["embeds"]) == 1
+        assert last["embeds"][0].title == "T"
+        ack = [e for e in handle.published if e.kind == "Acknowledgment"][0]
+        result = json.loads(ack.payload.note)
+        assert result["status"] == "sent"
+        assert len(result["message_ids"]) == len(ch.sent)
+    finally:
+        await ep.stop()
+
+
+@pytest.mark.asyncio
 async def test_textmessage_uses_discord_metadata_channel_and_replies(monkeypatch):
     ep, handle, fake = await _started(monkeypatch)
     ch = _FakeChannel(id="200")
