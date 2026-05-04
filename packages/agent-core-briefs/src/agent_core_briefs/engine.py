@@ -26,10 +26,19 @@ async def gather_context(
 ) -> dict[str, Any]:
     """Run all fetchers concurrently, merge results into a context dict.
 
-    Each fetcher gets its own timeout. Failures (exceptions or timeouts)
-    land in ``context._errors.<type_id>`` so the receiving agent sees what
-    fell over without losing the rest of the gather. One slow fetcher
-    cannot block others — they all run in parallel with isolated timeouts.
+    Each fetcher gets its own timeout. Successful payloads merge under
+    ``fetcher.namespace`` with dot-separated nesting — ``namespace="a.b"``
+    produces ``{"a": {"b": payload}}``.
+
+    Failures (exceptions or timeouts) land at
+    ``context["_errors"][fetcher.type_id]`` as
+    ``{"error": str, "type": str}``. The ``type_id`` is kept as a literal
+    key — dots in a ``type_id`` do NOT nest under ``_errors``.
+
+    One slow fetcher cannot block others — they all run in parallel with
+    isolated timeouts. Fetchers must yield to the event loop for timeouts
+    to be effective; a ``fetch`` that performs blocking I/O without
+    ``await`` will not be cancellable.
     """
     results = await asyncio.gather(
         *[_run_one(inv, when) for inv in invocations],
@@ -83,9 +92,9 @@ def _merge_into_namespace(context: dict, namespace: str, payload: dict) -> None:
     """Merge ``payload`` into ``context`` at ``namespace`` (dot-separated path).
 
     ``namespace="streaks.eod_log"`` creates nested dicts. Existing keys at
-    the leaf are overwritten — last write wins (intentional; multiple
-    fetchers contributing to the same leaf is a config error caught at
-    fetcher-loader time).
+    the leaf are overwritten — last write wins (intentional; namespace
+    collisions across fetchers are an operator misconfiguration that the
+    loader does not currently detect).
     """
     parts = namespace.split(".")
     cursor = context

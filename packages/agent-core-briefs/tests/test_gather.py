@@ -4,6 +4,7 @@ timeout, namespace merging, _errors capture, default 5min timeout."""
 from __future__ import annotations
 
 import asyncio
+import time
 from datetime import UTC, datetime
 
 import pytest
@@ -98,8 +99,6 @@ async def test_timeout_isolated_to_offending_fetcher():
 
 @pytest.mark.asyncio
 async def test_concurrent_execution_total_time_bounded_by_slowest():
-    import time
-
     slow = FetcherInvocation(_Slow("test.s1", "s1", delay_s=0.5), {}, 5)
     other = FetcherInvocation(_Slow("test.s2", "s2", delay_s=0.5), {}, 5)
     start = time.monotonic()
