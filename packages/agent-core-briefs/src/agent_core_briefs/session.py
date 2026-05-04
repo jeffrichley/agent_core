@@ -78,6 +78,11 @@ class ComposeSession:
     created_at: datetime
     consumed: bool = False
     extension_sections: list[SectionSpec] = field(default_factory=list)
+    # T13: orchestrator copies playbook.destinations onto the session at
+    # session-build time so the submit handler can fan out without re-parsing
+    # the playbook. Each entry is a raw dict with at least ``type`` and
+    # optionally ``config`` (matches Playbook.destinations shape).
+    destinations: list[dict] = field(default_factory=list)
 
 
 class SessionRegistry:

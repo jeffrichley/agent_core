@@ -278,6 +278,10 @@ class BriefsOrchestratorEndpoint:
             sections=resolved_sections,
             colors_palette=dict(playbook.colors),
             created_at=datetime.now(UTC),
+            # T13: thread the playbook destinations through so the submit
+            # handler can fan out without re-parsing the playbook. Each
+            # entry is a dict like ``{"type": "discord_embed", "config": {...}}``.
+            destinations=[dict(d) for d in playbook.destinations],
         )
         session_token = self._registry.create(session)
 
