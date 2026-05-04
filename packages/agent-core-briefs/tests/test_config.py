@@ -47,6 +47,29 @@ def test_undefined_var_raises_loud():
         substitute_vars("${missing_var}/path", {})
 
 
+def test_hyphen_in_var_name_raises():
+    with pytest.raises(ConfigSubstitutionError, match="malformed.*my-var"):
+        substitute_vars("${my-var}/path", {"my-var": "x"})
+
+
+def test_dotted_var_name_raises():
+    with pytest.raises(ConfigSubstitutionError, match="malformed.*pepper.root"):
+        substitute_vars("${pepper.root}/path", {"pepper.root": "x"})
+
+
+def test_empty_var_name_raises():
+    with pytest.raises(ConfigSubstitutionError, match="malformed"):
+        substitute_vars("${}/path", {})
+
+
+def test_var_value_containing_ref_is_preserved_literally():
+    """One-pass substitution by design: var values are NOT re-scanned for
+    further refs. This avoids infinite-loop failure modes. Locking the
+    contract so a future "improvement" to multi-pass doesn't break it."""
+    result = substitute_vars("${x}", {"x": "${y}"})
+    assert result == "${y}"
+
+
 def test_value_without_substitution_passes_through():
     assert substitute_vars("/absolute/path", {}) == "/absolute/path"
     assert substitute_vars(42, {"x": "y"}) == 42

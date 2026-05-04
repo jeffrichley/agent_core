@@ -11,7 +11,8 @@ import re
 from pathlib import Path
 from typing import Any
 
-_VAR_PATTERN = re.compile(r"\$\{(\w+)\}")
+_VAR_PATTERN = re.compile(r"\$\{([^}]*)\}")
+_VALID_VAR_NAME = re.compile(r"^\w+$")
 
 
 class ConfigSubstitutionError(ValueError):
@@ -40,6 +41,10 @@ def substitute_vars(value: Any, vars_map: dict[str, str]) -> Any:
 def _substitute_string(s: str, vars_map: dict[str, str]) -> str:
     def _replace(match: re.Match) -> str:
         name = match.group(1)
+        if not _VALID_VAR_NAME.match(name):
+            raise ConfigSubstitutionError(
+                f"malformed config var ${{{name}}} (names must match [A-Za-z0-9_]+)"
+            )
         if name not in vars_map:
             raise ConfigSubstitutionError(
                 f"undefined config var ${{{name}}} (missing_var={name!r})"
