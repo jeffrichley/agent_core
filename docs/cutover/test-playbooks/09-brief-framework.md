@@ -148,7 +148,7 @@ uv run pytest packages/core/tests/test_pepper_example_yaml.py::TestPepperExample
 
 Expected: 6 green. Catches removal of the `briefs.orchestrator` endpoint, misconfiguration of `${agent_root}`, missing playbook/fetcher path declarations, and other shapes the spec calls non-negotiable for Pepper post-cutover.
 
-### Step 6 — Real Pepper morning_brief (deferred until Pepper is on agent-core)
+### Step 6 — Real Pepper morning_brief (cutover-gate blocker)
 
 Once Pepper's live runtime is on agent-core, schedule a 7am cron entry firing a `BriefRequest{brief_type=morning_brief}` event onto her bus and verify three observables:
 
@@ -156,7 +156,7 @@ Once Pepper's live runtime is on agent-core, schedule a 7am cron entry firing a 
 2. A markdown file lands at `${agent_root}/Memory/daily/briefs/<date>-morning.md` with the same content.
 3. `~/.agent-core/briefs/audit.jsonl` records the full chain for that session.
 
-This is the integration smoke test, not a gate on this cutover landing — Pepper-on-agent-core is its own milestone (the cross-endpoint MCP-tool wiring is the prerequisite, see Known limitations).
+This step gates cutover. The two prerequisites listed in **Cutover-gate-blocking follow-ups** below must land before this step can pass.
 
 ## Pass/fail summary
 
@@ -167,11 +167,17 @@ This is the integration smoke test, not a gate on this cutover landing — Peppe
 | Step 3 | `briefs --help` lists `compose` and `fetchers`; `fetchers list` returns two built-ins; `fetchers test` returns a namespaced payload from `filesystem_read`. |
 | Step 4 | Example playbook parses to 8 sections + 2 conditional + 2 destinations + 'pepper' voice. |
 | Step 5 | `TestPepperExampleYamlBriefs` — 6 green. |
-| Step 6 | Deferred. Becomes a gate when Pepper's live runtime moves to agent-core. |
+| Step 6 | Cron-fired BriefRequest produces Discord embed + markdown file + full audit chain on Pepper's live agent-core runtime. Gates cutover. Requires both follow-ups below to land first. |
 
-## Known limitations (recorded; not blocking #09 done)
+## Cutover-gate-blocking follow-ups
 
-- **Cross-endpoint MCP tool mounting deferred.** The briefs MCP tools are not yet auto-mounted onto an agent's `ClaudeCodeMCPEndpoint` instance via the runner. T14's `register_briefs_tools` exists and works, T15's CLI works, the e2e harness drives the tools directly — but production "Pepper's MCP session has briefs tools available" requires post-cutover wiring between the `briefs.orchestrator` endpoint and the agent's `ClaudeCodeMCPEndpoint`. The pluggy hookspec for cross-endpoint coordination is the natural seam. Tracked as the prerequisite for Step 6 above.
+The framework code shipped in #09, but Pepper cannot actually compose a brief on the new substrate without these two pieces. Both are part of the cutover gate, not post-cutover polish.
+
+- **Cross-endpoint MCP tool mounting** — *In progress (Claude).* The briefs MCP tools are not yet auto-mounted onto Pepper's `ClaudeCodeMCPEndpoint`. T14's `register_briefs_tools(mcp, orchestrator, bus_handle, audit_log, destination_factories)` exists and works; the e2e harness drives the tools directly. What's missing is the runner-time wiring that, once both the `briefs.orchestrator` and `ClaudeCodeMCPEndpoint` instances are constructed and started, finds the orchestrator by name, captures its `bus_handle`, and calls `register_briefs_tools` on the MCP endpoint's FastMCP server. Without this, Pepper's session has zero briefs tools available — `compose_brief` is unreachable from inside her running session. The pluggy hookspec for cross-endpoint coordination is the natural seam.
+- **Briefs usage skill at `~/.claude/skills/briefs-author/`** — *Owner: Jeff.* Pepper-facing skill documenting how to author a playbook (YAML-in-MD format, simpleeval expression language, conditional sections, `${var}` substitution) and the gather config shape (fetchers list, namespace declarations, per-fetcher timeouts, `_errors` capture). Without this Pepper can call the framework but cannot extend it — every new brief type would require Jeff to author the playbook by hand. Authoring a skill in Pepper's voice is tone-judgment work, intentionally not automated.
+
+## Known limitations (recorded; not blocking #09 done OR the cutover gate)
+
 - **No backfill for historical briefs.** The brief framework is forward-only; existing `Memory/daily/briefs/*.md` files from Pepper's prior runtime aren't migrated. Acceptable — the WAR skill reads from `Memory/daily/summaries/` (which #04 covers), not from briefs.
 - **Audit log is unbounded.** Same shape as #04's daily JSONL: append-only, no rotation, manual cleanup. KB/day in practice; revisit when operationally painful.
 - **Single-machine.** Audit log + bus log live on the daemon machine. Cross-machine deployment requires HTTP export or file sync — same constraint as #04.
