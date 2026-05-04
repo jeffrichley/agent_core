@@ -6,6 +6,7 @@
 - `0482849` feat(bus_log): projector protocol + registry skeleton
 - `a69e147` fix(bus_log): apply Task 1 code-quality review feedback
 - `bec28f2` feat(bus_log): TextMessage projector + real fallback projector
+- `a1d4586` test(bus_log): cover Task 2 fallback projector branches missed by review
 - `93d36b3` feat(bus_log): iter_envelopes — raw read with time bounds and malformed-line tolerance
 - `f28c9a2` fix(bus_log): apply Task 3 code-quality review feedback
 - `34c3780` feat(bus_log): iter_for_agent — filter + project with timezone passthrough
