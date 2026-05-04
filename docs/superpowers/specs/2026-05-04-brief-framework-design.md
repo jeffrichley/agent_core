@@ -231,10 +231,27 @@ All fetchers fire concurrently. **5-minute default timeout per fetcher** (overri
 
 ### Built-in fetchers (v1)
 
-- `filesystem_read` — read a file or glob into the context. Useful for ledger-style data (`Memory/TASKS.md`, project state markdown, etc.).
-- `fake_calendar` — synthetic calendar data for tests; not for production.
+Two production fetchers, both fully agnostic. Pepper writes her own for everything beyond.
 
-Pepper writes her own for the integrations she needs (Google Calendar, Gmail, GitHub, Notion, weather). Built-ins stay small and agnostic on purpose.
+- **`filesystem_read`** — read a file or glob into the context. Useful for ledger-style data (`Memory/TASKS.md`, project state markdown, etc.). Config: `path` (glob ok), `format` (`text` | `json` | `yaml` | `lines`).
+- **`cli`** — run a CLI command and parse its stdout. Wraps `asyncio.create_subprocess_exec`, captures stdout, parses per `parse` setting, surfaces stderr + non-zero exit code in `_errors`. Most of Pepper's external data sources already have CLI clients (`gh`, `gcalcli`, `gmail-cli`, etc.); a declarative wrapper covers them without Python wrappers.
+
+  ```yaml
+  - type: cli
+    namespace: github.prs_awaiting_review
+    config:
+      command: ["gh", "pr", "list", "--state", "open", "--json", "number,title,url,author"]
+      cwd: ~/code/agent_core              # optional
+      parse: json                          # "json" | "yaml" | "lines" | "text"
+      timeout_seconds: 60                  # cli-fetcher-specific timeout (within outer 5min cap)
+      env_passthrough: [GH_TOKEN]          # explicit allowlist; the rest of env is dropped
+  ```
+
+  Trust note: same threat surface as filesystem-loaded Python fetchers. The CLI fetcher does not introduce new risk — Pepper can already write arbitrary Python; CLI invocation is a strict subset.
+
+A test-only `fake_calendar` fixture lives under `packages/agent-core-briefs/tests/fixtures/` for end-to-end tests. **It is not part of the production fetcher set** — production code never imports it.
+
+Pepper writes custom fetchers in her own repo for sources that need post-processing the CLI parsers can't handle (e.g., a fetcher that calls `gcalcli`, walks the result, and computes a `next_event_warning` derived field). Built-ins stay small and agnostic on purpose.
 
 ### Trust model
 
@@ -501,7 +518,7 @@ fields:
 
 ### Expression language
 
-Small subset of Python evaluated against the gathered context dict. Sandboxed via `simpleeval` (or equivalent). Supports:
+Small subset of Python evaluated against the gathered context dict. **Sandboxed via [`simpleeval`](https://pypi.org/project/simpleeval/)** — small, vetted, no transitive deps, exactly the right size for this. Supports:
 
 - Attribute access (`now.day_of_week`)
 - Bracket access (`email.urgent[0]`)
@@ -542,7 +559,7 @@ Same shape as the bus log audit pattern from cutover #04. Operator can grep, `jq
 - `SchedulerEndpoint` extension to fire `Event` envelopes (~50 lines on the existing endpoint)
 - `ComposeBrief` envelope shape + handler
 - Submit handler (atomic validate + format + send)
-- Built-in fetchers: `filesystem_read`, `fake_calendar` (test-only)
+- Built-in fetchers: `filesystem_read`, `cli` (production); `fake_calendar` lives under `tests/fixtures/` and is test-only
 - Built-in destinations: `discord_embed`, `markdown_file`
 - Playbook MD parser + color palette resolution + simple expression language
 - Agent tool surface (7 tools listed above)
@@ -593,7 +610,11 @@ Same shape as the bus log audit pattern from cutover #04. Operator can grep, `jq
 
 These can settle during implementation or in the plan review:
 
-- **Expression language library.** `simpleeval` is the natural pick (small, sandboxed, no deps). Alternatives: write a tiny custom parser, use `asteval`. v1 picks one.
 - **`memory_root` config on `ClaudeCodeMCPEndpoint`.** The framework needs to know where each agent's memory lives to find their playbooks/gather configs/fetchers. New constructor param. Defaults to `~/.<agent_name>/Memory` if unset.
 - **Field-level `guidance` storage.** Inline YAML strings for short guidance, separate per-section markdown blocks if guidance grows long. v1: inline only; revisit if Pepper's playbooks accumulate paragraphs of guidance.
-- **`scope` substitution in templated paths.** For project_brief, destinations might reference `{{scope.channel_id}}`. Framework needs a small templating layer. Pick: jinja2 (heavy but well-known) vs. Python `str.format_map` (no deps but less expressive). v1 picks one.
+
+### Decided (during spec drafting)
+
+- **Expression language:** `simpleeval`. Small, sandboxed, no transitive deps, exactly the right size.
+- **`scope` substitution / path templating:** small custom regex+dot-attribute formatter (~20 lines), no library. Handles `{{when.date}}`, `{{scope.channel_id}}`, etc. — flat var substitution with dot-attribute access. If v2+ needs loops/conditionals/filters in templates, escalate to jinja2 then. YAGNI for v1.
+- **Production fetchers v1:** `filesystem_read` and `cli` only. `fake_calendar` lives under `tests/fixtures/` and is never imported by production code.
