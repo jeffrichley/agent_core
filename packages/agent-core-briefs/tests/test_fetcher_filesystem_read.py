@@ -70,3 +70,40 @@ async def test_default_format_is_text(tmp_path: Path):
     fetcher = FilesystemReadFetcher()
     result = await fetcher.fetch({"path": str(f)}, datetime.now(UTC))
     assert result["content"] == "hi"
+
+
+@pytest.mark.asyncio
+async def test_json_list_root_raises(tmp_path: Path):
+    f = tmp_path / "x.json"
+    f.write_text("[1, 2, 3]", encoding="utf-8")
+    fetcher = FilesystemReadFetcher()
+    with pytest.raises(ValueError, match="json root must be"):
+        await fetcher.fetch({"path": str(f), "format": "json"}, datetime.now(UTC))
+
+
+@pytest.mark.asyncio
+async def test_yaml_list_root_raises(tmp_path: Path):
+    f = tmp_path / "x.yaml"
+    f.write_text("- a\n- b\n", encoding="utf-8")
+    fetcher = FilesystemReadFetcher()
+    with pytest.raises(ValueError, match="yaml root must be"):
+        await fetcher.fetch({"path": str(f), "format": "yaml"}, datetime.now(UTC))
+
+
+@pytest.mark.asyncio
+async def test_path_supports_tilde_expansion(tmp_path: Path, monkeypatch):
+    """``~/...`` paths in config get expanded via expand_path before reading."""
+    # Cross-platform: ``Path.expanduser`` consults ``USERPROFILE``/``HOMEDRIVE``
+    # on Windows in preference to ``HOME``. Override all of them so the test
+    # sees ``tmp_path`` regardless of platform. Mirrors test_config._force_home.
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setenv("USERPROFILE", str(tmp_path))
+    drive, _, tail = str(tmp_path).partition(":")
+    if tail:
+        monkeypatch.setenv("HOMEDRIVE", f"{drive}:")
+        monkeypatch.setenv("HOMEPATH", tail)
+    f = tmp_path / "x.md"
+    f.write_text("hello", encoding="utf-8")
+    fetcher = FilesystemReadFetcher()
+    result = await fetcher.fetch({"path": "~/x.md", "format": "text"}, datetime.now(UTC))
+    assert result["content"] == "hello"

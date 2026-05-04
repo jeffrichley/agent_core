@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 from datetime import datetime
 
@@ -19,6 +20,10 @@ class FilesystemReadFetcher:
 
     Returns a dict shape that varies by format. Use a wrapper fetcher
     in the agent's repo if you need fixed-shape output across formats.
+
+    JSON/YAML roots must be dicts (mappings); list or scalar roots raise
+    ``ValueError``. Wrap with a fetcher in your agent's repo if you need
+    to adapt non-dict file shapes.
     """
 
     type_id = "filesystem_read"
@@ -27,14 +32,26 @@ class FilesystemReadFetcher:
     async def fetch(self, config: dict, when: datetime) -> dict:
         path = expand_path(config["path"])
         fmt = config.get("format", "text")
-        text = path.read_text(encoding="utf-8")
+        text = await asyncio.to_thread(path.read_text, encoding="utf-8")
 
         if fmt == "text":
             return {"content": text, "path": str(path)}
         if fmt == "json":
-            return json.loads(text)
+            parsed = json.loads(text)
+            if not isinstance(parsed, dict):
+                raise ValueError(
+                    f"filesystem_read: json root must be an object/dict, "
+                    f"got {type(parsed).__name__}"
+                )
+            return parsed
         if fmt == "yaml":
-            return yaml.safe_load(text)
+            parsed = yaml.safe_load(text)
+            if not isinstance(parsed, dict):
+                raise ValueError(
+                    f"filesystem_read: yaml root must be a mapping/dict, "
+                    f"got {type(parsed).__name__}"
+                )
+            return parsed
         if fmt == "lines":
             return {"lines": [line.strip() for line in text.splitlines() if line.strip()]}
         raise ValueError(f"filesystem_read: unknown format {fmt!r}")
