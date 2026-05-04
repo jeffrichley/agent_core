@@ -31,7 +31,7 @@ Single bus-owned daily JSONL log written by a `pre_publish` BusHook, plus a read
 - Write: `builtin.daily_raw_jsonl` writes every published envelope to `~/.agent-core/bus/raw/<date>.jsonl` in bus-native shape (full envelope, no info loss). Skips `Acknowledgment`/`Progress`/`Cancellation` by default; configurable.
 - Library: `agent_core.bus_log` exposes `iter_envelopes` (raw) and `iter_for_agent` (filter to one agent + project to Tool 3 rows via registered projectors).
 - Projectors: default coverage for `TextMessage` (with scheduler-heartbeat skip), `Acknowledgment` (skip), `HandoffReady`, `HandoffFailed`, plus a fallback projector that renders unregistered event types generically (never silently dropped). New event types register projectors via the `register_bus_log_projectors` pluggy hookspec.
-- CLI: `agent-core bus-log show --agent <name> [--date | --since/--until] [--projected | --raw] [--limit N]` — for cron and operators.
+- CLI: `agent-core bus-log show --agent <name> [--date YYYY-MM-DD] [--projected | --raw] [--limit N]` — for cron and operators.
 - MCP: `show_my_day(date=None, projected=True, limit=None)` on `ClaudeCodeMCPEndpoint` — agent identity is read from `self.name`; there is no `agent` parameter, so cross-agent queries are prevented by construction.
 - Pepper example yaml (`docs/examples/pepper-agent-core.yaml`) registers the hook on `pre_publish`. Tripwire test in `test_pepper_example_yaml.py` catches removal.
 
@@ -120,6 +120,7 @@ From a live Pepper session, call `show_my_day` via MCP. Expected: returns the sa
 
 ## Known limitations (recorded; not blocking #04 done)
 
+- **Unbounded log growth.** Daily files have no rotation, no size limit, and no retention policy. Each day is a separate file but they accumulate forever in `~/.agent-core/bus/raw/`. At hundreds of envelopes per day, files are KB-to-low-MB; after a year of operation the directory is hundreds of MB. Cleanup is currently a manual `rm` against old dates. If/when retention becomes operationally painful, add a sweep job — separate ticket.
 - **Cross-machine deployment.** The bus log lives on the daemon's machine. If Pepper's reflection ever runs on a different machine than the daemon, an HTTP export endpoint or file sync becomes necessary — separate ticket.
 - **Multi-tenant isolation.** All agents' traffic shares one file. Today all agents are owned by the same operator; if multi-tenant ever becomes real, per-agent files become a follow-up ticket.
 - **Slow-consumer / disk-full robustness.** The hook catches `OSError` and continues (logged at ERROR). An adversarial environment could lose log entries. Acceptable because the bus is the source of truth; the log is observability.

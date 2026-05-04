@@ -226,7 +226,7 @@ The shape Pepper's `gather.py` already expects. Yielded by `iter_for_agent` when
 
 - `ts`: ISO 8601 derived from `envelope.created_at`, rendered in the timezone passed to `iter_for_agent` (read-time concern, not bake-time). Default `US/Eastern`. Different reflection jobs can request different timezones from the same source file.
 - `dir`: `"in"` if `envelope.to == perspective`, `"out"` if `envelope.from_ == perspective`, `"self"` if both (rare; agent talking to itself).
-- `src`: heuristic per projector — for `TextMessage` from a channel relay, the channel id; for scheduler triggers, the job name; default falls back to `envelope.from_`.
+- `src`: `envelope.from_` by default. Per-event-type projectors may override (e.g., a future channel-relay projector could surface the channel id here).
 - `cid`: `envelope.correlation_id` — preserves message threading.
 - `sender`: human-readable display name (e.g., Discord user display name from metadata) when available; else `envelope.from_`.
 - `content`: text content for `TextMessage`; the per-event-type rendering for Events; generic fallback otherwise.
@@ -357,8 +357,6 @@ agent-core bus-log show --agent <name> [options]
 Options:
   --agent NAME           Required. Whose perspective to filter to.
   --date YYYY-MM-DD      Date to read. Default: today (in --timezone).
-  --since ISO8601        Lower time bound (inclusive). Mutually exclusive with --date.
-  --until ISO8601        Upper time bound (exclusive). Used with --since.
   --raw                  Skip projection; emit raw envelope JSON. Default: projected.
   --projected            Force projected output (default).
   --log-root PATH        Where the daily files live. Default: ~/.agent-core/bus/raw.

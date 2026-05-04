@@ -37,6 +37,14 @@ endpoints:
     params:
       mount: /internal/handoff-jobs
 
+  - type: builtin.claude_code_mcp
+    name: pepper
+    params:
+      mount: /mcp/pepper
+      # Cutover #04: bus_log_root defaults to ~/.agent-core/bus/raw
+      # (matches builtin.daily_raw_jsonl writer). Override here only if
+      # the daemon writes the log somewhere non-default.
+
 bus_hooks:
   pre_publish:
     # Cutover #04: every published envelope (Discord, scheduler, relay,
