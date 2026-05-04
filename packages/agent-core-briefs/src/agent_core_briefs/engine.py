@@ -12,11 +12,21 @@ from agent_core_briefs.protocol import Fetcher
 
 @dataclass(frozen=True)
 class FetcherInvocation:
-    """One configured fetcher call: instance + config + per-call timeout."""
+    """One configured fetcher call: instance + config + per-call timeout.
+
+    ``namespace_override`` lets a caller (typically the orchestrator) override
+    the fetcher class's ``namespace`` for this invocation only. Built-in
+    fetchers (e.g., ``CliFetcher``) declare ``namespace = ""`` because the
+    routing namespace is a config decision, not a class identity. The
+    orchestrator's gather-config YAML supplies the namespace per-fetcher,
+    and this field carries it into ``gather_context`` without mutating the
+    fetcher instance.
+    """
 
     fetcher: Fetcher
     config: dict
     timeout_seconds: float
+    namespace_override: str | None = None
 
 
 async def gather_context(
@@ -67,7 +77,10 @@ async def _run_one(inv: FetcherInvocation, when: datetime) -> tuple[bool, str, d
             inv.fetcher.fetch(inv.config, when),
             timeout=inv.timeout_seconds,
         )
-        return False, inv.fetcher.namespace, payload
+        namespace = (
+            inv.namespace_override if inv.namespace_override is not None else inv.fetcher.namespace
+        )
+        return False, namespace, payload
     except TimeoutError:
         return (
             True,

@@ -1,0 +1,511 @@
+"""BriefsOrchestratorEndpoint — receives BriefRequest, runs gather, publishes ComposeBrief.
+
+Wire shapes consumed/produced are documented in the orchestrator module.
+These tests stub the bus with a minimal recording handle (same pattern as
+``test_scheduler_endpoint._RecordingHandle``) and use simple in-memory
+stub fetchers.
+"""
+
+from __future__ import annotations
+
+import uuid
+from datetime import UTC, datetime
+from pathlib import Path
+
+import pytest
+from agent_core_briefs.orchestrator import (
+    BriefsOrchestratorEndpoint,
+    ComposeSession,
+)
+
+from agent_core.bus.envelope import Envelope, EventPayload, TextMessagePayload
+
+FIXTURES = Path(__file__).parent / "fixtures"
+PLAYBOOKS_DIR = FIXTURES / "playbooks"
+GATHER_DIR = FIXTURES / "gather"
+
+
+# ---- test doubles ----
+
+
+class _RecordingHandle:
+    """Stub BusHandle that records publish + ack calls."""
+
+    def __init__(self):
+        self.published: list[Envelope] = []
+        self.acks: list[str] = []
+        self.nacks: list[str] = []
+
+    async def publish(self, envelope: Envelope, to=None) -> None:
+        if to is not None:
+            envelope = envelope.model_copy(update={"to": to if isinstance(to, str) else to[0]})
+        self.published.append(envelope)
+
+    async def ack(self, envelope_id: str) -> None:
+        self.acks.append(envelope_id)
+
+    async def nack(self, envelope_id: str, requeue: bool = True) -> None:
+        self.nacks.append(envelope_id)
+
+    def endpoints(self):
+        return []
+
+
+class _StubFetcher:
+    """Minimal Fetcher that returns a fixed payload. Class-level namespace
+    is intentionally empty — built-in fetchers (CliFetcher etc.) work the
+    same way, with the gather-config YAML supplying the namespace.
+    """
+
+    type_id = "stub.simple"
+    namespace = ""
+
+    def __init__(self):
+        # The orchestrator instantiates fetchers from the catalog at
+        # request time; instances must be cheap to build with no args.
+        self._payload = {"events": [{"id": "a"}]}
+
+    async def fetch(self, config: dict, when: datetime) -> dict:
+        # Echo the config back so tests can assert the per-fetcher config
+        # was threaded through correctly. Falls back to a deterministic
+        # default payload when the test gather config is empty.
+        if config:
+            return dict(config)
+        return dict(self._payload)
+
+
+class _StubEchoFetcher:
+    type_id = "stub.echo"
+    namespace = ""
+
+    def __init__(self):
+        pass
+
+    async def fetch(self, config: dict, when: datetime) -> dict:
+        # Return whatever 'payload' the gather config declares; default to
+        # a sentinel so the test can detect missing wiring.
+        return dict(config.get("payload") or {"echo": True})
+
+
+class _BoomFetcher:
+    type_id = "stub.boom"
+    namespace = ""
+
+    def __init__(self):
+        pass
+
+    async def fetch(self, config: dict, when: datetime) -> dict:
+        raise RuntimeError("boom in fetcher")
+
+
+# ---- fixtures ----
+
+
+@pytest.fixture
+def gather_yaml(tmp_path) -> Path:
+    """Return the path to the canonical orchestrator gather config fixture.
+
+    The fixture lives under ``tests/fixtures/gather/morning-test.yaml`` and
+    references two stub fetchers by type_id with explicit namespaces.
+    """
+    return GATHER_DIR / "morning-test.yaml"
+
+
+@pytest.fixture
+def playbook_path(tmp_path, gather_yaml) -> Path:
+    """Copy the orchestrator playbook fixture into ``tmp_path`` named after
+    the brief_type so the orchestrator's ``<playbooks_path>/<brief_type>.md``
+    convention works.
+    """
+    src = PLAYBOOKS_DIR / "morning-orchestrator.md"
+    dst = tmp_path / "morning_brief.md"
+    dst.write_text(src.read_text(encoding="utf-8"), encoding="utf-8")
+    return dst
+
+
+@pytest.fixture
+def fetcher_catalog():
+    return {
+        "stub.simple": _StubFetcher,
+        "stub.echo": _StubEchoFetcher,
+        "stub.boom": _BoomFetcher,
+    }
+
+
+def _make_brief_request(
+    *,
+    to: str,
+    brief_type: str | None = "morning_brief",
+    scope: str | None = "today",
+    when: str | None = "2026-05-04T07:00:00+00:00",
+    target_agent: str | None = None,
+    env_id: str | None = None,
+) -> Envelope:
+    """Build a BriefRequest envelope. Pass ``brief_type=None`` to test the
+    missing-key path; pass ``target_agent=...`` to set request metadata.
+    """
+    data: dict = {}
+    if brief_type is not None:
+        data["brief_type"] = brief_type
+    if scope is not None:
+        data["scope"] = scope
+    if when is not None:
+        data["when"] = when
+
+    metadata: dict = {}
+    if target_agent is not None:
+        metadata["target_agent"] = target_agent
+
+    return Envelope(
+        id=env_id or uuid.uuid4().hex,
+        correlation_id=uuid.uuid4().hex,
+        from_="scheduler",
+        to=to,
+        kind="Event",
+        payload=EventPayload(type="BriefRequest", data=data),
+        metadata=metadata,
+        created_at=datetime.now(UTC),
+    )
+
+
+# ---- tests ----
+
+
+@pytest.mark.asyncio
+async def test_happy_path_publishes_compose_brief(
+    playbook_path, gather_yaml, fetcher_catalog, tmp_path
+):
+    """BriefRequest → orchestrator runs gather → ComposeBrief published with
+    all fields populated correctly."""
+    handle = _RecordingHandle()
+    ep = BriefsOrchestratorEndpoint(
+        name="briefs.orchestrator",
+        playbooks_path=playbook_path.parent,
+        vars_map={"gather_config_path": str(gather_yaml)},
+        fetcher_catalog=fetcher_catalog,
+        default_target_agent="pepper",
+    )
+    await ep.start(handle)
+    try:
+        req = _make_brief_request(to="briefs.orchestrator")
+        await ep.deliver(req)
+    finally:
+        await ep.stop()
+
+    # The request was acked.
+    assert req.id in handle.acks
+
+    # Exactly one ComposeBrief was published.
+    composed = [e for e in handle.published if e.payload.type == "ComposeBrief"]
+    assert len(composed) == 1
+    env = composed[0]
+
+    # Envelope-level: routed to default agent, kind=Event, correlation_id preserved.
+    assert env.kind == "Event"
+    assert env.to == "pepper"
+    assert env.correlation_id == req.correlation_id
+
+    data = env.payload.data
+    assert data["brief_type"] == "morning_brief"
+    assert data["scope"] == "today"
+    assert data["when"] == "2026-05-04T07:00:00+00:00"
+    assert data["voice"] == "Pepper, warm"
+    assert data["playbook_path"] == str(playbook_path)
+    assert isinstance(data["session_token"], str)
+    assert len(data["session_token"]) == 32  # secrets.token_hex(16) → 32 hex chars
+    # Gather context: namespaces from gather config.
+    assert "calendar" in data["context"]
+    assert data["context"]["calendar"] == {"key": "value"}
+    assert data["context"]["priorities"] == {"items": ["a", "b"]}
+    # No errors on happy path.
+    assert "_errors" not in data["context"]
+    # Sections: required/optional split + conditional active.
+    assert data["sections_required"] == ["greeting", "calendar_today"]
+    assert data["sections_optional"] == ["footer_optional"]
+    # weekly_digest activates because calendar.key == 'value'; never_active stays inactive.
+    assert data["sections_conditional_active"] == ["weekly_digest"]
+
+
+@pytest.mark.asyncio
+async def test_non_brief_request_envelopes_are_ignored(playbook_path, gather_yaml, fetcher_catalog):
+    """Envelopes that aren't BriefRequest events get ack'd but produce no
+    ComposeBrief. This keeps the orchestrator a polite citizen on the bus."""
+    handle = _RecordingHandle()
+    ep = BriefsOrchestratorEndpoint(
+        name="briefs.orchestrator",
+        playbooks_path=playbook_path.parent,
+        vars_map={"gather_config_path": str(gather_yaml)},
+        fetcher_catalog=fetcher_catalog,
+        default_target_agent="pepper",
+    )
+    await ep.start(handle)
+    try:
+        # TextMessage is non-Event → ignored.
+        text_env = Envelope(
+            id="text-1",
+            correlation_id="c1",
+            from_="someone",
+            to="briefs.orchestrator",
+            kind="TextMessage",
+            payload=TextMessagePayload(text="hello"),
+            created_at=datetime.now(UTC),
+        )
+        await ep.deliver(text_env)
+        # Event with non-BriefRequest type → ignored.
+        other_event = Envelope(
+            id="evt-1",
+            correlation_id="c2",
+            from_="someone",
+            to="briefs.orchestrator",
+            kind="Event",
+            payload=EventPayload(type="SomeOtherEvent", data={"x": 1}),
+            created_at=datetime.now(UTC),
+        )
+        await ep.deliver(other_event)
+    finally:
+        await ep.stop()
+
+    # Both envelopes were ack'd.
+    assert "text-1" in handle.acks
+    assert "evt-1" in handle.acks
+    # No ComposeBrief published.
+    assert [e for e in handle.published if e.payload.type == "ComposeBrief"] == []
+
+
+@pytest.mark.asyncio
+async def test_missing_brief_type_does_not_publish_and_does_not_raise(
+    playbook_path, gather_yaml, fetcher_catalog
+):
+    """A BriefRequest with no ``brief_type`` is a malformed request. The
+    orchestrator logs the failure (caught by the outer handler) and does
+    NOT publish a ComposeBrief. It still acks the envelope so the bus
+    doesn't redeliver forever."""
+    handle = _RecordingHandle()
+    ep = BriefsOrchestratorEndpoint(
+        name="briefs.orchestrator",
+        playbooks_path=playbook_path.parent,
+        vars_map={"gather_config_path": str(gather_yaml)},
+        fetcher_catalog=fetcher_catalog,
+        default_target_agent="pepper",
+    )
+    await ep.start(handle)
+    try:
+        req = _make_brief_request(to="briefs.orchestrator", brief_type=None, env_id="bad-1")
+        # Must not raise out of deliver().
+        await ep.deliver(req)
+    finally:
+        await ep.stop()
+
+    assert "bad-1" in handle.acks
+    assert [e for e in handle.published if e.payload.type == "ComposeBrief"] == []
+
+
+@pytest.mark.asyncio
+async def test_unknown_brief_type_does_not_publish(playbook_path, gather_yaml, fetcher_catalog):
+    """When ``<playbooks_path>/<brief_type>.md`` doesn't exist, the orchestrator
+    cannot compose. It logs and does not publish; the envelope is still
+    acked."""
+    handle = _RecordingHandle()
+    ep = BriefsOrchestratorEndpoint(
+        name="briefs.orchestrator",
+        playbooks_path=playbook_path.parent,
+        vars_map={"gather_config_path": str(gather_yaml)},
+        fetcher_catalog=fetcher_catalog,
+        default_target_agent="pepper",
+    )
+    await ep.start(handle)
+    try:
+        req = _make_brief_request(
+            to="briefs.orchestrator", brief_type="nonexistent_brief", env_id="unk-1"
+        )
+        await ep.deliver(req)
+    finally:
+        await ep.stop()
+
+    assert "unk-1" in handle.acks
+    assert [e for e in handle.published if e.payload.type == "ComposeBrief"] == []
+
+
+@pytest.mark.asyncio
+async def test_gather_errors_are_captured_and_brief_still_composes(
+    playbook_path, fetcher_catalog, tmp_path
+):
+    """Per-spec graceful degradation: a fetcher that raises lands in
+    ``context._errors`` keyed by its type_id, but the brief STILL composes."""
+    # Build a gather config that uses the boom fetcher alongside a working one.
+    gather = tmp_path / "gather.yaml"
+    gather.write_text(
+        "fetchers:\n"
+        "  - type: stub.simple\n"
+        "    namespace: calendar\n"
+        "    timeout_seconds: 30\n"
+        "    config:\n"
+        "      key: value\n"
+        "  - type: stub.boom\n"
+        "    namespace: priorities\n"
+        "    timeout_seconds: 5\n"
+        "    config: {}\n",
+        encoding="utf-8",
+    )
+
+    handle = _RecordingHandle()
+    ep = BriefsOrchestratorEndpoint(
+        name="briefs.orchestrator",
+        playbooks_path=playbook_path.parent,
+        vars_map={"gather_config_path": str(gather)},
+        fetcher_catalog=fetcher_catalog,
+        default_target_agent="pepper",
+    )
+    await ep.start(handle)
+    try:
+        req = _make_brief_request(to="briefs.orchestrator")
+        await ep.deliver(req)
+    finally:
+        await ep.stop()
+
+    composed = [e for e in handle.published if e.payload.type == "ComposeBrief"]
+    assert len(composed) == 1
+    ctx = composed[0].payload.data["context"]
+    assert ctx["calendar"] == {"key": "value"}
+    assert "_errors" in ctx
+    assert "stub.boom" in ctx["_errors"]
+    assert "boom" in ctx["_errors"]["stub.boom"]["error"]
+
+
+@pytest.mark.asyncio
+async def test_scope_and_when_default_when_omitted(playbook_path, gather_yaml, fetcher_catalog):
+    """``scope`` and ``when`` are optional. Missing scope → None; missing
+    when → server-side now() (we just check it parses to a datetime that's
+    sane)."""
+    before = datetime.now(UTC)
+    handle = _RecordingHandle()
+    ep = BriefsOrchestratorEndpoint(
+        name="briefs.orchestrator",
+        playbooks_path=playbook_path.parent,
+        vars_map={"gather_config_path": str(gather_yaml)},
+        fetcher_catalog=fetcher_catalog,
+        default_target_agent="pepper",
+    )
+    await ep.start(handle)
+    try:
+        req = _make_brief_request(to="briefs.orchestrator", scope=None, when=None)
+        await ep.deliver(req)
+    finally:
+        await ep.stop()
+    after = datetime.now(UTC)
+
+    composed = [e for e in handle.published if e.payload.type == "ComposeBrief"]
+    assert len(composed) == 1
+    data = composed[0].payload.data
+    assert data["scope"] is None
+    # ``when`` is an ISO string; parsing it must yield a datetime in [before, after].
+    parsed = datetime.fromisoformat(data["when"])
+    assert before <= parsed <= after
+
+
+@pytest.mark.asyncio
+async def test_target_agent_from_metadata_overrides_default(
+    playbook_path, gather_yaml, fetcher_catalog
+):
+    """The request's ``metadata.target_agent`` wins over the orchestrator's
+    ``default_target_agent``. With no default and no metadata, the orchestrator
+    refuses to publish."""
+    # Case 1: metadata wins over default.
+    handle = _RecordingHandle()
+    ep = BriefsOrchestratorEndpoint(
+        name="briefs.orchestrator",
+        playbooks_path=playbook_path.parent,
+        vars_map={"gather_config_path": str(gather_yaml)},
+        fetcher_catalog=fetcher_catalog,
+        default_target_agent="pepper",
+    )
+    await ep.start(handle)
+    try:
+        req = _make_brief_request(to="briefs.orchestrator", target_agent="agent-bob")
+        await ep.deliver(req)
+    finally:
+        await ep.stop()
+    composed = [e for e in handle.published if e.payload.type == "ComposeBrief"]
+    assert len(composed) == 1
+    assert composed[0].to == "agent-bob"
+
+    # Case 2: no metadata, no default → no ComposeBrief published.
+    handle2 = _RecordingHandle()
+    ep2 = BriefsOrchestratorEndpoint(
+        name="briefs.orchestrator",
+        playbooks_path=playbook_path.parent,
+        vars_map={"gather_config_path": str(gather_yaml)},
+        fetcher_catalog=fetcher_catalog,
+        default_target_agent=None,
+    )
+    await ep2.start(handle2)
+    try:
+        req2 = _make_brief_request(to="briefs.orchestrator", env_id="no-target")
+        await ep2.deliver(req2)
+    finally:
+        await ep2.stop()
+    assert "no-target" in handle2.acks
+    assert [e for e in handle2.published if e.payload.type == "ComposeBrief"] == []
+
+
+@pytest.mark.asyncio
+async def test_session_tokens_unique_and_registered(playbook_path, gather_yaml, fetcher_catalog):
+    """Each BriefRequest produces a fresh 32-char hex token; the same token
+    appears in the published ComposeBrief; the session is queryable through
+    the registry seam (``ep.sessions``)."""
+    handle = _RecordingHandle()
+    ep = BriefsOrchestratorEndpoint(
+        name="briefs.orchestrator",
+        playbooks_path=playbook_path.parent,
+        vars_map={"gather_config_path": str(gather_yaml)},
+        fetcher_catalog=fetcher_catalog,
+        default_target_agent="pepper",
+    )
+    await ep.start(handle)
+    try:
+        req1 = _make_brief_request(to="briefs.orchestrator", env_id="r1")
+        req2 = _make_brief_request(to="briefs.orchestrator", env_id="r2")
+        await ep.deliver(req1)
+        await ep.deliver(req2)
+    finally:
+        await ep.stop()
+
+    composed = [e for e in handle.published if e.payload.type == "ComposeBrief"]
+    assert len(composed) == 2
+    token1 = composed[0].payload.data["session_token"]
+    token2 = composed[1].payload.data["session_token"]
+    assert token1 != token2
+
+    # Both sessions queryable via the registry seam.
+    assert token1 in ep.sessions
+    assert token2 in ep.sessions
+    s1 = ep.sessions[token1]
+    assert isinstance(s1, ComposeSession)
+    assert s1.brief_type == "morning_brief"
+    assert s1.target_agent == "pepper"
+    assert s1.playbook_path == playbook_path
+    # Correlation_id stored on the session matches the originating request.
+    assert s1.correlation_id == req1.correlation_id
+
+
+@pytest.mark.asyncio
+async def test_deliver_before_start_raises():
+    """Calling deliver() without start() is a programmer error — fail loud
+    so misuse is obvious in tests/integration."""
+    ep = BriefsOrchestratorEndpoint(
+        name="briefs.orchestrator",
+        playbooks_path=Path("/nonexistent"),
+        vars_map={},
+        fetcher_catalog={},
+    )
+    env = Envelope(
+        id="x",
+        correlation_id="c",
+        from_="x",
+        to="briefs.orchestrator",
+        kind="Event",
+        payload=EventPayload(type="BriefRequest", data={}),
+        created_at=datetime.now(UTC),
+    )
+    with pytest.raises(RuntimeError, match="not started"):
+        await ep.deliver(env)

@@ -1,0 +1,12 @@
+fetchers:
+  - type: stub.simple
+    namespace: calendar
+    timeout_seconds: 30
+    config:
+      key: value
+  - type: stub.echo
+    namespace: priorities
+    timeout_seconds: 10
+    config:
+      payload:
+        items: [a, b]
