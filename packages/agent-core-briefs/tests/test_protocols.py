@@ -33,6 +33,13 @@ class TestFetcherProtocol:
 
         assert not isinstance(_Bad(), Fetcher)
 
+    def test_missing_fetch_fails_runtime_check(self):
+        class _Bad:
+            type_id = "x"
+            namespace = "x"
+
+        assert not isinstance(_Bad(), Fetcher)
+
 
 class TestDestinationProtocol:
     def test_destination_is_runtime_checkable(self):
@@ -43,6 +50,12 @@ class TestDestinationProtocol:
                 return DeliveryResult(success=True, ref="test-1")
 
         assert isinstance(_Good(), Destination)
+
+    def test_missing_deliver_fails_runtime_check(self):
+        class _Bad:
+            type_id = "x"
+
+        assert not isinstance(_Bad(), Destination)
 
 
 class TestDeliveryResult:
@@ -75,8 +88,12 @@ class TestSectionSpec:
         spec = SectionSpec(
             section_id="email",
             title="📬 Inbox",
-            color={"dynamic": True, "expr": "len(email.urgent) > 0",
-                   "if_true": "EMAIL_URGENT", "if_false": "EMAIL_OK"},
+            color={
+                "dynamic": True,
+                "expr": "len(email.urgent) > 0",
+                "if_true": "EMAIL_URGENT",
+                "if_false": "EMAIL_OK",
+            },
             required=True,
             fields=[],
         )

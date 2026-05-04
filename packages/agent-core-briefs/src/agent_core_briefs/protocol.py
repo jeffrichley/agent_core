@@ -62,12 +62,12 @@ class FieldSpec:
 class SectionSpec:
     section_id: str
     title: str
-    color: str | dict             # palette name or {dynamic, expr, if_true, if_false}
+    color: str | dict  # palette name or {dynamic, expr, if_true, if_false}
     required: bool = False
     required_context: list[str] = field(default_factory=list)
     allow_compression: bool = False
     fields: list[FieldSpec] = field(default_factory=list)
-    when: dict | None = None       # {expr: "..."} for conditional sections
+    when: dict | None = None  # {expr: "..."} for conditional sections
     required_when_active: bool = False
 
 
