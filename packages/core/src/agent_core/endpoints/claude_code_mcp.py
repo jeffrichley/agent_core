@@ -25,6 +25,7 @@ import re
 import uuid
 from collections import Counter
 from datetime import UTC, datetime, timedelta
+from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal, cast
 
 import anyio
@@ -36,6 +37,8 @@ from mcp.types import JSONRPCMessage, JSONRPCNotification
 from agent_core.bus.envelope import AcknowledgmentPayload, Envelope
 from agent_core.bus.notify_broker import NotificationBroker
 from agent_core.bus.protocol import EndpointUnavailable
+from agent_core.bus_log import bootstrap_default_projectors, iter_for_agent
+from agent_core.bus_log.writer import default_log_root
 
 if TYPE_CHECKING:
     from agent_core.bus.handle import BusHandle
@@ -121,8 +124,12 @@ class ClaudeCodeMCPEndpoint:
         outbound_registry_ttl_seconds: float = 900.0,
         missing_ack_default_seconds: float = 30.0,
         max_tracked_outbounds: int = 10_000,
+        bus_log_root: Path | None = None,
     ):
         self.name = name
+        self._bus_log_root = (
+            Path(bus_log_root).expanduser() if bus_log_root is not None else default_log_root()
+        )
         self.mount = mount
         self.wake_on_all_acknowledgments = wake_on_all_acknowledgments
         ttl = float(outbound_registry_ttl_seconds)
@@ -173,6 +180,33 @@ class ClaudeCodeMCPEndpoint:
     def attach_notify_broker(self, broker: NotificationBroker) -> None:
         """Optional runner hook: attach broker after endpoint construction."""
         self._notify_broker = broker
+
+    async def _show_my_day_impl(
+        self,
+        *,
+        date: str | None = None,
+        projected: bool = True,
+        limit: int | None = None,
+        timezone: str = "US/Eastern",
+    ) -> list[dict]:
+        """Return today's bus traffic touching this agent.
+
+        Agent identity comes from ``self.name`` — there is no ``agent``
+        parameter exposed via MCP. Each ClaudeCodeMCPEndpoint instance
+        is bound to one agent at construction; cross-agent leakage is
+        prevented by construction, not by trusting the caller.
+        """
+        bootstrap_default_projectors()
+        target = date or datetime.now(UTC).date().isoformat()
+        path = self._bus_log_root / f"{target}.jsonl"
+        if projected:
+            rows = list(iter_for_agent(path, agent=self.name, projected=True, timezone=timezone))
+        else:
+            rows = [
+                env.model_dump(by_alias=True, mode="json")
+                for env in iter_for_agent(path, agent=self.name, projected=False)
+            ]
+        return rows[-limit:] if limit else rows
 
     def _register_session(self, session: Any) -> None:
         """Register a connected ServerSession."""
@@ -713,3 +747,21 @@ class ClaudeCodeMCPEndpoint:
                 self._release_outbound_registry_for_ack_envelope(env_before)
             self._pending = [e for e in self._pending if e.id != envelope_id]
             return {"status": "nacked", "id": envelope_id, "requeue": requeue}
+
+        @self._mcp.tool()
+        async def show_my_day(
+            date: str | None = None,
+            projected: bool = True,
+            limit: int | None = None,
+        ) -> list[dict]:
+            """Return today's bus traffic for this agent.
+
+            Use for self-introspection ('what just happened') or feeding
+            into a reflection summary. Projected output is Tool 3-shaped
+            rows; ``projected=False`` returns full envelope JSON.
+
+            The agent identity is the name this endpoint was constructed
+            with — no ``agent`` parameter is exposed to prevent cross-agent
+            queries. ``date`` defaults to today (UTC).
+            """
+            return await self._show_my_day_impl(date=date, projected=projected, limit=limit)
