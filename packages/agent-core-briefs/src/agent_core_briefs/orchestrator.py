@@ -254,12 +254,23 @@ class BriefsOrchestratorEndpoint:
 
         # Resolve dynamic + palette-name colors at session-build time so the
         # T10 agent-tool surface (get_section_spec) doesn't have to evaluate
-        # simpleeval on every call. We resolve only the static sections;
-        # conditional ones aren't materialized in the session because v1
-        # treats them as id-only flags (T11 destinations re-resolve at
-        # render time if/when they're appended).
+        # simpleeval on every call.
         resolved_sections = resolve_colors_for_sections(
             playbook.sections, playbook.colors, context=context
+        )
+
+        # T13/C1: also materialize conditional sections that gated truthy
+        # for this brief — submit-time validation (T13 validators) needs
+        # the full SectionSpec to enforce required-field/max-chars checks
+        # against the agent's submitted conditional sections. Apply color
+        # resolution here too so conditional sections with dynamic / palette
+        # colors are treated symmetrically with static sections.
+        active_conditional_ids = set(sections_active)
+        active_conditional_specs = [
+            s for s in playbook.conditional_sections if s.section_id in active_conditional_ids
+        ]
+        resolved_conditional = resolve_colors_for_sections(
+            active_conditional_specs, playbook.colors, context=context
         )
 
         session = ComposeSession(
@@ -282,6 +293,7 @@ class BriefsOrchestratorEndpoint:
             # handler can fan out without re-parsing the playbook. Each
             # entry is a dict like ``{"type": "discord_embed", "config": {...}}``.
             destinations=[dict(d) for d in playbook.destinations],
+            conditional_sections=resolved_conditional,
         )
         session_token = self._registry.create(session)
 

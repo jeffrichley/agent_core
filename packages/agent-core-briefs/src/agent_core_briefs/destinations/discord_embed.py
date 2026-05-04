@@ -61,6 +61,13 @@ if TYPE_CHECKING:
     from agent_core.bus.handle import BusHandle
 
 
+# Discord caps embeds at 10 per message. The destination owns this limit
+# (rather than the generic submission validator) because it's
+# Discord-specific — a brief targeting only ``markdown_file`` should not
+# be rejected by an embed-count rule that doesn't apply to it.
+_DISCORD_EMBED_LIMIT = 10
+
+
 class DiscordEmbedDestination:
     """Render brief sections as Discord embeds, post via DiscordEndpoint.
 
@@ -90,6 +97,18 @@ class DiscordEmbedDestination:
         """
         if not sections:
             return DeliveryResult(success=True, ref=None)
+        if len(sections) > _DISCORD_EMBED_LIMIT:
+            # Discord enforces this limit at the API level; rejecting here
+            # gives the agent a precise per-destination error in the audit
+            # log instead of an opaque rate-limit / "Invalid Form Body"
+            # response from the Discord side.
+            return DeliveryResult(
+                success=False,
+                error=(
+                    f"discord_embed: {len(sections)} sections exceeds Discord's "
+                    f"{_DISCORD_EMBED_LIMIT}-embed-per-message limit"
+                ),
+            )
 
         try:
             channel_id = str(config["channel_id"])

@@ -16,6 +16,8 @@ from agent_core_briefs.protocol import FieldSpec, SectionSpec
 from agent_core_briefs.session import ComposeSession
 from agent_core_briefs.validators import ValidationIssue, validate_submission
 
+_DEFAULT_DESTINATIONS = [{"type": "markdown_file", "config": {"path": "out.md"}}]
+
 
 def _make_session(
     *,
@@ -24,11 +26,14 @@ def _make_session(
     sections_optional: list[str] | None = None,
     sections_conditional_active: list[str] | None = None,
     extension_sections: list[SectionSpec] | None = None,
+    conditional_sections: list[SectionSpec] | None = None,
+    destinations: list[dict] | None = None,
 ) -> ComposeSession:
     """Build a minimal ComposeSession for validator tests.
 
-    The validator only reads the section specs and id lists; the rest
-    of the session fields are filler.
+    Defaults ``destinations`` to a single markdown_file entry so unrelated
+    tests don't trip the no_destinations_configured rule. Tests
+    exercising that rule pass ``destinations=[]`` explicitly.
     """
     return ComposeSession(
         brief_type="morning_brief",
@@ -47,6 +52,8 @@ def _make_session(
         colors_palette={},
         created_at=datetime.now(UTC),
         extension_sections=extension_sections or [],
+        destinations=destinations if destinations is not None else list(_DEFAULT_DESTINATIONS),
+        conditional_sections=conditional_sections or [],
     )
 
 
@@ -173,17 +180,84 @@ def test_validate_flags_unknown_field_in_section():
     )
 
 
-def test_validate_flags_too_many_sections_for_discord():
-    """More than 10 submitted sections → too_many_sections_for_discord."""
+def test_validate_accepts_more_than_10_sections():
+    """The Discord 10-embed limit is destination-specific, NOT a generic
+    submission rule (I4). A markdown-only brief with 12 sections is fine."""
     specs = [_section(f"s{i}") for i in range(12)]
     session = _make_session(sections=specs, sections_optional=[s.section_id for s in specs])
     submission = [_submitted(f"s{i}") for i in range(12)]
     issues = validate_submission(session=session, sections=submission)
-    too_many = [i for i in issues if i.code == "too_many_sections_for_discord"]
-    assert len(too_many) == 1
-    assert too_many[0].section_id is None
-    assert "12" in too_many[0].message
-    assert "10" in too_many[0].message
+    # No code about embed limits should appear.
+    assert not any("discord" in i.code or "embed" in i.code for i in issues)
+
+
+def test_validate_flags_no_destinations_configured():
+    """I1: a session with no destinations is undeliverable → no_destinations_configured.
+
+    Surfaced as a validation failure so submit_brief short-circuits BEFORE
+    consuming the session token; the agent / operator can fix the playbook
+    and retry with the same token.
+    """
+    session = _make_session(destinations=[])
+    issues = validate_submission(session=session, sections=[])
+    no_dest = [i for i in issues if i.code == "no_destinations_configured"]
+    assert len(no_dest) == 1
+    assert no_dest[0].section_id is None
+
+
+def test_validate_flags_missing_required_field_in_conditional_active_section():
+    """C1 regression: conditional sections that are active still need their
+    required fields validated. Without ``session.conditional_sections``,
+    submit-time validation silently skips per-section field checks for
+    conditional sections — Pepper's morning_brief weekly_digest depends on
+    this enforcement.
+    """
+    spec = SectionSpec(
+        section_id="weekly_digest",
+        title="Week ahead",
+        color=5763719,
+        required=False,  # conditional, not required-by-default
+        fields=[FieldSpec(name="This week", required=True, max_chars=200)],
+    )
+    session = _make_session(
+        sections=[],
+        sections_required=[],
+        sections_optional=[],
+        sections_conditional_active=["weekly_digest"],
+        conditional_sections=[spec],
+    )
+    submitted = [
+        {
+            "section_id": "weekly_digest",
+            "fields": [{"name": "This week", "value": ""}],
+        }
+    ]
+    issues = validate_submission(session=session, sections=submitted)
+    assert any(
+        i.code == "missing_required_field" and i.section_id == "weekly_digest" for i in issues
+    )
+
+
+def test_validate_flags_over_max_chars_in_conditional_active_section():
+    """C1: max_chars on conditional section fields is also enforced."""
+    spec = SectionSpec(
+        section_id="weekly_digest",
+        title="Week ahead",
+        color=5763719,
+        fields=[FieldSpec(name="This week", required=True, max_chars=10)],
+    )
+    session = _make_session(
+        sections_conditional_active=["weekly_digest"],
+        conditional_sections=[spec],
+    )
+    submitted = [
+        {
+            "section_id": "weekly_digest",
+            "fields": [{"name": "This week", "value": "x" * 50}],
+        }
+    ]
+    issues = validate_submission(session=session, sections=submitted)
+    assert any(i.code == "field_over_max_chars" and i.section_id == "weekly_digest" for i in issues)
 
 
 def test_validate_accepts_extension_section_with_known_id():

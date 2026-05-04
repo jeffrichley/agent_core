@@ -83,6 +83,13 @@ class ComposeSession:
     # the playbook. Each entry is a raw dict with at least ``type`` and
     # optionally ``config`` (matches Playbook.destinations shape).
     destinations: list[dict] = field(default_factory=list)
+    # T13/C1: full SectionSpec for every conditional section that gated
+    # truthy at session-build time. Without this, the submit-time validator
+    # (validators.validate_submission) only sees ids in
+    # ``sections_conditional_active`` and would silently skip
+    # required-field/max-chars checks on conditional sections — Pepper's
+    # morning_brief weekly_digest depends on this being enforced.
+    conditional_sections: list[SectionSpec] = field(default_factory=list)
 
 
 class SessionRegistry:

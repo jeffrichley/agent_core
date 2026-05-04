@@ -100,11 +100,13 @@ async def test_session_token_serialized_verbatim(tmp_path: Path) -> None:
 
 
 @pytest.mark.asyncio
-async def test_write_swallows_disk_failure(tmp_path: Path, capsys) -> None:
+async def test_write_swallows_disk_failure(tmp_path: Path, caplog) -> None:
     """A write that raises (here: bad path under a file-not-dir) does not propagate.
 
     Audit is observability, not the critical path — submit_brief must
-    never crash because the audit log can't be written.
+    never crash because the audit log can't be written. We require the
+    warning to actually land in the logger so a future regression that
+    silently swallows the error AND skips logging would fail this test.
     """
     # Create a file where we'll try to put a directory underneath it.
     blocker = tmp_path / "blocker"
@@ -112,11 +114,17 @@ async def test_write_swallows_disk_failure(tmp_path: Path, capsys) -> None:
     bad_path = blocker / "nested" / "audit.jsonl"
     audit = AuditLog(bad_path)
 
-    # Should NOT raise. The error goes to stderr / logger.
-    await audit.write(_event())
+    with caplog.at_level("WARNING", logger="agent_core_briefs.audit"):
+        # Should NOT raise.
+        await audit.write(_event())
 
-    captured = capsys.readouterr()
-    assert "audit" in captured.err.lower() or captured.err == ""
+    # Hard requirement (I3): the failure must have been logged at WARNING
+    # level. No OR-escape hatch — silent swallow is a real regression.
+    matching = [r for r in caplog.records if "audit" in r.getMessage().lower()]
+    assert matching, (
+        f"expected a WARNING from agent_core_briefs.audit; "
+        f"got records: {[(r.name, r.levelname, r.getMessage()) for r in caplog.records]}"
+    )
     # Sanity: blocker is still the file we left behind.
     assert blocker.is_file()
 

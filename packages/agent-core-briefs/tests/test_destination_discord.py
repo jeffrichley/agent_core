@@ -297,3 +297,46 @@ async def test_custom_endpoint_name_routes_envelope(tmp_path: Path) -> None:
         bus_handle=handle,
     )
     assert handle.published[0].to == "discord-pepper"
+
+
+@pytest.mark.asyncio
+async def test_deliver_rejects_more_than_10_sections(tmp_path: Path) -> None:
+    """I4: Discord caps embeds at 10 per message; this rule lives on the
+    destination, not the generic submission validator. A submission with 11
+    sections targeted at discord_embed must be rejected here so the audit
+    log carries a precise per-destination error rather than an opaque
+    "Invalid Form Body" surfaced from the Discord API later.
+    """
+    dest = DiscordEmbedDestination()
+    handle = _RecordingHandle()
+    sections = [_section(section_id=f"s{i}", title=f"T{i}", color=1, fields=[]) for i in range(11)]
+    result = await dest.deliver(
+        sections=sections,
+        playbook=_playbook(tmp_path),
+        scope=None,
+        when=datetime.now(UTC),
+        config={"channel_id": "1"},
+        bus_handle=handle,
+    )
+    assert result.success is False
+    assert "10-embed" in (result.error or "")
+    # Nothing was published — the destination short-circuited.
+    assert handle.published == []
+
+
+@pytest.mark.asyncio
+async def test_deliver_accepts_exactly_10_sections(tmp_path: Path) -> None:
+    """Boundary check for I4: 10 sections is fine, 11+ is the failure case."""
+    dest = DiscordEmbedDestination()
+    handle = _RecordingHandle()
+    sections = [_section(section_id=f"s{i}", title=f"T{i}", color=1, fields=[]) for i in range(10)]
+    result = await dest.deliver(
+        sections=sections,
+        playbook=_playbook(tmp_path),
+        scope=None,
+        when=datetime.now(UTC),
+        config={"channel_id": "1"},
+        bus_handle=handle,
+    )
+    assert result.success is True
+    assert len(handle.published) == 1

@@ -23,20 +23,14 @@ from dataclasses import dataclass
 
 from agent_core_briefs.session import ComposeSession
 
-# Discord caps embeds at 10 per message — the discord_embed destination
-# fans out one embed per section, so a submission with more than 10
-# sections is unrenderable. Validate at submit time so the agent sees
-# the failure in the audit-log surface, not as a delivery error.
-_DISCORD_EMBED_LIMIT = 10
-
 
 @dataclass(frozen=True)
 class ValidationIssue:
     """One validation finding against a brief submission.
 
-    ``section_id`` is ``None`` for cross-section issues (e.g., total
-    section count over the Discord limit). ``code`` is a short, stable
-    string suitable for filtering/aggregation in the audit log;
+    ``section_id`` is ``None`` for cross-section issues (e.g., a
+    playbook with no destinations configured). ``code`` is a short,
+    stable string suitable for filtering/aggregation in the audit log;
     ``message`` is human-readable detail.
     """
 
@@ -55,19 +49,36 @@ def validate_submission(
     Checks performed (in order; all checks run regardless of earlier
     failures so the agent sees the full set of issues at once):
 
+    - Playbook has at least one destination configured
     - Every required + conditional-active section is present
-    - No unknown sections (must be in ``session.sections`` or
-      ``session.extension_sections``)
+    - No unknown sections (must be in ``session.sections``,
+      ``session.conditional_sections``, or ``session.extension_sections``)
     - Per-section: required fields present and non-empty, max_chars
       respected, no unknown field names
-    - Total section count <= Discord's 10-embed-per-message ceiling
+
+    Destination-specific limits (e.g., Discord's 10-embed-per-message
+    ceiling) are enforced inside the destination, not here — a brief
+    targeting only ``markdown_file`` shouldn't be rejected for an
+    embed-count rule that doesn't apply to it.
 
     Returns an empty list if the submission is valid; otherwise a list
     of :class:`ValidationIssue` in roughly best-actionable-first order
-    (missing required sections, unknown sections, then per-section
-    field issues, then cross-section issues).
+    (cross-cutting issues, then missing required sections, then
+    unknown sections, then per-section field issues).
     """
     issues: list[ValidationIssue] = []
+
+    # Cross-cutting: a playbook with no destinations is undeliverable. Surface
+    # as a validation failure so the submit handler short-circuits BEFORE
+    # consuming the session token — the agent can fix the playbook and retry.
+    if not session.destinations:
+        issues.append(
+            ValidationIssue(
+                section_id=None,
+                code="no_destinations_configured",
+                message="playbook has no destinations configured; brief cannot be delivered",
+            )
+        )
 
     submitted_by_id: dict[str, dict] = {}
     for entry in sections:
@@ -78,7 +89,13 @@ def validate_submission(
     expected_required = set(session.sections_required) | set(session.sections_conditional_active)
     expected_optional = set(session.sections_optional)
     extension_ids = {s.section_id for s in session.extension_sections}
-    expected_all = expected_required | expected_optional | extension_ids
+    # Conditional section ids that gated truthy come in via
+    # sections_conditional_active (already in expected_required) — but listing
+    # them in expected_all explicitly via conditional_sections covers the case
+    # where a conditional section is in the spec dict without its id surfacing
+    # in the active list (defensive; same set in practice).
+    conditional_ids = {s.section_id for s in session.conditional_sections}
+    expected_all = expected_required | expected_optional | extension_ids | conditional_ids
 
     # Required missing.
     for sid in sorted(expected_required):
@@ -108,6 +125,15 @@ def validate_submission(
     spec_by_id = {s.section_id: s for s in session.sections}
     for ext_section in session.extension_sections:
         spec_by_id[ext_section.section_id] = ext_section
+    # C1: conditional sections that gated active still need their fields
+    # validated. Without this union, `submitted_by_id["weekly_digest"]`
+    # would be recognized as expected (because the id is in
+    # sections_conditional_active) but `spec_by_id` wouldn't carry the
+    # SectionSpec, so per-section required-field/max-chars checks would
+    # silently skip — Pepper's morning_brief weekly_digest depends on
+    # the framework catching missing required fields here.
+    for cond_section in session.conditional_sections:
+        spec_by_id[cond_section.section_id] = cond_section
 
     for submitted in sections:
         if not isinstance(submitted, dict):
@@ -176,19 +202,6 @@ def validate_submission(
                         ),
                     )
                 )
-
-    # Cross-section: Discord embed limit.
-    if len(sections) > _DISCORD_EMBED_LIMIT:
-        issues.append(
-            ValidationIssue(
-                section_id=None,
-                code="too_many_sections_for_discord",
-                message=(
-                    f"{len(sections)} sections exceeds Discord embed limit "
-                    f"of {_DISCORD_EMBED_LIMIT} per message"
-                ),
-            )
-        )
 
     return issues
 

@@ -476,6 +476,37 @@ async def test_submit_writes_three_audit_events_on_success(tmp_path: Path):
 
 
 @pytest.mark.asyncio
+async def test_submit_with_no_destinations_does_not_consume_token(tmp_path: Path):
+    """I1: empty session.destinations is a validation failure (no_destinations_configured),
+    NOT a silent no-op. Token stays active so the agent can fix the playbook and retry.
+    """
+    registry = SessionRegistry()
+    spec = _section("greeting")
+    session = _make_session(
+        sections=[spec],
+        sections_required=["greeting"],
+        destinations=[],
+    )
+    token = registry.create(session)
+    audit = AuditLog(tmp_path / "audit.jsonl")
+
+    result = await submit_brief(
+        registry=registry,
+        token=token,
+        sections=[_submitted("greeting")],
+        destination_factories={},
+        bus_handle=_StubBusHandle(),
+        audit_log=audit,
+    )
+
+    assert result.success is False
+    assert any(i.code == "no_destinations_configured" for i in result.validation_issues)
+    assert result.deliveries == []
+    # Token still active — registry.get must not raise.
+    assert registry.get(token) is session
+
+
+@pytest.mark.asyncio
 async def test_submit_writes_one_audit_event_on_validation_failure(tmp_path: Path):
     """Validation failure → exactly one ``submit.validate.fail`` event, no others."""
     registry = SessionRegistry()
