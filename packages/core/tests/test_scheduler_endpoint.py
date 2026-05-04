@@ -934,6 +934,28 @@ def test_jobdef_event_payload_requires_type_and_data():
         )
 
 
+def test_jobdef_event_payload_data_must_be_dict():
+    """Event payload['data'] must be a mapping; non-dict values are rejected at
+    JobDef construction (loud fail, not fire-time silent drop)."""
+    with pytest.raises(ValidationError, match="data.*must be a mapping"):
+        JobDef(
+            trigger="interval",
+            schedule={"seconds": 30},
+            target="agent-test",
+            envelope_kind="Event",
+            payload={"type": "BriefRequest", "data": "not a dict"},
+        )
+    # List is also not a mapping.
+    with pytest.raises(ValidationError, match="data.*must be a mapping"):
+        JobDef(
+            trigger="interval",
+            schedule={"seconds": 30},
+            target="agent-test",
+            envelope_kind="Event",
+            payload={"type": "BriefRequest", "data": [1, 2, 3]},
+        )
+
+
 def test_jobdef_accepts_event_with_full_payload():
     """envelope_kind='Event' with a complete payload validates successfully."""
     jd = JobDef(

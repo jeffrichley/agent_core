@@ -34,7 +34,7 @@ from apscheduler.datastores.sqlalchemy import SQLAlchemyDataStore
 from apscheduler.triggers.cron import CronTrigger
 from apscheduler.triggers.date import DateTrigger
 from apscheduler.triggers.interval import IntervalTrigger
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel, Field, ValidationError, model_validator
 from sqlalchemy.ext.asyncio import create_async_engine
 
 from agent_core.bus.envelope import (
@@ -72,6 +72,18 @@ def _validate_envelope_shape(
         if "type" not in payload or "data" not in payload:
             raise ValueError(
                 "envelope_kind='Event' requires payload with both 'type' and 'data' keys"
+            )
+        # Loud-fail at create/YAML-load time on a non-mapping `data` value.
+        # Without this, a misconfigured YAML (e.g., `data: "not a dict"`)
+        # would pass validation here and only blow up inside _fire's
+        # EventPayload(...) construction — at which point the broad
+        # exception-swallow drops the publish silently. "My brief never
+        # fires" is the worst failure mode in this framework, so reject
+        # at the boundary instead.
+        if not isinstance(payload["data"], dict):
+            raise ValueError(
+                "envelope_kind='Event' payload['data'] must be a mapping (dict), "
+                f"got {type(payload['data']).__name__}"
             )
         return
     raise ValueError(f"envelope_kind must be 'TextMessage' or 'Event', got {envelope_kind!r}")
@@ -556,7 +568,18 @@ async def _fire(
 
     try:
         env_payload, env_kind = _build_envelope_payload(envelope_kind, prompt, payload)
-    except ValueError:
+    except (ValueError, ValidationError):
+        # Defensive: a misconfigured Event job (e.g., a handcrafted bad row in
+        # the SQLite store, or a future Pydantic version that no longer makes
+        # ValidationError a ValueError subclass) is logged-and-dropped here
+        # rather than crashing the APScheduler worker.
+        #
+        # Tradeoff: operators discovering "why isn't my brief firing?" will
+        # need to grep logs — there is no externally-visible signal beyond
+        # this log line. Loud failure at create/YAML-load time (via
+        # _validate_envelope_shape) catches the common cases earlier, so
+        # this branch is the last-resort safety net for already-persisted
+        # bad rows.
         log.exception("Job %s has invalid envelope shape; dropping fire", name)
         return
 
