@@ -21,6 +21,11 @@ class FetcherInvocation:
     orchestrator's gather-config YAML supplies the namespace per-fetcher,
     and this field carries it into ``gather_context`` without mutating the
     fetcher instance.
+
+    Must be non-empty when set; an empty string falls back to
+    ``fetcher.namespace`` rather than landing payloads at ``context[""]``.
+    Callers should validate before constructing the invocation, but the
+    fallback prevents subtle bugs in callers that don't.
     """
 
     fetcher: Fetcher
@@ -77,9 +82,12 @@ async def _run_one(inv: FetcherInvocation, when: datetime) -> tuple[bool, str, d
             inv.fetcher.fetch(inv.config, when),
             timeout=inv.timeout_seconds,
         )
-        namespace = (
-            inv.namespace_override if inv.namespace_override is not None else inv.fetcher.namespace
-        )
+        # Empty-string override is treated the same as None — landing payloads
+        # at ``context[""]`` is never what a caller intends.
+        if inv.namespace_override:
+            namespace = inv.namespace_override
+        else:
+            namespace = inv.fetcher.namespace
         return False, namespace, payload
     except TimeoutError:
         return (

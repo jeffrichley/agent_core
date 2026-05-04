@@ -127,6 +127,23 @@ async def test_namespace_override_none_falls_back_to_fetcher_namespace():
 
 
 @pytest.mark.asyncio
+async def test_namespace_override_empty_string_falls_back_to_fetcher_namespace():
+    """Defensive: an empty-string override is treated like ``None`` so payloads
+    don't land at ``context[""]``. Callers (orchestrator) are expected to
+    validate non-empty at construction; this lock-in protects future callers
+    (T10/T14) that may forget."""
+    inv = FetcherInvocation(
+        fetcher=_Fixed("test.cal", "calendar", {"x": 1}),
+        config={},
+        timeout_seconds=300,
+        namespace_override="",
+    )
+    ctx = await gather_context([inv], when=datetime.now(UTC))
+    assert ctx == {"calendar": {"x": 1}}
+    assert "" not in ctx
+
+
+@pytest.mark.asyncio
 async def test_concurrent_execution_total_time_bounded_by_slowest():
     slow = FetcherInvocation(_Slow("test.s1", "s1", delay_s=0.5), {}, 5)
     other = FetcherInvocation(_Slow("test.s2", "s2", delay_s=0.5), {}, 5)

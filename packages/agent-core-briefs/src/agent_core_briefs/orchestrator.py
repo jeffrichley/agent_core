@@ -213,11 +213,23 @@ class BriefsOrchestratorEndpoint:
         if not isinstance(brief_type, str) or not brief_type:
             raise ValueError(f"BriefRequest envelope {envelope.id} is missing 'brief_type'")
 
-        target_agent = envelope.metadata.get("target_agent") or self._default_target_agent
-        if not isinstance(target_agent, str) or not target_agent:
+        # I1: distinguish "absent" from "explicitly empty". A caller setting
+        # metadata.target_agent="" (client bug or attempted force-default)
+        # must fail loud — not silently fall through to default_target_agent.
+        metadata_target = envelope.metadata.get("target_agent")
+        if metadata_target is not None:
+            if not isinstance(metadata_target, str) or not metadata_target.strip():
+                raise ValueError(
+                    f"BriefRequest envelope {envelope.id}: metadata.target_agent must be "
+                    "a non-empty string when present"
+                )
+            target_agent = metadata_target
+        elif self._default_target_agent:
+            target_agent = self._default_target_agent
+        else:
             raise ValueError(
-                f"BriefRequest envelope {envelope.id} has no target agent "
-                "(metadata.target_agent absent and no default_target_agent set)"
+                f"BriefRequest envelope {envelope.id}: no target_agent in metadata and "
+                "no default_target_agent configured"
             )
 
         scope = data.get("scope")
@@ -256,7 +268,6 @@ class BriefsOrchestratorEndpoint:
             correlation_id=envelope.correlation_id,
             metadata=dict(envelope.metadata),
         )
-        self._sessions[session_token] = session
 
         compose_env = Envelope(
             id=uuid.uuid4().hex,
@@ -278,10 +289,20 @@ class BriefsOrchestratorEndpoint:
                     "sections_conditional_active": sections_active,
                 },
             ),
+            # I4: Request metadata is preserved on the session for T13 (submit
+            # handler) but intentionally not echoed onto the ComposeBrief
+            # envelope — operator tags / trace ids belong on the operator-side
+            # session, not in the agent-facing wake message. T14 (MCP) reads
+            # from the session.
             metadata={"brief_request_id": envelope.id},
             created_at=datetime.now(UTC),
         )
+        # I2: publish first, then store. If publish raises (MailboxFull,
+        # unregistered recipient, etc.), the session is never stored — the
+        # agent never receives the token and could never submit anyway, so
+        # storing the session would just leak in-flight state.
         await self._handle.publish(compose_env)
+        self._sessions[session_token] = session
         log.info(
             "BriefsOrchestrator: composed brief brief_type=%s session_token=%s target=%s",
             brief_type,

@@ -449,6 +449,93 @@ async def test_target_agent_from_metadata_overrides_default(
 
 
 @pytest.mark.asyncio
+async def test_empty_string_target_agent_metadata_is_rejected(
+    playbook_path, gather_yaml, fetcher_catalog
+):
+    """I1: ``metadata.target_agent=""`` (or whitespace-only) is a malformed
+    request — it must NOT silently fall through to ``default_target_agent``.
+    The orchestrator catches the ValueError at the outer try/except so deliver
+    returns normally, but no ComposeBrief is published."""
+    handle = _RecordingHandle()
+    ep = BriefsOrchestratorEndpoint(
+        name="briefs.orchestrator",
+        playbooks_path=playbook_path.parent,
+        vars_map={"gather_config_path": str(gather_yaml)},
+        fetcher_catalog=fetcher_catalog,
+        default_target_agent="pepper",  # would silently win in the buggy version
+    )
+    await ep.start(handle)
+    try:
+        # Empty string.
+        req_empty = _make_brief_request(
+            to="briefs.orchestrator", target_agent="", env_id="empty-target"
+        )
+        await ep.deliver(req_empty)
+        # Whitespace-only.
+        req_blank = _make_brief_request(
+            to="briefs.orchestrator", target_agent="   ", env_id="blank-target"
+        )
+        await ep.deliver(req_blank)
+    finally:
+        await ep.stop()
+
+    # Both envelopes ack'd; neither produced a ComposeBrief.
+    assert "empty-target" in handle.acks
+    assert "blank-target" in handle.acks
+    assert [e for e in handle.published if e.payload.type == "ComposeBrief"] == []
+    # The session registry stays empty — nothing was stored.
+    assert ep.sessions == {}
+
+
+@pytest.mark.asyncio
+async def test_session_not_stored_when_publish_raises(playbook_path, gather_yaml, fetcher_catalog):
+    """I2: if ``bus.publish`` raises (MailboxFull, unregistered recipient,
+    etc.), the session must NOT be stored — the agent never receives the
+    token, so a stored session would just leak in-flight state."""
+
+    class _PublishOnceFails(_RecordingHandle):
+        """Recording handle whose first publish raises and second succeeds."""
+
+        def __init__(self):
+            super().__init__()
+            self._failed_once = False
+
+        async def publish(self, envelope, to=None):
+            if not self._failed_once:
+                self._failed_once = True
+                raise RuntimeError("MailboxFull simulation")
+            await super().publish(envelope, to)
+
+    handle = _PublishOnceFails()
+    ep = BriefsOrchestratorEndpoint(
+        name="briefs.orchestrator",
+        playbooks_path=playbook_path.parent,
+        vars_map={"gather_config_path": str(gather_yaml)},
+        fetcher_catalog=fetcher_catalog,
+        default_target_agent="pepper",
+    )
+    await ep.start(handle)
+    try:
+        # First request: publish raises → session must not be stored.
+        req1 = _make_brief_request(to="briefs.orchestrator", env_id="boom-1")
+        await ep.deliver(req1)
+        assert ep.sessions == {}, "session must not leak when publish raises"
+
+        # Second request: publish succeeds → session is stored as normal.
+        req2 = _make_brief_request(to="briefs.orchestrator", env_id="ok-1")
+        await ep.deliver(req2)
+    finally:
+        await ep.stop()
+
+    composed = [e for e in handle.published if e.payload.type == "ComposeBrief"]
+    assert len(composed) == 1
+    token = composed[0].payload.data["session_token"]
+    assert token in ep.sessions
+    # Only the successful session is stored — not two.
+    assert len(ep.sessions) == 1
+
+
+@pytest.mark.asyncio
 async def test_session_tokens_unique_and_registered(playbook_path, gather_yaml, fetcher_catalog):
     """Each BriefRequest produces a fresh 32-char hex token; the same token
     appears in the published ComposeBrief; the session is queryable through
