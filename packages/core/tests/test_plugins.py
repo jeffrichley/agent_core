@@ -54,11 +54,17 @@ def _base_hook():
         def configure_bus_hook_instance(*, instance, stage, hook_config, services):
             return None
 
+        @staticmethod
+        def wire_endpoints_after_registration(*, endpoints, raw_endpoint_configs, services):
+            return None
+
     return _Hook
 
 
 class TestRunnerPluginHooks:
-    async def test_resolve_endpoint_class_path(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    async def test_resolve_endpoint_class_path(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ):
         Hook = _base_hook()
 
         class _Hook(Hook):
@@ -133,14 +139,19 @@ class TestRunnerPluginHooks:
 
         config = {
             "endpoints": [{"type": "plugin.stub.Endpoint", "name": "stub", "params": {}}],
-            "bus_hooks": {"pre_publish": [{"type": "plugin.stub.BusHook", "params": {}}], "pre_deliver": []},
+            "bus_hooks": {
+                "pre_publish": [{"type": "plugin.stub.BusHook", "params": {}}],
+                "pre_deliver": [],
+            },
         }
         p = tmp_path / "plugin-bus-hook.yaml"
         p.write_text(yaml.dump(config), encoding="utf-8")
         await build_bus_from_config(p)
         assert seen == ["pre_publish"]
 
-    async def test_validate_config_can_reject(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    async def test_validate_config_can_reject(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ):
         Hook = _base_hook()
 
         class _Hook(Hook):
@@ -171,7 +182,9 @@ class TestPipelinePluginHooks:
         class _PluginManager:
             hook = _Hook()
 
-        monkeypatch.setattr("agent_core.hooks.pipeline.create_plugin_manager", lambda: _PluginManager())
+        monkeypatch.setattr(
+            "agent_core.hooks.pipeline.create_plugin_manager", lambda: _PluginManager()
+        )
 
         config = {"pipelines": {"SessionStart": [{"type": "plugin.stub.Tool"}]}}
         config_path = tmp_path / "pipeline-plugin.yaml"
@@ -180,6 +193,7 @@ class TestPipelinePluginHooks:
         results = pipeline.run("SessionStart", {})
         assert len(results) == 1
         assert results[0].heading == "Plugin Tool"
+
 
 class TestEntrypointPluginIntegration:
     async def test_alias_endpoint_resolves_without_monkeypatch(self, tmp_path: Path):

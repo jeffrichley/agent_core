@@ -86,3 +86,26 @@ class AgentCoreSpecs:
         ``agent_core`` does not depend on its plugins.
         """
         raise NotImplementedError
+
+    @hookspec
+    def wire_endpoints_after_registration(
+        self,
+        endpoints: dict[str, Endpoint],
+        raw_endpoint_configs: dict[str, dict[str, Any]],
+        services: RunnerServices,
+    ) -> None:
+        """Cross-endpoint wiring once all endpoints are constructed and registered.
+
+        Called by the runner after every endpoint in the yaml has been
+        instantiated and registered on the bus, but before ``bus.start()``.
+        Plugins implementing this hook can inspect sibling endpoints and
+        install deferred wiring (e.g., the briefs plugin pairs a briefs
+        orchestrator with a ``ClaudeCodeMCPEndpoint`` that names it).
+
+        Argument shapes:
+          - ``endpoints``: name → constructed Endpoint instance.
+          - ``raw_endpoint_configs``: name → the raw yaml entry's full dict
+            (so plugins can read params not visible on the instance).
+          - ``services``: same RunnerServices passed to
+            ``configure_endpoint_instance``.
+        """

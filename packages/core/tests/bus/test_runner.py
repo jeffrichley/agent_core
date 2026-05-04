@@ -99,7 +99,9 @@ class TestRunner:
         with pytest.raises(BusBootError, match="missing required 'type'"):
             await build_bus_from_config(p)
 
-    async def test_plugin_can_resolve_endpoint_class(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    async def test_plugin_can_resolve_endpoint_class(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ):
         class _PluginEndpoint:
             def __init__(self, *, name: str, **_: Any):
                 self.name = name
@@ -131,6 +133,10 @@ class TestRunner:
 
             @staticmethod
             def configure_bus_hook_instance(*, instance, stage, hook_config, services):
+                return None
+
+            @staticmethod
+            def wire_endpoints_after_registration(*, endpoints, raw_endpoint_configs, services):
                 return None
 
         class _PluginManager:

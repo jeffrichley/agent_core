@@ -44,6 +44,14 @@ endpoints:
       # Cutover #04: bus_log_root defaults to ~/.agent-core/bus/raw
       # (matches builtin.daily_raw_jsonl writer). Override here only if
       # the daemon writes the log somewhere non-default.
+      #
+      # Cutover #09 (T19): naming the briefs orchestrator here mounts
+      # the seven briefs agent tools (compose_brief, list_sections,
+      # get_section_spec, validate_section, compress_sections,
+      # add_extension_section, submit_brief) onto Pepper's MCP session
+      # via cross-endpoint wiring at runner construction time. The
+      # orchestrator must be registered as a sibling endpoint below.
+      briefs_orchestrator: briefs.orchestrator
 
   # Cutover #09: brief framework orchestrator. Listens for BriefRequest
   # events on the bus, runs the playbook's gather config (loaded from
@@ -67,6 +75,13 @@ endpoints:
       playbooks_path: "C:\\Users\\jeffr\\.pepper\\Memory\\playbooks"
       fetcher_paths:
         - "C:\\Users\\jeffr\\.pepper\\Memory\\briefs\\fetchers"
+      # T19 (cutover #09): destination_paths and audit_log_path are
+      # optional — both default to sensible values (built-in
+      # destinations + ~/.agent-core/briefs/audit.jsonl). Listed
+      # explicitly so operators see the knobs.
+      destination_paths:
+        - "C:\\Users\\jeffr\\.pepper\\Memory\\briefs\\destinations"
+      audit_log_path: "C:\\Users\\jeffr\\.agent-core\\briefs\\audit.jsonl"
       vars:
         agent_root: "C:\\Users\\jeffr\\.pepper"
       default_target_agent: "pepper"

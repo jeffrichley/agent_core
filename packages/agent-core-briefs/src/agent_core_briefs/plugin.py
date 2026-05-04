@@ -3,7 +3,7 @@
 T16 wiring (cutover #09): contributes the briefs subsystem to ``agent_core``
 via pluggy.
 
-Two hookimpls:
+Three hookimpls:
 
 * ``register_endpoint_types`` — exposes ``builtin.briefs_orchestrator`` so
   the bus runner can construct a :class:`BriefsOrchestratorEndpoint` from
@@ -15,12 +15,11 @@ Two hookimpls:
   on the top-level CLI. Imported lazily inside the hookimpl so
   ``agent_core`` itself does not import ``agent_core_briefs``; the
   layering flows entry-point → plugin → core, never the other direction.
-
-Cross-endpoint coordination (mounting briefs MCP tools onto a
-``ClaudeCodeMCPEndpoint`` instance with the orchestrator's bus handle) is
-intentionally out of scope for T16 — that's a post-cutover deliverable.
-The orchestrator becomes the BriefRequest subscriber by virtue of being
-a registered bus endpoint.
+* ``wire_endpoints_after_registration`` — T19 cross-endpoint MCP wiring.
+  Pairs every ``ClaudeCodeMCPEndpoint`` whose yaml params name a
+  ``briefs_orchestrator`` with the orchestrator instance, so the seven
+  briefs agent tools end up mounted on Pepper's MCP session at
+  ``bus.start()`` time.
 """
 
 from __future__ import annotations
@@ -31,6 +30,9 @@ import pluggy
 
 if TYPE_CHECKING:
     import typer
+
+    from agent_core.bus.protocol import Endpoint
+    from agent_core.plugins.specs import RunnerServices
 
 hookimpl = pluggy.HookimplMarker("agent_core")
 
@@ -59,3 +61,81 @@ def register_cli_subapps(app: typer.Typer) -> None:
     from agent_core_briefs.cli import briefs_app
 
     app.add_typer(briefs_app, name="briefs")
+
+
+@hookimpl
+def wire_endpoints_after_registration(
+    endpoints: dict[str, Endpoint],
+    raw_endpoint_configs: dict[str, dict[str, Any]],
+    services: RunnerServices,
+) -> None:
+    """Pair ``ClaudeCodeMCPEndpoint`` instances with a named briefs orchestrator.
+
+    For each MCP endpoint whose yaml entry sets
+    ``params.briefs_orchestrator: <name>``, this hookimpl looks up the
+    orchestrator endpoint by name and appends a deferred mounter to the
+    MCP endpoint's ``deferred_tool_mounters`` list. The mounter is
+    invoked once during the MCP endpoint's :meth:`start` with the
+    bus_handle, at which point it calls
+    :func:`agent_core_briefs.mcp.register_briefs_tools` to register the
+    seven briefs agent tools on the FastMCP server.
+
+    The orchestrator must already be registered (yaml ordering is the
+    operator's responsibility, but pluggy's ``configure_endpoint_instance``
+    pass and the construction loop run all endpoints first, so by the
+    time this hookimpl fires every endpoint named in the yaml is
+    instantiated).
+
+    Imports are lazy inside the hookimpl so plugins that don't trigger
+    this seam never pay the cost of importing fastmcp + the briefs MCP
+    tool surface.
+
+    Raises:
+        ValueError: a yaml entry references an orchestrator name that
+            isn't registered, or names an endpoint that exists but
+            isn't a ``BriefsOrchestratorEndpoint`` instance.
+    """
+    del services  # unused — kept for hookspec parity
+    from agent_core.endpoints.claude_code_mcp import ClaudeCodeMCPEndpoint
+    from agent_core_briefs.mcp import register_briefs_tools
+    from agent_core_briefs.orchestrator import BriefsOrchestratorEndpoint
+
+    for name, endpoint in endpoints.items():
+        if not isinstance(endpoint, ClaudeCodeMCPEndpoint):
+            continue
+        raw = raw_endpoint_configs.get(name) or {}
+        params = raw.get("params") or {}
+        orch_name = params.get("briefs_orchestrator")
+        if not orch_name:
+            continue
+        orch = endpoints.get(orch_name)
+        if orch is None:
+            raise ValueError(
+                f"endpoint {name!r} names briefs_orchestrator={orch_name!r} but "
+                f"no endpoint with that name is registered"
+            )
+        if not isinstance(orch, BriefsOrchestratorEndpoint):
+            raise ValueError(
+                f"endpoint {name!r} names briefs_orchestrator={orch_name!r}, but "
+                f"that endpoint is a {type(orch).__name__}, not a "
+                "BriefsOrchestratorEndpoint"
+            )
+
+        # Bind orch + mcp_endpoint into the closure default args so the
+        # mounter doesn't pick up a late-bound loop variable if the
+        # caller iterates more than one MCP endpoint in this pass.
+        def _mounter(
+            bus_handle,
+            *,
+            orch: BriefsOrchestratorEndpoint = orch,
+            mcp_endpoint: ClaudeCodeMCPEndpoint = endpoint,
+        ) -> None:
+            register_briefs_tools(
+                mcp=mcp_endpoint._mcp,
+                orchestrator=orch,
+                bus_handle=bus_handle,
+                audit_log=orch.audit_log,
+                destination_factories=orch.destination_factories,
+            )
+
+        endpoint.deferred_tool_mounters.append(_mounter)

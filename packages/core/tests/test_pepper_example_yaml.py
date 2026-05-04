@@ -212,3 +212,41 @@ class TestPepperExampleYamlBriefs:
             "Pepper's existing claude_code_mcp endpoint must remain in the example yaml"
         )
         assert ep.get("type") == "builtin.claude_code_mcp"
+
+    def test_pepper_mcp_endpoint_references_briefs_orchestrator(self, raw_yaml: dict):
+        """T19 cross-endpoint wiring: Pepper's MCP endpoint must name the
+        briefs orchestrator via ``params.briefs_orchestrator`` so the runner
+        mounts the seven briefs agent tools (compose_brief, list_sections,
+        get_section_spec, validate_section, compress_sections,
+        add_extension_section, submit_brief) onto Pepper's MCP session at
+        ``bus.start()`` time. Without this entry, Pepper's session
+        connects to the bus but cannot compose or submit briefs — Step 6
+        of the cutover #09 playbook (real morning_brief on cron) fails."""
+        ep = self._endpoint_by_name(raw_yaml, "pepper")
+        assert ep is not None
+        params = ep.get("params") or {}
+        assert params.get("briefs_orchestrator") == "briefs.orchestrator", (
+            "pepper.params.briefs_orchestrator must equal 'briefs.orchestrator' so "
+            "the cross-endpoint wiring hook pairs the MCP session with the orchestrator"
+        )
+
+    def test_briefs_orchestrator_destination_paths_or_default(self, raw_yaml: dict):
+        """T19: destination_paths is optional but if present must be a
+        non-empty list of strings. The orchestrator falls back to
+        built-in destinations only when omitted; either shape is
+        acceptable. This locks the shape so a future refactor can't
+        silently break the param's contract."""
+        ep = self._endpoint_by_name(raw_yaml, "briefs.orchestrator")
+        assert ep is not None
+        params = ep.get("params") or {}
+        if "destination_paths" not in params:
+            return  # using the default (built-in destinations only) — fine
+        destination_paths = params["destination_paths"]
+        assert isinstance(destination_paths, list) and len(destination_paths) >= 1, (
+            "briefs.orchestrator.params.destination_paths must be a list with at "
+            "least one entry when present"
+        )
+        for entry in destination_paths:
+            assert isinstance(entry, str) and entry, (
+                "every destination_paths entry must be a non-empty string"
+            )

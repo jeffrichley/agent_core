@@ -78,6 +78,7 @@ from __future__ import annotations
 
 import logging
 import uuid
+from collections.abc import Callable
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -85,6 +86,7 @@ from typing import TYPE_CHECKING, Any
 import yaml
 
 from agent_core.bus.envelope import Envelope, EventPayload
+from agent_core_briefs.audit import AuditLog
 from agent_core_briefs.config import substitute_vars
 from agent_core_briefs.engine import FetcherInvocation, gather_context
 from agent_core_briefs.loader import discover_implementations
@@ -94,11 +96,14 @@ from agent_core_briefs.playbook import (
     resolve_colors_for_sections,
     resolve_conditional_sections,
 )
-from agent_core_briefs.protocol import Fetcher
+from agent_core_briefs.protocol import Destination, Fetcher
 from agent_core_briefs.session import ComposeSession, SessionRegistry
 
 if TYPE_CHECKING:
     from agent_core.bus.handle import BusHandle
+
+
+_BUILTIN_DESTINATIONS_DIR = Path(__file__).parent / "destinations"
 
 log = logging.getLogger(__name__)
 
@@ -152,6 +157,8 @@ class BriefsOrchestratorEndpoint:
         default_target_agent: str | None = None,
         default_timeout_seconds: float = 300.0,
         session_ttl_seconds: float = 1800.0,
+        destination_paths: list[Path | str] | None = None,
+        audit_log_path: Path | str | None = None,
     ):
         # vars vs vars_map: pass exactly one. They're aliases — yaml
         # configurations prefer ``vars:`` (params.vars in agent-core.yaml is
@@ -200,6 +207,33 @@ class BriefsOrchestratorEndpoint:
         self._handle: BusHandle | None = None
         self._registry = SessionRegistry(ttl_seconds=session_ttl_seconds)
 
+        # T19: discover destinations from disk so the orchestrator owns a
+        # canonical ``type_id → factory`` map. Built-in destinations
+        # (``markdown_file`` + ``discord_embed``) ship inside this package
+        # and are always loaded; operators can extend via
+        # ``destination_paths`` to drop additional ``.py`` files into
+        # custom directories. Each factory is a thin closure that
+        # produces a fresh instance per ``submit_brief`` call so
+        # destinations stay stateless across deliveries.
+        resolved_dest_paths: list[Path] = [_BUILTIN_DESTINATIONS_DIR]
+        if destination_paths is not None:
+            resolved_dest_paths.extend(Path(p) for p in destination_paths)
+        discovered_destinations: dict[str, type[Destination]] = discover_implementations(
+            resolved_dest_paths, protocol=Destination
+        )
+        self._destination_factories: dict[str, Callable[[], Destination]] = {
+            type_id: (lambda cls=cls: cls()) for type_id, cls in discovered_destinations.items()
+        }
+
+        # Audit log location is configurable for hermetic tests; the
+        # default routes to ``~/.agent-core/briefs/audit.jsonl`` so a
+        # production yaml that omits the param still gets a stable
+        # location. Parent directories are created lazily on first write.
+        resolved_audit_path = (
+            Path(audit_log_path) if audit_log_path is not None else AuditLog.default_path()
+        )
+        self._audit_log = AuditLog(path=resolved_audit_path)
+
     @property
     def default_target_agent(self) -> str | None:
         """Read-only access to the default target agent.
@@ -221,6 +255,28 @@ class BriefsOrchestratorEndpoint:
         and ``consumed`` fields).
         """
         return self._registry
+
+    @property
+    def destination_factories(self) -> dict[str, Callable[[], Destination]]:
+        """Read-only view of the discovered destination factories.
+
+        T19's cross-endpoint MCP wiring threads this map into
+        :func:`agent_core_briefs.mcp.register_briefs_tools` so the
+        ``submit_brief`` tool fans out without re-discovering the
+        catalog on every call.
+        """
+        return self._destination_factories
+
+    @property
+    def audit_log(self) -> AuditLog:
+        """Read-only access to the orchestrator's audit log.
+
+        T19 threads this into ``register_briefs_tools`` so each MCP
+        ``submit_brief`` invocation lands ``submit.deliver`` and
+        ``submit.complete`` events on the same JSONL file the rest of
+        the orchestrator uses.
+        """
+        return self._audit_log
 
     @property
     def sessions(self) -> dict[str, ComposeSession]:

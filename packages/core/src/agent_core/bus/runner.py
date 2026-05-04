@@ -8,6 +8,7 @@ enforces v1 invariants: loopback-only bind unless an auth hook is configured
 from __future__ import annotations
 
 from pathlib import Path
+from typing import Any
 
 import yaml
 
@@ -16,6 +17,7 @@ from agent_core.bus.http_host import HTTPHost, MCPHostable
 from agent_core.bus.notify_broker import NotificationBroker
 from agent_core.bus.protocol import BusHook, Endpoint
 from agent_core.plugins.manager import (
+    apply_endpoint_wiring,
     create_plugin_manager,
     get_bus_hook_types,
     get_endpoint_types,
@@ -120,7 +122,9 @@ async def build_bus_from_config(path: Path) -> tuple[Bus, HTTPHost | None]:
                 f"endpoint type {endpoint_type!r} does not satisfy Endpoint protocol: {exc}"
             ) from exc
         if not isinstance(instance, Endpoint):
-            raise BusBootError(f"endpoint type {endpoint_type!r} does not satisfy Endpoint protocol")
+            raise BusBootError(
+                f"endpoint type {endpoint_type!r} does not satisfy Endpoint protocol"
+            )
         plugin_manager.hook.configure_endpoint_instance(
             instance=instance,
             endpoint_name=entry["name"],
@@ -128,6 +132,25 @@ async def build_bus_from_config(path: Path) -> tuple[Bus, HTTPHost | None]:
             services=services,
         )
         bus.register(EndpointSpec(endpoint=instance, description=entry.get("description", "")))
+
+    # Cross-endpoint wiring (T19 — cutover #09 follow-up). Once every
+    # endpoint in the yaml has been constructed and registered on the bus
+    # (but before bus.start), give plugins a chance to install deferred
+    # wiring that names sibling endpoints. The briefs plugin uses this to
+    # pair a briefs orchestrator with a ClaudeCodeMCPEndpoint named via
+    # ``params.briefs_orchestrator``.
+    endpoints_by_name: dict[str, Endpoint] = {
+        spec.name: spec.endpoint for spec in bus._endpoints_by_name.values()
+    }
+    raw_endpoint_configs: dict[str, dict[str, Any]] = {
+        entry["name"]: entry for entry in (raw.get("endpoints", []) or [])
+    }
+    apply_endpoint_wiring(
+        plugin_manager,
+        endpoints=endpoints_by_name,
+        raw_endpoint_configs=raw_endpoint_configs,
+        services=services,
+    )
 
     hostable: list[MCPHostable] = [
         spec.endpoint

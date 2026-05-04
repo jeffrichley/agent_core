@@ -8,8 +8,8 @@ from typing import TYPE_CHECKING, Any
 
 import pluggy
 
-from agent_core.bus.protocol import NotificationBrokerAwareEndpoint
-from agent_core.plugins.specs import AgentCoreSpecs
+from agent_core.bus.protocol import Endpoint, NotificationBrokerAwareEndpoint
+from agent_core.plugins.specs import AgentCoreSpecs, RunnerServices
 
 if TYPE_CHECKING:
     import typer
@@ -107,3 +107,24 @@ def apply_cli_subapps(pm: pluggy.PluginManager, app: typer.Typer) -> None:
     importing them directly (the layering inversion T15 review flagged).
     """
     pm.hook.register_cli_subapps(app=app)
+
+
+def apply_endpoint_wiring(
+    pm: pluggy.PluginManager,
+    endpoints: dict[str, Endpoint],
+    raw_endpoint_configs: dict[str, dict[str, Any]],
+    services: RunnerServices,
+) -> None:
+    """Invoke ``wire_endpoints_after_registration`` across every plugin.
+
+    Called by the runner after every endpoint has been constructed +
+    registered on the bus but before ``bus.start()``. Plugins use this
+    seam to install cross-endpoint wiring — e.g., the briefs plugin
+    pairs a briefs orchestrator with a ``ClaudeCodeMCPEndpoint`` that
+    names it as ``params.briefs_orchestrator``.
+    """
+    pm.hook.wire_endpoints_after_registration(
+        endpoints=endpoints,
+        raw_endpoint_configs=raw_endpoint_configs,
+        services=services,
+    )

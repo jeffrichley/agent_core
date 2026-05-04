@@ -111,7 +111,31 @@ class SessionRegistry(Middleware):
 
 
 class ClaudeCodeMCPEndpoint:
-    """Bus endpoint backed by a FastMCP server, served on the shared HTTP host."""
+    """Bus endpoint backed by a FastMCP server, served on the shared HTTP host.
+
+    Public seams for plugin integration:
+
+    - ``tool_mounters`` (constructor kwarg): list of callables invoked at
+      construction time with this endpoint's ``FastMCP`` instance. Each
+      mounter registers its tools via the standard ``mcp.tool(...)``
+      decorator. Used by in-process callers that already know the tool
+      surface at construction time (existing T14 path).
+    - ``register_tools(mounter)``: add a mounter after construction. Same
+      shape as ``tool_mounters``, but the call returns immediately and
+      the mounter runs synchronously against ``self._mcp``. Use this
+      when a plugin wires tools after ``__init__`` but before the
+      bus_handle is needed (e.g., an immediate FastMCP-only registration).
+    - ``deferred_tool_mounters`` (public attribute): list of callables
+      invoked once during :meth:`start` after this endpoint has been
+      handed its ``BusHandle``. Each callable receives that handle as
+      its sole argument and is responsible for wiring tools that need
+      to publish onto the bus (e.g., the briefs framework's
+      ``submit_brief`` tool calls into destinations that publish
+      Discord embeds via the bus). The cross-endpoint wiring hook
+      (``wire_endpoints_after_registration``) appends to this list during
+      runner construction; see :mod:`agent_core_briefs.plugin` for the
+      production caller.
+    """
 
     _URGENCY_RANK = {"red": 0, "yellow": 1, "green": 2}
     _URGENCY_ORDER = ["red", "yellow", "green"]
@@ -188,10 +212,25 @@ class ClaudeCodeMCPEndpoint:
         if tool_mounters:
             for mounter in tool_mounters:
                 mounter(self._mcp)
+        # T19 (cutover #09 follow-up): cross-endpoint wiring populates
+        # this list before bus.start. Each callable runs once during
+        # :meth:`start` after the BusHandle is set. Used for tools that
+        # need to publish onto the bus (e.g., briefs ``submit_brief``).
+        self.deferred_tool_mounters: list[Callable[[BusHandle], None]] = []
 
     def attach_notify_broker(self, broker: NotificationBroker) -> None:
         """Optional runner hook: attach broker after endpoint construction."""
         self._notify_broker = broker
+
+    def register_tools(self, mounter: Callable[[FastMCP], None]) -> None:
+        """Run a mounter against this endpoint's FastMCP server now.
+
+        Public seam for plugins that want to register tools after
+        construction but before the bus_handle is available. The mounter
+        is called synchronously against ``self._mcp``; tools registered
+        here are visible to the next ``mcp.list_tools()`` call.
+        """
+        mounter(self._mcp)
 
     async def _show_my_day_impl(
         self,
@@ -413,6 +452,12 @@ class ClaudeCodeMCPEndpoint:
 
     async def start(self, bus: BusHandle) -> None:
         self._handle = bus
+        # T19: drain deferred tool mounters now that the BusHandle exists.
+        # Cross-endpoint wiring (the briefs plugin) appends to this list
+        # before bus.start; each mounter performs the actual mcp.tool
+        # registration with the now-available handle threaded in.
+        for mounter in self.deferred_tool_mounters:
+            mounter(bus)
         log.info("ClaudeCodeMCPEndpoint(name=%s) started at mount=%s", self.name, self.mount)
 
     async def deliver(self, envelope: Envelope) -> None:
