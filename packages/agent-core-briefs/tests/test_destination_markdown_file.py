@@ -349,3 +349,54 @@ async def test_uses_async_to_thread_for_io(tmp_path: Path, monkeypatch) -> None:
     assert len(calls) == 1
     # The function passed to to_thread is the static _write_file
     assert calls[0][0] is MarkdownFileDestination._write_file
+
+
+@pytest.mark.asyncio
+async def test_os_error_during_write_returns_failure(tmp_path: Path) -> None:
+    """Parent path is a regular file, not a directory — ``mkdir(parents=True)``
+    raises ``NotADirectoryError`` (an ``OSError`` subclass) and we surface it
+    as ``DeliveryResult(success=False)`` rather than letting it propagate."""
+    blocker = tmp_path / "blocker"
+    blocker.write_text("I am a file, not a directory", encoding="utf-8")
+
+    dest = MarkdownFileDestination()
+    result = await dest.deliver(
+        sections=[_section()],
+        playbook=_playbook(tmp_path),
+        scope=None,
+        when=datetime(2026, 5, 4, 7, 0, 0, tzinfo=UTC),
+        config={"path": str(blocker / "child.md")},  # parent is a file
+        bus_handle=_NoopHandle(),
+    )
+
+    assert result.success is False
+    assert result.ref is None
+    assert result.error is not None
+    assert "write failed" in result.error
+
+
+@pytest.mark.asyncio
+async def test_unicode_error_during_write_returns_failure(tmp_path: Path) -> None:
+    """Encoding mismatch (``ascii`` encoding + emoji content) raises
+    ``UnicodeEncodeError``; verify it lands in ``DeliveryResult`` per the
+    docstring's failure contract. ``UnicodeError`` is NOT an ``OSError``
+    subclass, so this exercises the broadened ``except`` clause."""
+    dest = MarkdownFileDestination()
+    result = await dest.deliver(
+        sections=[
+            _section(
+                title="🌅 Morning",  # non-ASCII
+                fields=[{"name": "Today", "value": "✓ done"}],
+            )
+        ],
+        playbook=_playbook(tmp_path),
+        scope=None,
+        when=datetime(2026, 5, 4, 7, 0, 0, tzinfo=UTC),
+        config={"path": str(tmp_path / "out.md"), "encoding": "ascii"},
+        bus_handle=_NoopHandle(),
+    )
+
+    assert result.success is False
+    assert result.ref is None
+    assert result.error is not None
+    assert "write failed" in result.error

@@ -35,10 +35,11 @@ via ``str(value)``.
 Failure semantics
 -----------------
 ``Destination.deliver`` is best-effort per the brief framework spec.
-Config errors, unknown template keys, and OS-level write failures are
-captured in ``DeliveryResult(success=False, error=...)`` rather than
-propagating. ``DeliveryResult.ref`` on success is the absolute path of
-the written file.
+Config errors, unknown template keys, OS-level write failures, and
+encoding mismatches (e.g. ``encoding: ascii`` with non-ASCII content)
+are captured in ``DeliveryResult(success=False, error=...)`` rather
+than propagating. ``DeliveryResult.ref`` on success is the absolute
+path of the written file.
 
 Async I/O
 ---------
@@ -112,7 +113,10 @@ class MarkdownFileDestination:
 
         try:
             await asyncio.to_thread(self._write_file, path, content, encoding)
-        except OSError as exc:
+        except (OSError, UnicodeError) as exc:
+            # UnicodeError is the parent of UnicodeEncodeError; a misconfigured
+            # ``encoding: ascii`` with non-ASCII content would otherwise escape
+            # the ``except OSError`` net and break the best-effort contract.
             return DeliveryResult(
                 success=False,
                 error=f"markdown_file: write failed at {path}: {exc}",
