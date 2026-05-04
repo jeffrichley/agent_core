@@ -1,13 +1,22 @@
-"""SchedulerEndpoint — bus endpoint that fires scheduled prompts as envelopes.
+"""SchedulerEndpoint — bus endpoint that fires scheduled jobs as envelopes.
 
 Wraps apscheduler.AsyncScheduler with a SQLAlchemyDataStore-backed SQLite
 persistence. Static jobs are loaded from an optional jobs.yaml at start().
 Dynamic management uses ToolInvocation envelopes addressed to to=scheduler;
 replies are Acknowledgment envelopes.
 
-When a scheduled job fires, the endpoint publishes a TextMessage envelope to
-the job's target endpoint via the bus's BusHandle. The bus auto-stamps
-from_=scheduler on every publish.
+When a scheduled job fires, the endpoint publishes an envelope to the job's
+target endpoint via the bus's BusHandle. The bus auto-stamps from_=scheduler
+on every publish.
+
+Each job carries an `envelope_kind` (default `"TextMessage"`, also supports
+`"Event"`):
+
+- `TextMessage` jobs publish `TextMessagePayload(text=prompt)` — the legacy
+  shape, byte-identical to before Event support was added.
+- `Event` jobs publish `EventPayload(type=payload["type"],
+  data=payload["data"])` — used by the briefs orchestrator (cutover #09) to
+  fire BriefRequest events from cron schedules.
 """
 
 from __future__ import annotations
@@ -25,10 +34,15 @@ from apscheduler.datastores.sqlalchemy import SQLAlchemyDataStore
 from apscheduler.triggers.cron import CronTrigger
 from apscheduler.triggers.date import DateTrigger
 from apscheduler.triggers.interval import IntervalTrigger
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 from sqlalchemy.ext.asyncio import create_async_engine
 
-from agent_core.bus.envelope import AcknowledgmentPayload, Envelope, TextMessagePayload
+from agent_core.bus.envelope import (
+    AcknowledgmentPayload,
+    Envelope,
+    EventPayload,
+    TextMessagePayload,
+)
 from agent_core.bus.protocol import EndpointUnavailable
 
 if TYPE_CHECKING:
@@ -37,15 +51,52 @@ if TYPE_CHECKING:
 log = logging.getLogger(__name__)
 
 
+def _validate_envelope_shape(
+    envelope_kind: str,
+    prompt: str | None,
+    payload: dict[str, Any] | None,
+) -> None:
+    """Shared shape check for JobDef / _CreateJobArgs.
+
+    TextMessage jobs require a non-empty `prompt`. Event jobs require a
+    `payload` mapping with both `type` and `data` keys. Anything else raises
+    ValueError so the job is rejected at config-load / create time.
+    """
+    if envelope_kind == "TextMessage":
+        if not prompt:
+            raise ValueError("envelope_kind='TextMessage' requires a non-empty 'prompt'")
+        return
+    if envelope_kind == "Event":
+        if payload is None:
+            raise ValueError("envelope_kind='Event' requires a 'payload' mapping")
+        if "type" not in payload or "data" not in payload:
+            raise ValueError(
+                "envelope_kind='Event' requires payload with both 'type' and 'data' keys"
+            )
+        return
+    raise ValueError(f"envelope_kind must be 'TextMessage' or 'Event', got {envelope_kind!r}")
+
+
 class JobDef(BaseModel):
     """Validated job definition (yaml entry or tool call args)."""
 
     trigger: Literal["interval", "cron", "date"]
     schedule: dict[str, Any]
     target: str = Field(min_length=1)
-    prompt: str
+    # `prompt` is required for TextMessage jobs (the legacy default) and
+    # ignored for Event jobs. Validation runs in the model_validator below.
+    prompt: str | None = None
     timezone: str | None = None
     metadata: dict[str, Any] = Field(default_factory=dict)
+    envelope_kind: Literal["TextMessage", "Event"] = "TextMessage"
+    # For Event jobs, `payload` is `{"type": str, "data": dict}` and the bus
+    # constructs an EventPayload at fire time. None for TextMessage jobs.
+    payload: dict[str, Any] | None = None
+
+    @model_validator(mode="after")
+    def _validate_envelope(self) -> JobDef:
+        _validate_envelope_shape(self.envelope_kind, self.prompt, self.payload)
+        return self
 
 
 class _CreateJobArgs(BaseModel):
@@ -53,9 +104,16 @@ class _CreateJobArgs(BaseModel):
     trigger: Literal["interval", "cron", "date"]
     schedule: dict[str, Any]
     target: str = Field(min_length=1)
-    prompt: str
+    prompt: str | None = None
     timezone: str | None = None
     metadata: dict[str, Any] = Field(default_factory=dict)
+    envelope_kind: Literal["TextMessage", "Event"] = "TextMessage"
+    payload: dict[str, Any] | None = None
+
+    @model_validator(mode="after")
+    def _validate_envelope(self) -> _CreateJobArgs:
+        _validate_envelope_shape(self.envelope_kind, self.prompt, self.payload)
+        return self
 
 
 class _UpdateJobArgs(BaseModel):
@@ -65,6 +123,8 @@ class _UpdateJobArgs(BaseModel):
     prompt: str | None = None
     timezone: str | None = None
     metadata: dict[str, Any] | None = None
+    envelope_kind: Literal["TextMessage", "Event"] | None = None
+    payload: dict[str, Any] | None = None
 
 
 class _NameOnlyArgs(BaseModel):
@@ -182,12 +242,16 @@ class SchedulerEndpoint:
                 log.debug("Seed job %s already present; skipping", job_name)
                 continue
             trig = build_trigger(job)
-            await self._scheduler.add_schedule(
-                _fire,
-                trig,
-                id=job_name,
-                args=[self.name, job_name, job.target, job.prompt, job.metadata],
+            schedule_kwargs = _build_schedule_kwargs(
+                self.name,
+                job_name,
+                job.target,
+                job.prompt,
+                job.metadata,
+                job.envelope_kind,
+                job.payload,
             )
+            await self._scheduler.add_schedule(_fire, trig, id=job_name, **schedule_kwargs)
             log.info("Seeded job: %s", job_name)
 
     async def deliver(self, envelope: Envelope) -> None:
@@ -240,24 +304,33 @@ class SchedulerEndpoint:
         existing = await self._scheduler.get_schedules()
         if any(s.id == args.name for s in existing):
             raise _ToolError(f"job '{args.name}' already exists")
-        jd = JobDef(
-            trigger=args.trigger,
-            schedule=args.schedule,
-            target=args.target,
-            prompt=args.prompt,
-            timezone=args.timezone,
-            metadata=args.metadata,
-        )
+        try:
+            jd = JobDef(
+                trigger=args.trigger,
+                schedule=args.schedule,
+                target=args.target,
+                prompt=args.prompt,
+                timezone=args.timezone,
+                metadata=args.metadata,
+                envelope_kind=args.envelope_kind,
+                payload=args.payload,
+            )
+        except Exception as exc:
+            raise _ToolError(f"invalid job definition: {exc}") from exc
         try:
             trig = build_trigger(jd)
         except Exception as exc:
             raise _ToolError(f"invalid trigger: {exc}") from exc
-        await self._scheduler.add_schedule(
-            _fire,
-            trig,
-            id=args.name,
-            args=[self.name, args.name, args.target, args.prompt, args.metadata],
+        schedule_kwargs = _build_schedule_kwargs(
+            self.name,
+            args.name,
+            args.target,
+            args.prompt,
+            args.metadata,
+            args.envelope_kind,
+            args.payload,
         )
+        await self._scheduler.add_schedule(_fire, trig, id=args.name, **schedule_kwargs)
         return {"status": "created", "name": args.name}
 
     async def _update_job(self, args: _UpdateJobArgs) -> dict:
@@ -270,11 +343,30 @@ class SchedulerEndpoint:
         # Existing args tuple is (scheduler_name, job_name, target, prompt, metadata).
         cur_args = list(existing.args) if existing.args else [self.name, args.name, "", "", {}]
         current_target = str(cur_args[2])
-        current_prompt = str(cur_args[3])
-        current_metadata = cast(dict[str, Any], cur_args[4]) if isinstance(cur_args[4], dict) else {}
+        current_prompt = str(cur_args[3]) if cur_args[3] is not None else None
+        current_metadata = (
+            cast(dict[str, Any], cur_args[4]) if isinstance(cur_args[4], dict) else {}
+        )
+        # Envelope-kind / payload live in kwargs (only present when the job was
+        # created with envelope_kind="Event"; legacy TextMessage jobs pass none).
+        cur_kwargs = dict(existing.kwargs) if existing.kwargs else {}
+        current_envelope_kind = cur_kwargs.get("envelope_kind", "TextMessage")
+        current_payload = cur_kwargs.get("payload")
+
         new_target = args.target if args.target is not None else current_target
         new_prompt = args.prompt if args.prompt is not None else current_prompt
         new_metadata = args.metadata if args.metadata is not None else current_metadata
+        new_envelope_kind = (
+            args.envelope_kind if args.envelope_kind is not None else current_envelope_kind
+        )
+        new_payload = args.payload if args.payload is not None else current_payload
+
+        # Re-validate the merged shape so an update can't strand the job in an
+        # invalid configuration (e.g., switching to Event without a payload).
+        try:
+            _validate_envelope_shape(new_envelope_kind, new_prompt, new_payload)
+        except ValueError as exc:
+            raise _ToolError(f"invalid job definition: {exc}") from exc
 
         # Rebuild trigger if schedule or timezone changed; else reuse existing.
         if args.schedule is not None:
@@ -285,6 +377,8 @@ class SchedulerEndpoint:
                 prompt=new_prompt,
                 timezone=args.timezone,
                 metadata=new_metadata,
+                envelope_kind=new_envelope_kind,
+                payload=new_payload,
             )
             try:
                 new_trig = build_trigger(jd)
@@ -294,12 +388,16 @@ class SchedulerEndpoint:
             new_trig = existing.trigger  # type: ignore[assignment]
 
         await self._scheduler.remove_schedule(args.name)
-        await self._scheduler.add_schedule(
-            _fire,
-            new_trig,
-            id=args.name,
-            args=[self.name, args.name, new_target, new_prompt, new_metadata],
+        schedule_kwargs = _build_schedule_kwargs(
+            self.name,
+            args.name,
+            new_target,
+            new_prompt,
+            new_metadata,
+            new_envelope_kind,
+            new_payload,
         )
+        await self._scheduler.add_schedule(_fire, new_trig, id=args.name, **schedule_kwargs)
         return {"status": "updated", "name": args.name}
 
     async def _delete_job(self, args: _NameOnlyArgs) -> dict:
@@ -318,12 +416,15 @@ class SchedulerEndpoint:
         out: list[dict] = []
         for s in schedules:
             cur_args = list(s.args) if s.args else [self.name, s.id, "", "", {}]
+            cur_kwargs = dict(s.kwargs) if s.kwargs else {}
             out.append(
                 {
                     "name": s.id,
                     "trigger": str(s.trigger),
                     "target": cur_args[2],
                     "prompt": cur_args[3],
+                    "envelope_kind": cur_kwargs.get("envelope_kind", "TextMessage"),
+                    "payload": cur_kwargs.get("payload"),
                     "next_run": s.next_fire_time.isoformat() if s.next_fire_time else None,
                     "paused": getattr(s, "paused", False),
                 }
@@ -376,6 +477,30 @@ class SchedulerEndpoint:
         log.info("SchedulerEndpoint(name=%s) stopped", self.name)
 
 
+def _build_schedule_kwargs(
+    scheduler_name: str,
+    job_name: str,
+    target: str,
+    prompt: str | None,
+    metadata: dict[str, Any],
+    envelope_kind: str,
+    payload: dict[str, Any] | None,
+) -> dict[str, Any]:
+    """Compose the APScheduler `add_schedule(args=..., kwargs=...)` payload.
+
+    For TextMessage jobs (the default), only positional `args` are persisted —
+    byte-identical to the pre-Event-support shape, so legacy SQLite stores
+    keep working with no migration. Event jobs additionally persist
+    `envelope_kind` and `payload` as kwargs; `_fire` reads them at fire time.
+    """
+    out: dict[str, Any] = {
+        "args": [scheduler_name, job_name, target, prompt, metadata],
+    }
+    if envelope_kind != "TextMessage":
+        out["kwargs"] = {"envelope_kind": envelope_kind, "payload": payload}
+    return out
+
+
 # _fire is a module-level coroutine so APScheduler can serialize a reference
 # to it across restarts. Args are pickled into the SQLAlchemy data store, so
 # they must be picklable and stable across restarts — hence the scheduler
@@ -384,10 +509,18 @@ async def _fire(
     scheduler_name: str,
     name: str,
     target: str,
-    prompt: str,
+    prompt: str | None,
     metadata: dict | None = None,
+    *,
+    envelope_kind: str = "TextMessage",
+    payload: dict[str, Any] | None = None,
 ) -> None:
-    """APScheduler job callable. Publishes a TextMessage envelope to `target`.
+    """APScheduler job callable. Publishes an envelope to `target`.
+
+    For `envelope_kind="TextMessage"` (the default and legacy shape), the
+    envelope's payload is `TextMessagePayload(text=prompt)`. For
+    `envelope_kind="Event"`, the envelope's payload is
+    `EventPayload(type=payload["type"], data=payload["data"])`.
 
     Looks up the live SchedulerEndpoint via _active_endpoints[scheduler_name];
     if missing (endpoint stopped, daemon restarted but scheduler not yet
@@ -396,7 +529,11 @@ async def _fire(
     Errors during publish are logged and swallowed: the job stays scheduled,
     and APScheduler's misfire policy decides whether to retry. Bus-side
     delivery failures (target unregistered, mailbox full) propagate as
-    publish exceptions and end up here."""
+    publish exceptions and end up here.
+
+    Validation errors (missing payload for Event, unknown envelope_kind) are
+    logged and the fire becomes a no-op rather than crashing the worker.
+    """
     endpoint = _active_endpoints.get(scheduler_name)
     if endpoint is None:
         log.warning(
@@ -416,12 +553,19 @@ async def _fire(
 
     md = dict(metadata or {})
     md["scheduler_job"] = name
+
+    try:
+        env_payload, env_kind = _build_envelope_payload(envelope_kind, prompt, payload)
+    except ValueError:
+        log.exception("Job %s has invalid envelope shape; dropping fire", name)
+        return
+
     env = Envelope(
         id=uuid.uuid4().hex,
         correlation_id=uuid.uuid4().hex,
         to=target,
-        kind="TextMessage",
-        payload=TextMessagePayload(text=prompt),
+        kind=env_kind,  # type: ignore[arg-type]
+        payload=env_payload,
         metadata=md,
         created_at=datetime.now(UTC),
     )
@@ -430,6 +574,24 @@ async def _fire(
         log.info("Job %s fired → %s (envelope %s)", name, target, env.id)
     except Exception:
         log.exception("Job %s failed to publish to %s", name, target)
+
+
+def _build_envelope_payload(
+    envelope_kind: str,
+    prompt: str | None,
+    payload: dict[str, Any] | None,
+) -> tuple[TextMessagePayload | EventPayload, str]:
+    """Return (payload, kind) for the envelope based on the job's shape."""
+    _validate_envelope_shape(envelope_kind, prompt, payload)
+    if envelope_kind == "TextMessage":
+        # `prompt` is guaranteed non-None by the validator above.
+        return TextMessagePayload(text=prompt or ""), "TextMessage"
+    # envelope_kind == "Event"
+    assert payload is not None  # validator ensured this
+    return (
+        EventPayload(type=str(payload["type"]), data=dict(payload["data"])),
+        "Event",
+    )
 
 
 class _ToolError(Exception):

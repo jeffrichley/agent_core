@@ -815,6 +815,259 @@ async def test_deliver_update_job_changes_prompt(tmp_path):
 
 
 @pytest.mark.asyncio
+async def test_fire_publishes_event_envelope_when_envelope_kind_event():
+    """envelope_kind='Event' produces an EventPayload envelope."""
+    from agent_core.bus.envelope import EventPayload
+    from agent_core.endpoints.scheduler import _active_endpoints, _fire
+
+    handle = _RecordingHandle()
+    _active_endpoints["sched-test"] = _StubEndpointForFire(handle)
+    try:
+        await _fire(
+            "sched-test",
+            "morning-brief",
+            "agent-briefs",
+            None,
+            {"job_kind": "brief"},
+            envelope_kind="Event",
+            payload={"type": "BriefRequest", "data": {"slot": "morning"}},
+        )
+        assert len(handle.published) == 1
+        env = handle.published[0]
+        assert env.to == "agent-briefs"
+        assert env.kind == "Event"
+        assert isinstance(env.payload, EventPayload)
+        assert env.payload.type == "BriefRequest"
+        assert env.payload.data == {"slot": "morning"}
+        # Metadata routing still works for Event envelopes.
+        assert env.metadata["scheduler_job"] == "morning-brief"
+        assert env.metadata["job_kind"] == "brief"
+    finally:
+        _active_endpoints.pop("sched-test", None)
+
+
+@pytest.mark.asyncio
+async def test_fire_defaults_to_text_message_when_envelope_kind_omitted():
+    """Calling _fire without envelope_kind falls through to TextMessage (legacy)."""
+    from agent_core.bus.envelope import TextMessagePayload
+    from agent_core.endpoints.scheduler import _active_endpoints, _fire
+
+    handle = _RecordingHandle()
+    _active_endpoints["sched-test"] = _StubEndpointForFire(handle)
+    try:
+        # Legacy call shape — no envelope_kind kwarg, no payload kwarg.
+        await _fire("sched-test", "j", "agent-test", "hello", {})
+        env = handle.published[0]
+        assert env.kind == "TextMessage"
+        assert isinstance(env.payload, TextMessagePayload)
+        assert env.payload.text == "hello"
+    finally:
+        _active_endpoints.pop("sched-test", None)
+
+
+@pytest.mark.asyncio
+async def test_fire_event_without_payload_is_dropped():
+    """envelope_kind='Event' with no payload logs and no-ops (no envelope published)."""
+    from agent_core.endpoints.scheduler import _active_endpoints, _fire
+
+    handle = _RecordingHandle()
+    _active_endpoints["sched-test"] = _StubEndpointForFire(handle)
+    try:
+        await _fire("sched-test", "j", "agent-test", None, {}, envelope_kind="Event", payload=None)
+        assert handle.published == []
+    finally:
+        _active_endpoints.pop("sched-test", None)
+
+
+def test_jobdef_defaults_envelope_kind_to_text_message():
+    """Omitting envelope_kind from JobDef defaults to TextMessage (back-compat)."""
+    jd = JobDef(
+        trigger="interval",
+        schedule={"seconds": 30},
+        target="agent-test",
+        prompt="hi",
+    )
+    assert jd.envelope_kind == "TextMessage"
+    assert jd.payload is None
+
+
+def test_jobdef_text_message_requires_prompt():
+    """envelope_kind='TextMessage' (default) without a prompt raises ValueError."""
+    with pytest.raises(ValidationError):
+        JobDef(
+            trigger="interval",
+            schedule={"seconds": 30},
+            target="agent-test",
+            # no prompt
+        )
+
+
+def test_jobdef_event_requires_payload():
+    """envelope_kind='Event' without a payload raises ValueError."""
+    with pytest.raises(ValidationError):
+        JobDef(
+            trigger="interval",
+            schedule={"seconds": 30},
+            target="agent-test",
+            envelope_kind="Event",
+            # no payload
+        )
+
+
+def test_jobdef_event_payload_requires_type_and_data():
+    """envelope_kind='Event' with malformed payload raises ValueError."""
+    with pytest.raises(ValidationError):
+        JobDef(
+            trigger="interval",
+            schedule={"seconds": 30},
+            target="agent-test",
+            envelope_kind="Event",
+            payload={"type": "BriefRequest"},  # missing 'data'
+        )
+    with pytest.raises(ValidationError):
+        JobDef(
+            trigger="interval",
+            schedule={"seconds": 30},
+            target="agent-test",
+            envelope_kind="Event",
+            payload={"data": {}},  # missing 'type'
+        )
+
+
+def test_jobdef_accepts_event_with_full_payload():
+    """envelope_kind='Event' with a complete payload validates successfully."""
+    jd = JobDef(
+        trigger="cron",
+        schedule={"hour": 7, "minute": 0},
+        target="agent-briefs",
+        envelope_kind="Event",
+        payload={"type": "BriefRequest", "data": {"slot": "morning"}},
+    )
+    assert jd.envelope_kind == "Event"
+    assert jd.payload == {"type": "BriefRequest", "data": {"slot": "morning"}}
+    # `prompt` may legitimately be None for Event jobs.
+    assert jd.prompt is None
+
+
+@pytest.mark.asyncio
+async def test_deliver_create_event_job_persists_envelope_kind(tmp_path):
+    """Creating an Event job via create_job persists envelope_kind in list_jobs."""
+    handle = _RecordingHandle()
+    ep = SchedulerEndpoint(name="scheduler", db_path=str(tmp_path / "s.db"))
+    await ep.start(handle)
+    try:
+        await ep.deliver(
+            _make_envelope(
+                "c",
+                frm="agent-test",
+                to="scheduler",
+                kind="ToolInvocation",
+                payload=_toolcall(
+                    "create_job",
+                    {
+                        "name": "morning-brief",
+                        "trigger": "cron",
+                        "schedule": {"hour": 7, "minute": 0},
+                        "target": "agent-briefs",
+                        "envelope_kind": "Event",
+                        "payload": {
+                            "type": "BriefRequest",
+                            "data": {"slot": "morning"},
+                        },
+                    },
+                ),
+            )
+        )
+        ack = [e for e in handle.published if e.kind == "Acknowledgment" and e.payload.of == "c"][0]
+        assert json.loads(ack.payload.note) == {
+            "status": "created",
+            "name": "morning-brief",
+        }
+
+        # list_jobs surfaces the envelope_kind + payload.
+        await ep.deliver(
+            _make_envelope(
+                "l", "agent-test", "scheduler", "ToolInvocation", _toolcall("list_jobs", {})
+            )
+        )
+        ackl = [e for e in handle.published if e.kind == "Acknowledgment" and e.payload.of == "l"][
+            0
+        ]
+        listed = json.loads(ackl.payload.note)
+        assert len(listed) == 1
+        assert listed[0]["name"] == "morning-brief"
+        assert listed[0]["target"] == "agent-briefs"
+        assert listed[0]["envelope_kind"] == "Event"
+        assert listed[0]["payload"] == {
+            "type": "BriefRequest",
+            "data": {"slot": "morning"},
+        }
+    finally:
+        await ep.stop()
+
+
+@pytest.mark.asyncio
+async def test_deliver_create_event_job_missing_payload_returns_error(tmp_path):
+    """create_job with envelope_kind='Event' and no payload returns an error ack."""
+    handle = _RecordingHandle()
+    ep = SchedulerEndpoint(name="scheduler", db_path=str(tmp_path / "s.db"))
+    await ep.start(handle)
+    try:
+        await ep.deliver(
+            _make_envelope(
+                "c",
+                frm="agent-test",
+                to="scheduler",
+                kind="ToolInvocation",
+                payload=_toolcall(
+                    "create_job",
+                    {
+                        "name": "broken",
+                        "trigger": "interval",
+                        "schedule": {"seconds": 60},
+                        "target": "agent-briefs",
+                        "envelope_kind": "Event",
+                        # missing payload
+                    },
+                ),
+            )
+        )
+        ack = [e for e in handle.published if e.kind == "Acknowledgment" and e.payload.of == "c"][0]
+        assert "error" in ack.payload.note.lower()
+    finally:
+        await ep.stop()
+
+
+def test_load_seed_jobs_parses_event_job(tmp_path):
+    """jobs.yaml entries with envelope_kind: Event load with payload intact."""
+    from agent_core.endpoints.scheduler import load_seed_jobs
+
+    p = tmp_path / "jobs.yaml"
+    p.write_text(
+        textwrap.dedent(
+            """
+            morning-brief:
+              trigger: cron
+              schedule: { hour: 7, minute: 0 }
+              target: agent-briefs
+              envelope_kind: Event
+              payload:
+                type: BriefRequest
+                data:
+                  slot: morning
+            """
+        ).strip(),
+        encoding="utf-8",
+    )
+    jobs = load_seed_jobs(p)
+    assert "morning-brief" in jobs
+    jd = jobs["morning-brief"]
+    assert jd.envelope_kind == "Event"
+    assert jd.payload == {"type": "BriefRequest", "data": {"slot": "morning"}}
+    assert jd.prompt is None
+
+
+@pytest.mark.asyncio
 async def test_deliver_non_toolinvocation_publishes_warning(tmp_path):
     from agent_core.bus.envelope import TextMessagePayload
 
