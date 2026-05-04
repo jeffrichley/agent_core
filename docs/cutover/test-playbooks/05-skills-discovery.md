@@ -9,7 +9,7 @@ Nothing new in `agent-core` itself. Skill discovery, slash-command resolution, f
 
 The cutover surface for #05 is therefore **verification-only**: confirm that on the new substrate (agent-core hooks driving Pepper's session), Claude Code's skill mechanism continues to behave as it does today on the legacy `~/.pepper/` substrate. No new code; the existing skill directories at `~/.claude/skills/<name>/SKILL.md` keep working because Claude Code reads them directly.
 
-The "documented path for adding new skills" acceptance criterion is satisfied by the **briefs-author skill** Jeff is authoring as the cutover-gate-blocking follow-up on #09. That skill is the canonical exemplar of "this is how a Pepper-facing skill is structured on agent-core"; #05's documentation deliverable cites it rather than reinventing.
+The "documented path for adding new skills" acceptance criterion is satisfied by the **briefs-author skill** at `~/.claude/skills/briefs-author/SKILL.md` (1863 words; landed as the second cutover-gate-blocking follow-up on #09, authored via `superpowers:writing-skills` TDD methodology). That skill is the canonical exemplar of "this is how a Pepper-facing skill is structured on agent-core"; #05's documentation deliverable cites it rather than reinventing.
 
 ## Acceptance criteria (from spec §"Done looks like")
 

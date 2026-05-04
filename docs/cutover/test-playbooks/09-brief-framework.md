@@ -156,7 +156,7 @@ Once Pepper's live runtime is on agent-core, schedule a 7am cron entry firing a 
 2. A markdown file lands at `${agent_root}/Memory/daily/briefs/<date>-morning.md` with the same content.
 3. `~/.agent-core/briefs/audit.jsonl` records the full chain for that session.
 
-This step gates cutover. The MCP-wiring prerequisite landed (commits `0660b41` + `975c31d`); the remaining prerequisite — the briefs-author skill on Jeff's plate — must land before this step can pass.
+This step gates cutover. Both prerequisites have landed: MCP wiring (`0660b41` + `975c31d`) and the Pepper-facing briefs-author skill at `~/.claude/skills/briefs-author/SKILL.md` (1863 words, authored via `superpowers:writing-skills` TDD methodology — RED baseline + GREEN verify-with-different-scenario + REFACTOR for the CLI fetcher `env_passthrough` gotcha).
 
 ## Pass/fail summary
 
@@ -167,14 +167,14 @@ This step gates cutover. The MCP-wiring prerequisite landed (commits `0660b41` +
 | Step 3 | `briefs --help` lists `compose` and `fetchers`; `fetchers list` returns two built-ins; `fetchers test` returns a namespaced payload from `filesystem_read`. |
 | Step 4 | Example playbook parses to 8 sections + 2 conditional + 2 destinations + 'pepper' voice. |
 | Step 5 | `TestPepperExampleYamlBriefs` — 6 green. |
-| Step 6 | Cron-fired BriefRequest produces Discord embed + markdown file + full audit chain on Pepper's live agent-core runtime. Gates cutover. Requires the briefs-author skill follow-up to land first. |
+| Step 6 | Cron-fired BriefRequest produces Discord embed + markdown file + full audit chain on Pepper's live agent-core runtime. Gates cutover. Both prerequisites (MCP wiring + briefs-author skill) have landed. |
 
 ## Cutover-gate-blocking follow-ups
 
-The framework code shipped in #09. One follow-up remains before Pepper can extend the framework on the new substrate.
+The framework code shipped in #09. Both follow-ups have now landed; the cutover gate for #09 is closed.
 
 - **Cross-endpoint MCP tool mounting** — *Done (`0660b41` + `975c31d`).* Added the `wire_endpoints_after_registration` pluggy hookspec, the `deferred_tool_mounters` seam on `ClaudeCodeMCPEndpoint` (drained one-shot at `start()` once `bus_handle` is available), and the briefs plugin's hookimpl that pairs an MCP endpoint with a named `BriefsOrchestratorEndpoint` from the yaml. Pepper's session now has all 7 briefs tools available after `bus.start()` — `compose_brief` is reachable from inside her running session. Tripwire test (`TestPepperExampleYamlBriefs::test_pepper_mcp_endpoint_references_briefs_orchestrator`) locks the wiring shape; integration test (`test_mcp_wiring.py::test_pepper_mcp_endpoint_has_seven_briefs_tools_after_bus_start`) proves all 7 tools register correctly.
-- **Briefs usage skill at `~/.claude/skills/briefs-author/`** — *Owner: Jeff.* Pepper-facing skill documenting how to author a playbook (YAML-in-MD format, simpleeval expression language, conditional sections, `${var}` substitution) and the gather config shape (fetchers list, namespace declarations, per-fetcher timeouts, `_errors` capture). Without this Pepper can call the framework but cannot extend it — every new brief type would require Jeff to author the playbook by hand. Authoring a skill in Pepper's voice is tone-judgment work, intentionally not automated.
+- **Briefs usage skill at `~/.claude/skills/briefs-author/SKILL.md`** — *Done (1863 words, authored via `superpowers:writing-skills`).* Pepper-facing skill documenting how to author a playbook (YAML-in-MD format, simpleeval expression language, conditional sections, `${var}` substitution) and the gather config shape (fetchers list, namespace declarations, per-fetcher timeouts, `_errors` capture). Followed RED-GREEN-REFACTOR: baseline subagent run surfaced six real framework gotchas (no auto-injected `now` namespace; `${var}` parse-time vs `{{var}}` delivery-time; narrow simpleeval whitelist `len`/`any`/`all`; fetcher `type:` is the `type_id` class attribute, not the module name; default fetcher timeout is 300s; conditional sections use `required_when_active: true` not `required: true`); GREEN-phase verification with a different scenario (`evening_recap` vs `lunch_check`) confirmed the skill closes those traps; REFACTOR added an explicit gotcha + common-mistakes entry for `CliFetcher` after the verify-phase agent invented an unsupported `env:` map. Captured framework bug: the morning-brief example references `now.is_friday` / `now.is_weekly_digest_day` but neither the example gather config nor the framework adds a `now` fetcher — the skill flags this as Invariant #1.
 
 ## Known limitations (recorded; not blocking #09 done OR the cutover gate)
 
