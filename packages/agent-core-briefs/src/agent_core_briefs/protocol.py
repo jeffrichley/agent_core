@@ -10,7 +10,10 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
-from typing import Protocol, runtime_checkable
+from typing import TYPE_CHECKING, Protocol, runtime_checkable
+
+if TYPE_CHECKING:
+    from agent_core.bus.handle import BusHandle
 
 
 @runtime_checkable
@@ -36,7 +39,14 @@ class DeliveryResult:
 @runtime_checkable
 class Destination(Protocol):
     """Pluggable format + transport unit. Renders sections to native shape
-    and delivers; returns a DeliveryResult."""
+    and delivers; returns a DeliveryResult.
+
+    Destinations are filesystem-discovered and instantiated parameterless,
+    so the bus handle they need to publish through is threaded in at
+    ``deliver`` time rather than at construction. Destinations that don't
+    need to publish (e.g., ``markdown_file``) accept the parameter and
+    ignore it.
+    """
 
     type_id: str
 
@@ -47,6 +57,7 @@ class Destination(Protocol):
         scope: str | None,
         when: datetime,
         config: dict,
+        bus_handle: BusHandle,
     ) -> DeliveryResult: ...
 
 

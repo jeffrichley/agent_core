@@ -46,7 +46,7 @@ class TestDestinationProtocol:
         class _Good:
             type_id = "test.good"
 
-            async def deliver(self, sections, playbook, scope, when, config):
+            async def deliver(self, sections, playbook, scope, when, config, bus_handle):
                 return DeliveryResult(success=True, ref="test-1")
 
         assert isinstance(_Good(), Destination)

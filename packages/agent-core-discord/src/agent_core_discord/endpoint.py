@@ -428,13 +428,21 @@ class DiscordEndpoint:
         await self._handle.ack(envelope.id)
 
     async def _deliver_text_message(self, envelope: Envelope) -> dict:
-        """Route a bus TextMessage to Discord send."""
+        """Route a bus TextMessage to Discord send.
+
+        If ``metadata.discord.embeds`` is set, the embed dicts ride along
+        on the send call. The text portion is optional in that case — an
+        empty ``payload.text`` collapses to an embeds-only message; a
+        non-empty text is sent as content alongside the embeds (chunked
+        normally if it exceeds the Discord cap).
+        """
         if not isinstance(envelope.payload, TextMessagePayload):
             raise _ToolError("TextMessage envelope payload is invalid")
 
         discord_meta = envelope.metadata.get("discord", {})
         channel_id = None
         reply_to: str | None = None
+        embeds_data: list[dict[str, Any]] | None = None
         if isinstance(discord_meta, dict):
             channel_id = discord_meta.get("channel_id")
             # Prefer explicit reply_to; else message_id (legacy); else resolve
@@ -443,6 +451,10 @@ class DiscordEndpoint:
             reply_to = discord_meta.get("reply_to") or discord_meta.get("message_id")
             if reply_to is not None:
                 reply_to = str(reply_to)
+            raw_embeds = discord_meta.get("embeds")
+            if isinstance(raw_embeds, list) and raw_embeds:
+                # Defensive copy: caller may mutate metadata after publish.
+                embeds_data = [dict(e) for e in raw_embeds if isinstance(e, dict)]
         if (
             not reply_to
             and envelope.in_reply_to
@@ -459,9 +471,19 @@ class DiscordEndpoint:
                 "TextMessage requires metadata.discord.channel_id or endpoint outbound_channel_id"
             )
 
+        # When embeds ride on the envelope, an empty ``payload.text`` is
+        # the embeds-only path: collapse to ``None`` so ``_send`` skips
+        # chunking and dispatches a single message with the embeds. Without
+        # embeds, leave the text alone — pre-existing behavior was to pass
+        # the raw payload text straight through.
+        text_for_send: str | None = envelope.payload.text
+        if embeds_data and not text_for_send:
+            text_for_send = None
+
         args = _SendArgs(
             channel_id=str(channel_id),
-            text=envelope.payload.text,
+            text=text_for_send,
+            embeds=embeds_data,
             reply_to=reply_to,
         )
         return await self._send(args)

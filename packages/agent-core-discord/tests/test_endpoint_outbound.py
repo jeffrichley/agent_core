@@ -507,6 +507,104 @@ async def test_textmessage_long_payload_splits(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_textmessage_with_metadata_embeds_calls_channel_send_with_embeds(monkeypatch):
+    """``metadata.discord.embeds`` (list of dicts) becomes ``channel.send(embeds=...)``.
+
+    Real discord.py converts each dict into a ``discord.Embed`` via
+    ``Embed.from_dict``; the fake channel just records what we pass. This
+    test checks the round-trip — title, color, fields, footer all land.
+    """
+    ep, handle, fake = await _started(monkeypatch)
+    ch = _FakeChannel(id="200")
+    fake.add_channel(ch)
+    try:
+        embeds_meta = [
+            {
+                "title": "🌅 Morning",
+                "color": 15548997,
+                "fields": [
+                    {"name": "Today", "value": "Sunny day", "inline": False},
+                ],
+            },
+            {
+                "title": "📅 Calendar",
+                "color": 255,
+                "fields": [{"name": "9am", "value": "Standup", "inline": True}],
+                "footer": {"text": "morning_brief • 2026-05-04T07:00:00+00:00"},
+            },
+        ]
+        env = Envelope(
+            id="e-embed",
+            correlation_id=uuid.uuid4().hex,
+            from_="agent-test",
+            to="discord-test",
+            kind="TextMessage",
+            payload=TextMessagePayload(text=""),
+            metadata={"discord": {"channel_id": "200", "embeds": embeds_meta}},
+            created_at=datetime.now(UTC),
+        )
+        await ep.deliver(env)
+        assert len(ch.sent) == 1
+        sent = ch.sent[0]
+        # No content because payload.text was empty.
+        assert sent["content"] is None
+        # Embeds were converted into discord.Embed objects (real discord.py is
+        # installed); each Embed exposes ``.title`` / ``.color`` / ``.fields``.
+        assert sent["embeds"] is not None
+        assert len(sent["embeds"]) == 2
+        e1, e2 = sent["embeds"]
+        assert e1.title == "🌅 Morning"
+        # discord.Color wraps the int decimal; .value returns the int back.
+        assert e1.color is not None and e1.color.value == 15548997
+        assert len(e1.fields) == 1
+        assert e1.fields[0].name == "Today"
+        assert e1.fields[0].value == "Sunny day"
+        assert e1.fields[0].inline is False
+        assert e2.title == "📅 Calendar"
+        assert e2.color is not None and e2.color.value == 255
+        assert e2.fields[0].inline is True
+        assert e2.footer.text == "morning_brief • 2026-05-04T07:00:00+00:00"
+        ack = [e for e in handle.published if e.kind == "Acknowledgment"][0]
+        result = json.loads(ack.payload.note)
+        assert result["status"] == "sent"
+    finally:
+        await ep.stop()
+
+
+@pytest.mark.asyncio
+async def test_textmessage_with_embeds_and_text_sends_both(monkeypatch):
+    """When payload.text is non-empty, embeds ride alongside on the same send."""
+    ep, handle, fake = await _started(monkeypatch)
+    ch = _FakeChannel(id="200")
+    fake.add_channel(ch)
+    try:
+        env = Envelope(
+            id="e-embed-text",
+            correlation_id=uuid.uuid4().hex,
+            from_="agent-test",
+            to="discord-test",
+            kind="TextMessage",
+            payload=TextMessagePayload(text="Header line"),
+            metadata={
+                "discord": {
+                    "channel_id": "200",
+                    "embeds": [{"title": "T", "color": 1, "fields": []}],
+                },
+            },
+            created_at=datetime.now(UTC),
+        )
+        await ep.deliver(env)
+        assert len(ch.sent) == 1
+        sent = ch.sent[0]
+        assert sent["content"] == "Header line"
+        assert sent["embeds"] is not None
+        assert len(sent["embeds"]) == 1
+        assert sent["embeds"][0].title == "T"
+    finally:
+        await ep.stop()
+
+
+@pytest.mark.asyncio
 async def test_textmessage_uses_discord_metadata_channel_and_replies(monkeypatch):
     ep, handle, fake = await _started(monkeypatch)
     ch = _FakeChannel(id="200")
