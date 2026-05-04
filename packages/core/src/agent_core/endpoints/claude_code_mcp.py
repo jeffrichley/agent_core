@@ -120,11 +120,6 @@ class ClaudeCodeMCPEndpoint:
       mounter registers its tools via the standard ``mcp.tool(...)``
       decorator. Used by in-process callers that already know the tool
       surface at construction time (existing T14 path).
-    - ``register_tools(mounter)``: add a mounter after construction. Same
-      shape as ``tool_mounters``, but the call returns immediately and
-      the mounter runs synchronously against ``self._mcp``. Use this
-      when a plugin wires tools after ``__init__`` but before the
-      bus_handle is needed (e.g., an immediate FastMCP-only registration).
     - ``deferred_tool_mounters`` (public attribute): list of callables
       invoked once during :meth:`start` after this endpoint has been
       handed its ``BusHandle``. Each callable receives that handle as
@@ -221,16 +216,6 @@ class ClaudeCodeMCPEndpoint:
     def attach_notify_broker(self, broker: NotificationBroker) -> None:
         """Optional runner hook: attach broker after endpoint construction."""
         self._notify_broker = broker
-
-    def register_tools(self, mounter: Callable[[FastMCP], None]) -> None:
-        """Run a mounter against this endpoint's FastMCP server now.
-
-        Public seam for plugins that want to register tools after
-        construction but before the bus_handle is available. The mounter
-        is called synchronously against ``self._mcp``; tools registered
-        here are visible to the next ``mcp.list_tools()`` call.
-        """
-        mounter(self._mcp)
 
     async def _show_my_day_impl(
         self,
@@ -456,7 +441,15 @@ class ClaudeCodeMCPEndpoint:
         # Cross-endpoint wiring (the briefs plugin) appends to this list
         # before bus.start; each mounter performs the actual mcp.tool
         # registration with the now-available handle threaded in.
-        for mounter in self.deferred_tool_mounters:
+        #
+        # Pop-as-you-go: drain the list one-shot. If start() is somehow
+        # called again, the list is empty and re-registration is a no-op.
+        # Each mounter typically registers permanent state on self._mcp
+        # (FastMCP tools are additive), so re-firing them would either
+        # raise on duplicate tool names or silently shadow the prior
+        # registration — neither is what callers expect.
+        while self.deferred_tool_mounters:
+            mounter = self.deferred_tool_mounters.pop(0)
             mounter(bus)
         log.info("ClaudeCodeMCPEndpoint(name=%s) started at mount=%s", self.name, self.mount)
 

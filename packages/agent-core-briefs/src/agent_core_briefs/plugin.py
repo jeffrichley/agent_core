@@ -110,15 +110,23 @@ def wire_endpoints_after_registration(
             continue
         orch = endpoints.get(orch_name)
         if orch is None:
+            available = sorted(
+                n for n, e in endpoints.items() if isinstance(e, BriefsOrchestratorEndpoint)
+            )
             raise ValueError(
                 f"endpoint {name!r} names briefs_orchestrator={orch_name!r} but "
-                f"no endpoint with that name is registered"
+                f"no endpoint with that name is registered. Available "
+                f"BriefsOrchestratorEndpoint names: {available}"
             )
         if not isinstance(orch, BriefsOrchestratorEndpoint):
+            available = sorted(
+                n for n, e in endpoints.items() if isinstance(e, BriefsOrchestratorEndpoint)
+            )
             raise ValueError(
                 f"endpoint {name!r} names briefs_orchestrator={orch_name!r}, but "
                 f"that endpoint is a {type(orch).__name__}, not a "
-                "BriefsOrchestratorEndpoint"
+                f"BriefsOrchestratorEndpoint. Available "
+                f"BriefsOrchestratorEndpoint names: {available}"
             )
 
         # Bind orch + mcp_endpoint into the closure default args so the

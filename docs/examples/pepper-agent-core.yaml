@@ -79,6 +79,9 @@ endpoints:
       # optional — both default to sensible values (built-in
       # destinations + ~/.agent-core/briefs/audit.jsonl). Listed
       # explicitly so operators see the knobs.
+      # NOTE: built-in `discord_embed` and `markdown_file` are auto-loaded
+      # from the package; operator-supplied paths add NEW destinations only
+      # and cannot redefine a built-in `type_id` (duplicate raises LoaderError).
       destination_paths:
         - "C:\\Users\\jeffr\\.pepper\\Memory\\briefs\\destinations"
       audit_log_path: "C:\\Users\\jeffr\\.agent-core\\briefs\\audit.jsonl"

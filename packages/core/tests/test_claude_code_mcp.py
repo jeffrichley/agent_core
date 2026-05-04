@@ -363,3 +363,43 @@ async def test_session_registry_tracks_connected_sessions_after_mcp_message():
     finally:
         await ep.stop()
         assert not ep._sessions
+
+
+@pytest.mark.asyncio
+async def test_start_drains_deferred_tool_mounters_one_shot():
+    """``start()`` pops mounters as it calls them; a second ``start()`` is a no-op.
+
+    Each mounter typically registers permanent state on ``self._mcp``
+    (FastMCP tools are additive), so re-firing them on a second
+    ``start()`` would either raise on duplicate tool names or silently
+    shadow the prior registration — neither is what callers expect.
+    """
+    ep = ClaudeCodeMCPEndpoint(name="agent-test", mount="/mcp/agent-test")
+
+    calls: list[object] = []
+
+    def _mounter(bus: object) -> None:
+        calls.append(bus)
+
+    ep.deferred_tool_mounters.append(_mounter)
+    assert len(ep.deferred_tool_mounters) == 1
+
+    class _FakeHandle:
+        async def publish(self, *a, **kw): ...
+        async def ack(self, *a, **kw): ...
+        async def nack(self, *a, **kw): ...
+        def endpoints(self):
+            return []
+
+    handle1 = _FakeHandle()
+    await ep.start(handle1)
+    # Mounter ran exactly once with the first handle, and the list is
+    # drained so re-firing on a second start() is impossible.
+    assert calls == [handle1]
+    assert ep.deferred_tool_mounters == []
+
+    # A second start() with a fresh handle must NOT re-run the mounter.
+    handle2 = _FakeHandle()
+    await ep.start(handle2)
+    assert calls == [handle1]
+    assert ep.deferred_tool_mounters == []

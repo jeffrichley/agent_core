@@ -189,7 +189,13 @@ async def test_wire_endpoints_raises_on_unknown_orchestrator_name(tmp_path):
     mcp_endpoint = ClaudeCodeMCPEndpoint(name="pepper", mount="/mcp/pepper")
     services = RunnerServices(notify_broker=NotificationBroker())
 
-    with pytest.raises(ValueError, match="briefs_orchestrator='not.a.real.orch'"):
+    with pytest.raises(
+        ValueError,
+        match=(
+            r"briefs_orchestrator='not\.a\.real\.orch'.*"
+            r"Available BriefsOrchestratorEndpoint names: \[\]"
+        ),
+    ):
         wire_endpoints_after_registration(
             endpoints={"pepper": mcp_endpoint},
             raw_endpoint_configs={
@@ -215,7 +221,13 @@ async def test_wire_endpoints_raises_when_orchestrator_name_points_at_wrong_type
     other_endpoint = ClaudeCodeMCPEndpoint(name="not-an-orchestrator", mount="/mcp/other")
     services = RunnerServices(notify_broker=NotificationBroker())
 
-    with pytest.raises(ValueError, match="not a BriefsOrchestratorEndpoint"):
+    with pytest.raises(
+        ValueError,
+        match=(
+            r"not a BriefsOrchestratorEndpoint.*"
+            r"Available BriefsOrchestratorEndpoint names: \[\]"
+        ),
+    ):
         wire_endpoints_after_registration(
             endpoints={
                 "pepper": mcp_endpoint,

@@ -143,6 +143,16 @@ class BriefsOrchestratorEndpoint:
             without metadata cannot be routed and is logged as a failure.
         default_timeout_seconds: Per-fetcher timeout when the gather config
             entry doesn't specify one. Defaults to 300s (5 minutes).
+        destination_paths: Additional directories to scan for ``Destination``
+            implementations. Built-in destinations (``discord_embed``,
+            ``markdown_file``) are always loaded from the package's own
+            ``destinations/`` directory and are prepended to
+            ``destination_paths``. Operator-supplied paths cannot redefine
+            a built-in ``type_id`` — :func:`discover_implementations`
+            raises ``LoaderError`` on duplicate ``type_id``. Operators who
+            need to replace a built-in should fork the framework or open
+            an issue (a future ``include_builtin_destinations: bool``
+            opt-out is the natural extension).
     """
 
     def __init__(
