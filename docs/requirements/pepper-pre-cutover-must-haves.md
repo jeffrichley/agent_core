@@ -28,9 +28,9 @@ Status values: **Not started · In progress · Implementation complete · Verifi
 | 06 | [The vault stays the vault](pepper-cutover-06-vault-continuity.md)                           | Critical | Implementation complete   |
 | 07 | [SessionStart + UserPromptSubmit hook fidelity](pepper-cutover-07-hook-fidelity.md)          | High     | Implementation complete   |
 | 08 | [Notification surface I can actually see](pepper-cutover-08-notification-surface.md)         | High     | Implementation complete   |
-| 09 | [Brief framework v1](../superpowers/specs/2026-05-04-brief-framework-design.md)              | High     | Implementation complete (framework); 2 follow-ups gate Verified — see playbook |
+| 09 | [Brief framework v1](../superpowers/specs/2026-05-04-brief-framework-design.md)              | High     | Implementation complete (framework + MCP wiring); briefs-author skill on Jeff |
 
-**Cutover gate:** every row reaches **Verified** before Pepper's live runtime flips to agent-core. #01, #02, #06 are the non-negotiables; the rest are the working-functional set. **#09 was added post-epic** as a ninth ticket once the brief-framework design landed; it sits in the working-functional set alongside #03/#04/#05/#07/#08. Two cutover-gate-blocking follow-ups remain on #09 (cross-endpoint MCP tool mounting + Pepper-facing briefs-author skill) — see [`09-brief-framework.md`](../cutover/test-playbooks/09-brief-framework.md) §"Cutover-gate-blocking follow-ups".
+**Cutover gate:** every row reaches **Verified** before Pepper's live runtime flips to agent-core. #01, #02, #06 are the non-negotiables; the rest are the working-functional set. **#09 was added post-epic** as a ninth ticket once the brief-framework design landed; it sits in the working-functional set alongside #03/#04/#05/#07/#08. The cross-endpoint MCP tool mounting follow-up landed in `0660b41` + `975c31d`; the remaining cutover-gate-blocking follow-up on #09 is the Pepper-facing briefs-author skill (on Jeff's plate) — see [`09-brief-framework.md`](../cutover/test-playbooks/09-brief-framework.md) §"Cutover-gate-blocking follow-ups".
 
 ---
 
