@@ -160,13 +160,15 @@ class BriefsOrchestratorEndpoint:
 
     @property
     def sessions(self) -> dict[str, ComposeSession]:
-        """Deprecated. Returns a live view of active (non-consumed) sessions.
+        """Deprecated. Returns a snapshot of active (non-consumed, non-expired) sessions.
 
         Preserved for T9 test API compatibility; T13+ should use
-        :attr:`registry` directly. Expired sessions are filtered out by
-        the registry's lazy sweep on access.
+        :attr:`registry` directly. Routes through
+        :meth:`SessionRegistry.items_active` so expired sessions are
+        excluded — callers should never see a token the registry would
+        refuse on lookup.
         """
-        return {tok: s for tok, s in self._registry._sessions.items() if not s.consumed}
+        return dict(self._registry.items_active())
 
     # ---- Bus endpoint protocol ----
     async def start(self, bus: BusHandle) -> None:
@@ -314,9 +316,9 @@ class BriefsOrchestratorEndpoint:
         try:
             await self._handle.publish(compose_env)
         except Exception:
-            # Best-effort cleanup; if the token isn't there for some reason
-            # (cleanup_expired ran between create and publish), leave it.
-            self._registry._sessions.pop(session_token, None)
+            # Best-effort cleanup; delete() is idempotent so a no-op return
+            # (e.g., cleanup_expired ran between create and publish) is fine.
+            self._registry.delete(session_token)
             raise
         log.info(
             "BriefsOrchestrator: composed brief brief_type=%s session_token=%s target=%s",

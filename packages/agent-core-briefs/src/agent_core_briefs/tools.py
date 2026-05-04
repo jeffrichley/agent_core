@@ -150,15 +150,23 @@ async def compress_sections(
     section_ids: list[str],
     target_total_chars: int,
 ) -> dict:
-    """Suggest compression for the given sections to fit a budget.
+    """Suggest compression budgets for the given sections.
 
-    v1 strategy: proportional split. Each section's weight is its summed
-    ``max_chars`` across required fields (or ``_DEFAULT_BUDGET_WEIGHT``
-    when no field has a cap). Budgets sum to ``target_total_chars``
-    modulo rounding; the last allocation absorbs the rounding remainder
-    so the sum lands exact.
+    Strategy: each section's weight is the sum of ``max_chars`` across
+    *all* of its fields that have a ``max_chars`` set (not just required
+    fields — capping at the spec's stated bound is the right per-section
+    weight). Sections with no max-chars-bounded fields fall back to a
+    default weight of ``_DEFAULT_BUDGET_WEIGHT`` (500). Budgets are split
+    proportionally to weight so ``sum(allocations) == target_total_chars``
+    exactly — the last section absorbs the rounding remainder.
 
     A ``target_total_chars`` of 0 returns 0-budgets across all sections.
+
+    Returns:
+        ``{"target_total_chars": 1500,
+        "allocations": [{"section_id": "...", "budget": 200}, ...]}``
+
+    The agent does the actual compression — this tool only allocates.
     """
     session = registry.get(token)
 

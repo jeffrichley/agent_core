@@ -8,6 +8,7 @@ stub fetchers.
 
 from __future__ import annotations
 
+import asyncio
 import uuid
 from datetime import UTC, datetime
 from pathlib import Path
@@ -613,6 +614,38 @@ async def test_registry_seam_returns_session_for_token(playbook_path, gather_yam
     assert via_registry.created_at is not None
     assert via_registry.colors_palette  # populated from playbook
     assert via_registry.sections  # resolved sections list
+
+
+@pytest.mark.asyncio
+async def test_sessions_shim_excludes_expired_sessions(playbook_path, gather_yaml, fetcher_catalog):
+    """The deprecated ``sessions`` shim must filter expired sessions, not
+    just consumed. Otherwise callers see tokens the registry would refuse
+    on lookup. Routes through ``registry.items_active`` for honest output.
+    """
+    handle = _RecordingHandle()
+    # Tiny TTL so a single asyncio.sleep ages the session past expiry.
+    ep = BriefsOrchestratorEndpoint(
+        name="briefs.orchestrator",
+        playbooks_path=playbook_path.parent,
+        vars_map={"gather_config_path": str(gather_yaml)},
+        fetcher_catalog=fetcher_catalog,
+        default_target_agent="pepper",
+        session_ttl_seconds=0.01,
+    )
+    await ep.start(handle)
+    try:
+        req = _make_brief_request(to="briefs.orchestrator", env_id="exp-1")
+        await ep.deliver(req)
+        # Confirm the session is briefly visible before expiring.
+        composed = [e for e in handle.published if e.payload.type == "ComposeBrief"]
+        token = composed[0].payload.data["session_token"]
+        # Sleep past the TTL.
+        await asyncio.sleep(0.05)
+        # Shim must exclude the expired session — same contract as the registry.
+        assert token not in ep.sessions
+        assert ep.sessions == {}
+    finally:
+        await ep.stop()
 
 
 @pytest.mark.asyncio

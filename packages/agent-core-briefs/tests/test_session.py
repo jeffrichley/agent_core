@@ -163,3 +163,50 @@ def test_cleanup_expired_with_explicit_now():
     assert registry.cleanup_expired(now=base + timedelta(seconds=30)) == 1
     with pytest.raises(SessionNotFoundError):
         registry.get(token)
+
+
+def test_delete_removes_session_and_returns_it():
+    """delete() returns the removed session and subsequent get() raises NotFound."""
+    registry = SessionRegistry(ttl_seconds=1800)
+    session = _make_session()
+    token = registry.create(session)
+    removed = registry.delete(token)
+    assert removed is session
+    with pytest.raises(SessionNotFoundError):
+        registry.get(token)
+
+
+def test_delete_unknown_token_returns_none():
+    """delete() on a token that was never registered returns None (no raise)."""
+    registry = SessionRegistry(ttl_seconds=1800)
+    assert registry.delete("nonexistent") is None
+
+
+def test_delete_is_idempotent():
+    """A second delete on the same token is a no-op returning None."""
+    registry = SessionRegistry(ttl_seconds=1800)
+    token = registry.create(_make_session())
+    registry.delete(token)
+    assert registry.delete(token) is None  # second delete is a no-op
+
+
+def test_items_active_excludes_consumed_and_expired():
+    """items_active() returns only sessions that get() would still resolve."""
+    registry = SessionRegistry(ttl_seconds=10.0)
+    # Active token — fresh, not consumed.
+    active_token = registry.create(_make_session())
+    # Consumed token — fresh but consumed.
+    consumed_token = registry.create(_make_session())
+    registry.consume(consumed_token)
+    # Expired token — created with an old timestamp.
+    expired_token = registry.create(
+        _make_session(created_at=datetime.now(UTC) - timedelta(seconds=60))
+    )
+
+    items = dict(registry.items_active())
+    assert active_token in items
+    assert consumed_token not in items
+    assert expired_token not in items
+    # Snapshot semantics: returned object is a list (not a live view).
+    snapshot = registry.items_active()
+    assert isinstance(snapshot, list)

@@ -129,6 +129,15 @@ class SessionRegistry:
             del self._sessions[tok]
         return len(expired)
 
+    def delete(self, token: str) -> ComposeSession | None:
+        """Remove a session by token, idempotent.
+
+        Returns the removed session (or ``None`` if absent). Used by the
+        orchestrator's publish-failure rewind and by T13's submit-consume
+        failure paths so they don't have to reach into ``_sessions``.
+        """
+        return self._sessions.pop(token, None)
+
     # ---- accessors ----
     def get(self, token: str) -> ComposeSession:
         """Look up a non-consumed, non-expired session.
@@ -148,6 +157,20 @@ class SessionRegistry:
         if session.consumed:
             raise SessionConsumedError(token)
         return session
+
+    def items_active(self) -> list[tuple[str, ComposeSession]]:
+        """Return ``(token, session)`` pairs for non-expired, non-consumed sessions.
+
+        Snapshot semantics — callers can iterate the returned list without
+        worrying about concurrent mutation of the underlying registry.
+        Used by the orchestrator's ``sessions`` backward-compat shim.
+        """
+        now = datetime.now(UTC)
+        return [
+            (tok, sess)
+            for tok, sess in self._sessions.items()
+            if not sess.consumed and not self._is_expired(sess, now)
+        ]
 
     def __len__(self) -> int:
         """Count active (non-expired, non-consumed) sessions.
