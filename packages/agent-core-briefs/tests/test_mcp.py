@@ -246,6 +246,25 @@ async def test_compose_brief_explicit_when_passes_through(orchestrator):
     assert session.when == custom
 
 
+@pytest.mark.asyncio
+async def test_compose_brief_assigns_unique_correlation_id_per_call(orchestrator):
+    """Two self-launches of the same brief_type must produce distinct
+    correlation_ids on the registered sessions, so audit events are
+    disambiguable. Regression repro for the sentinel-collision bug
+    (the previous implementation used a static ``compose_brief:<brief_type>``
+    sentinel that collided under concurrency).
+    """
+    result1 = await compose_brief(orchestrator=orchestrator, brief_type="morning_brief")
+    result2 = await compose_brief(orchestrator=orchestrator, brief_type="morning_brief")
+
+    s1 = orchestrator.registry.get(result1["session_token"])
+    s2 = orchestrator.registry.get(result2["session_token"])
+    assert s1.correlation_id != s2.correlation_id
+    # Sanity: each looks like a uuid hex (32 chars, all lowercase hex).
+    assert len(s1.correlation_id) == 32
+    assert len(s2.correlation_id) == 32
+
+
 # ---- register_briefs_tools tests ------------------------------------------
 
 
@@ -272,6 +291,23 @@ async def test_register_briefs_tools_registers_seven_tools(orchestrator, tmp_pat
         "add_extension_section",
         "submit_brief",
     }
+
+
+def test_register_briefs_tools_rejects_none_bus_handle(orchestrator, tmp_path):
+    """bus_handle is non-optional — destinations like discord_embed call
+    ``bus_handle.publish`` to fan out, so a ``None`` here is a programming
+    error (caught at registration time, not at first delivery attempt).
+    """
+    mcp = FastMCP("test-server")
+    audit = AuditLog(tmp_path / "audit.jsonl")
+    with pytest.raises(TypeError, match="bus_handle is required"):
+        register_briefs_tools(
+            mcp=mcp,
+            orchestrator=orchestrator,
+            bus_handle=None,  # type: ignore[arg-type]
+            audit_log=audit,
+            destination_factories={},
+        )
 
 
 def _structured(call_result) -> dict:

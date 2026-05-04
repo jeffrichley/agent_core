@@ -44,6 +44,7 @@ Design notes
 
 from __future__ import annotations
 
+import uuid
 from collections.abc import Callable
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
@@ -137,18 +138,14 @@ async def compose_brief(
             scope=scope,
             when=when_resolved,
             target_agent=target_agent,
-            # No bus envelope on the self-launch path → no
-            # correlation_id from outside. Use the session_token
-            # surrogate downstream tools can correlate against by
-            # passing the session_token itself as the correlation_id.
-            # build_compose_session generates the token before stamping
-            # the session, so we use a sentinel string here and the
-            # session's correlation_id is recorded as such.
-            correlation_id=f"compose_brief:{brief_type}",
-            request_metadata=None,
+            # Each self-launch gets a fresh correlation_id so concurrent
+            # invocations of the same brief_type produce distinguishable
+            # audit events (sentinel strings would collide).
+            correlation_id=uuid.uuid4().hex,
+            request_metadata={},
         )
     except FileNotFoundError as exc:
-        raise ValueError(str(exc)) from exc
+        raise ValueError(f"unknown brief_type {brief_type!r}: {exc}") from exc
     return compose_data
 
 
@@ -156,7 +153,7 @@ def register_briefs_tools(
     *,
     mcp: FastMCP,
     orchestrator: BriefsOrchestratorEndpoint,
-    bus_handle: BusHandle | None,
+    bus_handle: BusHandle,
     audit_log: AuditLog,
     destination_factories: dict[str, Callable[[], Destination]],
 ) -> None:
@@ -182,16 +179,36 @@ def register_briefs_tools(
         orchestrator: Provides the session registry + the playbook
             path / fetcher catalog used by ``compose_brief``.
         bus_handle: Threaded into each ``destination.deliver`` call by
-            ``submit_brief``. May be ``None`` when the orchestrator's
-            destinations don't publish through the bus (e.g., a
-            markdown-file-only configuration).
+            ``submit_brief``. Required (non-nullable) — destinations
+            like ``discord_embed`` call ``bus_handle.publish`` to fan
+            out, so a ``None`` here would crash on first delivery
+            attempt rather than degrade gracefully.
         audit_log: Receives ``submit.*`` events from ``submit_brief``.
         destination_factories: Map ``type_id → factory``; T16 builds
             this from the plugin loader at runner-construction time.
+
+    Raises:
+        TypeError: if ``bus_handle`` is ``None``. Destinations may
+            publish, so a ``None`` here is a programming error
+            (caught at registration time, not at first delivery).
     """
+    if bus_handle is None:
+        raise TypeError("register_briefs_tools: bus_handle is required (destinations may publish)")
     registry = orchestrator.registry
 
-    @mcp.tool(name="compose_brief")
+    @mcp.tool(
+        name="compose_brief",
+        description=(
+            "Self-launch a brief composition. Runs the gather pipeline "
+            "(same as a bus-driven BriefRequest) and returns a session_token "
+            "plus the gathered context. Call list_sections + get_section_spec "
+            "next to learn what to fill in, then submit_brief once every "
+            "required section is composed. Returns: {brief_type, scope, when, "
+            "session_token (32-char hex), playbook_path, voice, context "
+            "(namespaced gather output), sections_required, sections_optional, "
+            "sections_conditional_active}."
+        ),
+    )
     async def _tool_compose_brief(brief_type: str, scope: str | None = None) -> dict[str, Any]:
         """Self-launch a brief composition.
 
@@ -207,24 +224,60 @@ def register_briefs_tools(
             scope=scope,
         )
 
-    @mcp.tool(name="list_sections")
+    @mcp.tool(
+        name="list_sections",
+        description=(
+            "List the section IDs the brief expects: required (must be "
+            "submitted), optional (may be submitted), and conditional_active "
+            "(gated truthy by the playbook's when expressions and treated as "
+            "required if required_when_active). Returns: {required, optional, "
+            "conditional_active, brief_type, voice}."
+        ),
+    )
     async def _tool_list_sections(token: str) -> dict[str, Any]:
         """List the section IDs the brief expects (required, optional, conditional)."""
         return await _list_sections(registry, token)
 
-    @mcp.tool(name="get_section_spec")
+    @mcp.tool(
+        name="get_section_spec",
+        description=(
+            "Return one section's full spec: title, resolved int color, "
+            "required flag, and per-field specs (name, required, max_chars, "
+            "guidance). Use this to learn what fields to populate before "
+            "drafting content. Raises if section_id is not in the brief."
+        ),
+    )
     async def _tool_get_section_spec(token: str, section_id: str) -> dict[str, Any]:
         """Return the section's spec (title, color, fields, guidance)."""
         return await _get_section_spec(registry, token, section_id=section_id)
 
-    @mcp.tool(name="validate_section")
+    @mcp.tool(
+        name="validate_section",
+        description=(
+            "Validate a draft for one section before submit. Checks: every "
+            "required field is present and non-empty, no field exceeds "
+            "max_chars, no extra fields beyond the spec. fields shape: "
+            "[{name, value}, ...]. Returns: {section_id, valid, issues "
+            "(list of human-readable strings)}. Use this iteratively while "
+            "composing — validation also runs at submit time."
+        ),
+    )
     async def _tool_validate_section(
         token: str, section_id: str, fields: list[dict[str, Any]]
     ) -> dict[str, Any]:
         """Validate the agent's draft for one section. Returns ``valid`` + ``issues``."""
         return await _validate_section(registry, token, section_id=section_id, fields=fields)
 
-    @mcp.tool(name="compress_sections")
+    @mcp.tool(
+        name="compress_sections",
+        description=(
+            "Suggest per-section character budgets when the total brief is "
+            "too long. Allocates target_total_chars proportionally to each "
+            "section's max_chars-weighted size. Returns: {target_total_chars, "
+            "allocations: [{section_id, budget}, ...]}. The agent does the "
+            "actual rewriting — this tool only allocates."
+        ),
+    )
     async def _tool_compress_sections(
         token: str, section_ids: list[str], target_total_chars: int
     ) -> dict[str, Any]:
@@ -236,7 +289,16 @@ def register_briefs_tools(
             target_total_chars=target_total_chars,
         )
 
-    @mcp.tool(name="add_extension_section")
+    @mcp.tool(
+        name="add_extension_section",
+        description=(
+            "Append an ad-hoc section the playbook didn't predefine (e.g., "
+            "a one-off 'today's blockers' callout). Color is int decimal or "
+            "a palette name. Raises if section_id collides with a playbook "
+            "section or a previously-added extension. Extensions render "
+            "alongside playbook sections at submit time."
+        ),
+    )
     async def _tool_add_extension_section(
         token: str,
         section_id: str,
@@ -254,7 +316,19 @@ def register_briefs_tools(
             fields=fields,
         )
 
-    @mcp.tool(name="submit_brief")
+    @mcp.tool(
+        name="submit_brief",
+        description=(
+            "Submit the composed brief for delivery. Validates all required "
+            "sections + fields are present, then fans out to all configured "
+            "destinations (Discord, markdown file, etc.) best-effort. Token "
+            "is consumed one-shot — call only after composing every required "
+            "section. Partial success is possible (some destinations succeed, "
+            "others fail). Returns: {success: bool, validation_issues: "
+            "[{section_id, code, message}, ...], deliveries: "
+            "[{destination_type, success, ref, error}, ...]}."
+        ),
+    )
     async def _tool_submit_brief(token: str, sections: list[dict[str, Any]]) -> dict[str, Any]:
         """Submit the composed brief — validate, fan out to destinations, audit."""
         result = await _submit_brief(
@@ -262,7 +336,7 @@ def register_briefs_tools(
             token=token,
             sections=sections,
             destination_factories=destination_factories,
-            bus_handle=bus_handle,  # type: ignore[arg-type]
+            bus_handle=bus_handle,
             audit_log=audit_log,
         )
         # SubmitResult is a frozen dataclass — flatten to a JSON-friendly
