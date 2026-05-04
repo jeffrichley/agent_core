@@ -52,8 +52,9 @@ def test_bus_log_show_requires_agent(sample_log: Path):
         "--date", "2026-05-03",
         "--log-root", str(sample_log),
     ])
-    assert result.exit_code != 0
-    assert "agent" in result.output.lower() or "agent" in (result.stderr if hasattr(result, "stderr") else "")
+    assert result.exit_code == 2
+    assert "Missing option" in result.output
+    assert "--agent" in result.output
 
 
 def test_bus_log_show_projected_default_filters_to_agent(sample_log: Path):
@@ -102,6 +103,8 @@ def test_bus_log_show_limit_returns_last_n(sample_log: Path):
     assert result.exit_code == 0
     lines = [line for line in result.output.splitlines() if line.strip()]
     assert len(lines) == 1
+    parsed = json.loads(lines[0])
+    assert parsed["cid"] == "cb"
 
 
 def test_bus_log_show_missing_file_yields_no_output(tmp_path: Path):
@@ -115,3 +118,72 @@ def test_bus_log_show_missing_file_yields_no_output(tmp_path: Path):
     assert result.exit_code == 0
     # Empty stdout is the right behavior: a quiet day, not an error.
     assert result.output.strip() == ""
+
+
+def test_bus_log_show_default_date_uses_configured_timezone(sample_log: Path, monkeypatch):
+    """Default --date is today in --timezone, matching the writer's local-tz
+    rollover. At 02:00 UTC on May 4, an Eastern operator's 'today' is May 3
+    (21:30 EDT May 3 = 01:30 UTC May 4). The CLI default must read the May 3
+    file, not May 4 — otherwise it shows nothing despite minutes-old traffic."""
+    import agent_core.bus_log.cli as cli_module
+
+    class _FakeDatetime:
+        @staticmethod
+        def now(tz):
+            # 02:00 UTC May 4 — Eastern is still May 3 (22:00 EDT May 3).
+            return datetime(2026, 5, 4, 2, 0, 0, tzinfo=UTC)
+
+    # Patch only datetime.now usage in the CLI module.
+    monkeypatch.setattr(cli_module, "datetime", _FakeDatetime)
+
+    runner = CliRunner()
+    result = runner.invoke(app, [
+        "bus-log", "show",
+        "--agent", "pepper",
+        "--log-root", str(sample_log),
+        "--timezone", "US/Eastern",
+    ])
+    assert result.exit_code == 0
+    # The fixture's file is "2026-05-03.jsonl" — the default date must resolve to it.
+    lines = [line for line in result.output.splitlines() if line.strip()]
+    assert len(lines) == 2  # the May 3 file's pepper rows
+
+
+def test_bus_log_show_rejects_invalid_timezone(sample_log: Path):
+    """A typo'd --timezone is a CLI boundary error — surface it loudly,
+    don't silently produce empty output via swallowed projector errors."""
+    runner = CliRunner()
+    result = runner.invoke(app, [
+        "bus-log", "show",
+        "--agent", "pepper",
+        "--date", "2026-05-03",
+        "--log-root", str(sample_log),
+        "--timezone", "Atlantis/Lemuria",
+    ])
+    assert result.exit_code != 0
+    assert "Atlantis/Lemuria" in result.output or "timezone" in result.output.lower()
+
+
+def test_bus_log_show_rejects_limit_zero(sample_log: Path):
+    runner = CliRunner()
+    result = runner.invoke(app, [
+        "bus-log", "show",
+        "--agent", "pepper",
+        "--date", "2026-05-03",
+        "--log-root", str(sample_log),
+        "--limit", "0",
+    ])
+    assert result.exit_code != 0
+    assert "limit" in result.output.lower()
+
+
+def test_bus_log_show_rejects_invalid_date_format(sample_log: Path):
+    runner = CliRunner()
+    result = runner.invoke(app, [
+        "bus-log", "show",
+        "--agent", "pepper",
+        "--date", "2026-13-99",
+        "--log-root", str(sample_log),
+    ])
+    assert result.exit_code != 0
+    assert "date" in result.output.lower() or "2026-13-99" in result.output

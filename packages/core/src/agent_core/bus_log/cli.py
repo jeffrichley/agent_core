@@ -6,6 +6,7 @@ import json
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Annotated
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 import typer
 
@@ -54,8 +55,28 @@ def show(
     """
     bootstrap_default_projectors()
 
+    try:
+        ZoneInfo(timezone)
+    except ZoneInfoNotFoundError as exc:
+        raise typer.BadParameter(
+            f"Unknown timezone: {timezone}",
+            param_hint="--timezone",
+        ) from exc
+
+    if date is not None:
+        try:
+            datetime.strptime(date, "%Y-%m-%d")
+        except ValueError as exc:
+            raise typer.BadParameter(
+                f"--date must be YYYY-MM-DD: {date}",
+                param_hint="--date",
+            ) from exc
+
+    if limit is not None and limit < 1:
+        raise typer.BadParameter("--limit must be >= 1", param_hint="--limit")
+
     root = log_root if log_root is not None else default_log_root()
-    target_date = date or datetime.now(UTC).date().isoformat()
+    target_date = date or datetime.now(UTC).astimezone(ZoneInfo(timezone)).date().isoformat()
     path = root / f"{target_date}.jsonl"
 
     if raw:
