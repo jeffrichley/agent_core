@@ -13,6 +13,10 @@
 #      and emits "Session started Xm ago" / "Last user turn Ym ago" deltas.
 #   3. PreCompact/SessionEnd: HandoffWriter enqueues a daemon job. The daemon
 #      worker generates handoff.md and writes handoff-status.json.
+#   4. pre_publish: every envelope on the bus (Discord inbound, Pepper's
+#      replies, scheduler triggers, agent-to-agent) is appended to
+#      ~/.agent-core/bus/raw/<date>.jsonl. Pepper's 3 AM reflection job
+#      reads this log via agent_core.bus_log.iter_for_agent.
 #
 # .claude/settings.json hooks should point to:
 #   "command": "uv run agent-core hooks run SessionStart"
@@ -32,6 +36,17 @@ endpoints:
     name: handoff-jobs
     params:
       mount: /internal/handoff-jobs
+
+bus_hooks:
+  pre_publish:
+    # Cutover #04: every published envelope (Discord, scheduler, relay,
+    # cross-agent) lands as JSONL in the daemon-owned daily log. Each
+    # agent's reflection job (Pepper's 3 AM cron) filters this log to
+    # its perspective via agent_core.bus_log.iter_for_agent. Defaults:
+    # log_root ~/.agent-core/bus/raw, timezone US/Eastern, skip_kinds
+    # ["Acknowledgment","Progress","Cancellation"].
+    - type: builtin.daily_raw_jsonl
+      params: {}
 
 pipelines:
   SessionStart:

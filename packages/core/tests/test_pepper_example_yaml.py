@@ -94,3 +94,21 @@ class TestPepperExampleYaml:
         results = pepper_pipeline.run("UserPromptSubmit", {"session_id": "yaml-tripwire"})
         rendered = pepper_pipeline.render(results)
         assert "## Current Time" in rendered
+
+
+class TestPepperExampleYamlBusLog:
+    """Cutover #04 wiring tripwire."""
+
+    def test_bus_hooks_pre_publish_registers_daily_raw_jsonl(self):
+        """The example yaml must register builtin.daily_raw_jsonl on
+        pre_publish so Pepper's bus traffic is captured for tomorrow's
+        reflection summary. If a future refactor drops this entry, the
+        test fails — Pepper would silently stop logging her day."""
+        import yaml as pyyaml
+        raw = pyyaml.safe_load(_EXAMPLE_YAML.read_text(encoding="utf-8"))
+        bus_hooks = (raw or {}).get("bus_hooks", {}) or {}
+        pre_publish = bus_hooks.get("pre_publish") or []
+        types = [entry.get("type") for entry in pre_publish]
+        assert "builtin.daily_raw_jsonl" in types, (
+            "Cutover #04 expects the daily JSONL hook on pre_publish"
+        )
