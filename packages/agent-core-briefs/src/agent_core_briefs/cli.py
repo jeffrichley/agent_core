@@ -97,7 +97,7 @@ def _resolve_when(when: str | None) -> datetime:
         parsed = datetime.fromisoformat(when)
     except ValueError as exc:
         raise typer.BadParameter(
-            f"--when must be ISO-8601: {when}",
+            f"must be ISO-8601: {when}",
             param_hint="--when",
         ) from exc
     return parsed if parsed.tzinfo else parsed.replace(tzinfo=UTC)
@@ -113,13 +113,13 @@ def _parse_vars(entries: list[str] | None) -> dict[str, str]:
     for raw in entries or []:
         if "=" not in raw:
             raise typer.BadParameter(
-                f"--var must be KEY=VALUE, got {raw!r}",
+                f"must be KEY=VALUE, got {raw!r}",
                 param_hint="--var",
             )
         key, _, value = raw.partition("=")
         if not key:
             raise typer.BadParameter(
-                f"--var has empty KEY: {raw!r}",
+                f"empty KEY: {raw!r}",
                 param_hint="--var",
             )
         out[key] = value
@@ -180,9 +180,12 @@ def compose(
         float,
         typer.Option(
             "--timeout",
-            help="Default per-fetcher timeout in seconds (gather config can override).",
+            help=(
+                "Default per-fetcher timeout in seconds (matches production orchestrator "
+                "default; gather config can override per-fetcher)."
+            ),
         ),
-    ] = 30.0,
+    ] = 300.0,
 ) -> None:
     """Run a brief composition in-process and print the ComposeBrief data dict.
 
@@ -309,8 +312,11 @@ def test_fetcher(
     ] = None,
     timeout: Annotated[
         float,
-        typer.Option("--timeout", help="Fetcher timeout in seconds."),
-    ] = 30.0,
+        typer.Option(
+            "--timeout",
+            help="Fetcher timeout in seconds (matches production orchestrator default of 300s).",
+        ),
+    ] = 300.0,
 ) -> None:
     """Run a single fetcher in isolation; print its namespace-merged context.
 

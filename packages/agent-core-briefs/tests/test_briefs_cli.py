@@ -46,6 +46,26 @@ STUB_FETCHER_SOURCE = textwrap.dedent(
 ).strip()
 
 
+RAISING_FETCHER_SOURCE = textwrap.dedent(
+    '''
+    """Stub fetcher whose fetch() raises — exercises the _errors path."""
+
+    from datetime import datetime
+
+
+    class RaisingFetcher:
+        type_id = "stub.fail"
+        namespace = "stub_fail_ns"
+
+        def __init__(self) -> None:
+            pass
+
+        async def fetch(self, config: dict, when: datetime) -> dict:
+            raise RuntimeError("boom")
+    '''
+).strip()
+
+
 # ---- fixtures ----
 
 
@@ -63,6 +83,15 @@ def empty_fetcher_dir(tmp_path: Path) -> Path:
     """A directory with no fetchers in it."""
     d = tmp_path / "no_fetchers"
     d.mkdir()
+    return d
+
+
+@pytest.fixture
+def raising_fetcher_dir(tmp_path: Path) -> Path:
+    """Directory holding a single fetcher whose ``fetch()`` raises."""
+    d = tmp_path / "raising_fetchers"
+    d.mkdir()
+    (d / "raising_fetcher.py").write_text(RAISING_FETCHER_SOURCE + "\n", encoding="utf-8")
     return d
 
 
@@ -297,6 +326,36 @@ def test_fetchers_test_namespace_override(fetcher_dir: Path, fetcher_config_yaml
     parsed = json.loads(result.output)
     assert "overridden" in parsed
     assert "stub_ns" not in parsed
+
+
+def test_fetchers_test_surfaces_fetcher_error_in_errors_namespace(
+    raising_fetcher_dir: Path, fetcher_config_yaml: Path
+):
+    """A fetcher that raises must surface via ``_errors`` — exit code stays 0."""
+    runner = CliRunner()
+    result = runner.invoke(
+        app,
+        [
+            "briefs",
+            "fetchers",
+            "test",
+            "--type",
+            "stub.fail",
+            "--config",
+            str(fetcher_config_yaml),
+            "--fetcher-path",
+            str(raising_fetcher_dir),
+            "--when",
+            "2026-05-04T12:00:00+00:00",
+        ],
+    )
+    assert result.exit_code == 0, result.output
+    parsed = json.loads(result.output)
+    assert "_errors" in parsed
+    assert "stub.fail" in parsed["_errors"]
+    err_entry = parsed["_errors"]["stub.fail"]
+    assert err_entry["type"] == "RuntimeError"
+    assert "error" in err_entry
 
 
 # ---- briefs compose ----
