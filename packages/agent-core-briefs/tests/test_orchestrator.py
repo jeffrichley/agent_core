@@ -9,6 +9,7 @@ stub fetchers.
 from __future__ import annotations
 
 import asyncio
+import textwrap
 import uuid
 from datetime import UTC, datetime
 from pathlib import Path
@@ -669,3 +670,137 @@ async def test_deliver_before_start_raises():
     )
     with pytest.raises(RuntimeError, match="not started"):
         await ep.deliver(env)
+
+
+# ---- T16 constructor branches ----
+
+# A self-contained stub fetcher module for the ``fetcher_paths`` happy-path.
+# Kept inline (rather than imported from test_briefs_cli.py) so this test
+# file remains independently runnable. The class layout matches the
+# ``Fetcher`` protocol (``type_id``, ``namespace``, async ``fetch``) so
+# ``discover_implementations`` picks it up.
+STUB_FETCHER_SOURCE = textwrap.dedent(
+    '''
+    """Stub fetcher used by the orchestrator constructor tests."""
+
+    from datetime import datetime
+
+
+    class StubFetcher:
+        type_id = "stub.ctor"
+        namespace = "stub_ctor_ns"
+
+        def __init__(self) -> None:
+            pass
+
+        async def fetch(self, config: dict, when: datetime) -> dict:
+            return {"echo": config.get("echo", "default")}
+    '''
+).strip()
+
+
+class TestBriefsOrchestratorEndpointConstruction:
+    """T16 added two constructor aliases — ``vars=`` (alias for ``vars_map=``)
+    and ``fetcher_paths=`` (alias for ``fetcher_catalog=``) — with
+    exactly-one-of validation for each pair. These tests pin the runner-
+    facing path so a future refactor that drops/renames either alias is
+    caught directly rather than via downstream integration failure."""
+
+    def test_vars_alias_constructs_and_populates_vars_map(self, tmp_path: Path) -> None:
+        """Passing ``vars={...}`` (the yaml-idiomatic alias) instead of
+        ``vars_map={...}`` constructs successfully, and the orchestrator's
+        internal ``_vars_map`` reflects the value verbatim. ``fetcher_catalog``
+        is still required, so we pass an empty catalog to satisfy that branch."""
+        ep = BriefsOrchestratorEndpoint(
+            name="briefs.orchestrator",
+            playbooks_path=tmp_path,
+            vars={"agent_root": "/tmp/x"},
+            fetcher_catalog={},
+        )
+        assert ep._vars_map == {"agent_root": "/tmp/x"}
+
+    def test_fetcher_paths_discovers_implementations(self, tmp_path: Path) -> None:
+        """Passing ``fetcher_paths=[<dir>]`` runs ``discover_implementations``
+        on construction and the resulting catalog is keyed by ``type_id``.
+        The stub module is written to a fresh tmp directory so the discovery
+        is deterministic and isolated from the rest of the test suite."""
+        fetcher_dir = tmp_path / "fetchers"
+        fetcher_dir.mkdir()
+        (fetcher_dir / "stub_fetcher.py").write_text(STUB_FETCHER_SOURCE + "\n", encoding="utf-8")
+
+        ep = BriefsOrchestratorEndpoint(
+            name="briefs.orchestrator",
+            playbooks_path=tmp_path,
+            vars_map={},
+            fetcher_paths=[fetcher_dir],
+        )
+
+        assert "stub.ctor" in ep._fetcher_catalog
+        cls = ep._fetcher_catalog["stub.ctor"]
+        # Round-trip: discovered class is the actual stub (matched on the
+        # public protocol surface).
+        assert getattr(cls, "type_id", None) == "stub.ctor"
+        assert getattr(cls, "namespace", None) == "stub_ctor_ns"
+
+    def test_both_vars_and_vars_map_raises(self, tmp_path: Path) -> None:
+        """Setting both ``vars=`` and ``vars_map=`` is ambiguous; the
+        orchestrator must refuse rather than silently pick one. The error
+        message names both flag identifiers so operators know what to drop."""
+        with pytest.raises(
+            ValueError,
+            match=r"pass exactly one of 'vars_map' or 'vars', not both",
+        ):
+            BriefsOrchestratorEndpoint(
+                name="briefs.orchestrator",
+                playbooks_path=tmp_path,
+                vars_map={"a": "1"},
+                vars={"b": "2"},
+                fetcher_catalog={},
+            )
+
+    def test_neither_vars_nor_vars_map_raises(self, tmp_path: Path) -> None:
+        """Omitting both ``vars=`` and ``vars_map=`` is also rejected — the
+        caller must pick exactly one. ``fetcher_catalog={}`` satisfies the
+        sibling exactly-one-of so the error we catch is the vars one."""
+        with pytest.raises(
+            ValueError,
+            match=r"'vars_map' \(or 'vars' alias\) is required",
+        ):
+            BriefsOrchestratorEndpoint(
+                name="briefs.orchestrator",
+                playbooks_path=tmp_path,
+                fetcher_catalog={},
+            )
+
+    def test_both_fetcher_catalog_and_fetcher_paths_raises(self, tmp_path: Path) -> None:
+        """Setting both ``fetcher_catalog=`` and ``fetcher_paths=`` is the
+        same kind of ambiguity (would the paths *add* to the catalog or
+        *shadow* it?). The orchestrator refuses with a message that names
+        both flags."""
+        fetcher_dir = tmp_path / "fetchers"
+        fetcher_dir.mkdir()
+        with pytest.raises(
+            ValueError,
+            match=r"pass exactly one of 'fetcher_catalog' or 'fetcher_paths', not both",
+        ):
+            BriefsOrchestratorEndpoint(
+                name="briefs.orchestrator",
+                playbooks_path=tmp_path,
+                vars_map={},
+                fetcher_catalog={},
+                fetcher_paths=[fetcher_dir],
+            )
+
+    def test_neither_fetcher_catalog_nor_fetcher_paths_raises(self, tmp_path: Path) -> None:
+        """Omitting both fetcher inputs leaves the orchestrator with nothing
+        to dispatch against; the constructor refuses up-front instead of
+        raising at first BriefRequest."""
+        with pytest.raises(
+            ValueError,
+            match=r"one of 'fetcher_catalog' or 'fetcher_paths' is required",
+        ):
+            BriefsOrchestratorEndpoint(
+                name="briefs.orchestrator",
+                playbooks_path=tmp_path,
+                vars_map={},
+            )
