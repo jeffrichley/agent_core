@@ -17,6 +17,7 @@ from agent_core_briefs.orchestrator import (
     BriefsOrchestratorEndpoint,
     ComposeSession,
 )
+from agent_core_briefs.session import SessionRegistry
 
 from agent_core.bus.envelope import Envelope, EventPayload, TextMessagePayload
 
@@ -573,6 +574,45 @@ async def test_session_tokens_unique_and_registered(playbook_path, gather_yaml, 
     assert s1.playbook_path == playbook_path
     # Correlation_id stored on the session matches the originating request.
     assert s1.correlation_id == req1.correlation_id
+
+
+@pytest.mark.asyncio
+async def test_registry_seam_returns_session_for_token(playbook_path, gather_yaml, fetcher_catalog):
+    """T10 seam: ``ep.registry`` is a SessionRegistry and ``registry.get(token)``
+    returns the same in-flight ComposeSession that was published. T13 (submit
+    handler) uses this seam to consume sessions one-shot.
+    """
+    handle = _RecordingHandle()
+    ep = BriefsOrchestratorEndpoint(
+        name="briefs.orchestrator",
+        playbooks_path=playbook_path.parent,
+        vars_map={"gather_config_path": str(gather_yaml)},
+        fetcher_catalog=fetcher_catalog,
+        default_target_agent="pepper",
+    )
+    assert isinstance(ep.registry, SessionRegistry)
+
+    await ep.start(handle)
+    try:
+        req = _make_brief_request(to="briefs.orchestrator", env_id="reg-1")
+        await ep.deliver(req)
+    finally:
+        await ep.stop()
+
+    composed = [e for e in handle.published if e.payload.type == "ComposeBrief"]
+    assert len(composed) == 1
+    token = composed[0].payload.data["session_token"]
+
+    # Registry resolves the same session as the back-compat shim.
+    via_registry = ep.registry.get(token)
+    via_shim = ep.sessions[token]
+    assert via_registry is via_shim
+    assert via_registry.brief_type == "morning_brief"
+    # T10 added these fields — confirm they're populated.
+    assert via_registry.consumed is False
+    assert via_registry.created_at is not None
+    assert via_registry.colors_palette  # populated from playbook
+    assert via_registry.sections  # resolved sections list
 
 
 @pytest.mark.asyncio

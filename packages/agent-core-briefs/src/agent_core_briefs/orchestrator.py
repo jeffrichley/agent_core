@@ -66,18 +66,18 @@ via T3's ``discover_implementations``); the namespace from the gather config
 overrides the fetcher class's ``namespace`` attribute via T4's
 ``FetcherInvocation.namespace_override``.
 
-T10 will replace the in-memory ``_sessions`` dict with a TTL-aware
-``SessionRegistry``; T13 will add a submit handler that consumes the session
-and routes through destinations. T14 wires the ComposeBrief envelope to a
-direct MCP-tool surface so agents can invoke ``compose_brief`` themselves.
+T10 introduced :class:`agent_core_briefs.session.SessionRegistry` (TTL +
+one-shot consume) and the agent-tool surface in
+:mod:`agent_core_briefs.tools`. T13 adds a submit handler that consumes
+the session via ``registry.consume`` and routes through destinations.
+T14 wires the ComposeBrief envelope to a direct MCP-tool surface so
+agents can invoke ``compose_brief`` themselves.
 """
 
 from __future__ import annotations
 
 import logging
-import secrets
 import uuid
-from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -90,9 +90,11 @@ from agent_core_briefs.engine import FetcherInvocation, gather_context
 from agent_core_briefs.playbook import (
     Playbook,
     parse_playbook,
+    resolve_colors_for_sections,
     resolve_conditional_sections,
 )
 from agent_core_briefs.protocol import Fetcher
+from agent_core_briefs.session import ComposeSession, SessionRegistry
 
 if TYPE_CHECKING:
     from agent_core.bus.handle import BusHandle
@@ -100,27 +102,10 @@ if TYPE_CHECKING:
 log = logging.getLogger(__name__)
 
 
-@dataclass
-class ComposeSession:
-    """In-flight compose session tracked by the orchestrator.
-
-    T10 will move this to a dedicated session registry with TTL + agent-tool
-    integration. For v1 the orchestrator keeps sessions in a plain dict
-    keyed by ``session_token`` — see :attr:`BriefsOrchestratorEndpoint.sessions`.
-    """
-
-    brief_type: str
-    playbook_path: Path
-    voice: str
-    scope: str | None
-    when: datetime
-    context: dict[str, Any]
-    sections_required: list[str]
-    sections_optional: list[str]
-    sections_conditional_active: list[str]
-    target_agent: str
-    correlation_id: str
-    metadata: dict[str, Any] = field(default_factory=dict)
+# Backward-compat re-export: existing T9 tests import ComposeSession from
+# orchestrator. T10 moved the dataclass to session.py — keep the import
+# alias so consumers don't break.
+__all__ = ["BriefsOrchestratorEndpoint", "ComposeSession"]
 
 
 class BriefsOrchestratorEndpoint:
@@ -151,6 +136,7 @@ class BriefsOrchestratorEndpoint:
         fetcher_catalog: dict[str, type[Fetcher]],
         default_target_agent: str | None = None,
         default_timeout_seconds: float = 300.0,
+        session_ttl_seconds: float = 1800.0,
     ):
         self.name = name
         self._playbooks_path = Path(playbooks_path)
@@ -159,17 +145,28 @@ class BriefsOrchestratorEndpoint:
         self._default_target_agent = default_target_agent
         self._default_timeout_seconds = default_timeout_seconds
         self._handle: BusHandle | None = None
-        self._sessions: dict[str, ComposeSession] = {}
+        self._registry = SessionRegistry(ttl_seconds=session_ttl_seconds)
+
+    @property
+    def registry(self) -> SessionRegistry:
+        """Read-only access to the session registry.
+
+        T13 (submit) and T14 (MCP) use this seam to look up sessions by
+        token. Tests can also assert against ``registry.get(token)`` for
+        the full session view (including the moved-here ``created_at``
+        and ``consumed`` fields).
+        """
+        return self._registry
 
     @property
     def sessions(self) -> dict[str, ComposeSession]:
-        """Read-only view of in-flight compose sessions.
+        """Deprecated. Returns a live view of active (non-consumed) sessions.
 
-        T10 replaces this with a real ``SessionRegistry`` (TTL, eviction,
-        thread-safety). Tests use this to confirm session persistence across
-        the publish boundary; production callers should NOT mutate it.
+        Preserved for T9 test API compatibility; T13+ should use
+        :attr:`registry` directly. Expired sessions are filtered out by
+        the registry's lazy sweep on access.
         """
-        return self._sessions
+        return {tok: s for tok, s in self._registry._sessions.items() if not s.consumed}
 
     # ---- Bus endpoint protocol ----
     async def start(self, bus: BusHandle) -> None:
@@ -253,7 +250,16 @@ class BriefsOrchestratorEndpoint:
         sections_active = resolve_conditional_sections(playbook.conditional_sections, context)
         required, optional = self._split_sections(playbook)
 
-        session_token = secrets.token_hex(16)
+        # Resolve dynamic + palette-name colors at session-build time so the
+        # T10 agent-tool surface (get_section_spec) doesn't have to evaluate
+        # simpleeval on every call. We resolve only the static sections;
+        # conditional ones aren't materialized in the session because v1
+        # treats them as id-only flags (T11 destinations re-resolve at
+        # render time if/when they're appended).
+        resolved_sections = resolve_colors_for_sections(
+            playbook.sections, playbook.colors, context=context
+        )
+
         session = ComposeSession(
             brief_type=brief_type,
             playbook_path=playbook_path,
@@ -267,7 +273,11 @@ class BriefsOrchestratorEndpoint:
             target_agent=target_agent,
             correlation_id=envelope.correlation_id,
             metadata=dict(envelope.metadata),
+            sections=resolved_sections,
+            colors_palette=dict(playbook.colors),
+            created_at=datetime.now(UTC),
         )
+        session_token = self._registry.create(session)
 
         compose_env = Envelope(
             id=uuid.uuid4().hex,
@@ -297,12 +307,17 @@ class BriefsOrchestratorEndpoint:
             metadata={"brief_request_id": envelope.id},
             created_at=datetime.now(UTC),
         )
-        # I2: publish first, then store. If publish raises (MailboxFull,
-        # unregistered recipient, etc.), the session is never stored — the
-        # agent never receives the token and could never submit anyway, so
-        # storing the session would just leak in-flight state.
-        await self._handle.publish(compose_env)
-        self._sessions[session_token] = session
+        # I2: publish first, drop the registered session if publish raises.
+        # The registry's create() already inserted the session; if we don't
+        # rewind, a publish failure leaves a dangling session token the agent
+        # never received. Drop on failure preserves the I2 invariant.
+        try:
+            await self._handle.publish(compose_env)
+        except Exception:
+            # Best-effort cleanup; if the token isn't there for some reason
+            # (cleanup_expired ran between create and publish), leave it.
+            self._registry._sessions.pop(session_token, None)
+            raise
         log.info(
             "BriefsOrchestrator: composed brief brief_type=%s session_token=%s target=%s",
             brief_type,
