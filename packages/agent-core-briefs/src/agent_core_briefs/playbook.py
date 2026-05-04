@@ -92,11 +92,22 @@ def parse_playbook(path: Path, *, vars_map: dict[str, str]) -> Playbook:
             conditional_sections.append(_to_section_spec(substituted))
         elif kind == "section":
             sections.append(_to_section_spec(substituted))
-        else:  # pragma: no cover — _classify_block enumerates all kinds
+        else:
+            # Reachable: any block whose top-level keys don't match the four
+            # classifiers (e.g., a misspelled ``section-id``). Surface loudly
+            # rather than silently dropping the block.
             raise PlaybookParseError(f"unrecognized YAML block in {path}: keys={list(substituted)}")
 
     if metadata is None or "brief_type" not in metadata:
         raise PlaybookParseError(f"playbook {path} is missing required 'brief_type' metadata")
+
+    # Validate color palette types early — a YAML author writing ``RED: "ff0000"``
+    # would otherwise typed-lie in Playbook.colors: dict[str, int].
+    for name, val in colors.items():
+        if not isinstance(val, int) or isinstance(val, bool):
+            raise PlaybookParseError(
+                f"color {name!r} must be int decimal, got {type(val).__name__}"
+            )
 
     schedule = metadata.get("schedule")
     schedule_cron: str | None = None
@@ -242,14 +253,13 @@ def _resolve_color_value(
             raise PlaybookParseError(
                 f"dynamic color in section {section.section_id!r} missing expr"
             )
-        # Tolerate missing context bindings — a dynamic color's job is to flag
-        # state, and absence-of-state collapses to the falsy branch (typically
-        # the calmer color). The same expression run after a real gather will
-        # see the real names and evaluate properly.
-        try:
-            truthy = bool(_eval_expr(expr, context))
-        except (NameNotDefined, AttributeDoesNotExist, AttributeError, KeyError):
-            truthy = False
+        # Strict evaluation — authoring bugs (typos in YAML expressions) must
+        # fail loudly to be discoverable. Runtime fetcher failures degrade
+        # through the gather context's _errors channel; mixing the two failure
+        # modes silently would make color expressions the only place in the
+        # parser where typos are invisible. _eval_expr wraps simpleeval errors
+        # in PlaybookParseError so callers don't import simpleeval to catch.
+        truthy = bool(_eval_expr(expr, context))
         chosen_name = color.get("if_true") if truthy else color.get("if_false")
         if not isinstance(chosen_name, str):
             raise PlaybookParseError(
@@ -272,14 +282,18 @@ def _eval_expr(expr: str, context: dict) -> Any:
     Wraps top-level dict values in :class:`_AttrDict` so expressions can use
     attribute access (``projects.active``) rather than item access. Enables
     ``any``/``all``/``len`` so conditional gating expressions stay readable.
+
+    Wraps simpleeval's native exceptions in :class:`PlaybookParseError` so
+    consumers (orchestrator, destinations, submit handler) don't have to
+    import simpleeval to catch authoring-bug exceptions.
     """
-    evaluator = EvalWithCompoundTypes()
-    evaluator.functions = dict(evaluator.functions)
-    evaluator.functions.setdefault("any", any)
-    evaluator.functions.setdefault("all", all)
-    evaluator.functions.setdefault("len", len)
-    evaluator.names = _wrap_context(context)
-    return evaluator.eval(expr)
+    try:
+        evaluator = EvalWithCompoundTypes()
+        evaluator.functions = {**evaluator.functions, "any": any, "all": all, "len": len}
+        evaluator.names = _wrap_context(context)
+        return evaluator.eval(expr)
+    except (NameNotDefined, AttributeDoesNotExist) as exc:
+        raise PlaybookParseError(f"expression failed: {expr!r}: {exc}") from exc
 
 
 def _wrap_context(ctx: dict) -> dict:

@@ -47,7 +47,8 @@ def test_parses_sections_in_order():
 
 def test_section_with_static_color_resolves_to_decimal():
     playbook = parse_playbook(FIXTURE, vars_map={"agent_root": "/test/root"})
-    resolved = resolve_colors_for_sections(playbook.sections, playbook.colors, context={})
+    static_sections = [s for s in playbook.sections if isinstance(s.color, str)]
+    resolved = resolve_colors_for_sections(static_sections, playbook.colors, context={})
     greeting = next(s for s in resolved if s.section_id == "greeting")
     assert greeting.color == 15548997  # TEST_RED
 
@@ -107,3 +108,46 @@ def test_undefined_color_in_section_raises(tmp_path):
     pb = parse_playbook(bad, vars_map={})
     with pytest.raises(PlaybookParseError, match="undefined color"):
         resolve_colors_for_sections(pb.sections, pb.colors, context={})
+
+
+def test_dynamic_color_undefined_name_raises_loud(tmp_path):
+    """A typo or missing context binding in a dynamic-color expression
+    must raise — silent fallback to if_false would hide authoring bugs."""
+    bad = tmp_path / "bad.md"
+    bad.write_text(
+        "# bad\n"
+        "```yaml\nbrief_type: x\nvoice: y\n```\n"
+        "```yaml\ncolors:\n  RED: 1\n  GREEN: 2\n```\n"
+        "```yaml\n"
+        "section_id: s\ntitle: t\n"
+        "color:\n"
+        "  dynamic: true\n"
+        '  expr: "projeccts.active"\n'  # typo: projeccts
+        "  if_true: RED\n"
+        "  if_false: GREEN\n"
+        "fields: []\n"
+        "```\n",
+        encoding="utf-8",
+    )
+    pb = parse_playbook(bad, vars_map={})
+    with pytest.raises(PlaybookParseError, match="expression"):
+        resolve_colors_for_sections(
+            pb.sections,
+            pb.colors,
+            context={"projects": {"active": []}},  # right name; expr has wrong name
+        )
+
+
+def test_unrecognized_block_raises(tmp_path):
+    """A block whose top-level keys don't match any classifier (e.g., a
+    misspelled ``section-id``) must surface as a parse error rather than
+    silently dropping content."""
+    bad = tmp_path / "bad.md"
+    bad.write_text(
+        "# bad\n"
+        "```yaml\nbrief_type: x\nvoice: y\n```\n"
+        "```yaml\nrandom_key: nonsense\nother: data\n```\n",
+        encoding="utf-8",
+    )
+    with pytest.raises(PlaybookParseError, match="unrecognized"):
+        parse_playbook(bad, vars_map={})
