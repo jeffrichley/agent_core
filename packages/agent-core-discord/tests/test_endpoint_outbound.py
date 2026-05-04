@@ -9,12 +9,17 @@ from datetime import UTC, datetime
 
 import pytest
 from agent_core_discord import send_retry as send_retry_mod
+from agent_core_discord.args import (
+    _CreatePollArgs,
+    _CreateScheduledEventArgs,
+    _SendTypingArgs,
+)
 from agent_core_discord.briefing import (
     BRIEFING_COLOR_CRITICAL,
     BRIEFING_COLOR_WARNING,
     build_briefing_embeds,
 )
-from agent_core_discord.endpoint import DiscordEndpoint
+from agent_core_discord.endpoint import DiscordEndpoint, _parse_iso_datetime
 
 from agent_core.bus.envelope import (
     EndpointInfo,
@@ -1421,5 +1426,210 @@ async def test_scheduled_event_create_list_cancel(monkeypatch):
         await ep.deliver(env4)
         ack4 = [e for e in handle.published if e.kind == "Acknowledgment"][-1]
         assert json.loads(ack4.payload.note) == []
+    finally:
+        await ep.stop()
+
+
+# --- review-feedback hardening: trailing-Z parse + channel-type guard + validation ---
+
+
+def test_parse_iso_datetime_trailing_z_parses():
+    """Trailing 'Z' is treated as UTC."""
+    dt = _parse_iso_datetime("start_time", "2026-05-04T07:00:00Z")
+    assert dt.year == 2026
+    assert dt.month == 5
+    assert dt.day == 4
+    assert dt.hour == 7
+    assert dt.tzinfo is not None
+    assert dt.utcoffset() == datetime(1970, 1, 1, tzinfo=UTC).utcoffset()
+
+
+def test_parse_iso_datetime_does_not_mangle_embedded_z():
+    """Embedded 'Z' (e.g. inside a fragment) must not get globally replaced.
+
+    Before the fix, value="2026-05-04T07:00:00Z#anchorZ" became
+    "2026-05-04T07:00:00+00:00#anchor+00:00" — a parse failure with a
+    misleading "invalid datetime" message rooted in the rewrite, not the
+    user's input. Now only the trailing 'Z' is rewritten, so the embedded
+    'Z' survives intact and the input correctly fails as malformed (the
+    point: the failure now reflects the real input, not our mangling).
+    """
+    from agent_core_discord.endpoint import _ToolError
+
+    with pytest.raises(_ToolError) as exc:
+        _parse_iso_datetime("start_time", "2026-05-04T07:00:00Z#anchorZ")
+    # Surface the original value, unmangled.
+    assert "2026-05-04T07:00:00Z#anchorZ" in str(exc.value)
+    assert "anchor+00:00" not in str(exc.value)
+
+
+@pytest.mark.asyncio
+async def test_create_scheduled_event_stage_requires_stage_channel(monkeypatch):
+    """entity_type='stage' against a text channel must surface a clear error."""
+    from agent_core_discord.endpoint import _ToolError
+
+    ep, handle, fake = await _started(monkeypatch)
+    text_ch = _FakeChannel(id="200", channel_type="text", guild_id="g1")
+    g = _FakeGuild(id="g1", channels=[text_ch])
+    fake.add_guild(g)
+    try:
+        with pytest.raises(_ToolError) as exc:
+            await ep._create_scheduled_event(
+                _CreateScheduledEventArgs(
+                    guild_id="g1",
+                    name="StageTalk",
+                    start_time="2026-06-01T15:00:00+00:00",
+                    entity_type="stage",
+                    channel_id="200",
+                )
+            )
+        msg = str(exc.value)
+        assert "stage" in msg
+        assert "stage_voice" in msg
+        assert "text" in msg
+    finally:
+        await ep.stop()
+
+
+@pytest.mark.asyncio
+async def test_create_scheduled_event_voice_requires_voice_channel(monkeypatch):
+    """entity_type='voice' against a text channel must surface a clear error."""
+    from agent_core_discord.endpoint import _ToolError
+
+    ep, handle, fake = await _started(monkeypatch)
+    text_ch = _FakeChannel(id="201", channel_type="text", guild_id="g1")
+    g = _FakeGuild(id="g1", channels=[text_ch])
+    fake.add_guild(g)
+    try:
+        with pytest.raises(_ToolError) as exc:
+            await ep._create_scheduled_event(
+                _CreateScheduledEventArgs(
+                    guild_id="g1",
+                    name="VoiceTalk",
+                    start_time="2026-06-01T15:00:00+00:00",
+                    entity_type="voice",
+                    channel_id="201",
+                )
+            )
+        msg = str(exc.value)
+        assert "voice" in msg
+        assert "text" in msg
+    finally:
+        await ep.stop()
+
+
+@pytest.mark.asyncio
+async def test_create_scheduled_event_stage_accepts_stage_voice_channel(monkeypatch):
+    """entity_type='stage' against a stage_voice channel goes through."""
+    ep, handle, fake = await _started(monkeypatch)
+    stage_ch = _FakeChannel(id="300", channel_type="stage_voice", guild_id="g2")
+    g = _FakeGuild(id="g2", channels=[stage_ch])
+    fake.add_guild(g)
+    try:
+        result = await ep._create_scheduled_event(
+            _CreateScheduledEventArgs(
+                guild_id="g2",
+                name="StageTalk",
+                start_time="2026-06-01T15:00:00+00:00",
+                entity_type="stage",
+                channel_id="300",
+            )
+        )
+        assert result["status"] == "created"
+    finally:
+        await ep.stop()
+
+
+# --- I-2 / I-4: cross-field validator surface (rejection at the _v step) ---
+
+
+def test_create_scheduled_event_validator_rejects_external_without_location():
+    """external entity_type with empty location/end_time triggers ValidationError.
+
+    The _v lambda translates ValidationError to _ToolError. We assert on
+    pydantic's ValidationError directly here to pin the args contract — the
+    _v translation path is exercised by test_send_validation_error_returns_error_ack
+    and the dispatch tests below.
+    """
+    import pydantic
+
+    with pytest.raises(pydantic.ValidationError) as exc:
+        _CreateScheduledEventArgs(
+            guild_id="g1",
+            name="Standup",
+            start_time="2026-06-01T15:00:00+00:00",
+            entity_type="external",
+            location="",
+            end_time="",
+        )
+    msg = str(exc.value)
+    assert "external" in msg.lower()
+
+
+def test_create_scheduled_event_validator_rejects_stage_without_channel_id():
+    """stage entity_type with no channel_id triggers ValidationError."""
+    import pydantic
+
+    with pytest.raises(pydantic.ValidationError) as exc:
+        _CreateScheduledEventArgs(
+            guild_id="g1",
+            name="StageTalk",
+            start_time="2026-06-01T15:00:00+00:00",
+            entity_type="stage",
+            channel_id=None,
+        )
+    msg = str(exc.value)
+    assert "channel_id" in msg
+
+
+def test_create_poll_rejects_min_length_two_answers():
+    """answers list must have >=2 entries — pydantic Field min_length=2."""
+    import pydantic
+
+    with pytest.raises(pydantic.ValidationError) as exc:
+        _CreatePollArgs(
+            channel_id="200",
+            question="Pick one?",
+            answers=["only one"],
+        )
+    msg = str(exc.value)
+    # pydantic surfaces min_length / list info on the failure.
+    assert "answers" in msg
+
+
+def test_send_typing_rejects_duration_over_ten_seconds():
+    """duration_seconds must be <= 10.0 — pydantic Field le=10.0."""
+    import pydantic
+
+    with pytest.raises(pydantic.ValidationError) as exc:
+        _SendTypingArgs(channel_id="200", duration_seconds=99.0)
+    msg = str(exc.value)
+    assert "duration_seconds" in msg
+
+
+@pytest.mark.asyncio
+async def test_create_poll_dispatch_translates_validation_to_error_ack(monkeypatch):
+    """Dispatch via _dispatch on bad args → error: ack (the _v translation path)."""
+    ep, handle, fake = await _started(monkeypatch)
+    ch = _FakeChannel(id="200")
+    fake.add_channel(ch)
+    try:
+        env = _envelope(
+            "e",
+            "agent-test",
+            "discord-test",
+            _toolcall(
+                "create_poll",
+                {
+                    "channel_id": "200",
+                    "question": "Pick one?",
+                    "answers": ["only one"],
+                },
+            ),
+        )
+        await ep.deliver(env)
+        ack = [e for e in handle.published if e.kind == "Acknowledgment"][-1]
+        assert ack.payload.note.lower().startswith("error:")
+        assert ack.urgency == "yellow"
     finally:
         await ep.stop()

@@ -75,7 +75,11 @@ def _canonical_tool(tool: str) -> str:
 
 
 def _parse_iso_datetime(label: str, value: str) -> datetime:
-    raw = (value or "").strip().replace("Z", "+00:00")
+    # Trailing-Z only — replacing every "Z" mangles inputs that legitimately
+    # contain the letter elsewhere (e.g. "2026-05-04T07:00:00Z#anchorZ").
+    raw = (value or "").strip()
+    if raw.endswith("Z"):
+        raw = raw[:-1] + "+00:00"
     try:
         dt = datetime.fromisoformat(raw)
     except ValueError as exc:
@@ -1243,6 +1247,18 @@ class DiscordEndpoint:
             kwargs["end_time"] = _parse_iso_datetime("end_time", args.end_time or "")
         else:
             ch = await self._resolve_channel(args.channel_id or "")
+            # Reject channels whose type does not match the entity_type before
+            # the API does. discord.py's ChannelType uses 'stage_voice' for
+            # stage channels and 'voice' for voice channels; matching those
+            # exact names keeps us in sync with discord.py's enum.
+            ch_type = getattr(ch, "type", None)
+            ch_type_name = str(getattr(ch_type, "name", ch_type) or "")
+            expected = {"stage": "stage_voice", "voice": "voice"}[args.entity_type]
+            if ch_type_name and ch_type_name != expected:
+                raise _ToolError(
+                    f"create_scheduled_event: {args.entity_type} event requires a "
+                    f"{expected} channel, got {ch_type_name!r}"
+                )
             kwargs["channel"] = ch
             if args.end_time:
                 kwargs["end_time"] = _parse_iso_datetime("end_time", args.end_time)
