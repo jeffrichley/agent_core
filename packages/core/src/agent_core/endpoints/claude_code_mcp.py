@@ -27,6 +27,7 @@ from collections import Counter
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal, cast
+from zoneinfo import ZoneInfo
 
 import anyio
 from fastmcp import FastMCP
@@ -130,6 +131,7 @@ class ClaudeCodeMCPEndpoint:
         self._bus_log_root = (
             Path(bus_log_root).expanduser() if bus_log_root is not None else default_log_root()
         )
+        self._projectors_bootstrapped = False
         self.mount = mount
         self.wake_on_all_acknowledgments = wake_on_all_acknowledgments
         ttl = float(outbound_registry_ttl_seconds)
@@ -196,8 +198,10 @@ class ClaudeCodeMCPEndpoint:
         is bound to one agent at construction; cross-agent leakage is
         prevented by construction, not by trusting the caller.
         """
-        bootstrap_default_projectors()
-        target = date or datetime.now(UTC).date().isoformat()
+        if not self._projectors_bootstrapped:
+            bootstrap_default_projectors()
+            self._projectors_bootstrapped = True
+        target = date or datetime.now(UTC).astimezone(ZoneInfo(timezone)).date().isoformat()
         path = self._bus_log_root / f"{target}.jsonl"
         if projected:
             rows = list(iter_for_agent(path, agent=self.name, projected=True, timezone=timezone))
@@ -206,7 +210,11 @@ class ClaudeCodeMCPEndpoint:
                 env.model_dump(by_alias=True, mode="json")
                 for env in iter_for_agent(path, agent=self.name, projected=False)
             ]
-        return rows[-limit:] if limit else rows
+        if limit is not None and limit < 1:
+            raise ValueError("limit must be >= 1")
+        if limit is not None:
+            rows = rows[-limit:]
+        return rows
 
     def _register_session(self, session: Any) -> None:
         """Register a connected ServerSession."""
@@ -762,6 +770,9 @@ class ClaudeCodeMCPEndpoint:
 
             The agent identity is the name this endpoint was constructed
             with — no ``agent`` parameter is exposed to prevent cross-agent
-            queries. ``date`` defaults to today (UTC).
+            queries. ``date`` defaults to today in the configured timezone
+            (default ``US/Eastern``), matching the writer's local-midnight
+            rollover so an evening invocation reads the same day's file.
+            ``limit`` must be >= 1 if provided.
             """
             return await self._show_my_day_impl(date=date, projected=projected, limit=limit)

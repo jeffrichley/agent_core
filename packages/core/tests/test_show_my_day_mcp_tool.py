@@ -97,3 +97,35 @@ async def test_show_my_day_cannot_be_coerced_to_other_agent(sample_log: Path):
     rows = await vale._show_my_day_impl(date="2026-05-03", projected=True)
     assert len(rows) == 1
     assert rows[0]["cid"] == "cb"
+
+
+@pytest.mark.asyncio
+async def test_show_my_day_default_date_uses_configured_timezone(sample_log: Path, monkeypatch):
+    """Default date resolves in the impl's timezone, not UTC, matching the
+    writer's rollover. At 02:00 UTC May 4, an Eastern operator's 'today' is
+    May 3 — the impl must read the May 3 file, not May 4 (or it returns
+    empty despite minutes-old traffic)."""
+    import agent_core.endpoints.claude_code_mcp as mcp_module
+
+    class _FakeDatetime:
+        @staticmethod
+        def now(tz):
+            return datetime(2026, 5, 4, 2, 0, 0, tzinfo=UTC)
+
+    monkeypatch.setattr(mcp_module, "datetime", _FakeDatetime)
+
+    ep = ClaudeCodeMCPEndpoint(name="pepper", mount="/mcp/pepper", bus_log_root=sample_log)
+    rows = await ep._show_my_day_impl(projected=True, timezone="US/Eastern")
+    # Fixture file is "2026-05-03.jsonl"; default date must resolve to it.
+    assert len(rows) == 1
+    assert rows[0]["cid"] == "ca"
+
+
+@pytest.mark.asyncio
+async def test_show_my_day_rejects_limit_zero_or_negative(sample_log: Path):
+    """limit must be >= 1; 0 and negatives are caller bugs."""
+    ep = ClaudeCodeMCPEndpoint(name="pepper", mount="/mcp/pepper", bus_log_root=sample_log)
+    with pytest.raises(ValueError, match="limit must be >= 1"):
+        await ep._show_my_day_impl(date="2026-05-03", projected=True, limit=0)
+    with pytest.raises(ValueError, match="limit must be >= 1"):
+        await ep._show_my_day_impl(date="2026-05-03", projected=True, limit=-3)
