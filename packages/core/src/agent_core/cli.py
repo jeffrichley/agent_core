@@ -5,6 +5,12 @@ Commands:
     agent-core notify <title> <msg> Send a desktop toast notification.
     agent-core vault plan-dry-run …  Dry-run vault + YAML path audit (cutover #06).
 
+Plugin-contributed subapps (e.g. ``agent-core briefs``) are wired in via the
+``register_cli_subapps`` pluggy hookspec — see
+:mod:`agent_core.plugins.specs` and :mod:`agent_core.plugins.manager`.
+That keeps satellite packages off ``agent_core``'s import graph; this
+module no longer imports plugin CLIs directly.
+
 See Also:
     agent_core.hooks.pipeline.Pipeline: The engine that runs the tools.
 """
@@ -14,13 +20,13 @@ import sys
 from pathlib import Path
 
 import typer
-from agent_core_briefs.cli import briefs_app
 
 from agent_core.bus.cli import app as bus_app
 from agent_core.bus_log.cli import bus_log_app
 from agent_core.daemon.cli import app as daemon_app
 from agent_core.email.cli import email_app
 from agent_core.hooks.pipeline import Pipeline
+from agent_core.plugins.manager import apply_cli_subapps, create_plugin_manager
 from agent_core.vault_migration_plan import vault_app
 
 app = typer.Typer(
@@ -36,7 +42,6 @@ hooks_app = typer.Typer(
 )
 app.add_typer(hooks_app, name="hooks")
 app.add_typer(email_app, name="email")
-app.add_typer(briefs_app, name="briefs")
 app.add_typer(bus_app, name="bus")
 app.add_typer(bus_log_app, name="bus-log")
 app.add_typer(daemon_app, name="daemon")
@@ -95,6 +100,14 @@ def notify(
     notifier = DesktopNotifier()
     asyncio.run(notifier.send(title=title, message=message))
     typer.echo(f"Notification sent: {title} — {message}")
+
+
+# Mount plugin-contributed Typer subapps (e.g. agent-core-briefs ships
+# the ``briefs`` subapp via this hook). Done at module load so
+# ``agent-core --help`` lists them; satellite packages register their
+# subapp inside the hookimpl so the import only happens when their
+# entry-point is loaded.
+apply_cli_subapps(create_plugin_manager(), app)
 
 
 if __name__ == "__main__":

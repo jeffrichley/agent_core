@@ -87,6 +87,7 @@ import yaml
 from agent_core.bus.envelope import Envelope, EventPayload
 from agent_core_briefs.config import substitute_vars
 from agent_core_briefs.engine import FetcherInvocation, gather_context
+from agent_core_briefs.loader import discover_implementations
 from agent_core_briefs.playbook import (
     Playbook,
     parse_playbook,
@@ -117,9 +118,21 @@ class BriefsOrchestratorEndpoint:
         playbooks_path: Directory of playbook ``.md`` files. A request with
             ``brief_type=X`` loads ``<playbooks_path>/X.md``.
         vars_map: ``${var}`` substitutions for both the playbook (T2) and
-            the gather config YAML.
-        fetcher_catalog: Mapping of ``type_id`` → ``Fetcher`` class. Built
-            externally via :func:`agent_core_briefs.loader.discover_implementations`.
+            the gather config YAML. Mutually exclusive with ``vars`` —
+            yaml configs prefer ``vars:`` (terser), in-process callers
+            (existing tests, the briefs CLI) prefer ``vars_map=`` for
+            clarity. Pass exactly one.
+        vars: Alias for ``vars_map`` aimed at yaml configurations
+            (``params.vars`` in ``agent-core.yaml``). Mutually exclusive
+            with ``vars_map``.
+        fetcher_catalog: Pre-built mapping of ``type_id`` → ``Fetcher``
+            class. Used by in-process callers that already discovered
+            implementations themselves. Mutually exclusive with
+            ``fetcher_paths`` — pass exactly one.
+        fetcher_paths: List of directories from which to discover fetcher
+            implementations on construction (the runner-friendly path
+            used by the yaml-driven plugin wiring; T16). Mutually
+            exclusive with ``fetcher_catalog``.
         default_target_agent: Fallback when the request envelope's
             ``metadata.target_agent`` is absent. ``None`` means a request
             without metadata cannot be routed and is logged as a failure.
@@ -132,16 +145,56 @@ class BriefsOrchestratorEndpoint:
         *,
         name: str,
         playbooks_path: Path | str,
-        vars_map: dict[str, str],
-        fetcher_catalog: dict[str, type[Fetcher]],
+        vars_map: dict[str, str] | None = None,
+        vars: dict[str, str] | None = None,
+        fetcher_catalog: dict[str, type[Fetcher]] | None = None,
+        fetcher_paths: list[Path | str] | None = None,
         default_target_agent: str | None = None,
         default_timeout_seconds: float = 300.0,
         session_ttl_seconds: float = 1800.0,
     ):
+        # vars vs vars_map: pass exactly one. They're aliases — yaml
+        # configurations prefer ``vars:`` (params.vars in agent-core.yaml is
+        # terser and matches how operators think about substitutions); the
+        # existing in-process API uses ``vars_map=`` for clarity. Refusing
+        # both keeps the ambiguity from leaking into a silent merge order.
+        if vars_map is not None and vars is not None:
+            raise ValueError(
+                "BriefsOrchestratorEndpoint: pass exactly one of 'vars_map' or 'vars', not both"
+            )
+        if vars_map is None and vars is None:
+            raise ValueError("BriefsOrchestratorEndpoint: 'vars_map' (or 'vars' alias) is required")
+        resolved_vars: dict[str, str] = dict(vars_map if vars_map is not None else vars or {})
+
+        # fetcher_catalog vs fetcher_paths: same exactly-one rule. The
+        # runner builds endpoints from yaml params, where listing paths is
+        # natural; in-process callers (tests, the briefs CLI) build the
+        # catalog themselves so they can mutate it. Allowing both would
+        # invite a "did paths add to catalog or shadow it?" question we
+        # don't want to answer.
+        if fetcher_catalog is not None and fetcher_paths is not None:
+            raise ValueError(
+                "BriefsOrchestratorEndpoint: pass exactly one of 'fetcher_catalog' or "
+                "'fetcher_paths', not both"
+            )
+        if fetcher_catalog is None and fetcher_paths is None:
+            raise ValueError(
+                "BriefsOrchestratorEndpoint: one of 'fetcher_catalog' or 'fetcher_paths' "
+                "is required"
+            )
+        if fetcher_paths is not None:
+            resolved_paths = [Path(p) for p in fetcher_paths]
+            resolved_catalog: dict[str, type[Fetcher]] = discover_implementations(
+                resolved_paths, protocol=Fetcher
+            )
+        else:
+            assert fetcher_catalog is not None  # pyright narrowing
+            resolved_catalog = dict(fetcher_catalog)
+
         self.name = name
         self._playbooks_path = Path(playbooks_path)
-        self._vars_map = dict(vars_map)
-        self._fetcher_catalog = dict(fetcher_catalog)
+        self._vars_map = resolved_vars
+        self._fetcher_catalog = resolved_catalog
         self._default_target_agent = default_target_agent
         self._default_timeout_seconds = default_timeout_seconds
         self._handle: BusHandle | None = None

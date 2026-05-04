@@ -45,6 +45,32 @@ endpoints:
       # (matches builtin.daily_raw_jsonl writer). Override here only if
       # the daemon writes the log somewhere non-default.
 
+  # Cutover #09: brief framework orchestrator. Listens for BriefRequest
+  # events on the bus, runs the playbook's gather config (loaded from
+  # `<playbooks_path>/<brief_type>.md`), and publishes a ComposeBrief
+  # envelope back to `default_target_agent` (Pepper). The agent then
+  # composes the brief content via the registered MCP tool surface
+  # (T14) and submits it via T13.
+  #
+  # `fetcher_paths` is the runner-friendly path: the orchestrator
+  # discovers fetchers on construction via `discover_implementations`.
+  # In-process callers (tests, the briefs CLI) use the alternative
+  # `fetcher_catalog=` constructor kwarg instead.
+  #
+  # `vars.agent_root` anchors `${agent_root}/...` substitutions in the
+  # playbook + gather YAMLs. T16 wires this entry through pluggy
+  # (`agent_core_briefs.plugin.register_endpoint_types`); the briefs
+  # subsystem is contributed via entry-points, not a hard dep on core.
+  - type: builtin.briefs_orchestrator
+    name: briefs.orchestrator
+    params:
+      playbooks_path: "C:\\Users\\jeffr\\.pepper\\Memory\\playbooks"
+      fetcher_paths:
+        - "C:\\Users\\jeffr\\.pepper\\Memory\\briefs\\fetchers"
+      vars:
+        agent_root: "C:\\Users\\jeffr\\.pepper"
+      default_target_agent: "pepper"
+
 bus_hooks:
   pre_publish:
     # Cutover #04: every published envelope (Discord, scheduler, relay,

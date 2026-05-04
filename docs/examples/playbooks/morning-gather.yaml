@@ -1,0 +1,42 @@
+# Morning brief — gather config example.
+#
+# Referenced from morning-brief.md's `gather_config:` metadata key. The
+# orchestrator loads this YAML, runs each fetcher entry against the
+# registered fetcher catalog, and merges their output under `namespace`
+# in the gather context the playbook sees.
+#
+# `${agent_root}` is substituted at parse time using the orchestrator's
+# `vars.agent_root`. `{{ ... }}` substitutions belong in destinations,
+# not here — gather config runs once, before delivery.
+#
+# Both example fetchers below are built into the briefs package:
+# `filesystem_read` and `cli`. Drop additional `.py` modules into one of
+# the `fetcher_paths` directories on the orchestrator endpoint to add
+# more — they're picked up on next gather without an install step.
+#
+# Place at `${agent_root}/Memory/gather/morning.yaml`.
+
+fetchers:
+  - type: filesystem_read
+    namespace: projects
+    timeout_seconds: 10
+    config:
+      path: "${agent_root}/Memory/projects/active.yaml"
+      format: yaml
+
+  - type: cli
+    namespace: calendar
+    timeout_seconds: 30
+    config:
+      command:
+        - "gcalcli"
+        - "agenda"
+        - "--nocolor"
+        - "--details"
+        - "time"
+      parse: text
+      env_passthrough:
+        - PATH
+        - PATHEXT
+        - SYSTEMROOT
+        - USERPROFILE

@@ -4,12 +4,15 @@ from __future__ import annotations
 
 import logging
 from collections.abc import Iterable
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import pluggy
 
 from agent_core.bus.protocol import NotificationBrokerAwareEndpoint
 from agent_core.plugins.specs import AgentCoreSpecs
+
+if TYPE_CHECKING:
+    import typer
 
 log = logging.getLogger(__name__)
 hookimpl = pluggy.HookimplMarker("agent_core")
@@ -93,3 +96,14 @@ def get_bus_log_projectors(pm: pluggy.PluginManager) -> dict[str, Any]:
     for mapping in pm.hook.register_bus_log_projectors():
         merged.update(mapping)
     return merged
+
+
+def apply_cli_subapps(pm: pluggy.PluginManager, app: typer.Typer) -> None:
+    """Invoke ``register_cli_subapps`` across every plugin.
+
+    Each hookimpl receives the same top-level Typer ``app`` and is expected
+    to call ``app.add_typer(subapp, name=...)`` on it. Used at CLI module
+    load to discover satellite-package subapps without ``agent_core``
+    importing them directly (the layering inversion T15 review flagged).
+    """
+    pm.hook.register_cli_subapps(app=app)

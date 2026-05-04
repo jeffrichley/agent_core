@@ -6,6 +6,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Literal
 
 import pluggy
+import typer
 
 hookspec = pluggy.HookspecMarker("agent_core")
 
@@ -71,5 +72,17 @@ class AgentCoreSpecs:
         Keys are either ``EventPayload.type`` strings (e.g., "HandoffReady")
         or envelope ``kind`` strings (e.g., "TextMessage"). Last-write-wins
         on duplicate keys across plugins (intentional override semantics).
+        """
+        raise NotImplementedError
+
+    @hookspec
+    def register_cli_subapps(self, app: typer.Typer) -> None:
+        """Mount Typer subapps onto the top-level ``agent-core`` CLI.
+
+        Plugins import their subapp lazily inside the hookimpl and call
+        ``app.add_typer(subapp, name="...")``. Used by satellite packages
+        (e.g., agent-core-briefs) to extend the CLI without forcing the
+        core package to import them — preserves the layering where
+        ``agent_core`` does not depend on its plugins.
         """
         raise NotImplementedError
