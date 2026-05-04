@@ -17,17 +17,27 @@ class CliFetcher:
 
     Config:
     - ``command`` (list[str]): argv. First element is the executable.
-    - ``cwd`` (str | None): working directory (supports ``~/`` expansion).
+      Must be a list of strings — a single shell-style string will not be
+      parsed (it will be split character-by-character by argv expansion).
+    - ``cwd`` (str | None): working directory. Supports ``~/`` expansion.
     - ``parse``: ``"text"`` | ``"json"`` | ``"yaml"`` | ``"lines"``.
     - ``env_passthrough`` (list[str]): env var names to forward; everything
-      else is dropped (clean env, no inherited surprises).
+      else is dropped (clean env, no inherited surprises). To find
+      executables on ``PATH``, include ``"PATH"`` in ``env_passthrough``
+      (on Windows, also ``"PATHEXT"`` and ``"SYSTEMROOT"`` for system DLLs).
 
-    Non-zero exit codes raise ``RuntimeError`` with stderr captured. Invalid
-    parse output raises ``ValueError``.
+    Subprocess semantics:
+    - Stdin is closed; interactive CLIs are not supported.
+    - Stderr is captured but only surfaced on non-zero exit.
+    - On timeout/cancellation, the subprocess is terminated best-effort
+      via asyncio's transport cleanup; long-running children may briefly
+      outlive cancellation.
 
-    JSON/YAML roots must be dicts (mappings); list or scalar roots raise
-    ``ValueError``. Wrap with a fetcher in your agent's repo if you need
-    to adapt non-dict shapes.
+    Errors:
+    - Non-zero exit codes raise ``RuntimeError`` with stderr captured.
+    - Invalid JSON (parse error) and non-dict JSON/YAML roots raise
+      ``ValueError``. JSON/YAML roots must be mappings; wrap with a
+      project-local fetcher if you need to adapt other shapes.
     """
 
     type_id = "cli"
