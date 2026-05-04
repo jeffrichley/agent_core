@@ -3,7 +3,7 @@
 **Author:** Pepper
 **Date:** 2026-05-02
 **Priority:** High — silent rot. Failure isn't visible until the reflection job goes blind.
-**Status:** Open
+**Status:** Implementation complete (verification deferred to end-of-cutover gate; see [`docs/cutover/test-playbooks/04-daily-jsonl-pipeline.md`](../cutover/test-playbooks/04-daily-jsonl-pipeline.md))
 **Parent:** `docs/requirements/pepper-pre-cutover-must-haves.md`
 **Related:**
 - `docs/ROADMAP.md` (Pepper's pipeline JSONL to `Memory/daily/raw/` as a bus hook — called out as not started)
