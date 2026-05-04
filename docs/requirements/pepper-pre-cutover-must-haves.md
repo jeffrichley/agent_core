@@ -22,7 +22,7 @@ Status values: **Not started · In progress · Implementation complete · Verifi
 |----|----------------------------------------------------------------------------------------------|----------|---------------------------|
 | 01 | [Identity at full fidelity on fresh boot](pepper-cutover-01-identity-fidelity.md)            | Critical | Implementation complete   |
 | 02 | [Handoff continuity that is observable](pepper-cutover-02-handoff-observability.md)          | Critical | Implementation complete   |
-| 03 | [Discord parity at the verbs I use](pepper-cutover-03-discord-verb-parity.md)                | High     | Not started               |
+| 03 | [Discord parity at the verbs I use](pepper-cutover-03-discord-verb-parity.md)                | High     | Implementation complete (cherry-pick from PR #31 + adversarial review hardening) |
 | 04 | [Daily JSONL pipeline survives the move](pepper-cutover-04-daily-jsonl-pipeline.md)          | High     | Implementation complete   |
 | 05 | [Skills survive the cutover](pepper-cutover-05-skills-discovery.md)                          | High     | Not started               |
 | 06 | [The vault stays the vault](pepper-cutover-06-vault-continuity.md)                           | Critical | Implementation complete   |

@@ -21,6 +21,7 @@ incrementally as each ticket lands.
 |---|----------|--------|
 | 01 | [Identity fidelity](01-identity-fidelity.md) | Implementation complete; verification pending end-of-cutover run |
 | 02 | [Handoff observability](02-handoff-observability.md) | Implementation complete; verification pending end-of-cutover run (mid-session perception step now backed by #08 evidence) |
+| 03 | [Discord verb parity](03-discord-verb-parity.md) | Implementation complete; verification pending end-of-cutover run. Stranded PR #31 cherry-picked + hardened; 13 Pepper-facing Discord verbs reachable via `_dispatch`. |
 | 04 | [Daily JSONL pipeline](04-daily-jsonl-pipeline.md) | Implementation complete; verification pending end-of-cutover run. Single bus-owned log + read-time filter + per-agent MCP introspection. |
 | 06 | [Vault continuity](06-vault-continuity.md) | Implementation complete (tooling + runbook); operator move deferred to cutover window with Pepper offline. `agent-core vault plan-dry-run` audits absolute paths; runbook documents `autoMemoryDirectory` mitigation. |
 | 07 | [Hook fidelity](07-hook-fidelity.md) | Implementation complete; verification pending end-of-cutover run. UserPromptSubmit pipeline added; `test_pepper_example_yaml.py` is the wiring tripwire. |
