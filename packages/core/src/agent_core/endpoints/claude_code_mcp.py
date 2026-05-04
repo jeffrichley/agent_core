@@ -24,6 +24,7 @@ import logging
 import re
 import uuid
 from collections import Counter
+from collections.abc import Callable
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal, cast
@@ -126,6 +127,7 @@ class ClaudeCodeMCPEndpoint:
         missing_ack_default_seconds: float = 30.0,
         max_tracked_outbounds: int = 10_000,
         bus_log_root: Path | None = None,
+        tool_mounters: list[Callable[[FastMCP], None]] | None = None,
     ):
         self.name = name
         self._bus_log_root = (
@@ -178,6 +180,14 @@ class ClaudeCodeMCPEndpoint:
         self._missing_ack_tasks: dict[str, asyncio.Task[None]] = {}
         self._mcp.add_middleware(SessionRegistry(self))
         self._register_tools()
+        # T14: plugin-provided tool mounters can register additional MCP
+        # tools on this endpoint at construction time. Each mounter is a
+        # callable that takes the FastMCP server and adds tools via the
+        # standard ``mcp.tool(...)`` decorator. T16 wires the briefs
+        # framework's tools through this seam.
+        if tool_mounters:
+            for mounter in tool_mounters:
+                mounter(self._mcp)
 
     def attach_notify_broker(self, broker: NotificationBroker) -> None:
         """Optional runner hook: attach broker after endpoint construction."""
@@ -485,7 +495,9 @@ class ClaudeCodeMCPEndpoint:
 
     # --- Internal ---
 
-    def _build_summary(self, urgency_floor: Literal["red", "yellow", "green"] | None = None) -> dict:
+    def _build_summary(
+        self, urgency_floor: Literal["red", "yellow", "green"] | None = None
+    ) -> dict:
         """Snapshot the current mailbox into a notification summary."""
         pending = list(self._pending)
         count = len(pending)
@@ -589,8 +601,7 @@ class ClaudeCodeMCPEndpoint:
         if self._debounce_urgency_floor is None:
             self._debounce_urgency_floor = incoming_urgency
         elif (
-            self._URGENCY_RANK[incoming_urgency]
-            < self._URGENCY_RANK[self._debounce_urgency_floor]
+            self._URGENCY_RANK[incoming_urgency] < self._URGENCY_RANK[self._debounce_urgency_floor]
         ):
             self._debounce_urgency_floor = incoming_urgency
 

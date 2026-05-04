@@ -148,6 +148,17 @@ class BriefsOrchestratorEndpoint:
         self._registry = SessionRegistry(ttl_seconds=session_ttl_seconds)
 
     @property
+    def default_target_agent(self) -> str | None:
+        """Read-only access to the default target agent.
+
+        T14's ``compose_brief`` MCP tool reads this to fill in the
+        target_agent on a self-launched session: there is no envelope
+        metadata to consult, so the default is the only routing source.
+        ``None`` means self-launch is not configured for this orchestrator.
+        """
+        return self._default_target_agent
+
+    @property
     def registry(self) -> SessionRegistry:
         """Read-only access to the session registry.
 
@@ -239,6 +250,89 @@ class BriefsOrchestratorEndpoint:
 
         when = self._resolve_when(data.get("when"), envelope.id)
 
+        # T14: gather + resolve + build-session is shared with the
+        # self-launch path (compose_brief MCP tool). build_compose_session
+        # creates and registers the ComposeSession and returns the
+        # ComposeBrief data dict so we can pack it into the bus envelope.
+        session_token, compose_data = await self.build_compose_session(
+            brief_type=brief_type,
+            scope=scope,
+            when=when,
+            target_agent=target_agent,
+            correlation_id=envelope.correlation_id,
+            request_metadata=dict(envelope.metadata),
+        )
+
+        compose_env = Envelope(
+            id=uuid.uuid4().hex,
+            correlation_id=envelope.correlation_id,
+            to=target_agent,
+            kind="Event",
+            payload=EventPayload(
+                type="ComposeBrief",
+                data=compose_data,
+            ),
+            # I4: Request metadata is preserved on the session for T13 (submit
+            # handler) but intentionally not echoed onto the ComposeBrief
+            # envelope — operator tags / trace ids belong on the operator-side
+            # session, not in the agent-facing wake message. T14 (MCP) reads
+            # from the session.
+            metadata={"brief_request_id": envelope.id},
+            created_at=datetime.now(UTC),
+        )
+        # I2: publish first, drop the registered session if publish raises.
+        # The registry's create() already inserted the session; if we don't
+        # rewind, a publish failure leaves a dangling session token the agent
+        # never received. Drop on failure preserves the I2 invariant.
+        try:
+            await self._handle.publish(compose_env)
+        except Exception:
+            # Best-effort cleanup; delete() is idempotent so a no-op return
+            # (e.g., cleanup_expired ran between create and publish) is fine.
+            self._registry.delete(session_token)
+            raise
+        log.info(
+            "BriefsOrchestrator: composed brief brief_type=%s session_token=%s target=%s",
+            brief_type,
+            session_token,
+            target_agent,
+        )
+
+    # ---- T14: shared gather-and-build helper ----
+    async def build_compose_session(
+        self,
+        *,
+        brief_type: str,
+        scope: str | None,
+        when: datetime,
+        target_agent: str,
+        correlation_id: str,
+        request_metadata: dict[str, Any] | None = None,
+    ) -> tuple[str, dict[str, Any]]:
+        """Run gather → resolve → build-and-register a ComposeSession.
+
+        Both the bus-driven ``BriefRequest`` path and the self-launch
+        ``compose_brief`` MCP path share this helper. The bus path then
+        wraps the returned data dict into a ``ComposeBrief`` envelope and
+        publishes; the self-launch path returns the dict directly to the
+        caller.
+
+        The session is created and registered in :attr:`registry` before
+        return — callers are responsible for rewinding via
+        :meth:`SessionRegistry.delete` if a downstream step fails.
+
+        Returns:
+            ``(session_token, compose_data)`` where ``compose_data`` is the
+            payload dict that goes into a ``ComposeBrief`` envelope's
+            ``data`` field (brief_type, scope, when, session_token,
+            playbook_path, voice, context, sections_*).
+
+        Raises:
+            FileNotFoundError: playbook for ``brief_type`` not found.
+            Various ValueErrors: malformed gather config, unknown
+                fetcher type ids, etc. — same surface as the bus-driven
+                path.
+        """
         playbook_path = self._playbooks_path / f"{brief_type}.md"
         if not playbook_path.exists():
             raise FileNotFoundError(
@@ -284,8 +378,8 @@ class BriefsOrchestratorEndpoint:
             sections_optional=optional,
             sections_conditional_active=sections_active,
             target_agent=target_agent,
-            correlation_id=envelope.correlation_id,
-            metadata=dict(envelope.metadata),
+            correlation_id=correlation_id,
+            metadata=dict(request_metadata or {}),
             sections=resolved_sections,
             colors_palette=dict(playbook.colors),
             created_at=datetime.now(UTC),
@@ -297,51 +391,19 @@ class BriefsOrchestratorEndpoint:
         )
         session_token = self._registry.create(session)
 
-        compose_env = Envelope(
-            id=uuid.uuid4().hex,
-            correlation_id=envelope.correlation_id,
-            to=target_agent,
-            kind="Event",
-            payload=EventPayload(
-                type="ComposeBrief",
-                data={
-                    "brief_type": brief_type,
-                    "scope": scope,
-                    "when": when.isoformat(),
-                    "session_token": session_token,
-                    "playbook_path": str(playbook_path),
-                    "voice": playbook.voice,
-                    "context": context,
-                    "sections_required": required,
-                    "sections_optional": optional,
-                    "sections_conditional_active": sections_active,
-                },
-            ),
-            # I4: Request metadata is preserved on the session for T13 (submit
-            # handler) but intentionally not echoed onto the ComposeBrief
-            # envelope — operator tags / trace ids belong on the operator-side
-            # session, not in the agent-facing wake message. T14 (MCP) reads
-            # from the session.
-            metadata={"brief_request_id": envelope.id},
-            created_at=datetime.now(UTC),
-        )
-        # I2: publish first, drop the registered session if publish raises.
-        # The registry's create() already inserted the session; if we don't
-        # rewind, a publish failure leaves a dangling session token the agent
-        # never received. Drop on failure preserves the I2 invariant.
-        try:
-            await self._handle.publish(compose_env)
-        except Exception:
-            # Best-effort cleanup; delete() is idempotent so a no-op return
-            # (e.g., cleanup_expired ran between create and publish) is fine.
-            self._registry.delete(session_token)
-            raise
-        log.info(
-            "BriefsOrchestrator: composed brief brief_type=%s session_token=%s target=%s",
-            brief_type,
-            session_token,
-            target_agent,
-        )
+        compose_data: dict[str, Any] = {
+            "brief_type": brief_type,
+            "scope": scope,
+            "when": when.isoformat(),
+            "session_token": session_token,
+            "playbook_path": str(playbook_path),
+            "voice": playbook.voice,
+            "context": context,
+            "sections_required": required,
+            "sections_optional": optional,
+            "sections_conditional_active": sections_active,
+        }
+        return session_token, compose_data
 
     # ---- helpers ----
     def _build_invocations(self, playbook: Playbook) -> list[FetcherInvocation]:
