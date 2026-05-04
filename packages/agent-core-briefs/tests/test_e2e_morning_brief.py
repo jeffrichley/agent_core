@@ -437,22 +437,14 @@ async def test_e2e_morning_brief_full_flow(briefs_e2e: _E2EHarness, tmp_path: Pa
     # 3. Drive the compose-loop tools the way an LLM agent would. The
     # plan calls for "stub calls list_sections, get_section_spec for each"
     # — we exercise list_sections + get_section_spec across the required
-    # static sections. Conditional-active sections are NOT looked up via
-    # get_section_spec here because the v1 ``tools._find_section`` only
-    # walks ``session.sections`` + ``extension_sections`` — conditional
-    # sections live in ``session.conditional_sections`` and are not
-    # currently reachable through that tool. Validation at submit-time
-    # still enforces their required-field/max-chars rules (T13/C1), so
-    # the agent can compose them without a spec lookup, but agents that
-    # want to introspect a conditional section's spec mid-compose are
-    # currently out of luck. See the test report for this finding.
+    # static sections AND the active conditional sections.
     sections_view = await list_sections(briefs_e2e.orchestrator.registry, session_token)
     assert sections_view["required"] == ["greeting", "calendar_today"]
     assert sections_view["conditional_active"] == ["next_event_callout"]
     assert sections_view["voice"] == "Pepper, warm"
 
     section_specs: dict[str, dict] = {}
-    for sid in sections_view["required"]:
+    for sid in [*sections_view["required"], *sections_view["conditional_active"]]:
         spec = await get_section_spec(
             briefs_e2e.orchestrator.registry, session_token, section_id=sid
         )
@@ -481,14 +473,10 @@ async def test_e2e_morning_brief_full_flow(briefs_e2e: _E2EHarness, tmp_path: Pa
                 }
             ],
         },
-        # next_event_callout: conditional section. The validator looks up
-        # its SectionSpec via session.conditional_sections (T13/C1) so
-        # required-field/max-chars enforcement still happens; the agent
-        # supplies title/color from the playbook structure directly.
         {
             "section_id": "next_event_callout",
-            "title": "Next up",
-            "color": 5763719,  # GREEN, from the playbook palette
+            "title": section_specs["next_event_callout"]["title"],
+            "color": section_specs["next_event_callout"]["color"],
             "fields": [{"name": "Event", "value": "Standup in ~30 minutes."}],
         },
     ]

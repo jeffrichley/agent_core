@@ -50,6 +50,7 @@ def _register(
     sections_required: list[str] | None = None,
     sections_optional: list[str] | None = None,
     sections_conditional_active: list[str] | None = None,
+    conditional_sections: list[SectionSpec] | None = None,
     colors_palette: dict[str, int] | None = None,
     context: dict | None = None,
     voice: str = "Pepper, warm",
@@ -71,6 +72,7 @@ def _register(
         sections=sections or [],
         colors_palette=colors_palette or {},
         created_at=datetime.now(UTC),
+        conditional_sections=conditional_sections or [],
     )
     return registry.create(session)
 
@@ -462,3 +464,168 @@ async def test_get_section_spec_finds_extension_section():
     result = await get_section_spec(registry, token, section_id="blockers")
     assert result["section_id"] == "blockers"
     assert result["color"] == 15548997
+
+
+# ---- conditional sections (active subset) --------------------------------
+#
+# The orchestrator pre-filters playbook conditional_sections to only the
+# active ones (those whose ``when`` expression gated truthy at session-build
+# time) before populating ``ComposeSession.conditional_sections``. The agent
+# tools therefore treat that list as the ground truth for "what conditional
+# sections does the agent need to compose for this brief?" and look them up
+# alongside playbook + extension sections.
+
+
+@pytest.mark.asyncio
+async def test_get_section_spec_returns_active_conditional_section():
+    """get_section_spec resolves an active conditional section's spec."""
+    registry = SessionRegistry()
+    token = _register(
+        registry,
+        sections=[_make_section("greeting", color=15548997)],
+        sections_conditional_active=["weekly_digest"],
+        conditional_sections=[
+            _make_section(
+                "weekly_digest",
+                title="Weekly Digest",
+                color="GREEN",
+                required=False,
+                fields=[
+                    FieldSpec(
+                        name="Summary",
+                        required=True,
+                        max_chars=300,
+                        guidance="Roll-up of the week.",
+                    ),
+                ],
+            )
+        ],
+        colors_palette={"RED": 15548997, "GREEN": 5763719},
+    )
+    result = await get_section_spec(registry, token, section_id="weekly_digest")
+    assert result["section_id"] == "weekly_digest"
+    assert result["title"] == "Weekly Digest"
+    assert result["color"] == 5763719  # GREEN resolved from palette
+    assert result["required"] is False
+    assert result["fields"] == [
+        {
+            "name": "Summary",
+            "required": True,
+            "max_chars": 300,
+            "guidance": "Roll-up of the week.",
+        }
+    ]
+
+
+@pytest.mark.asyncio
+async def test_validate_section_validates_conditional_section():
+    """validate_section accepts an active conditional section + complete fields."""
+    registry = SessionRegistry()
+    token = _register(
+        registry,
+        sections=[_make_section("greeting", color=15548997)],
+        sections_conditional_active=["weekly_digest"],
+        conditional_sections=[
+            _make_section(
+                "weekly_digest",
+                title="Weekly Digest",
+                color=5763719,
+                required=False,
+                fields=[FieldSpec(name="Summary", required=True, max_chars=300)],
+            )
+        ],
+    )
+    result = await validate_section(
+        registry,
+        token,
+        section_id="weekly_digest",
+        fields=[{"name": "Summary", "value": "Shipped T17 + the cutover gate."}],
+    )
+    assert result == {"section_id": "weekly_digest", "valid": True, "issues": []}
+
+
+@pytest.mark.asyncio
+async def test_compress_sections_includes_conditional():
+    """compress_sections allocates a non-zero budget to a conditional section."""
+    registry = SessionRegistry()
+    token = _register(
+        registry,
+        sections=[
+            _make_section(
+                "greeting",
+                color=15548997,
+                fields=[FieldSpec(name="Today", max_chars=200)],
+            )
+        ],
+        sections_conditional_active=["weekly_digest"],
+        conditional_sections=[
+            _make_section(
+                "weekly_digest",
+                color=5763719,
+                required=False,
+                fields=[FieldSpec(name="Summary", max_chars=400)],
+            )
+        ],
+    )
+    result = await compress_sections(
+        registry,
+        token,
+        section_ids=["greeting", "weekly_digest"],
+        target_total_chars=1500,
+    )
+    assert result["target_total_chars"] == 1500
+    by_id = {a["section_id"]: a["budget"] for a in result["allocations"]}
+    # 200 vs 400 weights → 1:2 split. greeting gets 1500*200/600 = 500;
+    # weekly_digest absorbs the remainder = 1000.
+    assert by_id["greeting"] == 500
+    assert by_id["weekly_digest"] == 1000
+    assert sum(a["budget"] for a in result["allocations"]) == 1500
+
+
+@pytest.mark.asyncio
+async def test_add_extension_section_rejects_conditional_id_collision():
+    """Extension section_id colliding with an active conditional id raises ValueError."""
+    registry = SessionRegistry()
+    token = _register(
+        registry,
+        sections=[_make_section("greeting", color=15548997)],
+        sections_conditional_active=["weekly_digest"],
+        conditional_sections=[
+            _make_section(
+                "weekly_digest",
+                color=5763719,
+                required=False,
+                fields=[FieldSpec(name="Summary", required=True)],
+            )
+        ],
+    )
+    with pytest.raises(ValueError, match="weekly_digest"):
+        await add_extension_section(
+            registry,
+            token,
+            section_id="weekly_digest",
+            title="Dup",
+            color=15548997,
+            fields=[],
+        )
+
+
+@pytest.mark.asyncio
+async def test_get_section_spec_still_raises_for_unknown_id():
+    """Negative path didn't regress — unknown id still raises ValueError."""
+    registry = SessionRegistry()
+    token = _register(
+        registry,
+        sections=[_make_section("greeting", color=15548997)],
+        sections_conditional_active=["weekly_digest"],
+        conditional_sections=[
+            _make_section(
+                "weekly_digest",
+                color=5763719,
+                required=False,
+                fields=[FieldSpec(name="Summary")],
+            )
+        ],
+    )
+    with pytest.raises(ValueError, match="ghost"):
+        await get_section_spec(registry, token, section_id="ghost")

@@ -27,7 +27,7 @@ from typing import Any
 
 from agent_core_briefs.playbook import resolve_colors_for_sections
 from agent_core_briefs.protocol import FieldSpec, SectionSpec
-from agent_core_briefs.session import SessionRegistry
+from agent_core_briefs.session import ComposeSession, SessionRegistry
 
 # Default per-section budget when computing proportional allocations for
 # sections that have no explicit ``max_chars`` cap. 500 is a reasonable
@@ -58,10 +58,11 @@ async def get_section_spec(registry: SessionRegistry, token: str, *, section_id:
 
     Color is resolved to int decimal (looked up against the playbook's
     palette, or evaluated for dynamic colors). Raises ``ValueError`` if
-    ``section_id`` isn't present in the session's sections or extensions.
+    ``section_id`` isn't present in the session's sections, extensions,
+    or active conditional sections.
     """
     session = registry.get(token)
-    section = _find_section(session.sections, session.extension_sections, section_id)
+    section = _find_section(session, section_id)
 
     # Resolve dynamic / palette-name colors to int decimal so the agent
     # doesn't have to know the palette. Static-int colors (already
@@ -96,7 +97,7 @@ async def validate_section(
     - Field names match the spec's field names exactly (extras flagged)
     """
     session = registry.get(token)
-    section = _find_section(session.sections, session.extension_sections, section_id)
+    section = _find_section(session, section_id)
 
     issues: list[str] = []
 
@@ -170,10 +171,11 @@ async def compress_sections(
     """
     session = registry.get(token)
 
-    # Resolve sections (extensions allowed) and compute per-section weights.
+    # Resolve sections (extensions + active conditionals allowed) and compute
+    # per-section weights.
     weights: list[tuple[str, int]] = []
     for sid in section_ids:
-        section = _find_section(session.sections, session.extension_sections, sid)
+        section = _find_section(session, sid)
         weight = sum(
             f.max_chars for f in section.fields if isinstance(f.max_chars, int) and f.max_chars > 0
         )
@@ -227,14 +229,17 @@ async def add_extension_section(
     destinations include extensions in the rendered output.
 
     Raises ``ValueError`` if ``section_id`` collides with any existing
-    section (playbook-defined OR previously added extension).
+    section (playbook-defined, active conditional, OR previously added
+    extension).
     """
     session = registry.get(token)
 
-    # Collision check covers playbook sections (active set) and
-    # previously-added extensions on the same session.
+    # Collision check covers playbook sections (active set), conditional
+    # sections that gated truthy for this brief, and previously-added
+    # extensions on the same session.
     existing_ids = {s.section_id for s in session.sections}
     existing_ids.update(s.section_id for s in session.extension_sections)
+    existing_ids.update(s.section_id for s in session.conditional_sections)
     if section_id in existing_ids:
         raise ValueError(
             f"section_id {section_id!r} already present in session "
@@ -273,21 +278,25 @@ async def add_extension_section(
 # -- private helpers --------------------------------------------------------
 
 
-def _find_section(
-    sections: list[SectionSpec],
-    extensions: list[SectionSpec],
-    section_id: str,
-) -> SectionSpec:
-    """Look up a section by id across playbook sections + extensions.
+def _find_section(session: ComposeSession, section_id: str) -> SectionSpec:
+    """Look up a section by id across playbook + conditional + extension lists.
+
+    Walks ``session.sections`` (playbook required/optional), then
+    ``session.conditional_sections`` (only the conditionals that gated
+    truthy at session-build time — the orchestrator pre-filters this
+    list), then ``session.extension_sections`` (agent-added).
 
     Raises ``ValueError`` if the section_id isn't present anywhere — the
     tools.py public surface promises ValueError, not KeyError, so callers
     don't have to catch both.
     """
-    for section in sections:
+    for section in session.sections:
         if section.section_id == section_id:
             return section
-    for section in extensions:
+    for section in session.conditional_sections:
+        if section.section_id == section_id:
+            return section
+    for section in session.extension_sections:
         if section.section_id == section_id:
             return section
     raise ValueError(f"section {section_id!r} is not in the brief")
