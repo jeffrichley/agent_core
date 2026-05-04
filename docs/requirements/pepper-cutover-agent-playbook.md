@@ -60,7 +60,7 @@ Status moves to **Implementation complete** only when the spec and reality match
 
 Use these to choose the next ticket, not to skip prerequisites.
 
-### Pepper cutover specs (#01–#08 + epic)
+### Pepper cutover specs (#01–#09 + epic)
 
 ```mermaid
 flowchart TB

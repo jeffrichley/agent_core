@@ -53,7 +53,7 @@ The architecture is the deterministic-LLM-deterministic seam end-to-end. Cron (o
 
 **CLI subapp.** `agent-core briefs` exposes `compose --type <brief_type> --agent <agent>` (drives an end-to-end run from the CLI for operator debugging), `fetchers list --fetcher-path <path>` (catalog inspection), and `fetchers test --type <fetcher_type> --config <yaml-or-json> --fetcher-path <path>` (single-fetcher probe — useful for verifying API credentials and parsing without booting the full bus).
 
-**Pluggy plugin entry-point.** The `agent_core_briefs` package exposes two hooks: `register_endpoint_types` (returns the orchestrator endpoint type so it can be referenced from `agent_core.yaml` as `briefs.orchestrator`) and `register_cli_subapps` (mounts the briefs subapp under `agent-core`). The Pepper example yaml (`docs/examples/pepper-agent-core.yaml`) gains a `briefs.orchestrator` endpoint with `playbooks_path`, `fetchers_path`, `destinations_path`, `extensions_path`, and a `vars: { agent_root: ~/.pepper }` block; `${agent_root}` substitution at config-load time keeps every path a single line away from "Pepper's home moved." The `test_pepper_example_yaml.py` tripwire grew a `TestPepperExampleYamlBriefs` class (6 tests) that catches removal or misconfiguration of the briefs endpoint.
+**Pluggy plugin entry-point.** The `agent_core_briefs` package exposes two hooks: `register_endpoint_types` (returns the orchestrator endpoint type so it can be referenced from `agent_core.yaml` as `builtin.briefs_orchestrator`) and `register_cli_subapps` (mounts the briefs subapp under `agent-core`). The Pepper example yaml (`docs/examples/pepper-agent-core.yaml`) gains a `briefs.orchestrator` endpoint with `playbooks_path`, `fetcher_paths` (list), `default_target_agent`, and a `vars: { agent_root: ... }` block; `${agent_root}` substitution at config-load time keeps every path a single line away from "Pepper's home moved." The `test_pepper_example_yaml.py` tripwire grew a `TestPepperExampleYamlBriefs` class (6 tests) that catches removal or misconfiguration of the briefs endpoint.
 
 **Audit log at `~/.agent-core/briefs/audit.jsonl`.** Append-only, one line per significant event in the chain — `request_received`, `gather_started`, `gather_completed` (per-fetcher status, duration, context size), `wake_published`, `submit_attempted`, `delivery_completed` (per-destination status), `session_consumed` (total wall time), `session_expired` (TTL exhaustion). Same shape as the bus log audit pattern from cutover #04.
 
@@ -77,10 +77,10 @@ The architecture is the deterministic-LLM-deterministic seam end-to-end. Cron (o
 cd E:\workspaces\ai\agents\agent_core
 uv run pytest packages/agent-core-briefs/tests `
               packages/core/tests/test_pepper_example_yaml.py `
-              packages/core/tests/test_scheduler_event_envelopes.py -q
+              packages/core/tests/test_scheduler_endpoint.py -q
 ```
 
-Expected: all green (~219 tests in the briefs package + the pepper-yaml tripwire class + the scheduler `Event`-envelope-shape tests). Confirms gather engine (concurrency, per-fetcher timeouts, `_errors` capture), playbook parser (YAML-in-MD + simpleeval expressions for conditionals), config-load-time `${var}` substitution, filesystem-loaded fetcher/destination discovery, both built-in fetchers (`filesystem_read`, `cli`), both built-in destinations (`discord_embed` bus path, `markdown_file` direct write), session registry (one-submit-per-token, TTL expiry), all 7 agent tools (including the conditional-section coverage from `a852284`), atomic submit (validate-then-format-then-send-then-audit), CLI surface (compose / fetchers list / fetchers test), scheduler `Event` JobDef shape, and the example yaml wiring tripwires.
+Expected: all green (~219 tests in the briefs package + the pepper-yaml tripwire class + the scheduler endpoint tests, which include the `Event`-envelope JobDef shape from T8). Confirms gather engine (concurrency, per-fetcher timeouts, `_errors` capture), playbook parser (YAML-in-MD + simpleeval expressions for conditionals), config-load-time `${var}` substitution, filesystem-loaded fetcher/destination discovery, both built-in fetchers (`filesystem_read`, `cli`), both built-in destinations (`discord_embed` bus path, `markdown_file` direct write), session registry (one-submit-per-token, TTL expiry), all 7 agent tools (including the conditional-section coverage from `a852284`), atomic submit (validate-then-format-then-send-then-audit), CLI surface (compose / fetchers list / fetchers test), scheduler `Event` JobDef shape, and the example yaml wiring tripwires.
 
 ### Step 2 — End-to-end morning_brief harness
 
@@ -106,18 +106,27 @@ uv run agent-core briefs fetchers list `
 Expected: JSON listing the two built-in fetchers (`cli`, `filesystem_read`) with their declared config schemas.
 
 ```powershell
+# fetchers test takes --config as a yaml file path (not inline JSON).
+@"
+path: README.md
+format: text
+"@ | Out-File -Encoding utf8 verify-cfg.yaml
+
 uv run agent-core briefs fetchers test `
   --type filesystem_read `
-  --config '{"path": "README.md", "max_bytes": 200}' `
-  --fetcher-path packages/agent-core-briefs/src/agent_core_briefs/fetchers
+  --config verify-cfg.yaml `
+  --fetcher-path packages/agent-core-briefs/src/agent_core_briefs/fetchers `
+  --namespace fs
+
+Remove-Item verify-cfg.yaml
 ```
 
-Expected: a namespaced payload (e.g. `{"filesystem_read": "<first 200 bytes of README.md>"}`) on stdout. Fetcher errors print to stderr with a non-zero exit.
+Expected: a JSON object on stdout shaped `{"fs": {"content": "<README.md text>", "path": "README.md"}}` — gather_context wraps the fetcher payload under the `--namespace` you pass (filesystem_read's class-level namespace is empty, so always pass one). Fetcher errors land in `_errors.<type_id>` inside the same JSON output (exit code stays 0 — see the existing `test_fetchers_test_surfaces_fetcher_error_in_errors_namespace` test). CLI errors (unknown type, missing config file, bad yaml) print to stderr with a non-zero exit.
 
 ### Step 4 — Example playbook parses
 
 ```powershell
-uv run python -c "from pathlib import Path; from agent_core_briefs.playbook_parser import parse_playbook; pb = parse_playbook(Path('docs/examples/playbooks/morning-brief.md').read_text(encoding='utf-8')); print('sections:', len(pb.sections)); print('conditional:', len(pb.conditional_sections)); print('destinations:', len(pb.destinations)); print('voice:', pb.voice)"
+uv run python -c "from pathlib import Path; from agent_core_briefs.playbook import parse_playbook; pb = parse_playbook(Path('docs/examples/playbooks/morning-brief.md'), vars_map={'agent_root': 'C:/test'}); print('sections:', len(pb.sections)); print('conditional:', len(pb.conditional_sections)); print('destinations:', len(pb.destinations)); print('voice:', pb.voice)"
 ```
 
 Expected output:
@@ -129,7 +138,7 @@ destinations: 2
 voice: pepper
 ```
 
-Confirms the example playbook is well-formed and the parser still accepts everything the example exercises (YAML-in-MD, simpleeval conditional expressions, dual-shape `guidance` — inline and file-ref, voice declaration).
+Confirms the example playbook is well-formed and the parser still accepts everything the example exercises (YAML-in-MD, simpleeval conditional expressions, voice declaration). `vars_map={'agent_root': ...}` provides a stand-in for the `${agent_root}` substitution; any string is fine for parse-shape verification.
 
 ### Step 5 — Pepper example yaml tripwires
 

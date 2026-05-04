@@ -11,7 +11,7 @@ incrementally as each ticket lands.
 - The playbook captures: what the implementation is, the acceptance criteria
   from the spec, and the concrete verification steps to run **once the whole
   epic is done**.
-- When all eight tickets are implemented and we're ready to flip Pepper's
+- When all listed tickets are implemented and we're ready to flip Pepper's
   runtime to agent-core, run every playbook in this directory in numeric
   order. Cutover gate = every playbook passes.
 
@@ -37,6 +37,6 @@ Each playbook covers two layers:
 
 ## Cutover gate criteria (per the epic doc)
 
-All eight tickets' playbooks pass. **#01, #02, #06 are the non-negotiables**;
-the rest are the working-functional set. See
+Every listed ticket's playbook passes. **#01, #02, #06 are the non-negotiables**;
+the rest are the working-functional set (#03/#04/#05/#07/#08/#09). See
 `docs/requirements/pepper-pre-cutover-must-haves.md` for the rationale.
