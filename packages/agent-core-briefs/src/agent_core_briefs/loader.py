@@ -4,6 +4,12 @@ Scans configured paths, imports each ``.py`` via importlib.util, registers
 classes satisfying a given Protocol by their ``type_id`` attribute. Used
 for fetchers, destinations, and extensions — same shape, same code path.
 
+Filesystem-discovered (not entry-point/pluggy) by design: plugin authors
+drop a ``.py`` into ``${agent_root}/Memory/briefs/<kind>/`` and the loader
+picks it up next call. No PR, no install, no registration step. Trust
+model: discover-and-surface (the loader's job is *not* to vet); duplicate
+type_id raises, syntax errors raise, missing paths warn.
+
 Hot reload is implicit: the loader doesn't cache. Each call re-imports.
 """
 
@@ -58,8 +64,14 @@ def discover_implementations[T](
                 # Verify an instance satisfies the runtime-checkable Protocol
                 try:
                     instance = member()
-                except Exception:
-                    continue  # can't instantiate without args; not our impl
+                except Exception as exc:
+                    log.debug(
+                        "loader: skipping %s.%s — instantiation failed: %s",
+                        module.__name__,
+                        member.__name__,
+                        exc,
+                    )
+                    continue
                 if not isinstance(instance, protocol):
                     continue
                 type_id = member.type_id

@@ -77,6 +77,19 @@ def test_hot_reload_picks_up_new_files(tmp_path: Path):
     assert set(impls2.keys()) == {"test.f1", "test.f2"}
 
 
+def test_hot_reload_picks_up_edited_file(tmp_path: Path):
+    """Editing an existing plugin file mid-life is picked up on the next
+    discovery call (the loader doesn't cache; each call re-imports)."""
+    _write_fetcher_module(tmp_path / "f1.py", type_id="test.original")
+    impls1 = discover_implementations([tmp_path], protocol=Fetcher)
+    assert "test.original" in impls1
+
+    _write_fetcher_module(tmp_path / "f1.py", type_id="test.edited")
+    impls2 = discover_implementations([tmp_path], protocol=Fetcher)
+    assert "test.edited" in impls2
+    assert "test.original" not in impls2
+
+
 def test_syntax_error_in_module_raises_loud(tmp_path: Path):
     (tmp_path / "bad.py").write_text("def broken(\n", encoding="utf-8")
     with pytest.raises(LoaderError, match="bad.py"):
