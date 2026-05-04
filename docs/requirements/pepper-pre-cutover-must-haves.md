@@ -28,8 +28,9 @@ Status values: **Not started · In progress · Implementation complete · Verifi
 | 06 | [The vault stays the vault](pepper-cutover-06-vault-continuity.md)                           | Critical | Implementation complete   |
 | 07 | [SessionStart + UserPromptSubmit hook fidelity](pepper-cutover-07-hook-fidelity.md)          | High     | Implementation complete   |
 | 08 | [Notification surface I can actually see](pepper-cutover-08-notification-surface.md)         | High     | Implementation complete   |
+| 09 | [Brief framework v1](../superpowers/specs/2026-05-04-brief-framework-design.md)              | High     | Implementation complete   |
 
-**Cutover gate:** every row reaches **Verified** before Pepper's live runtime flips to agent-core. #01, #02, #06 are the non-negotiables; the rest are the working-functional set.
+**Cutover gate:** every row reaches **Verified** before Pepper's live runtime flips to agent-core. #01, #02, #06 are the non-negotiables; the rest are the working-functional set. **#09 was added post-epic** as a ninth ticket once the brief-framework design landed; it sits in the working-functional set alongside #03/#04/#05/#07/#08.
 
 ---
 

@@ -73,6 +73,7 @@ flowchart TB
   EP --> C06["06 Vault continuity"]
   EP --> C07["07 Hook fidelity"]
   EP --> C08["08 Notification surface"]
+  EP --> C09["09 Brief framework"]
   DC["Handoff daemon contract"]
   DC --> C02
   C08 -.->|"partially gates done: visible ready signal"| C02
@@ -138,6 +139,7 @@ Cutover **#03** aligns thematically with the Discord issues; **#04 / #08** with 
 | 06 | [`pepper-cutover-06-vault-continuity.md`](pepper-cutover-06-vault-continuity.md) |
 | 07 | [`pepper-cutover-07-hook-fidelity.md`](pepper-cutover-07-hook-fidelity.md) |
 | 08 | [`pepper-cutover-08-notification-surface.md`](pepper-cutover-08-notification-surface.md) |
+| 09 | [Brief framework v1 design](../superpowers/specs/2026-05-04-brief-framework-design.md) |
 
 ### Supporting / adjacent specs
 
@@ -169,8 +171,9 @@ Update this table whenever a ticket moves. Status values: **Not started · In pr
 | 06 | [Vault continuity](pepper-cutover-06-vault-continuity.md) | **Implementation complete** | PR #32 cherry-picked as `1e66ac5` (`agent-core vault plan-dry-run` CLI + tests + initial runbook). Adversarial review caught two detector bugs (false-positive on URL routes like `/internal/handoff-jobs`; false-negative on `~`-relative paths) plus runbook factual drift on auto-memory derivation — all fixed. Runbook now leads with `autoMemoryDirectory` (the Claude Code-supported override) as the canonical mitigation. **Operator file moves deferred to the cutover window with Pepper offline** — concurrent writes during a copy would lose memories. Test playbook: [`06-vault-continuity.md`](../cutover/test-playbooks/06-vault-continuity.md). PR #32 should be closed as "superseded by 1e66ac5". |
 | 07 | [Hook fidelity](pepper-cutover-07-hook-fidelity.md) | **Implementation complete** | §3b found one production gap: example `pepper-agent-core.yaml` didn't register TimeInjector on UserPromptSubmit. Fixed: added `UserPromptSubmit:` block with `track_session: true`. New `TestTimeInjectorTrackSession` tests lock in per-turn deltas; new `test_pepper_example_yaml.py` is the wiring tripwire that catches the spec's documented regression mode (someone deletes the registration). Test playbook: [`07-hook-fidelity.md`](../cutover/test-playbooks/07-hook-fidelity.md). |
 | 08 | [Notification surface](pepper-cutover-08-notification-surface.md) | **Implementation complete** | No new framework code: existing `deliver()` + `_notify_mail_arrived` path is already kind-agnostic. Locked in by 3 new tests in `test_notify_mail_arrived.py` (deliver-kind-agnostic for `Event`; `_envelope_to_dict` round-trips full `EventPayload`; mixed `TextMessage` + `Event` traffic surfaces uniformly) plus surface-mapping doc [`docs/cutover/notification-surfaces.md`](../cutover/notification-surfaces.md). Test playbook: [`08-notification-surface.md`](../cutover/test-playbooks/08-notification-surface.md). Closes the perception side of #02 scenario (b). |
+| 09 | [Brief framework v1](../superpowers/specs/2026-05-04-brief-framework-design.md) | **Implementation complete** | New package `agent-core-briefs` formalises the deterministic-LLM-deterministic seam (gather → wake → compose → submit) for Pepper's daily artifacts. Async-concurrent gather engine + filesystem-loaded fetchers (`filesystem_read`, `cli`) + filesystem-loaded destinations (`discord_embed`, `markdown_file`) + playbook MD/YAML parser + 7-tool agent surface (`compose_brief`, `list_sections`, `get_section_spec`, `validate_section`, `compress_sections`, `add_extension_section`, `submit_brief`) + atomic submit handler + audit log at `~/.agent-core/briefs/audit.jsonl`. `SchedulerEndpoint` extended (T8) to fire `Event` envelopes alongside `TextMessage`. CLI subapp `agent-core briefs` (compose / fetchers list / fetchers test) for operator debugging. Pluggy plugin (`register_endpoint_types` + `register_cli_subapps`). Pepper example yaml gains `briefs.orchestrator` endpoint with `${agent_root}` substitution + tripwire test (`TestPepperExampleYamlBriefs`). End-to-end integration test (`test_e2e_morning_brief.py`) drives the full chain in-process; the T17 e2e surfaced and fixed a real bug (`a852284`) in `get_section_spec` for conditional sections. **Cross-endpoint MCP tool mounting deferred** to post-cutover wiring between `briefs.orchestrator` and the agent's `ClaudeCodeMCPEndpoint`. Test playbook: [`09-brief-framework.md`](../cutover/test-playbooks/09-brief-framework.md). |
 
-**Cutover gate** (per the epic): every row reaches **Verified**. **#01, #02, #06 are non-negotiable**; the others are the working-functional set.
+**Cutover gate** (per the epic): every row reaches **Verified**. **#01, #02, #06 are non-negotiable**; the others are the working-functional set. **#09 was added post-epic** and joins the working-functional set.
 
 ---
 

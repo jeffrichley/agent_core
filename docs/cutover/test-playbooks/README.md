@@ -25,6 +25,7 @@ incrementally as each ticket lands.
 | 06 | [Vault continuity](06-vault-continuity.md) | Implementation complete (tooling + runbook); operator move deferred to cutover window with Pepper offline. `agent-core vault plan-dry-run` audits absolute paths; runbook documents `autoMemoryDirectory` mitigation. |
 | 07 | [Hook fidelity](07-hook-fidelity.md) | Implementation complete; verification pending end-of-cutover run. UserPromptSubmit pipeline added; `test_pepper_example_yaml.py` is the wiring tripwire. |
 | 08 | [Notification surface](08-notification-surface.md) | Implementation complete; verification pending end-of-cutover run. Closes the perception side of #02 scenario (b). |
+| 09 | [Brief framework](09-brief-framework.md) | Implementation complete; verification pending end-of-cutover run. Brief framework v1 (gather→wake→compose→submit) + 7-tool agent surface + filesystem-discovered fetchers/destinations + Pepper morning_brief example. |
 
 ## Scope of "verification"
 
