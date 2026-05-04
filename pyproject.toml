@@ -11,6 +11,7 @@ agent-core-notify = { workspace = true }
 agent-core-credentials = { workspace = true }
 agent-core-discord = { workspace = true }
 agent-core-channel = { workspace = true }
+agent-core-briefs = { workspace = true }
 
 [dependency-groups]
 # Dev tools only; real package deps live in member pyprojects.
