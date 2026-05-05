@@ -323,3 +323,150 @@ async def test_on_reaction_add_dm_context(monkeypatch):
         assert env.payload.data["channel_id"] == "dm"
     finally:
         await ep.stop()
+
+
+# Engagement-event listeners (poll votes, message edits/deletes). Wired
+# against discord.py's *raw* dispatch points so the agent gets notified
+# even after the underlying message has been evicted from the client's
+# message cache — which is the common case for long-running agents.
+# Caught on testbot 2026-05-05 Phase 6 verification: a vote on a
+# bot-posted poll never reached the agent because no listener was wired.
+
+class _FakeRawPollVote:
+    """Mirrors ``discord.RawPollVoteActionEvent`` shape (raw_models.py:528).
+
+    Attributes match real discord.py exactly — only IDs, no resolved
+    objects. ``guild_id`` is ``Optional[int]`` (None for DMs).
+    """
+
+    def __init__(
+        self,
+        *,
+        message_id: int,
+        channel_id: int,
+        user_id: int,
+        guild_id: int | None,
+        answer_id: int,
+    ) -> None:
+        self.message_id = message_id
+        self.channel_id = channel_id
+        self.user_id = user_id
+        self.guild_id = guild_id
+        self.answer_id = answer_id
+
+
+class _FakeRawMessageDelete:
+    """Mirrors ``discord.RawMessageDeleteEvent`` shape (raw_models.py:85)."""
+
+    def __init__(
+        self, *, message_id: int, channel_id: int, guild_id: int | None
+    ) -> None:
+        self.message_id = message_id
+        self.channel_id = channel_id
+        self.guild_id = guild_id
+
+
+class _FakeRawMessageUpdate:
+    """Mirrors ``discord.RawMessageUpdateEvent`` shape (raw_models.py:140).
+
+    Real discord.py also exposes ``data`` (raw gateway dict) and
+    ``cached_message`` (Optional[Message]); the adapter only reads IDs.
+    """
+
+    def __init__(
+        self, *, message_id: int, channel_id: int, guild_id: int | None
+    ) -> None:
+        self.message_id = message_id
+        self.channel_id = channel_id
+        self.guild_id = guild_id
+
+
+@pytest.mark.asyncio
+async def test_on_raw_poll_vote_add_publishes_event_envelope(monkeypatch):
+    ep, handle, fake = await _start_endpoint(monkeypatch)
+    raw = _FakeRawPollVote(
+        message_id=1501308103499452467,
+        channel_id=1499028901257805874,
+        user_id=100,
+        guild_id=1229523821820772392,
+        answer_id=1,
+    )
+    try:
+        await fake.fire("on_raw_poll_vote_add", raw)
+        assert len(handle.published) == 1
+        env = handle.published[0]
+        assert env.kind == "Event"
+        assert isinstance(env.payload, EventPayload)
+        assert env.payload.type == "discord.poll_vote_add"
+        assert env.payload.data["message_id"] == "1501308103499452467"
+        assert env.payload.data["channel_id"] == "1499028901257805874"
+        assert env.payload.data["user_id"] == "100"
+        assert env.payload.data["guild_id"] == "1229523821820772392"
+        assert env.payload.data["answer_id"] == 1
+    finally:
+        await ep.stop()
+
+
+@pytest.mark.asyncio
+async def test_on_raw_poll_vote_add_dm_context(monkeypatch):
+    """``guild_id`` is ``None`` on real discord.py raw events for DMs;
+    the envelope normalizes that to ``""`` for consistency with the
+    rest of the adapter's surface."""
+    ep, handle, fake = await _start_endpoint(monkeypatch)
+    raw = _FakeRawPollVote(
+        message_id=1, channel_id=2, user_id=3, guild_id=None, answer_id=1
+    )
+    try:
+        await fake.fire("on_raw_poll_vote_add", raw)
+        env = handle.published[0]
+        assert env.payload.data["guild_id"] == ""
+    finally:
+        await ep.stop()
+
+
+@pytest.mark.asyncio
+async def test_on_raw_poll_vote_remove_publishes_event_envelope(monkeypatch):
+    ep, handle, fake = await _start_endpoint(monkeypatch)
+    raw = _FakeRawPollVote(
+        message_id=10, channel_id=20, user_id=30, guild_id=40, answer_id=2
+    )
+    try:
+        await fake.fire("on_raw_poll_vote_remove", raw)
+        assert len(handle.published) == 1
+        env = handle.published[0]
+        assert env.payload.type == "discord.poll_vote_remove"
+        assert env.payload.data["message_id"] == "10"
+        assert env.payload.data["answer_id"] == 2
+    finally:
+        await ep.stop()
+
+
+@pytest.mark.asyncio
+async def test_on_raw_message_edit_publishes_event_envelope(monkeypatch):
+    ep, handle, fake = await _start_endpoint(monkeypatch)
+    raw = _FakeRawMessageUpdate(message_id=100, channel_id=200, guild_id=300)
+    try:
+        await fake.fire("on_raw_message_edit", raw)
+        assert len(handle.published) == 1
+        env = handle.published[0]
+        assert env.kind == "Event"
+        assert env.payload.type == "discord.message_edit"
+        assert env.payload.data["message_id"] == "100"
+        assert env.payload.data["channel_id"] == "200"
+        assert env.payload.data["guild_id"] == "300"
+    finally:
+        await ep.stop()
+
+
+@pytest.mark.asyncio
+async def test_on_raw_message_delete_publishes_event_envelope(monkeypatch):
+    ep, handle, fake = await _start_endpoint(monkeypatch)
+    raw = _FakeRawMessageDelete(message_id=100, channel_id=200, guild_id=None)
+    try:
+        await fake.fire("on_raw_message_delete", raw)
+        env = handle.published[0]
+        assert env.payload.type == "discord.message_delete"
+        assert env.payload.data["message_id"] == "100"
+        assert env.payload.data["guild_id"] == ""
+    finally:
+        await ep.stop()

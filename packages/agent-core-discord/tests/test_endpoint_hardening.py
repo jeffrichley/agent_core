@@ -165,10 +165,17 @@ async def test_handlers_registered_via_add_listener(monkeypatch):
     )
     await ep.start(_Recording())
     try:
-        # All three listeners should be registered under their event names.
+        # All listeners should be registered under their event names.
         assert "on_message" in fake._handlers
         assert "on_reaction_add" in fake._handlers
         assert "on_ready" in fake._handlers
+        # Engagement listeners — wired against raw dispatch points so
+        # they fire even after the underlying message has been evicted
+        # from the client's message cache.
+        assert "on_raw_poll_vote_add" in fake._handlers
+        assert "on_raw_poll_vote_remove" in fake._handlers
+        assert "on_raw_message_edit" in fake._handlers
+        assert "on_raw_message_delete" in fake._handlers
     finally:
         await ep.stop()
 

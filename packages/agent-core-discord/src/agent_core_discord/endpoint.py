@@ -359,6 +359,28 @@ class DiscordEndpoint:
             #    function can't silently mis-route the event.
             self._add_listener(self._make_on_message_handler(), "on_message")
             self._add_listener(self._make_on_reaction_add_handler(), "on_reaction_add")
+            # Engagement events — wire the *raw* dispatch points so we
+            # always fire, even when the underlying message has been
+            # evicted from the client's message cache (the common case
+            # for long-running agents). Caught on testbot 2026-05-05
+            # Phase 6 verification: a vote on a bot-posted poll never
+            # reached the agent because no listener was wired here.
+            self._add_listener(
+                self._make_on_raw_poll_vote_handler("discord.poll_vote_add"),
+                "on_raw_poll_vote_add",
+            )
+            self._add_listener(
+                self._make_on_raw_poll_vote_handler("discord.poll_vote_remove"),
+                "on_raw_poll_vote_remove",
+            )
+            self._add_listener(
+                self._make_on_raw_message_lifecycle_handler("discord.message_edit"),
+                "on_raw_message_edit",
+            )
+            self._add_listener(
+                self._make_on_raw_message_lifecycle_handler("discord.message_delete"),
+                "on_raw_message_delete",
+            )
 
             # An on_ready listener that flips the ready event so start() can
             # return once the gateway connection is live.
@@ -833,6 +855,74 @@ class DiscordEndpoint:
             await self._handle.publish(env)
 
         return on_reaction_add
+
+    def _make_on_raw_poll_vote_handler(self, event_type: str):
+        """Build a handler for ``on_raw_poll_vote_add`` / ``on_raw_poll_vote_remove``.
+
+        Both events have identical payload shape (``RawPollVoteActionEvent``
+        with message_id / channel_id / user_id / guild_id / answer_id), so a
+        single factory parameterised by ``event_type`` covers both. We use
+        the *raw* variants rather than the cached ``poll_vote_add`` /
+        ``poll_vote_remove`` so the agent gets notified even after the
+        underlying message has been evicted from the client's cache.
+        """
+
+        async def on_raw_poll_vote(raw: Any) -> None:
+            # Drop the bot's own votes — same policy as on_reaction_add.
+            self_user = self._client.user if self._client else None
+            self_id = getattr(self_user, "id", None) if self_user is not None else None
+            if self_id is not None and str(getattr(raw, "user_id", "")) == str(self_id):
+                return
+
+            data: dict[str, Any] = {
+                "message_id": str(raw.message_id),
+                "channel_id": str(raw.channel_id),
+                "user_id": str(raw.user_id),
+                "guild_id": str(raw.guild_id) if raw.guild_id else "",
+                "answer_id": int(raw.answer_id),
+            }
+            env = Envelope(
+                id=uuid.uuid4().hex,
+                correlation_id=uuid.uuid4().hex,
+                to=self.target,
+                kind="Event",
+                payload=EventPayload(type=event_type, data=data),
+                created_at=datetime.now(UTC),
+            )
+            assert self._handle is not None
+            await self._handle.publish(env)
+
+        return on_raw_poll_vote
+
+    def _make_on_raw_message_lifecycle_handler(self, event_type: str):
+        """Build a handler for ``on_raw_message_edit`` / ``on_raw_message_delete``.
+
+        Both raw events expose ``message_id``, ``channel_id``, ``guild_id``
+        (Optional). We deliberately don't try to surface message *content*
+        in the envelope — for edits, the new content lives in
+        ``raw.data`` (a partial gateway dict) and may not include the full
+        message; for deletes, there's nothing to surface anyway. Agents
+        that need content can refetch via ``fetch_messages``.
+        """
+
+        async def on_raw_message_lifecycle(raw: Any) -> None:
+            data: dict[str, Any] = {
+                "message_id": str(raw.message_id),
+                "channel_id": str(raw.channel_id),
+                "guild_id": str(raw.guild_id) if raw.guild_id else "",
+            }
+            env = Envelope(
+                id=uuid.uuid4().hex,
+                correlation_id=uuid.uuid4().hex,
+                to=self.target,
+                kind="Event",
+                payload=EventPayload(type=event_type, data=data),
+                created_at=datetime.now(UTC),
+            )
+            assert self._handle is not None
+            await self._handle.publish(env)
+
+        return on_raw_message_lifecycle
 
     # --- Outbound tool handlers (Task 6: send, edit, react). ---
 
