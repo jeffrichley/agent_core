@@ -206,6 +206,35 @@ Pepper inherits the fix with `git pull` — documented in [`pepper-cutover-agent
 
 ---
 
+**Bug caught + fixed (5th cutover-blocker): handoff worker published to `agent_name` instead of bus endpoint name.**
+
+After the transcript_root fix, Jeff drove a real `/exit` cycle (Turing/Enigma conversation). The handoff worker:
+- Read the transcript ✓
+- Summarized correctly via Claude Code SDK ✓ (good summary — even meta-observed Jeff was "casually testing session resumption behavior")
+- Wrote `handoff.md` (1624 bytes) ✓
+- Wrote `handoff-status.json` with `state: ready` ✓
+- Then crashed trying to `publish HandoffReady` — `ValueError: publish to unregistered endpoint 'testbot'`
+
+Root cause: `_publish_result` used `req.agent_name` ("testbot") as the bus recipient, but the bus endpoint is named `agent-testbot`. The retry loop made it worse: each retry re-summarized via the Claude Code SDK (3 SDK invocations visible in the daemon log between 11:29:47 and 11:30:56), then each publish failed, then the final HandoffFailed publish also failed and the worker crashed at 11:31:28.
+
+Pepper's example yaml had the same shape: `agent_name: "Pepper"` (capitalized) but the bus endpoint named `pepper` (lowercase). Same `ValueError: publish to unregistered endpoint 'Pepper'` would have hit Pepper on day-one cutover.
+
+Fixed in `ac535bd`:
+- `HandoffJobRequest.mailbox: str | None` field decouples bus routing from identity
+- `routing_target` property returns `mailbox or agent_name` (backward-compat)
+- `_publish_result` uses `routing_target`; envelope's `to=` becomes the mailbox
+- `HandoffWriter` accepts optional `mailbox` yaml param
+- testbot's `agent_core.yaml` updated with `mailbox: "agent-testbot"`
+- Pepper example yaml updated with `mailbox: "pepper"`
+- New test `test_handoff_publishes_to_mailbox_when_distinct_from_agent_name` locks the routing contract using a deliberately-mismatched fixture
+- Full repo suite: **668 passed, 3 skipped** (was 667 + 1 new test)
+
+After the global tool reinstall + daemon bounce, the live SessionEnd CLI smoke now publishes the final HandoffFailed envelope correctly to `to=agent-testbot` (the fake transcript path still doesn't exist, so state correctly transitions to `failed` with a descriptive error — but the routing fix is verified).
+
+A real `/exit` cycle would now produce `state: ready` + a `HandoffReady` envelope to `agent-testbot` (instead of crashing). Pepper inherits the fix with `git pull`; her runtime config must add `mailbox: "pepper"` to PreCompact + SessionEnd handoff_writer params.
+
+---
+
 ## Phase 3 — Briefs framework (#09)
 
 ### 3.1 — Automated suites already green
