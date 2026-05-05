@@ -177,7 +177,7 @@ Original runbook step 1 was wrong: `agent-core mailbox send …` is not a real C
 
 Acceptance #2 (scheduler trigger) and #3 (channel-relay event) get exercised by Phase 3.4 and Phase 2.2 respectively — already on the runbook.
 
-### 2.2 — Notification surface (#08) — **PARTIAL ✓ + 4th cutover-blocker fixed**
+### 2.2 — Notification surface (#08) — **GREEN ✓ + 2 cutover-blockers fixed (4th, 5th)**
 
 Original runbook step "fire a HandoffReady Event from another shell" was wrong: there is no CLI publisher (cutover #08 spec acknowledges this; the canonical entry points are real Discord traffic, real session-end → handoff worker, and the scheduler's `create` ToolInvocation). Pivoted to validating from real artifacts:
 
@@ -232,6 +232,43 @@ Fixed in `ac535bd`:
 After the global tool reinstall + daemon bounce, the live SessionEnd CLI smoke now publishes the final HandoffFailed envelope correctly to `to=agent-testbot` (the fake transcript path still doesn't exist, so state correctly transitions to `failed` with a descriptive error — but the routing fix is verified).
 
 A real `/exit` cycle would now produce `state: ready` + a `HandoffReady` envelope to `agent-testbot` (instead of crashing). Pepper inherits the fix with `git pull`; her runtime config must add `mailbox: "pepper"` to PreCompact + SessionEnd handoff_writer params.
+
+---
+
+**Live observation closing the loop on #08 acceptance #2a (after the mailbox fix).**
+
+Jeff drove a real `/exit` cycle. Backend artifacts after the cycle:
+- `handoff-status.json`: `state: ready`, real Claude Code session UUID `90a77723-…`, `content_sha256: f55d58a1…b272626`
+- `handoff.md`: clean summary; testbot during the session had **already perceived and acked the previous HandoffFailed envelope** from the earlier mailbox-fix-verify CLI smoke (`"Acknowledged the HandoffFailed envelope (id 182981e7…) as a successful validation of the failure path"` and `"`batch_window_seconds=30` on `list_pending` worked as expected"`)
+- JSONL: exactly **one** new `HandoffReady` envelope, correctly routed to `to=agent-testbot`, sha matching disk. **Zero retries. Zero crashes. Zero double-publishes.** Single clean publish — the mailbox fix removed the entire retry-loop pathology.
+
+Then Jeff opened a fresh session to verify mid-session perception of the just-published `HandoffReady`. Result, **before any prompt was even sent**:
+
+```
+← agent-core-channel: INBOX: 1 pending — 1 from handoff-jobs (Event)
+
+● Wake from the bus — 1 green Event from handoff-jobs. Pulling it now.
+  Called agent-core 2 times (list_pending + ack)
+
+● This is the success counterpart to last session's HandoffFailed probe —
+  HandoffReady for session 90a77723…, my own testbot agent, kind SessionEnd.
+  The bus correctly routed the success event to my mailbox with a content
+  hash for the handoff file. Acking it now.
+
+● Both halves of the handoff event path are now validated end-to-end:
+  - Failure path: HandoffFailed for mailbox-fix-verify → delivered, acked.
+  - Success path: HandoffReady for session 90a77723… → delivered, acked.
+    Handoff written to C:\Users\jeffr\.testbot\Memory\testbot\handoff.md
+    with SHA256 f55d58a1…b272626.
+```
+
+testbot:
+- Reacted to the `notifications/claude/channel` push at turn zero (no prompt sent) — exact #08 surface working
+- Called `list_pending` + ack via the agent-core MCP autonomously
+- Quoted the on-disk SHA256 verbatim — confirming she's reading the actual envelope data
+- Articulated the success/failure parity herself
+
+**Phase 2 fully GREEN.** Cutovers #01, #02, #04, #07, #08 all observed end-to-end on real testbot conditions.
 
 ---
 
