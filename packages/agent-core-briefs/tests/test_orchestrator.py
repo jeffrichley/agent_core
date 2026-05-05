@@ -742,6 +742,26 @@ class TestBriefsOrchestratorEndpointConstruction:
         assert getattr(cls, "type_id", None) == "stub.ctor"
         assert getattr(cls, "namespace", None) == "stub_ctor_ns"
 
+    def test_fetcher_paths_auto_loads_built_ins(self, tmp_path: Path) -> None:
+        """Built-in fetchers (``cli``, ``filesystem_read``, ``now``) ship
+        inside the package and are auto-discovered for any ``fetcher_paths``
+        caller. Operators don't have to copy package source into their own
+        fetcher dir — mirrors the destinations contract. An empty
+        ``fetcher_paths`` is enough to get the three built-ins."""
+        fetcher_dir = tmp_path / "fetchers"
+        fetcher_dir.mkdir()  # empty — no operator fetchers
+
+        ep = BriefsOrchestratorEndpoint(
+            name="briefs.orchestrator",
+            playbooks_path=tmp_path,
+            vars_map={},
+            fetcher_paths=[fetcher_dir],
+        )
+
+        assert "cli" in ep._fetcher_catalog
+        assert "filesystem_read" in ep._fetcher_catalog
+        assert "now" in ep._fetcher_catalog
+
     def test_both_vars_and_vars_map_raises(self, tmp_path: Path) -> None:
         """Setting both ``vars=`` and ``vars_map=`` is ambiguous; the
         orchestrator must refuse rather than silently pick one. The error

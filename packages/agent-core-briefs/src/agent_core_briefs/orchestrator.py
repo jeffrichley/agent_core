@@ -104,6 +104,7 @@ if TYPE_CHECKING:
 
 
 _BUILTIN_DESTINATIONS_DIR = Path(__file__).parent / "destinations"
+_BUILTIN_FETCHERS_DIR = Path(__file__).parent / "fetchers"
 
 log = logging.getLogger(__name__)
 
@@ -134,10 +135,16 @@ class BriefsOrchestratorEndpoint:
             class. Used by in-process callers that already discovered
             implementations themselves. Mutually exclusive with
             ``fetcher_paths`` — pass exactly one.
-        fetcher_paths: List of directories from which to discover fetcher
+        fetcher_paths: Additional directories from which to discover fetcher
             implementations on construction (the runner-friendly path
-            used by the yaml-driven plugin wiring; T16). Mutually
-            exclusive with ``fetcher_catalog``.
+            used by the yaml-driven plugin wiring; T16). Built-in
+            fetchers (``cli``, ``filesystem_read``, ``now``) are always
+            loaded from the package's own ``fetchers/`` directory and
+            are prepended to ``fetcher_paths``. Operator-supplied paths
+            cannot redefine a built-in ``type_id`` —
+            :func:`discover_implementations` raises ``LoaderError`` on
+            duplicate ``type_id``. Mutually exclusive with
+            ``fetcher_catalog``.
         default_target_agent: Fallback when the request envelope's
             ``metadata.target_agent`` is absent. ``None`` means a request
             without metadata cannot be routed and is logged as a failure.
@@ -200,7 +207,16 @@ class BriefsOrchestratorEndpoint:
                 "is required"
             )
         if fetcher_paths is not None:
-            resolved_paths = [Path(p) for p in fetcher_paths]
+            # Built-in fetchers (``cli``, ``filesystem_read``, ``now``) ship
+            # inside this package and are always discoverable from
+            # ``fetcher_paths`` callers — same shape as ``destination_paths``.
+            # Operators who pass ``fetcher_paths`` get the built-ins for free
+            # and only declare their own custom directories. Duplicate
+            # ``type_id`` between built-ins and operator paths raises
+            # ``LoaderError`` (intentional; built-ins cannot be shadowed
+            # silently). Catalog-mode callers (in-process tests, the briefs
+            # CLI) build the full catalog explicitly and bypass discovery.
+            resolved_paths = [_BUILTIN_FETCHERS_DIR, *(Path(p) for p in fetcher_paths)]
             resolved_catalog: dict[str, type[Fetcher]] = discover_implementations(
                 resolved_paths, protocol=Fetcher
             )

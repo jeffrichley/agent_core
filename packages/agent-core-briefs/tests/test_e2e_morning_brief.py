@@ -236,18 +236,18 @@ class _E2EHarness:
 async def briefs_e2e(tmp_path):
     """Build a real Bus + register orchestrator, stub agent, fake discord.
 
-    The fetcher_paths point at a directory containing both the e2e
-    fake_calendar fixture and the framework's built-in
-    ``filesystem_read`` fetcher source — that way the orchestrator's
-    fetcher catalog is built the same way the production runner does
-    (filesystem-discovered), with no in-test wiring shortcuts.
+    The fetcher_paths point at a directory containing only the e2e's
+    custom ``fake_calendar`` fixture. Built-in ``filesystem_read`` is
+    auto-loaded by the orchestrator (``_BUILTIN_FETCHERS_DIR`` is
+    prepended to ``fetcher_paths``), so the catalog is built the same
+    way production does — operators don't have to mirror built-in
+    sources into their own fetcher dirs.
     """
     # Layout:
     #   tmp_path/playbooks/morning_brief.md      (e2e playbook)
     #   tmp_path/gather/morning.yaml             (gather config)
     #   tmp_path/priorities.json                 (filesystem_read source)
     #   tmp_path/fetchers/fake_calendar.py       (test fetcher copy)
-    #   tmp_path/fetchers/filesystem_read.py     (real fetcher copy)
     #   tmp_path/markdown/{{when.date}}.md       (destination output)
     #   tmp_path/audit.jsonl                     (audit log)
     #   tmp_path/bus.sqlite                      (bus persistence)
@@ -277,21 +277,14 @@ async def briefs_e2e(tmp_path):
     playbook_path = playbooks_dir / "morning_brief.md"
     playbook_path.write_text(_E2E_PLAYBOOK, encoding="utf-8")
 
-    # Copy fake_calendar.py + filesystem_read.py into a single fetcher
-    # discovery directory. The loader skips ``__init__.py``-style files
-    # (anything starting with ``_``), so we only need the implementation
-    # modules themselves. Copying (rather than referencing the source
-    # tree directly) keeps the discovery deterministic — if the source
-    # tree gains another fetcher, this test won't accidentally pick it
-    # up and shift the catalog.
+    # Copy only the e2e's custom fake_calendar fixture into the fetcher
+    # discovery directory. The orchestrator prepends its built-in
+    # fetchers directory to ``fetcher_paths``, so ``filesystem_read`` is
+    # already discoverable without copying source. The loader skips
+    # ``__init__.py``-style files (anything starting with ``_``).
     repo_fixtures = Path(__file__).parent / "fixtures"
-    repo_fetchers = Path(__file__).parent.parent / "src" / "agent_core_briefs" / "fetchers"
     (fetcher_dir / "fake_calendar.py").write_text(
         (repo_fixtures / "fake_calendar.py").read_text(encoding="utf-8"),
-        encoding="utf-8",
-    )
-    (fetcher_dir / "filesystem_read.py").write_text(
-        (repo_fetchers / "filesystem_read.py").read_text(encoding="utf-8"),
         encoding="utf-8",
     )
 
