@@ -165,11 +165,17 @@ Phase 1 fixtures cleaned up post-test (vault reset to fresh-agent state).
 
 ## Phase 2 — Bus + traffic (#04, #08)
 
-### 2.1 — Daily JSONL pipeline (#04)
+### 2.1 — Daily JSONL pipeline (#04) — **DONE ✓**
 
-- [ ] Send a test bus message: `agent-core mailbox send --to agent-testbot --kind TextMessage --payload '{"text":"jsonl-test"}'`
-- [ ] Tail `~/.agent-core/bus/raw/<today>.jsonl` and confirm the envelope landed
-- [ ] Run `agent-core bus-log show --agent agent-testbot` and confirm the projected line is human-readable
+Original runbook step 1 was wrong: `agent-core mailbox send …` is not a real CLI command (the bus CLI is read-only — sending happens via the agent-core MCP `submit_envelope` tool from a connected session, or via Discord traffic, or the scheduler). Real Discord ↔ testbot traffic from earlier today gave us the live mixed-traffic day the spec wants.
+
+- [x] **Bug caught:** runbook command `agent-core mailbox send` does not exist. Pivoted to using real Discord traffic that had already crossed the bus today (9 inbound TextMessages from `discord-testbot` + 1 outbound reply from `agent-testbot`).
+- [x] Tail of `~/.agent-core/bus/raw/2026-05-05.jsonl` shows 10 envelopes — write side (`builtin.daily_raw_jsonl` BusHook on `pre_publish`) is firing on every published envelope, full bus-native shape preserved.
+- [x] `agent-core bus-log show --agent agent-testbot --date 2026-05-05` projects all 10 envelopes to human-readable Tool 3 rows with `ts/dir/src/cid/sender/content` fields.
+- [x] **Round-trip correlation verified:** the inbound `"first official test… ❯ introduce yourself"` envelope and testbot's reply share `cid: 33c3cf1c…` — projector preserves correlation IDs across direction flip.
+- [x] **Acceptance #1 (spec):** Discord inbound + agent reply, both in JSONL with consistent envelope shape, both projected cleanly. ✓
+
+Acceptance #2 (scheduler trigger) and #3 (channel-relay event) get exercised by Phase 3.4 and Phase 2.2 respectively — already on the runbook.
 
 ### 2.2 — Notification surface (#08)
 
