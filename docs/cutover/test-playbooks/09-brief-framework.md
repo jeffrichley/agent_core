@@ -80,7 +80,7 @@ uv run pytest packages/agent-core-briefs/tests `
               packages/core/tests/test_scheduler_endpoint.py -q
 ```
 
-Expected: all green (~219 tests in the briefs package + the pepper-yaml tripwire class + the scheduler endpoint tests, which include the `Event`-envelope JobDef shape from T8). Confirms gather engine (concurrency, per-fetcher timeouts, `_errors` capture), playbook parser (YAML-in-MD + simpleeval expressions for conditionals), config-load-time `${var}` substitution, filesystem-loaded fetcher/destination discovery, both built-in fetchers (`filesystem_read`, `cli`), both built-in destinations (`discord_embed` bus path, `markdown_file` direct write), session registry (one-submit-per-token, TTL expiry), all 7 agent tools (including the conditional-section coverage from `a852284`), atomic submit (validate-then-format-then-send-then-audit), CLI surface (compose / fetchers list / fetchers test), scheduler `Event` JobDef shape, and the example yaml wiring tripwires.
+Expected: all green (~244 tests in the briefs package + the pepper-yaml tripwire class + the scheduler endpoint tests, which include the `Event`-envelope JobDef shape from T8). Confirms gather engine (concurrency, per-fetcher timeouts, `_errors` capture), playbook parser (YAML-in-MD + simpleeval expressions for conditionals), config-load-time `${var}` substitution, filesystem-loaded fetcher/destination discovery (both built-in dirs auto-prepended — operators don't have to copy package source), all three built-in fetchers (`filesystem_read`, `cli`, `now`), both built-in destinations (`discord_embed` bus path, `markdown_file` direct write), session registry (one-submit-per-token, TTL expiry), all 7 agent tools (including the conditional-section coverage from `a852284`), atomic submit (validate-then-format-then-send-then-audit), CLI surface (compose / fetchers list / fetchers test), scheduler `Event` JobDef shape, the example yaml wiring tripwires, and the morning-brief example end-to-end (gather + resolve_conditional against real fetchers — see Step 4b).
 
 ### Step 2 — End-to-end morning_brief harness
 
@@ -103,7 +103,7 @@ uv run agent-core briefs fetchers list `
   --fetcher-path packages/agent-core-briefs/src/agent_core_briefs/fetchers
 ```
 
-Expected: JSON listing the two built-in fetchers (`cli`, `filesystem_read`) with their declared config schemas.
+Expected: JSON listing the three built-in fetchers (`cli`, `filesystem_read`, `now`) with their declared config schemas.
 
 ```powershell
 # fetchers test takes --config as a yaml file path (not inline JSON).
@@ -123,7 +123,9 @@ Remove-Item verify-cfg.yaml
 
 Expected: a JSON object on stdout shaped `{"fs": {"content": "<README.md text>", "path": "README.md"}}` — gather_context wraps the fetcher payload under the `--namespace` you pass (filesystem_read's class-level namespace is empty, so always pass one). Fetcher errors land in `_errors.<type_id>` inside the same JSON output (exit code stays 0 — see the existing `test_fetchers_test_surfaces_fetcher_error_in_errors_namespace` test). CLI errors (unknown type, missing config file, bad yaml) print to stderr with a non-zero exit.
 
-### Step 4 — Example playbook parses
+### Step 4 — Example playbook parses + runs end-to-end
+
+**Step 4a — Parse-only check.**
 
 ```powershell
 uv run python -c "from pathlib import Path; from agent_core_briefs.playbook import parse_playbook; pb = parse_playbook(Path('docs/examples/playbooks/morning-brief.md'), vars_map={'agent_root': 'C:/test'}); print('sections:', len(pb.sections)); print('conditional:', len(pb.conditional_sections)); print('destinations:', len(pb.destinations)); print('voice:', pb.voice)"
@@ -139,6 +141,14 @@ voice: pepper
 ```
 
 Confirms the example playbook is well-formed and the parser still accepts everything the example exercises (YAML-in-MD, simpleeval conditional expressions, voice declaration). `vars_map={'agent_root': ...}` provides a stand-in for the `${agent_root}` substitution; any string is fine for parse-shape verification.
+
+**Step 4b — End-to-end tripwire.**
+
+```powershell
+uv run pytest packages/agent-core-briefs/tests/test_examples_morning_brief.py -v
+```
+
+Expected: 7 green. This runs the full **gather → resolve_conditional_sections** path against the real example fetchers (the built-in `now` + the agent-side `email_stub` from `docs/examples/fetchers/`), so the simpleeval expressions in the example (`now.is_weekly_digest_day`, `now.is_friday`, `len(email.urgent) > 0`) actually evaluate. Catches a class of bug parse-only verification can't: the playbook references namespaces that the gather config doesn't supply. Step 4a is structural; Step 4b is "would Pepper actually be able to run this on day one of cutover."
 
 ### Step 5 — Pepper example yaml tripwires
 
@@ -165,7 +175,7 @@ This step gates cutover. Both prerequisites have landed: MCP wiring (`0660b41` +
 | Step 1 | All briefs tests + pepper-yaml briefs tripwire + scheduler envelope-shape tests green. |
 | Step 2 | `test_e2e_morning_brief` green; full chain reaches both destinations + audit. |
 | Step 3 | `briefs --help` lists `compose` and `fetchers`; `fetchers list` returns two built-ins; `fetchers test` returns a namespaced payload from `filesystem_read`. |
-| Step 4 | Example playbook parses to 8 sections + 2 conditional + 2 destinations + 'pepper' voice. |
+| Step 4 | (4a) Example playbook parses to 8 sections + 2 conditional + 2 destinations + 'pepper' voice. (4b) `test_examples_morning_brief.py` — 7 green; example runs end-to-end against real fetchers without `now.is_friday` / `email.urgent` crashes. |
 | Step 5 | `TestPepperExampleYamlBriefs` — 6 green. |
 | Step 6 | Cron-fired BriefRequest produces Discord embed + markdown file + full audit chain on Pepper's live agent-core runtime. Gates cutover. Both prerequisites (MCP wiring + briefs-author skill) have landed. |
 
