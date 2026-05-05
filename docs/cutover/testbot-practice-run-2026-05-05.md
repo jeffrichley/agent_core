@@ -85,7 +85,7 @@ Testbot's Discord app + token + channels already existed from prior validation w
 
 These three share the SessionStart pipeline; testing them in sequence reuses the warm setup.
 
-### 1.1 — CLI hook smoke (#01 Step 2)
+### 1.1 — CLI hook smoke (#01 Step 2) — **DONE ✓**
 
 ```powershell
 echo '{}' | uv run agent-core hooks run SessionStart --config C:\Users\jeffr\.testbot\agent_core.yaml
@@ -93,13 +93,22 @@ echo '{}' | uv run agent-core hooks run SessionStart --config C:\Users\jeffr\.te
 
 **Expected:** JSON with `additionalContext` containing testbot's SOUL/IDENTITY content, no `Pepper` text leaking from the framework, no truncation cap. **Pass = readable JSON, content present.**
 
-### 1.2 — TimeInjector fires (#07)
+- [x] SessionStart fires 4 tools: `time_injector`, `identity_injector` x2, `handoff_injector`
+- [x] `additionalContext` contains: Current Time block (Tuesday, May 05, 2026 09:56 AM EDT) + SOUL.md (testbot voice, no Pepper leak) + IDENTITY.md (six rules) + Continuity placeholder `(file not found: testbot/handoff.md)` — graceful on fresh agent
+- [x] No truncation cap; full SOUL + IDENTITY content emitted
+- [x] No `Pepper` framework text leaked into output
+
+### 1.2 — TimeInjector fires (#07) — **DONE ✓**
 
 ```powershell
 echo '{"prompt":"hi"}' | uv run agent-core hooks run UserPromptSubmit --config C:\Users\jeffr\.testbot\agent_core.yaml
 ```
 
 **Expected:** `additionalContext` contains a current-time block. Run it twice 60 seconds apart, the second has the later time. **Pass = time advances correctly.**
+
+- [x] First fire (`session_id: phase-1-2-smoke`): `additionalContext` = `## Current Time\nTuesday, May 05, 2026 09:57 AM Eastern Daylight Time` — absolute only on first turn (matches `track_session` first-turn semantics)
+- [x] Second fire ~22s later (same `session_id`): `additionalContext` adds `Session started 22s ago.\nLast user turn 22s ago.` — per-turn re-anchoring works, `since_last >= 1s` gate satisfied
+- [x] Tripwire #07 Step 4: `~/.agent_core/time-state.json` has the `phase-1-2-smoke` entry with both `started_at` and `last_seen` — state persists across firings
 
 ### 1.3 — Fresh-session real Claude Code smoke (#01 Step 3)
 
