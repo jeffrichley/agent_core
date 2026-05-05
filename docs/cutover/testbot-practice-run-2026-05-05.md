@@ -381,14 +381,83 @@ In testbot's running session:
 
 ---
 
-## Phase 6 — Discord verb parity (#03)
+## Phase 6 — Discord verb parity (#03) — **GREEN ✓ (10/10) + 4 punch-list findings**
 
 Discord wired in §0.6.
 
-- [ ] In testbot's session, drive each verb against the test channel: `send_discord_message`, `send_briefing` (briefing template), `create_poll`, `create_thread`, `send_typing`, `edit_message`, `add_reaction`, `fetch_messages`, `download_attachments`, `list_channels`, `get_channel_info`
-- [ ] For each: confirm the action lands in the channel as expected
+- [x] In testbot's session, drove each verb against the test channel: `send_discord_message`, `send_briefing` (briefing template — already proven by morning_brief embed in Phase 3.4), `create_poll`, `create_thread`, `send_typing`, `edit_message`, `add_reaction`, `fetch_messages`, `download_attachments`, `list_channels`, `get_channel_info`
+- [x] For each: confirmed the action lands in the channel as expected
 
-**Pass criteria:** every verb works end-to-end against testbot's existing Discord channels.
+**Pass criteria:** every verb works end-to-end against testbot's existing Discord channels. **GREEN — 10/10.**
+
+testbot drove all 10 verbs in sequence (some in parallel where independent), each returning a successful Acknowledgment from the discord-testbot endpoint:
+
+| # | Verb | Result | Note |
+|---|---|---|---|
+| 1 | `list_channels` | ✅ | 21 channels in guild 1229523821820772392; testbot channel 1499028901257805874 = `name: "test", type: "text"` |
+| 2 | `get_channel_info` | ✅ with bug | Returns empty `guild_id` (Finding 1) |
+| 3 | `fetch_messages` (limit=5) | ✅ | 5 messages back, including the morning brief embeds |
+| 4 | `send_typing` (3s) | ✅ | `{"status": "typing_started", "duration_seconds": 3.0}` |
+| 5 | `send_discord_message "phase6-msg test"` | ✅ | message_id 1501286560824561685 |
+| 6 | `edit_message → "phase6-msg edited"` | ✅ | Edit confirmed via subsequent fetch |
+| 7 | `add_reaction 👍` | ✅ | `{"status": "reacted", "emoji": "👍"}` |
+| 8 | `create_thread "phase6-thread"` | ✅ | thread_id == parent message_id (Discord API convention; not a bug) |
+| 9 | `create_poll` (1h, 3 options) | ✅ | message_id 1501286855302184992 (Finding 3) |
+| 10 | `download_attachments` | ✅ with bug | Saved 114 bytes to attachments dir; `content_type: ""` (Finding 2) |
+
+**Punch-list findings (NOT cutover-blockers — affect agent introspection only, not core day-to-day Discord usage):**
+
+1. **`get_channel_info` returns empty `guild_id`** — `endpoint.py:1142` uses `getattr(ch, "guild_id", "")` but discord.py text channels expose `channel.guild.id`. Fix: `str(ch.guild.id) if ch.guild else ""`. Note `_list_channels` at endpoint.py:1130 has the same shape but works incidentally because it iterates from a guild object.
+2. **`download_attachments` drops content_type** — `endpoint.py:1111` hard-codes `"content_type": ""` in saved records even though `fetch_messages` returns the proper MIME (e.g., `text/plain; charset=utf-8`). Callers must re-call `fetch_messages` to recover what they downloaded.
+3. **`fetch_messages` doesn't surface polls** — `message.poll` is a first-class Discord attribute that the `_fetch` method doesn't read. Agents fetching channel state to understand "what just happened" will be blind to active polls.
+4. **Doc note (not a bug):** `thread_id == message_id` from `create_thread` — Discord API convention (threads anchored on a message inherit that message's ID). Worth documenting so callers don't assume separate ID spaces.
+
+**Bus-meta observation (punch-list):** wake-channel notifications occasionally reported `urgency_max: "yellow"` while every envelope in the queue at the time was actually green. testbot saw it twice during the run, both around send→ack races. Timing window in the wake builder — it samples `urgency_max` slightly out of sync with what `list_pending` later returns. Not blocking; caused testbot to suspect failures that didn't exist.
+
+These findings are deferred to follow-up tickets and do not block the cutover gate.
+
+---
+
+## Sign-off — 2026-05-05 testbot practice run — **GREEN**
+
+**All six phases GREEN. All nine cutover playbooks observed end-to-end on real testbot conditions.** The practice-run policy paid for itself many times over: **6 cutover-blockers caught and fixed before Pepper ever touched the new substrate.**
+
+### Cutover-blockers caught + fixed (full list)
+
+1. `1a38463` — Runner forwarded plugin-managed `params:` keys to endpoint `__init__()`. New `reserved_endpoint_params` pluggy hookspec. Repo fix.
+2. `4c4b7bd` — `briefs fetchers list/test` CLI didn't auto-prepend the built-in fetchers directory. Repo fix.
+3. *no commit* — Globally-installed `agent-core` CLI tool was stale vs the repo schema (`tool:` → `type:`). Environmental, per-machine. Documented as Step 0 prerequisite in [`07-hook-fidelity.md`](test-playbooks/07-hook-fidelity.md). **Pepper's machine must `uv tool install --reinstall ./packages/core` before her cutover.**
+4. `438d6fe` — `HandoffJobsEndpoint` validated `transcript_path` against `vault_root`. Real Claude Code transcripts live at `~/.claude/projects/<...>/`. New `transcript_root` field. Repo fix.
+5. `ac535bd` — `_publish_result` used `agent_name` for both human identity AND bus routing. New `mailbox` field decouples them. Repo fix. **Pepper's runtime config must add `mailbox: "pepper"`** to PreCompact + SessionEnd handoff_writer params.
+6. `33fb1f9` — Briefs framework: agent's `submit_brief` carries content-only (section_id + fields); destinations rendered empty `## ` headers because title + color weren't being enriched from the spec. AND testbot's playbook didn't set `discord_endpoint_name`. Repo fix + example yaml update. **Pepper's runtime playbook must set `discord_endpoint_name`** to her actual Discord endpoint name.
+
+### Live observations satisfied
+
+- Cutover #01 (Identity at SessionStart): SOUL + IDENTITY content present, no truncation, agent identifies as testbot in first person
+- Cutover #02 (Handoff observability): ready / cross-session-pending / failed placeholders all honored on real Claude Code sessions
+- Cutover #03 (Discord verb parity): 10/10 verbs work end-to-end
+- Cutover #04 (Daily JSONL pipeline): Real Discord round-trip + briefs traffic + handoff events all in JSONL with consistent envelope shape
+- Cutover #05 (Skills): project-scope `briefs-author` and `email` resolve correctly
+- Cutover #06 (Vault dry-run): `configs: []` — zero migration false-positives
+- Cutover #07 (Hook fidelity): TimeInjector fires on UserPromptSubmit with per-turn deltas
+- Cutover #08 (Notification surface): channel-relay push surfaces HandoffReady/Failed mid-session; agent reacts at turn zero
+- Cutover #09 (Briefs framework): cron-fired BriefRequest produces markdown file + Discord embed + audit log on a real session
+
+### Pepper-runtime config additions needed before her cutover
+
+- `mailbox: "pepper"` on PreCompact + SessionEnd handoff_writer params
+- `discord_endpoint_name: "<her-discord-endpoint>"` on her morning_brief playbook's `discord_embed` destination
+
+### Punch-list (deferred follow-ups, not blocking)
+
+- **Discord adapter polish:** `get_channel_info` empty `guild_id`, `download_attachments` empty `content_type`, `fetch_messages` doesn't surface `message.poll`
+- **Bus wake-builder:** `urgency_max` samples slightly out of sync with `list_pending` queue state
+- **Briefs CLI UX:** duplicate `--fetcher-path` to the built-in dir produces a confusing "duplicate type_id" error (loader should de-dupe paths)
+- **Claude Code:** additional working directories don't auto-load `.claude/skills/` trees from secondary roots (likely intentional isolation, worth confirming)
+
+### Recommendation
+
+**Go on Pepper cutover.** All blockers fixed, all playbooks observed live, runtime config additions documented, punch-list scoped. Pepper is dramatically safer than she was at the start of the day.
 
 ---
 
