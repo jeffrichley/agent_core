@@ -248,6 +248,13 @@ class DiscordEndpoint:
         self._client_factory = _client_factory  # test seam
         self._handle: BusHandle | None = None
         self._client: Any = None
+        # Sticky cache of ``user_id → display_name`` so raw events that
+        # only carry IDs (poll votes, future engagement events) don't
+        # have to re-do the get_user / fetch_user dance on every fire.
+        # First miss → HTTP fetch; every subsequent vote from the same
+        # user → cache hit. Failures are deliberately NOT cached so a
+        # transient HTTP error doesn't lock the user at empty forever.
+        self._user_display_name_cache: dict[str, str] = {}
         self._client_task: asyncio.Task | None = None
         self._sweep_task: asyncio.Task | None = None
         self._ready_event: asyncio.Event = asyncio.Event()
@@ -856,6 +863,42 @@ class DiscordEndpoint:
 
         return on_reaction_add
 
+    async def _resolve_user_display_name(self, user_id: int) -> str:
+        """Resolve a Discord user's display name with sticky cache.
+
+        Resolution order:
+        1. Local cache (``self._user_display_name_cache``) — sticky for
+           the lifetime of the endpoint. The whole point: a user fires
+           100 votes, we fetch them once.
+        2. ``client.get_user(user_id)`` — discord.py's own cache, populated
+           opportunistically by message / reaction events whose
+           dispatchers hydrate the User. Synchronous, cheap.
+        3. ``client.fetch_user(user_id)`` — HTTP round-trip. Reliable but
+           adds latency; only paid on first encounter with the user.
+
+        Returns the empty string on any failure (uncached + fetch raises,
+        or no client). Failures are deliberately NOT cached so a
+        transient HTTP error doesn't lock the user at empty forever.
+        """
+        user_id_str = str(user_id)
+        cached = self._user_display_name_cache.get(user_id_str)
+        if cached is not None:
+            return cached
+        if self._client is None:
+            return ""
+        user = self._client.get_user(user_id)
+        if user is None:
+            try:
+                user = await self._client.fetch_user(user_id)
+            except Exception:
+                # discord.NotFound, HTTPException, network error, etc.
+                # Don't cache — try again next time.
+                return ""
+        name = str(getattr(user, "display_name", "") or "")
+        if name:
+            self._user_display_name_cache[user_id_str] = name
+        return name
+
     def _make_on_raw_poll_vote_handler(self, event_type: str):
         """Build a handler for ``on_raw_poll_vote_add`` / ``on_raw_poll_vote_remove``.
 
@@ -874,17 +917,16 @@ class DiscordEndpoint:
             if self_id is not None and str(getattr(raw, "user_id", "")) == str(self_id):
                 return
 
-            # Resolve the voter's display name from the client's user
-            # cache for parity with ``discord.reaction_add`` (which gets
-            # ``user_display_name`` for free because discord.py passes
-            # the resolved User into the cached event). Falls back to
-            # ``""`` when uncached — agents can resolve lazily.
-            voter = (
-                self._client.get_user(int(raw.user_id))
-                if self._client is not None
-                else None
+            # Resolve the voter's display name with a sticky local cache.
+            # Parity goal: ``discord.reaction_add`` Events carry
+            # ``user_display_name`` for free (discord.py hydrates the
+            # User object before dispatch). Raw poll vote events only
+            # carry IDs, so the handler has to resolve. First miss →
+            # HTTP fetch_user; subsequent votes from same user → cache
+            # hit. Caught on testbot 2026-05-05 round-3 verification.
+            user_display_name = await self._resolve_user_display_name(
+                int(raw.user_id)
             )
-            user_display_name = getattr(voter, "display_name", "") or ""
 
             data: dict[str, Any] = {
                 "message_id": str(raw.message_id),

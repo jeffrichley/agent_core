@@ -332,6 +332,15 @@ class _FakeDiscordClient:
         # that resolve display names from raw events have something to
         # find.
         self._users: dict[str, _FakeUser] = {}
+        # Real ``discord.Client.fetch_user(user_id)`` is the HTTP-backed
+        # fallback. Crucially, fetch_user does NOT auto-cache into
+        # ``_users`` (it just constructs a new ``User`` from the
+        # response — see ``client.py:2679``); the bus-level adapter has
+        # to maintain its own sticky cache. Tests pre-seed
+        # via ``add_remote_user`` for the HTTP-only path.
+        self._remote_users: dict[str, _FakeUser] = {}
+        # Counter so tests can assert cache hits avoided HTTP.
+        self.fetch_user_call_count = 0
         self._closed = False
         self._logged_in = False
         self._handlers: dict[str, Callable] = {}
@@ -357,6 +366,31 @@ class _FakeDiscordClient:
 
     def add_user(self, user: _FakeUser) -> None:
         self._users[str(user.id)] = user
+
+    async def fetch_user(self, user_id: int | str) -> _FakeUser:
+        """Mirrors ``discord.Client.fetch_user`` — async HTTP-style lookup.
+
+        Raises a ``LookupError`` for missing users, mirroring real
+        ``discord.NotFound`` (the adapter catches broad ``Exception`` so
+        the specific class doesn't matter for the test surface).
+
+        Crucially, this does NOT auto-cache — same as real discord.py.
+        Adapters that want stickiness must maintain their own cache.
+        """
+        self.fetch_user_call_count += 1
+        u = self._remote_users.get(str(user_id))
+        if u is None:
+            raise LookupError(f"user {user_id!r} not found")
+        return u
+
+    def add_remote_user(self, user: _FakeUser) -> None:
+        """Pre-seed a user reachable only via ``fetch_user``.
+
+        Use this for tests that exercise the HTTP-fallback path. Users
+        seeded here are NOT visible to ``get_user`` (mirrors real
+        discord.py: HTTP-fetched users aren't auto-added to the cache).
+        """
+        self._remote_users[str(user.id)] = user
 
     def get_guild(self, guild_id: int | str) -> _FakeGuild | None:
         return self._guilds.get(str(guild_id))

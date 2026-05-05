@@ -414,13 +414,73 @@ async def test_on_raw_poll_vote_add_publishes_event_envelope(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_on_raw_poll_vote_add_uncached_user_empty_display_name(monkeypatch):
-    """If the voting User is not in the client's cache, ``user_display_name``
-    is the empty string — agents can resolve it lazily via ``fetch_messages``
-    or their own User cache. Mirrors discord.py's ``get_user`` returning
-    ``None`` for uncached users."""
+async def test_on_raw_poll_vote_add_falls_back_to_fetch_user_on_cache_miss(
+    monkeypatch,
+):
+    """When ``get_user`` misses, the handler falls through to
+    ``fetch_user`` (HTTP). discord.py's ``_users`` is a
+    ``WeakValueDictionary`` and ``fetch_user`` doesn't auto-cache, so
+    raw poll vote events would otherwise return empty display names for
+    every voter who hasn't recently messaged or reacted (the common
+    case caught on testbot 2026-05-05 round-3 verification)."""
     ep, handle, fake = await _start_endpoint(monkeypatch)
-    # Deliberately do NOT seed user 999.
+    # User is reachable ONLY via fetch_user (HTTP). Not in get_user cache.
+    fake.add_remote_user(_FakeUser(id="100", name="alice", display_name="Alice"))
+    raw = _FakeRawPollVote(
+        message_id=1, channel_id=2, user_id=100, guild_id=3, answer_id=1
+    )
+    try:
+        await fake.fire("on_raw_poll_vote_add", raw)
+        env = handle.published[0]
+        assert env.payload.data["user_id"] == "100"
+        assert env.payload.data["user_display_name"] == "Alice"
+        assert fake.fetch_user_call_count == 1
+    finally:
+        await ep.stop()
+
+
+@pytest.mark.asyncio
+async def test_on_raw_poll_vote_add_uses_local_cache_to_avoid_repeated_fetch_user(
+    monkeypatch,
+):
+    """Once a user has been resolved (via either ``get_user`` or
+    ``fetch_user``), the adapter must remember them — Jeff's exact ask:
+    \"a cache where it only needs to see the user once and it saves it\".
+    A user firing 100 votes should hit the HTTP path exactly once."""
+    ep, handle, fake = await _start_endpoint(monkeypatch)
+    fake.add_remote_user(_FakeUser(id="100", name="alice", display_name="Alice"))
+    raw = _FakeRawPollVote(
+        message_id=1, channel_id=2, user_id=100, guild_id=3, answer_id=1
+    )
+    try:
+        # First vote: cache miss → get_user None → fetch_user HTTP.
+        await fake.fire("on_raw_poll_vote_add", raw)
+        assert fake.fetch_user_call_count == 1
+        assert handle.published[0].payload.data["user_display_name"] == "Alice"
+
+        # Second + third votes from same user: should hit local cache.
+        # No new HTTP round-trip, display name still resolves.
+        await fake.fire("on_raw_poll_vote_remove", raw)
+        await fake.fire("on_raw_poll_vote_add", raw)
+        assert fake.fetch_user_call_count == 1, (
+            "fetch_user must not be called for users already in local cache"
+        )
+        assert handle.published[1].payload.data["user_display_name"] == "Alice"
+        assert handle.published[2].payload.data["user_display_name"] == "Alice"
+    finally:
+        await ep.stop()
+
+
+@pytest.mark.asyncio
+async def test_on_raw_poll_vote_add_returns_empty_when_fetch_user_raises(
+    monkeypatch,
+):
+    """If neither ``get_user`` nor ``fetch_user`` resolves (deleted account,
+    network error, etc.), the Event still publishes — just with an empty
+    ``user_display_name``. Failures are NOT cached, so a transient HTTP
+    error doesn't lock the user at empty forever."""
+    ep, handle, fake = await _start_endpoint(monkeypatch)
+    # Deliberately seed nowhere — both get_user AND fetch_user will miss.
     raw = _FakeRawPollVote(
         message_id=1, channel_id=2, user_id=999, guild_id=3, answer_id=1
     )
@@ -429,6 +489,14 @@ async def test_on_raw_poll_vote_add_uncached_user_empty_display_name(monkeypatch
         env = handle.published[0]
         assert env.payload.data["user_id"] == "999"
         assert env.payload.data["user_display_name"] == ""
+        assert fake.fetch_user_call_count == 1, "fetch_user attempted on get_user miss"
+
+        # Recovery: a later fix (user re-seeded) should resolve cleanly,
+        # NOT be locked at empty by the failure cache.
+        fake.add_remote_user(_FakeUser(id="999", name="late", display_name="LateBoot"))
+        await fake.fire("on_raw_poll_vote_add", raw)
+        assert handle.published[1].payload.data["user_display_name"] == "LateBoot"
+        assert fake.fetch_user_call_count == 2
     finally:
         await ep.stop()
 
