@@ -9,14 +9,28 @@
 # `vars.agent_root`. `{{ ... }}` substitutions belong in destinations,
 # not here — gather config runs once, before delivery.
 #
-# Both example fetchers below are built into the briefs package:
-# `filesystem_read` and `cli`. Drop additional `.py` modules into one of
-# the `fetcher_paths` directories on the orchestrator endpoint to add
-# more — they're picked up on next gather without an install step.
+# Three of the four fetchers below use built-ins shipped with the briefs
+# package: `cli`, `filesystem_read`, and `now`. The fourth (`email_stub`)
+# is an agent-side example fetcher under `docs/examples/fetchers/` that
+# keeps the example runnable without a real email integration. Drop your
+# own `.py` modules into one of the orchestrator's `fetcher_paths`
+# directories to add more — they're picked up on next gather without an
+# install step.
 #
 # Place at `${agent_root}/Memory/gather/morning.yaml`.
 
 fetchers:
+  # Built-in: time/calendar facts. The morning-brief playbook gates
+  # `weekly_digest` and `war_pointer` conditional sections on `now.is_friday`
+  # and `now.is_weekly_digest_day` — without this fetcher both expressions
+  # crash. `weekly_digest_day` defaults to Monday; override via config.
+  - type: now
+    namespace: now
+    timeout_seconds: 5
+    config:
+      timezone: America/New_York
+
+  # Built-in: read a local YAML/JSON/text file into the context.
   - type: filesystem_read
     namespace: projects
     timeout_seconds: 10
@@ -24,6 +38,7 @@ fetchers:
       path: "${agent_root}/Memory/projects/active.yaml"
       format: yaml
 
+  # Built-in: shell out to a CLI and parse stdout.
   - type: cli
     namespace: calendar
     timeout_seconds: 30
@@ -40,3 +55,12 @@ fetchers:
         - PATHEXT
         - SYSTEMROOT
         - USERPROFILE
+
+  # Agent-side example: stub email fetcher. Swap with a real client when
+  # ready. Source: `docs/examples/fetchers/email_stub.py`. Add the
+  # containing directory to the orchestrator's `fetcher_paths` so it's
+  # discoverable.
+  - type: email_stub
+    namespace: email
+    timeout_seconds: 5
+    config: {}
