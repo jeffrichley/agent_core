@@ -351,6 +351,118 @@ endpoints:
 
 
 @pytest.mark.asyncio
+async def test_handoff_pepper_capital_p_identity_routes_to_lowercase_mailbox(
+    tmp_path, monkeypatch
+):
+    # Pepper-shaped regression: real Pepper config has agent_name="Pepper"
+    # (capitalized — her display identity, what she calls herself in SOUL.md
+    # and IDENTITY.md) and bus endpoint "pepper" (lowercase — the routing
+    # name registered with the daemon). Without the mailbox split, the
+    # worker would publish to "Pepper" and ValueError on an unregistered
+    # endpoint. This test locks in that the case-mismatched config works:
+    # publish routes to lowercase "pepper", but the agent_name preserved in
+    # the HandoffReady payload data stays capitalized "Pepper" so downstream
+    # consumers (and Pepper herself when she reads list_pending) see her
+    # identity unchanged.
+    vault_root = tmp_path / "vault"
+    vault_root.mkdir(parents=True, exist_ok=True)
+    transcript_root = tmp_path / "claude_projects"
+    transcript_root.mkdir(parents=True, exist_ok=True)
+    transcript_path = transcript_root / "session-pepper.jsonl"
+    transcript_path.write_text('{"message":{"role":"user","content":"hi"}}\n', encoding="utf-8")
+    handoff_path = vault_root / "handoff.md"
+    status_path = vault_root / "handoff-status.json"
+
+    cfg = tmp_path / "agent_core.yaml"
+    cfg.write_text(
+        f"""
+bus:
+  storage_path: {tmp_path / "bus.sqlite"}
+http:
+  bind_host: 127.0.0.1
+  bind_port: 0
+endpoints:
+  - type: builtin.handoff_jobs
+    name: handoff-jobs
+    params:
+      mount: /internal/handoff-jobs
+  - type: builtin.stub
+    name: pepper
+""",
+        encoding="utf-8",
+    )
+
+    bus, http_host = await build_bus_from_config(cfg)
+    assert http_host is not None
+    await http_host.start()
+    try:
+        await bus.start()
+        try:
+            endpoint = bus._endpoints_by_name["handoff-jobs"].endpoint
+
+            async def _fake_extract(self, req, transcript_text):
+                return "# Handoff\n"
+
+            monkeypatch.setattr(type(endpoint), "_extract_handoff", _fake_extract)
+            url = f"http://127.0.0.1:{http_host.port}/internal/handoff-jobs"
+            payload = {
+                "session_id": "session-pepper",
+                "event": "SessionEnd",
+                "agent_name": "Pepper",  # capital P — display identity
+                "mailbox": "pepper",  # lowercase — bus endpoint name
+                "vault_root": str(vault_root),
+                "handoff_path": str(handoff_path),
+                "handoff_status_path": str(status_path),
+                "transcript_path": str(transcript_path),
+                "transcript_root": str(transcript_root),
+                "requested_at": datetime.now(UTC).isoformat(),
+            }
+            async with httpx.AsyncClient(timeout=5.0) as client:
+                resp = await client.post(url, json=payload)
+            assert resp.status_code == 202
+
+            for _ in range(60):
+                if status_path.exists():
+                    state = json.loads(status_path.read_text(encoding="utf-8")).get("state")
+                    if state == "ready":
+                        break
+                await asyncio.sleep(0.05)
+
+            stub_ep = bus._endpoints_by_name["pepper"].endpoint
+            for _ in range(60):
+                if any(
+                    env.kind == "Event"
+                    and isinstance(env.payload, EventPayload)
+                    and env.payload.type == "HandoffReady"
+                    for env in stub_ep.inbox
+                ):
+                    break
+                await asyncio.sleep(0.05)
+
+            ready_envs = [
+                env
+                for env in stub_ep.inbox
+                if env.kind == "Event"
+                and isinstance(env.payload, EventPayload)
+                and env.payload.type == "HandoffReady"
+            ]
+            assert ready_envs, (
+                "HandoffReady never reached the lowercase 'pepper' endpoint — "
+                "worker likely tried to publish to capital-P 'Pepper' (the "
+                "human identity) instead of the registered bus endpoint."
+            )
+            # Routing went to lowercase mailbox — what the bus needs to deliver:
+            assert ready_envs[0].to == "pepper"
+            # Identity in the payload preserved as capital-P — what Pepper
+            # sees when she reads the event from her own inbox:
+            assert ready_envs[0].payload.data["agent_name"] == "Pepper"
+        finally:
+            await bus.stop()
+    finally:
+        await http_host.stop()
+
+
+@pytest.mark.asyncio
 async def test_handoff_jobs_endpoint_rejects_transcript_outside_transcript_root(tmp_path):
     # transcript_path must live under transcript_root (default: ~/.claude/projects/),
     # not vault_root. Caller can override transcript_root explicitly. This test
