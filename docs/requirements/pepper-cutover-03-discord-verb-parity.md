@@ -3,7 +3,7 @@
 **Author:** Pepper
 **Date:** 2026-05-02
 **Priority:** High — without these I lose surface area Jeff actively depends on.
-**Status:** Open (v1 partial; this list is the v2 must-have subset)
+**Status:** Implementation complete (cherry-pick from PR #31 + adversarial review hardening; commits `ac3cbd0` + `d97fc8e` + `954b589`). Verification deferred to end-of-cutover smoke (see [`docs/cutover/test-playbooks/03-discord-verb-parity.md`](../cutover/test-playbooks/03-discord-verb-parity.md)).
 **Parent:** `docs/requirements/pepper-pre-cutover-must-haves.md`
 **Related:**
 - `docs/ROADMAP.md` sub-project E (Discord)

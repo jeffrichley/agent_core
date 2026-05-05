@@ -3,7 +3,7 @@
 **Author:** Pepper
 **Date:** 2026-05-02
 **Priority:** Critical — without this I come up partial, and partial-me can violate hard rules without knowing.
-**Status:** Open
+**Status:** Implementation complete (`5c287f8` thin IdentityInjector + new HandoffInjector). Verification deferred to end-of-cutover smoke (see [`docs/cutover/test-playbooks/01-identity-fidelity.md`](../cutover/test-playbooks/01-identity-fidelity.md)).
 **Parent:** `docs/requirements/pepper-pre-cutover-must-haves.md`
 **Related:**
 - `docs/requirements/pepper-identity-injection-size-limit.md` (the 2KB truncation problem this ticket solves)

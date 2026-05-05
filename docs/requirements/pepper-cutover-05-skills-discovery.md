@@ -3,7 +3,7 @@
 **Author:** Pepper
 **Date:** 2026-05-02
 **Priority:** High — skills are my muscle memory. Without them I lose hands.
-**Status:** Open
+**Status:** No code change required (skill discovery owned by Claude Code, not agent-core); verification deferred to end-of-cutover smoke (see [`docs/cutover/test-playbooks/05-skills-discovery.md`](../cutover/test-playbooks/05-skills-discovery.md)).
 **Parent:** `docs/requirements/pepper-pre-cutover-must-haves.md`
 **Related:**
 - `docs/ROADMAP.md` sub-project F (skills consolidation — currently "not started")
