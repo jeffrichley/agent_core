@@ -177,13 +177,32 @@ Original runbook step 1 was wrong: `agent-core mailbox send …` is not a real C
 
 Acceptance #2 (scheduler trigger) and #3 (channel-relay event) get exercised by Phase 3.4 and Phase 2.2 respectively — already on the runbook.
 
-### 2.2 — Notification surface (#08)
+### 2.2 — Notification surface (#08) — **PARTIAL ✓ + 4th cutover-blocker fixed**
 
-- [ ] In a running testbot session, fire a `HandoffReady` Event onto the bus from another shell
-- [ ] Confirm the running session sees it (channel notification or system reminder on next prompt)
-- [ ] Repeat with a `HandoffFailed` Event — same surface
+Original runbook step "fire a HandoffReady Event from another shell" was wrong: there is no CLI publisher (cutover #08 spec acknowledges this; the canonical entry points are real Discord traffic, real session-end → handoff worker, and the scheduler's `create` ToolInvocation). Pivoted to validating from real artifacts:
 
-**Pass criteria:** mid-session perception works for both `TextMessage` and `Event` kinds.
+- [x] **TextMessage kind-agnostic perception, mid-session:** already proven by the Phase 2.1 traffic dump. At 10:02:59 Jeff sent `"first official test… ❯ introduce yourself"` to testbot via Discord; at 10:03:27 testbot replied via the bus, same `cid`. That's a live, in-session, channel-relay-push round-trip. Acceptance #08(2b) GREEN.
+- [x] **Event kind perception, mid-session:** intended path was `/exit` → SessionEnd hook → handoff-jobs daemon endpoint → worker summarizes → publishes `HandoffReady` to mailbox. Driving this exposed the 4th cutover-blocker bug (see below).
+
+**Bug caught + fixed: HandoffJobsEndpoint rejects real Claude Code transcript paths with 403 Forbidden.**
+
+When Jeff `/exit`'d a testbot session, the SessionEnd hook fired, posted a job to the daemon's `/internal/handoff-jobs` endpoint — and got HTTP 403. Root cause: the endpoint validated `transcript_path` against `vault_root`, but Claude Code stores per-session transcripts at `~/.claude/projects/<encoded-cwd>/<session-id>.jsonl` — outside any agent vault by design. Every real graceful session-end on the new substrate would 403.
+
+The bug was hidden because the integration test fixtures placed `transcript_path` inside `vault_root` — the opposite of real Claude Code topology. Green tests masking a production bug, exactly the failure mode the standing "fakes mirror real strictly" rule warns about.
+
+Fixed in `438d6fe`:
+- `HandoffJobRequest` grows `transcript_root: str` field (default `~/.claude/projects/`)
+- `_post_job` and `_process_job` validate `transcript_path` against `transcript_root`; write paths (handoff_path, status_path) still validate against `vault_root` (path-traversal protection on writes preserved)
+- `HandoffWriter` hook accepts an optional `transcript_root` yaml param
+- Test fixtures fixed to mirror real topology: transcript outside vault
+- New test `test_handoff_jobs_endpoint_rejects_transcript_outside_transcript_root` locks the symmetric check on the new field
+- Full repo suite: **667 passed, 3 skipped** (was 666 baseline + 1 new test)
+
+After the global tool reinstall + daemon restart, the live SessionEnd CLI smoke now returns "Handoff Job Enqueued" with a real job_id. The worker processes the job and writes `state: failed` with a descriptive error when the (fake) transcript doesn't exist — proving the entire enqueue → worker → status-write chain works on real Claude Code paths.
+
+**Live in-session HandoffReady perception not yet observed on testbot** — covered architecturally by the unit + integration tests (`test_notify_mail_arrived.py` Step 1 of #08, plus `test_handoff_enqueue_integration.py` proving end-to-end publish), but not yet observed on a real Claude Code session. A targeted re-run of `/exit` → wait → fresh-session `list_pending` is straightforward to do once we want to formally close the live observation; not a blocker for moving on.
+
+Pepper inherits the fix with `git pull` — documented in [`pepper-cutover-agent-playbook.md`](../requirements/pepper-cutover-agent-playbook.md) bug table row 4.
 
 ---
 
