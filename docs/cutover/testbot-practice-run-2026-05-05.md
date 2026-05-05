@@ -127,10 +127,12 @@ echo '{"prompt":"hi"}' | uv run agent-core hooks run UserPromptSubmit --config C
 
 Three sub-scenarios on the running session:
 
-**(a) Ready before boot:**
-- [ ] Manually write a `handoff.md` and `handoff-status.json` (`status: ready`) to testbot's vault before opening Claude Code
-- [ ] Open a new session
-- [ ] First response should reference specific content from `handoff.md` unprompted
+**(a) Ready before boot:** — **DONE ✓**
+- [x] Manually write a `handoff.md` and `handoff-status.json` (`state: ready`) to testbot's vault before opening Claude Code
+- [x] Open a new session
+- [x] First response should reference specific content from `handoff.md` unprompted
+
+**Result:** GREEN. Fixture handoff.md embedded a distinctive token (`zucchini-pickle-7421`); first response to `"where are we?"` volunteered the token + Phase 1.4 context unprompted. State-ready → HandoffInjector → file-read path verified end-to-end on a real Claude Code session.
 
 **(b) Pending at boot:**
 - [ ] Set `handoff-status.json` to `{status: pending, session_id: <some-other-id>}`
