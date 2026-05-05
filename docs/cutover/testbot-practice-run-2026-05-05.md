@@ -61,31 +61,23 @@ Manual setup since there's no `agent-core init` yet. Each item is small; the tim
 - [x] Daemon restarted; log confirms `Seeded job: testbot-morning-brief` with next run at 23:59
 - [x] Bus has 6 endpoints registered + scheduler running
 
-### 0.4 — Install skills (the manual workaround for missing init)
+### 0.6 — Discord endpoint for #03 — **DONE ✓**
 
-- [ ] Copy `packages/agent-core-briefs/src/agent_core_briefs/skills/briefs-author/SKILL.md` → `~/.testbot/.claude/skills/briefs-author/SKILL.md`
-- [ ] Copy `packages/core/src/agent_core/skills/email/SKILL.md` → `~/.testbot/.claude/skills/email/SKILL.md` (only if we want #05's coverage to include `/email`)
-- [ ] **Note:** this is the workaround. The eventual `agent-core init` step replaces it.
+Testbot's Discord app + token + channels already existed from prior validation work. The `discord-testbot` endpoint was already wired in `~/.agent-core/agent_core.yaml` before today's run.
 
-### 0.5 — Stage scheduler entry for morning_brief (#09 Step 6)
+- [x] `DISCORD_TESTBOT_TOKEN` env var loaded from `~/.agent-core/discord-testbot.env` (confirmed in daemon log: `loaded env file: ~/.agent-core/discord-testbot.env`)
+- [x] `discord-testbot` endpoint registered in daemon yaml with `target: agent-testbot`
+- [x] Discord gateway connected: daemon log shows `Shard ID None has connected to Gateway`
+- [x] `DiscordEndpoint(name=discord-testbot) started; target=agent-testbot, attachments=...`
+- [x] Test channel for Phase 6 verb-parity drive: `1499028901257805874` (also wired into the morning_brief playbook's `discord_embed` destination)
 
-- [ ] Add a `JobDef` to testbot's scheduler config that publishes a `BriefRequest{brief_type=morning_brief}` event
-- [ ] Confirm it's an `Event`-kind envelope (not `TextMessage`) — that's the cutover #09 path
-- [ ] Set the cron expression for "soon enough that we can manually bump it when we get to Phase 3.4," OR plan to use `agent-core scheduler trigger <job-name>` if that command exists, OR just edit the cron to `*/1 * * * *` for the test window. We'll figure out the cleanest fire-on-demand approach during setup; the important thing is the JobDef is *registered* now so the scheduler→bus path is exercised.
+### 0.7 — Daemon boot — **DONE ✓**
 
-### 0.6 — Discord endpoint for #03
-
-Testbot's Discord app + token + channels already exist (we've been exercising them in prior validation work). Today's job is just to make sure the endpoint is wired in `~/.testbot/agent_core.yaml`.
-
-- [ ] Confirm `TESTBOT_DISCORD_TOKEN` (or whatever the existing env var is) is in the environment the daemon will inherit
-- [ ] Add `discord` endpoint block to agent_core.yaml, pointed at testbot's existing channels
-- [ ] Note which channel(s) we'll use for the verb-parity drive in Phase 6 — we want one we can spam without anyone caring
-
-### 0.7 — Daemon boot
-
-- [ ] Run `agent-core daemon start` (or check it's already running per your existing setup)
-- [ ] `agent-core daemon status` shows the agent-testbot endpoint registered
-- [ ] `agent-core bus status` shows the daemon healthy
+- [x] Daemon running (PID 29284 after final restart for jobs.yaml seed-load)
+- [x] `agent-core daemon status` confirms running
+- [x] All 6 endpoints registered: handoff-jobs, agent-testbot MCP, briefs.orchestrator, scheduler, stub, discord-testbot
+- [x] HTTPHost listening on 127.0.0.1:8789 with 2 mounts (/internal/handoff-jobs + /mcp/agent-testbot)
+- [x] `testbot-morning-brief` seed job loaded (next run 23:59 — we'll bump for Phase 3.4)
 
 ---
 
