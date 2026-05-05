@@ -25,11 +25,19 @@
 #   "command": "uv run agent-core hooks run SessionEnd"
 
 bus:
-  storage_path: "C:\\Users\\jeffr\\.pepper\\agent-core\\bus.sqlite"
+  # Single shared bus database across all agents on this daemon — NOT
+  # one per agent. Matches the daemon's actual yaml at
+  # ~/.agent-core/agent_core.yaml. Tilde expansion is supported.
+  storage_path: "~/.agent-core/bus.sqlite"
 
 http:
   bind_host: "127.0.0.1"
-  bind_port: 8788
+  # Port 8789 is what the actual daemon listens on (testbot setup ran
+  # here all day 2026-05-05). Code default in http_host.py is 8788; the
+  # operational config bumps it by one. Anything that points at the
+  # daemon (handoff_jobs_url below, channel-relay --daemon-url, etc.)
+  # MUST match this value.
+  bind_port: 8789
 
 endpoints:
   - type: builtin.handoff_jobs
@@ -153,7 +161,7 @@ pipelines:
         output_path: "C:\\Users\\jeffr\\.pepper\\Memory\\pepper\\handoff.md"
         vault_root: "C:\\Users\\jeffr\\.pepper\\Memory\\pepper"
         handoff_status_path: "C:\\Users\\jeffr\\.pepper\\Memory\\pepper\\handoff-status.json"
-        handoff_jobs_url: "http://127.0.0.1:8788/internal/handoff-jobs"
+        handoff_jobs_url: "http://127.0.0.1:8789/internal/handoff-jobs"
         agent_name: "Pepper"
         # Bus endpoint name to route HandoffReady/Failed to. The bus endpoint
         # above is "pepper" (lowercase); ``agent_name`` is the human identity
@@ -167,6 +175,6 @@ pipelines:
         output_path: "C:\\Users\\jeffr\\.pepper\\Memory\\pepper\\handoff.md"
         vault_root: "C:\\Users\\jeffr\\.pepper\\Memory\\pepper"
         handoff_status_path: "C:\\Users\\jeffr\\.pepper\\Memory\\pepper\\handoff-status.json"
-        handoff_jobs_url: "http://127.0.0.1:8788/internal/handoff-jobs"
+        handoff_jobs_url: "http://127.0.0.1:8789/internal/handoff-jobs"
         agent_name: "Pepper"
         mailbox: "pepper"

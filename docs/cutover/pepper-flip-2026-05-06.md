@@ -120,7 +120,7 @@ The new shape is in [`docs/examples/pepper-agent-core.yaml`](../examples/pepper-
 
 Key facts for tomorrow:
 - `mailbox: "pepper"` MUST be present on PreCompact + SessionEnd handoff_writer params (Bug #5 — without it, every SessionEnd raises "publish to unregistered endpoint" and burns 2-3 SDK calls per session via the retry loop).
-- `handoff_jobs_url` port: **8789** (matches the daemon's actual port, NOT the example's 8788 — example yaml has a stale port literal).
+- `handoff_jobs_url` port: **8789** (the example yaml is now consistent with the daemon's operational port; the code-default 8788 doesn't apply because `~/.agent-core/agent_core.yaml` overrides it).
 - `vault_root` is `C:\Users\jeffr\.pepper\Memory\pepper` (NOT the broader `Memory` dir).
 - Identity files: keep Pepper's three-block split (SOUL / IDENTITY / preferences) plus the dedicated HandoffInjector for handoff.md.
 

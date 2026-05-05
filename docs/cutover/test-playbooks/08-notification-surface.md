@@ -71,7 +71,7 @@ uv run agent-core bus dlq list --config <cfg>     # for any drops
 
 1. Connect two subscribers to the same agent:
    - **Subscriber A:** Pepper's normal Claude Code session (HTTP MCP — registers via `_register_session` when she connects).
-   - **Subscriber B:** start `uv run agent-core-channel --agent <name> --daemon-url http://127.0.0.1:8788` in a separate terminal — this opens a stdio MCP session that subscribes to the broker.
+   - **Subscriber B:** start `uv run agent-core-channel --agent <name> --daemon-url http://127.0.0.1:8789` in a separate terminal — this opens a stdio MCP session that subscribes to the broker. (Port 8789 matches the daemon's operational config; the channel-relay CLI's own default is 8788, so the explicit `--daemon-url` is required.)
 2. Publish any envelope to that agent (e.g., reuse Step 2a or 2b).
 3. **Test:** both subscribers receive the `notifications/claude/channel` push within the same debounce window. Confirms `NotificationBroker.publish` fans out correctly to all subscribed queues.
 
