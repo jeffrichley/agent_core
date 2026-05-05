@@ -88,6 +88,29 @@ class AgentCoreSpecs:
         raise NotImplementedError
 
     @hookspec
+    def reserved_endpoint_params(self) -> list[str]:
+        """Param names plugins consume post-construction; runner filters them out.
+
+        Endpoint yaml entries can carry ``params:`` keys that target a
+        plugin's post-construction wiring (e.g., the briefs plugin
+        consumes ``params.briefs_orchestrator`` via
+        :meth:`wire_endpoints_after_registration`) rather than the
+        endpoint class's ``__init__``. Without filtering, the runner
+        would pass these as kwargs to ``__init__`` and crash on
+        endpoint classes that don't accept them.
+
+        Plugins implementing post-construction wiring return the param
+        names they consume. The runner pops these from ``params:``
+        before calling ``cls(name=..., **params)``; the original raw
+        config (still containing the popped keys) is what gets passed
+        to :meth:`wire_endpoints_after_registration` later.
+
+        Names are global, not type-id-scoped — collisions across
+        plugins on the same name would already collide on intent.
+        """
+        raise NotImplementedError
+
+    @hookspec
     def wire_endpoints_after_registration(
         self,
         endpoints: dict[str, Endpoint],

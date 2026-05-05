@@ -58,6 +58,10 @@ def _base_hook():
         def wire_endpoints_after_registration(*, endpoints, raw_endpoint_configs, services):
             return None
 
+        @staticmethod
+        def reserved_endpoint_params():
+            return []
+
     return _Hook
 
 
@@ -168,6 +172,62 @@ class TestRunnerPluginHooks:
         p.write_text(yaml.dump({"endpoints": []}), encoding="utf-8")
         with pytest.raises(ValueError, match="invalid plugin config"):
             await build_bus_from_config(p)
+
+    async def test_reserved_endpoint_params_pop_before_construction(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ):
+        """Plugin-declared reserved params don't reach the endpoint __init__.
+
+        Regression for the cutover #09 boot bug: ClaudeCodeMCPEndpoint
+        crashed because the runner forwarded ``briefs_orchestrator``
+        (a briefs-plugin-managed key) to ``__init__`` as a kwarg. With
+        ``reserved_endpoint_params`` returning that key, the runner
+        pops it before construction.
+        """
+        captured_kwargs: dict[str, Any] = {}
+
+        class _StrictEndpoint:
+            def __init__(self, *, name: str, allowed_only: str = "default"):
+                self.name = name
+                captured_kwargs["allowed_only"] = allowed_only
+
+            async def start(self, bus): ...
+            async def deliver(self, envelope): ...
+            async def stop(self): ...
+
+        Hook = _base_hook()
+
+        class _Hook(Hook):
+            @staticmethod
+            def register_endpoint_types():
+                return {"plugin.strict": _StrictEndpoint}
+
+            @staticmethod
+            def reserved_endpoint_params():
+                return ["plugin_managed_key"]
+
+        class _PluginManager:
+            hook = _Hook()
+
+        monkeypatch.setattr("agent_core.bus.runner.create_plugin_manager", lambda: _PluginManager())
+
+        config = {
+            "endpoints": [
+                {
+                    "type": "plugin.strict",
+                    "name": "strict",
+                    "params": {
+                        "allowed_only": "yes",
+                        "plugin_managed_key": "would-crash-if-passed-to-init",
+                    },
+                }
+            ]
+        }
+        p = tmp_path / "reserved-params.yaml"
+        p.write_text(yaml.dump(config), encoding="utf-8")
+        bus, _ = await build_bus_from_config(p)
+        assert "strict" in bus._endpoints_by_name
+        assert captured_kwargs == {"allowed_only": "yes"}
 
 
 class TestPipelinePluginHooks:

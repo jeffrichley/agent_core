@@ -64,6 +64,20 @@ def register_cli_subapps(app: typer.Typer) -> None:
 
 
 @hookimpl
+def reserved_endpoint_params() -> list[str]:
+    """Declare the params we consume in :func:`wire_endpoints_after_registration`.
+
+    The runner pops these keys from each endpoint's ``params:`` before
+    calling ``cls(name=..., **params)``, so endpoint classes
+    (e.g., ``ClaudeCodeMCPEndpoint``) don't have to accept the
+    plugin-managed ``briefs_orchestrator`` key in their ``__init__``.
+    The original raw config (still containing the key) is what reaches
+    :func:`wire_endpoints_after_registration` via ``raw_endpoint_configs``.
+    """
+    return ["briefs_orchestrator"]
+
+
+@hookimpl
 def wire_endpoints_after_registration(
     endpoints: dict[str, Endpoint],
     raw_endpoint_configs: dict[str, dict[str, Any]],

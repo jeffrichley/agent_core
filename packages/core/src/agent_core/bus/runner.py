@@ -18,6 +18,7 @@ from agent_core.bus.notify_broker import NotificationBroker
 from agent_core.bus.protocol import BusHook, Endpoint
 from agent_core.plugins.manager import (
     apply_endpoint_wiring,
+    collect_reserved_endpoint_params,
     create_plugin_manager,
     get_bus_hook_types,
     get_endpoint_types,
@@ -101,6 +102,11 @@ async def build_bus_from_config(path: Path) -> tuple[Bus, HTTPHost | None]:
     _validate_http(http_cfg, has_auth_hook)
 
     # Endpoints.
+    # Plugin-managed param names (e.g., briefs_orchestrator) get popped before
+    # construction so endpoint classes don't have to swallow them. The full
+    # raw config (including the popped keys) still reaches plugins via
+    # apply_endpoint_wiring below, where they're actually consumed.
+    reserved_params = collect_reserved_endpoint_params(plugin_manager)
     for entry in raw.get("endpoints", []) or []:
         if "type" not in entry:
             raise BusBootError(f"endpoint entry missing required 'type' field: {entry!r}")
@@ -111,12 +117,13 @@ async def build_bus_from_config(path: Path) -> tuple[Bus, HTTPHost | None]:
         if cls is None:
             raise BusBootError(f"unknown endpoint type: {endpoint_type!r}")
         params = entry.get("params", {})
+        constructor_params = {k: v for k, v in params.items() if k not in reserved_params}
         # Runner-side convention (not enforced by the Endpoint Protocol):
         # every endpoint class must accept `name` as a constructor kwarg.
         # The Protocol only requires `name` as an *attribute*; this convention
         # is what lets the runner construct from YAML without per-class adapters.
         try:
-            instance = cls(name=entry["name"], **params)
+            instance = cls(name=entry["name"], **constructor_params)
         except Exception as exc:
             raise BusBootError(
                 f"endpoint type {endpoint_type!r} does not satisfy Endpoint protocol: {exc}"

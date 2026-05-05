@@ -109,6 +109,34 @@ def apply_cli_subapps(pm: pluggy.PluginManager, app: typer.Typer) -> None:
     pm.hook.register_cli_subapps(app=app)
 
 
+def collect_reserved_endpoint_params(pm: pluggy.PluginManager) -> set[str]:
+    """Aggregate ``reserved_endpoint_params`` returns across all plugins.
+
+    Each plugin's hookimpl returns a list of param names it consumes
+    post-construction (e.g., the briefs plugin returns
+    ``["briefs_orchestrator"]``). The runner unions them and pops these
+    keys from each endpoint's ``params:`` before calling ``__init__``,
+    so endpoint classes don't have to know about plugin-managed keys.
+
+    Defensive about return shape (matches ``_merge_type_maps`` convention):
+    real pluggy aggregates as a list-of-lists (one inner list per plugin);
+    test stubs may return a single flat list directly. Both forms work.
+    """
+    raw = pm.hook.reserved_endpoint_params() or []
+    reserved: set[str] = set()
+    # Heuristic: a flat list of strings is the test-stub shape; a list of
+    # lists of strings is the pluggy multi-plugin shape. Distinguish by
+    # checking whether the first element is iterable-but-not-a-string.
+    if raw and all(isinstance(item, str) for item in raw):
+        reserved.update(raw)
+        return reserved
+    for plugin_result in raw:
+        if not plugin_result:
+            continue
+        reserved.update(plugin_result)
+    return reserved
+
+
 def apply_endpoint_wiring(
     pm: pluggy.PluginManager,
     endpoints: dict[str, Endpoint],

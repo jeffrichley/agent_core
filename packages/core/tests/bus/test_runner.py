@@ -139,6 +139,10 @@ class TestRunner:
             def wire_endpoints_after_registration(*, endpoints, raw_endpoint_configs, services):
                 return None
 
+            @staticmethod
+            def reserved_endpoint_params():
+                return []
+
         class _PluginManager:
             hook = _Hook()
 
