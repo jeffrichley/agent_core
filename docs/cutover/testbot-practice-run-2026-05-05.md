@@ -110,14 +110,18 @@ echo '{"prompt":"hi"}' | uv run agent-core hooks run UserPromptSubmit --config C
 - [x] Second fire ~22s later (same `session_id`): `additionalContext` adds `Session started 22s ago.\nLast user turn 22s ago.` — per-turn re-anchoring works, `since_last >= 1s` gate satisfied
 - [x] Tripwire #07 Step 4: `~/.agent_core/time-state.json` has the `phase-1-2-smoke` entry with both `started_at` and `last_seen` — state persists across firings
 
-### 1.3 — Fresh-session real Claude Code smoke (#01 Step 3)
+### 1.3 — Fresh-session real Claude Code smoke (#01 Step 3) — **DONE ✓**
 
-- [ ] Fully quit any running Claude Code session
-- [ ] Open Claude Code at `~/.testbot/`
-- [ ] Send the first prompt: "introduce yourself"
-- [ ] Verify testbot's first response: speaks in first person, identifies as testbot (not Pepper, not generic Claude), doesn't auto-send anything, can list the identity files it saw on turn one
+- [x] Fully quit any running Claude Code session
+- [x] Open Claude Code at `~/.testbot/`
+- [x] Send the first prompt: "introduce yourself"
+- [x] Verify testbot's first response: speaks in first person, identifies as testbot (not Pepper, not generic Claude), doesn't auto-send anything, can list the identity files it saw on turn one
 
 **Pass criteria:** identity rules survive turn one. **Fail = identity got truncated or muddled.**
+
+**Result:** GREEN.
+- First prompt response: `"I'm testbot — Jeff's QA validation agent for the agent-core infrastructure…"` — first person, identifies as testbot, explicit `"I'm not Pepper"` framing, voice matches SOUL (`"blunt, technical, and dry"`), ends by offering pre-approved-scope action (`"run the bus smoke test"`) without auto-sending.
+- Follow-up prompt `"Which identity files did you see at session start?"`: testbot enumerated `~/.testbot/Memory/SOUL.md` (core character) and `~/.testbot/Memory/IDENTITY.md` (behavioral rules) with accurate content paraphrase (decide-don't-ask scope, out-of-scope list including `~/.pepper/`), and bonus-correctly identified the third Continuity section + the `(file not found: testbot/handoff.md)` placeholder. Strict-spec compliance: agent can list the identity files it saw on turn one.
 
 ### 1.4 — Handoff observability scenarios (#02 Steps 4–6)
 
