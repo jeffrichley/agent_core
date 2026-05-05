@@ -14,35 +14,52 @@
 
 Manual setup since there's no `agent-core init` yet. Each item is small; the time is in being careful.
 
-### 0.1 — Author `~/.testbot/agent_core.yaml`
+### 0.1 — Author `~/.testbot/agent_core.yaml` and extend daemon config — **DONE ✓**
 
-- [ ] Clone `docs/examples/pepper-agent-core.yaml` to `~/.testbot/agent_core.yaml`
-- [ ] Rebase paths onto `~/.testbot/` (set `vars.agent_root: C:\Users\jeffr\.testbot`)
-- [ ] Drop or stub the Discord endpoint (we'll either wire it later or skip it)
-- [ ] Keep all four hook tools in the pipeline: IdentityInjector, HandoffInjector, TimeInjector, HandoffWriter
+- [x] Created per-project hooks file at `~/.testbot/agent_core.yaml` (pipelines block: SessionStart → time + identity x2 + handoff; UserPromptSubmit → time-with-track-session; PreCompact + SessionEnd → handoff_writer)
+- [x] Extended daemon config at `~/.agent-core/agent_core.yaml`: added `handoff-jobs` endpoint, `briefs.orchestrator` endpoint, `briefs_orchestrator: briefs.orchestrator` cross-endpoint param on the testbot MCP, and `bus_hooks.pre_publish` daily JSONL writer
+- [x] Daemon restart caught a real cutover-blocker bug — fixed in `1a38463` (new `reserved_endpoint_params` hookspec; runner pops plugin-managed params before endpoint construction)
+- [x] Daemon now boots clean with all 6 endpoints registered (handoff-jobs, agent-testbot MCP, briefs.orchestrator, scheduler, stub, discord-testbot)
 
-**I'll do this and show you the diff before we move on.**
+**Bug caught:** `ClaudeCodeMCPEndpoint.__init__()` rejected `briefs_orchestrator` as an unknown kwarg. The runner was forwarding all `params:` keys to `__init__()` without filtering plugin-managed keys. Pepper would have hit this on day one of cutover. Fixed properly with a new pluggy hookspec; 666 tests + 3 skipped, all green; positive test (`test_reserved_endpoint_params_pop_before_construction`) locks the contract.
 
-### 0.2 — Stand up `~/.testbot/Memory/` skeleton
+### 0.2 — Stand up `~/.testbot/Memory/` skeleton — **DONE ✓**
 
-- [ ] `~/.testbot/Memory/SOUL.md` — minimal, ~200 words, written in testbot's voice (a friendly QA engineer, not pretending to be Pepper)
-- [ ] `~/.testbot/Memory/IDENTITY.md` — short identity rules block (the same "first person, don't auto-send, ask permission" framework)
-- [ ] `~/.testbot/Memory/MEMORY.md` — empty index file, just frontmatter + heading
-- [ ] `~/.testbot/Memory/OPERATIONS.md` — empty stub (referenced by SessionStart, OK to be empty)
-- [ ] `~/.testbot/Memory/playbooks/morning_brief.md` — copy of `docs/examples/playbooks/morning-brief.md` with `${agent_root}` paths
-- [ ] `~/.testbot/Memory/gather/morning.yaml` — copy of `docs/examples/playbooks/morning-gather.yaml`
-- [ ] `~/.testbot/Memory/daily/summaries/` — empty directory
-- [ ] `~/.testbot/Memory/daily/briefs/` — empty directory
+- [x] SOUL.md (testbot voice — blunt-honest QA engineer, ~200 words; satisfies cutover #01 rule 1)
+- [x] IDENTITY.md (six identity rules from cutover #01 spec)
+- [x] MEMORY.md (empty index)
+- [x] playbooks/morning_brief.md (copy of example, voice changed to `testbot`, channel_id set to `1499028901257805874`)
+- [x] gather/morning.yaml (copy of example; built-in fetchers + email_stub will resolve, gcalcli/projects-yaml will land in `_errors` — that's the gather engine's intended "fetcher failed" semantic)
+- [x] daily/summaries/, daily/briefs/, testbot/, briefs/fetchers/, briefs/destinations/ — all created
+- [x] email_stub fetcher copied into briefs/fetchers/ so testbot's fetcher path resolves cleanly
+- [x] Daemon restarted; no missing-path warnings; all 4 fetchers (`cli`, `email_stub`, `filesystem_read`, `now`) discoverable via `briefs fetchers list`
 
-**Why minimal:** we're testing whether the framework correctly delivers and routes content, not whether testbot has Pepper-quality identity. Two pages of testbot identity is enough to make the smoke tests meaningful.
+**Bug caught:** `briefs fetchers list` CLI didn't auto-prepend the built-in fetchers directory — it would have shown 0 built-ins at the gate, failing #09 Step 3. Fixed in `4c4b7bd`. Same root cause as yesterday's orchestrator fix; the CLI was missed.
 
-### 0.3 — Wire `~/.testbot/.claude/settings.json` hooks
+### 0.3 — Wire `~/.testbot/.claude/settings.json` hooks — **DONE ✓**
 
-- [ ] Add `hooks` block with SessionStart, UserPromptSubmit, PreCompact, SessionEnd
-- [ ] Each hook calls `agent-core hooks run <event> --config C:\Users\jeffr\.testbot\agent_core.yaml`
-- [ ] Keep existing bus permissions (`mcp__agent-core__*`)
+- [x] Added `hooks` block with all four lifecycle events (SessionStart, UserPromptSubmit, PreCompact, SessionEnd)
+- [x] Commands match Pepper's pattern (`uv run agent-core hooks run <event>`)
+- [x] Permissions widened to match Pepper's `bypassPermissions` mode + standard tool allowlist; existing `mcp__agent-core__*` permissions preserved
+- [x] Smoke test from `~/.testbot/`: SessionStart hook fires 4 tools (time, identity x2, handoff) and emits clean JSON `additionalContext` with testbot's SOUL + IDENTITY content
+- [x] UserPromptSubmit smoke fires the time tool with track_session
 
-**I'll author the JSON and show you before saving.**
+**Bug caught:** the globally-installed `agent-core` (via `uv tools`) was stale — still used the old `tool:` schema while the repo had moved to `type:`. Pepper would have hit this on the very first SessionStart hook firing on the new substrate. Fixed by `uv tool install --reinstall ./packages/core` to bring the global tool current with the repo. This is a **third real cutover-blocker** caught by the practice run.
+
+### 0.4 — Install skills (manual workaround for missing agent init) — **DONE ✓**
+
+- [x] Copied `briefs-author/SKILL.md` → `~/.testbot/.claude/skills/briefs-author/SKILL.md` (project-scope, per-agent)
+- [x] Copied `email/SKILL.md` → `~/.testbot/.claude/skills/email/SKILL.md`
+- [x] Both skills now visible to testbot's Claude Code session (project-scope; never user-scope)
+
+### 0.5 — Stage scheduler entry for morning_brief — **DONE ✓**
+
+- [x] Wrote `~/.agent-core/jobs.yaml` with `testbot-morning-brief` JobDef:
+  - `trigger: cron`, `schedule: { hour: 23, minute: 59 }` (far-future placeholder; bump at Phase 3.4)
+  - `target: briefs.orchestrator`
+  - `envelope_kind: Event`, `payload.type: BriefRequest`, `payload.data.brief_type: morning_brief`
+- [x] Daemon restarted; log confirms `Seeded job: testbot-morning-brief` with next run at 23:59
+- [x] Bus has 6 endpoints registered + scheduler running
 
 ### 0.4 — Install skills (the manual workaround for missing init)
 
