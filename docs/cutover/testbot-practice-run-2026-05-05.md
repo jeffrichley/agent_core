@@ -300,19 +300,45 @@ uv run pytest packages/agent-core-briefs/tests/test_examples_morning_brief.py -v
 
 **Expected:** 7 green. Locks the morning-brief example coherence.
 
-### 3.4 — Cron-fired BriefRequest in testbot's runtime (#09 Step 6 — the big one)
+### 3.4 — Cron-fired BriefRequest in testbot's runtime (#09 Step 6 — the big one) — **GREEN ✓ + 6th cutover-blocker fixed**
 
-Fire the staged JobDef from §0.5. Approach decided at setup time — either:
-- bump the cron expression to fire ~1 min from now and wait for it, or
-- invoke `agent-core scheduler trigger <job-name>` if available (validates the same scheduler→bus path without wall-clock waiting).
+Two cron-fire cycles. The first surfaced the 6th cutover-blocker (two related bugs), the second verified both fixes live.
 
-- [ ] Trigger the morning_brief JobDef (whichever way we picked)
-- [ ] Confirm three observables:
-  1. `~/.testbot/Memory/daily/briefs/<date>-morning.md` written with the section structure
-  2. Discord embed lands in the testbot channel (since #03 is in scope today)
-  3. `~/.agent-core/briefs/audit.jsonl` shows the full `request_received → gather_completed → wake_published → submit_attempted → delivery_completed` chain
+#### First cycle (12:23 EDT) — partial pass + bug discovery
 
-**Pass criteria:** all three. Markdown file is the most important — it's the canonical fallback destination and proves the chain works without Discord; Discord embed proves the bus-mediated destination path; audit log proves the deterministic plumbing recorded the chain end-to-end.
+- [x] Triggered the morning_brief JobDef by bumping the cron + restarting the daemon (cleared `~/.agent-core/scheduler.db` so the new tz-aware seed registers; APScheduler v4 defaults to UTC if no `timezone:` is set on the JobDef — the runbook now sets `timezone: "America/New_York"` explicitly)
+- [x] Cron fired ✓ — orchestrator → wake → compose chain all working
+- [x] testbot drove compose autonomously after picking up the wake via `list_pending`. **She refused to submit until Jeff confirmed authorization** — exactly the IDENTITY rule "Don't send, message, or spend without explicit permission" honored on the first real brief. Strict-spec compliance.
+- [x] Markdown file delivered ✓ — but with **empty `## ` headers** (Finding 2)
+- [x] Discord embed FAILED ❌ — `publish to unregistered endpoint 'discord'` (Finding 1)
+- [x] Audit log clean ✓ — captured the discord failure with the precise error string
+
+**Bug caught + fixed (6th cutover-blocker):** Two related issues in the briefs framework, both Pepper-affecting:
+
+**Finding 1 (config):** testbot's playbook didn't set `discord_endpoint_name` on the `discord_embed` destination, so it defaulted to `"discord"` but the actual endpoint is named `discord-testbot`. Pepper's playbook would default to `"discord"` too and hit the identical failure if her Discord endpoint follows the `agent-*` convention.
+
+**Finding 2 (architecture):** The agent's `submit_brief` call carries content (section_id + fields) but typically omits title + color — they're spec authority, the agent has no reason to retype them. The destinations rendered empty `## ` headers as a result. Same fake-mirrors-real pathology as the earlier handoff bugs: tests passed because their fixtures hand-set title in the agent submission, the opposite of what real agents do.
+
+testbot caught both bugs herself, diagnosed them cleanly, and proposed accurate fix recipes — that level of compose discipline + bug-surfacing is exactly what we want Pepper to inherit.
+
+Fixed in `33fb1f9`:
+- New `_enrich_sections_with_spec` helper in `submit_brief` overrides title + color from session SectionSpec before destination delivery (Finding 2)
+- Pepper example playbook updated with documented `discord_endpoint_name` placeholder + bug-log reference (Finding 1)
+- New test `test_submit_enriches_section_title_from_spec_when_agent_omits_it` locks the contract — agent submits without title, destination MUST receive enriched section
+- Full repo suite: **669 passed, 3 skipped** (was 668 + 1 new test)
+
+#### Second cycle (13:51 EDT) — fully GREEN
+
+After the global tool reinstall + daemon bounce + jobs.yaml bump:
+
+- [x] Cron fired ✓
+- [x] testbot reacted **autonomously** via the channel-relay push (no prompt needed) — same pattern as the HandoffReady mid-session perception
+- [x] testbot composed in voice; her greeting field literally said *"Second ComposeBrief of the day — re-running the framework loop to see whether the Phase 3.4 follow-ups (Discord endpoint resolution, markdown title rendering) have landed since the 12:23 run"*. She knew exactly what we were testing.
+- [x] **Observable #1 (markdown file):** GREEN — `~/.testbot/Memory/daily/briefs/2026-05-05-morning.md` rendered with proper section titles (`## 🌅 Morning, Jeff`, `## 📅 Today's calendar`, etc.)
+- [x] **Observable #2 (Discord embed):** GREEN — `discord_embed: success: true, ref: d06266d5...` — landed in the testbot channel
+- [x] **Observable #3 (audit log):** GREEN — `submit.complete: total_destinations: 2, successful: 2, failed: 0, overall_success: true`
+
+Pepper inherits the fix with `git pull` — documented in [`pepper-cutover-agent-playbook.md`](../requirements/pepper-cutover-agent-playbook.md) bug table row 6. Her runtime playbook must set `discord_endpoint_name` to her actual Discord endpoint name (e.g., `discord-pepper` if following the `agent-*` convention).
 
 ---
 
