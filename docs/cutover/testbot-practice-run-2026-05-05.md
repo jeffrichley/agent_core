@@ -434,7 +434,9 @@ testbot also observed that her own poll-vote and message-edit/delete events did 
 
 **Test coverage:** 138/138 in the discord suite (was 133 pre-round-2; +5 inbound-listener tests + 1 hardening assertion across all four new handlers), 677/680 in full repo. Test fakes (`_FakeRawPollVote`, `_FakeRawMessageDelete`, `_FakeRawMessageUpdate`) mirror real `discord.py` raw event shapes.
 
-**Bus-meta observation (punch-list, confirmed twice):** wake-channel notifications occasionally reported `urgency_max: "yellow"` and counts that snapshot a queue state slightly behind reality. testbot saw it during the original run AND during round-2 verification. Timing window in the wake builder — it samples slightly out of sync with what `list_pending` later returns. Not blocking; caused testbot to suspect failures that didn't exist.
+**Bus-meta observation (now tracked as [issue #33](https://github.com/jeffrichley/agent_core/issues/33)):** wake-channel notifications occasionally reported `urgency_max: "yellow"` and counts that snapshot a queue state slightly behind reality. testbot saw it during the original run AND during round-2 verification (4+ sightings across the day). Timing window in the wake builder — it samples slightly out of sync with what `list_pending` later returns. Not blocking; caused testbot to suspect failures that didn't exist. Filed as a discrete bug for follow-up.
+
+**Round-2 polish (`dbb1a17`):** testbot's round-2 verification also flagged a small symmetry gap — `discord.reaction_add` Events include `user_display_name`, but the new `discord.poll_vote_add` / `_remove` Events landed without it (functional path was fine, but downstream code had to do an extra User resolution for poll votes that it didn't have to do for reactions). Closed by adding `self._client.get_user(int(raw.user_id))` lookup with empty-string fallback for uncached users, mirroring what discord.py does internally for the cached-event variant. Fake client gains `get_user` + `add_user` to mirror real discord.py's user-cache surface.
 
 ---
 
@@ -473,7 +475,7 @@ testbot also observed that her own poll-vote and message-edit/delete events did 
 
 ### Punch-list (deferred follow-ups, not blocking)
 
-- **Bus wake-builder:** `urgency_max` samples slightly out of sync with `list_pending` queue state
+- **Bus wake-builder:** `urgency_max` + `count` snapshot lags actual queue state — tracked as [issue #33](https://github.com/jeffrichley/agent_core/issues/33)
 - **Briefs CLI UX:** duplicate `--fetcher-path` to the built-in dir produces a confusing "duplicate type_id" error (loader should de-dupe paths)
 - **Claude Code:** additional working directories don't auto-load `.claude/skills/` trees from secondary roots (likely intentional isolation, worth confirming)
 
