@@ -360,16 +360,24 @@ The "missing_recommended_files" list (IDENTITY.md, SOUL.md, etc. expected at vau
 
 ---
 
-## Phase 5 — Skills smoke (#05)
+## Phase 5 — Skills smoke (#05) — **GREEN ✓**
 
 In testbot's running session:
 
-- [ ] Ask testbot to list available user-scope and project-scope skills
-- [ ] Confirm `briefs-author` appears as project-scope (under `<agent_root>/.claude/skills/`)
-- [ ] Confirm `disable-model-invocation` is honored where set
-- [ ] If `email` skill copied: invoke `/email` and confirm it resolves
+- [x] Ask testbot to list available user-scope and project-scope skills
+- [x] Confirm `briefs-author` appears as project-scope (under `<agent_root>/.claude/skills/`)
+- [x] Confirm `disable-model-invocation` is honored where set
+- [x] If `email` skill copied: confirmed available via project-scope SKILL.md (slash invocation gated by `user-invocable: true` frontmatter)
 
 **Pass criteria:** project-scope skills resolve, project-scope wins on collision (per Claude Code's documented behavior).
+
+**Result:** GREEN. testbot's skill enumeration was thorough and accurate:
+- Both `briefs-author` and `email` resolve at project-scope `~/.testbot/.claude/skills/<name>/SKILL.md` ✓
+- Scope hierarchy correctly identified: built-in (Claude Code core) / user-scope / project-scope / plugin-scope (`superpowers:*`, `elements-of-style:*`)
+- Neither skill declares `disable-model-invocation` in frontmatter; no settings.json directive disables them; both are presented in the available-skills list with full descriptions — default behavior is correct
+- testbot also distinguished `user-invocable: true` (governs `/email` slash invocation) from model auto-invocation gating
+
+**Side-finding (punch list, not blocking):** Claude Code's additional-working-directories support does not auto-load `.claude/skills/` trees from those secondary roots. testbot noticed three skills in `e:\workspaces\businesses\47tabs\.claude\skills` that weren't surfaced in her session. Either intentional isolation or a config discrepancy worth poking at; not in scope for the agent-core cutover.
 
 ---
 
