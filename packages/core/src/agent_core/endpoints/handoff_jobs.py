@@ -44,6 +44,12 @@ class HandoffJobRequest(BaseModel):
     session_id: str = Field(min_length=1)
     event: Literal["SessionEnd", "PreCompact"]
     agent_name: str = Field(min_length=1)
+    # ``mailbox`` is the bus endpoint name to publish HandoffReady/Failed to.
+    # Decoupled from ``agent_name`` (the human identity) so configs can map
+    # an agent to a routing endpoint with a different name — e.g. identity
+    # "testbot" → endpoint "agent-testbot", or identity "Pepper" → endpoint
+    # "pepper". Optional; if omitted, falls back to ``agent_name``.
+    mailbox: str | None = None
     vault_root: str = Field(min_length=1)
     handoff_path: str = Field(min_length=1)
     handoff_status_path: str = Field(min_length=1)
@@ -52,6 +58,10 @@ class HandoffJobRequest(BaseModel):
     requested_at: datetime
     idempotency_key: str | None = None
     context: dict[str, Any] = Field(default_factory=dict)
+
+    @property
+    def routing_target(self) -> str:
+        return self.mailbox or self.agent_name
 
 
 @dataclass(frozen=True)
@@ -337,7 +347,7 @@ Transcript:
         env = Envelope(
             id=uuid.uuid4().hex,
             correlation_id=uuid.uuid4().hex,
-            to=req.agent_name,
+            to=req.routing_target,
             kind="Event",
             payload=EventPayload(type=kind, data=payload_data),
             metadata={"handoff_job_id": job_id, "handoff_event": req.event},

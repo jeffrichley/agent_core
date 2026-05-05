@@ -245,6 +245,112 @@ endpoints:
 
 
 @pytest.mark.asyncio
+async def test_handoff_publishes_to_mailbox_when_distinct_from_agent_name(
+    tmp_path, monkeypatch
+):
+    # Real configs split agent identity (display name like "Pepper" or
+    # "testbot") from bus routing (endpoint name like "pepper" or
+    # "agent-testbot"). When they differ, the worker MUST publish to the
+    # mailbox/endpoint name, not the human identity, otherwise the bus
+    # rejects with "publish to unregistered endpoint" (caught on testbot
+    # 2026-05-05 when SessionEnd → /internal/handoff-jobs → worker tried
+    # to publish to "testbot" while the endpoint is "agent-testbot").
+    vault_root = tmp_path / "vault"
+    vault_root.mkdir(parents=True, exist_ok=True)
+    transcript_root = tmp_path / "claude_projects"
+    transcript_root.mkdir(parents=True, exist_ok=True)
+    transcript_path = transcript_root / "session-mailbox.jsonl"
+    transcript_path.write_text('{"message":{"role":"user","content":"hi"}}\n', encoding="utf-8")
+    handoff_path = vault_root / "handoff.md"
+    status_path = vault_root / "handoff-status.json"
+
+    cfg = tmp_path / "agent_core.yaml"
+    cfg.write_text(
+        f"""
+bus:
+  storage_path: {tmp_path / "bus.sqlite"}
+http:
+  bind_host: 127.0.0.1
+  bind_port: 0
+endpoints:
+  - type: builtin.handoff_jobs
+    name: handoff-jobs
+    params:
+      mount: /internal/handoff-jobs
+  - type: builtin.stub
+    name: agent-testbot
+""",
+        encoding="utf-8",
+    )
+
+    bus, http_host = await build_bus_from_config(cfg)
+    assert http_host is not None
+    await http_host.start()
+    try:
+        await bus.start()
+        try:
+            endpoint = bus._endpoints_by_name["handoff-jobs"].endpoint
+
+            async def _fake_extract(self, req, transcript_text):
+                return "# Handoff\n"
+
+            monkeypatch.setattr(type(endpoint), "_extract_handoff", _fake_extract)
+            url = f"http://127.0.0.1:{http_host.port}/internal/handoff-jobs"
+            payload = {
+                "session_id": "session-mailbox",
+                "event": "SessionEnd",
+                "agent_name": "testbot",  # human identity
+                "mailbox": "agent-testbot",  # bus endpoint — different
+                "vault_root": str(vault_root),
+                "handoff_path": str(handoff_path),
+                "handoff_status_path": str(status_path),
+                "transcript_path": str(transcript_path),
+                "transcript_root": str(transcript_root),
+                "requested_at": datetime.now(UTC).isoformat(),
+            }
+            async with httpx.AsyncClient(timeout=5.0) as client:
+                resp = await client.post(url, json=payload)
+            assert resp.status_code == 202
+
+            for _ in range(60):
+                if status_path.exists():
+                    state = json.loads(status_path.read_text(encoding="utf-8")).get("state")
+                    if state == "ready":
+                        break
+                await asyncio.sleep(0.05)
+
+            stub_ep = bus._endpoints_by_name["agent-testbot"].endpoint
+            for _ in range(60):
+                if any(
+                    env.kind == "Event"
+                    and isinstance(env.payload, EventPayload)
+                    and env.payload.type == "HandoffReady"
+                    for env in stub_ep.inbox
+                ):
+                    break
+                await asyncio.sleep(0.05)
+
+            ready_envs = [
+                env
+                for env in stub_ep.inbox
+                if env.kind == "Event"
+                and isinstance(env.payload, EventPayload)
+                and env.payload.type == "HandoffReady"
+            ]
+            assert ready_envs, (
+                "HandoffReady never reached the agent-testbot endpoint — worker "
+                "likely tried to publish to the human identity 'testbot' instead "
+                "of the bus endpoint 'agent-testbot'."
+            )
+            assert ready_envs[0].to == "agent-testbot"
+            assert ready_envs[0].payload.data["agent_name"] == "testbot"
+        finally:
+            await bus.stop()
+    finally:
+        await http_host.stop()
+
+
+@pytest.mark.asyncio
 async def test_handoff_jobs_endpoint_rejects_transcript_outside_transcript_root(tmp_path):
     # transcript_path must live under transcript_root (default: ~/.claude/projects/),
     # not vault_root. Caller can override transcript_root explicitly. This test

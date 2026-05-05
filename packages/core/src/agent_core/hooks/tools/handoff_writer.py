@@ -39,6 +39,7 @@ class HandoffWriter:
         status_path = Path(params.get("handoff_status_path", str(output_path.parent / "handoff-status.json")))
         enqueue_url = params.get("handoff_jobs_url", "http://127.0.0.1:8788/internal/handoff-jobs")
         agent_name = params.get("agent_name", "Assistant")
+        mailbox_param = params.get("mailbox")
         transcript_root_param = params.get("transcript_root")
         session_id = str(hook_input.get("session_id", "")).strip()
         transcript_path_str = str(hook_input.get("transcript_path", "")).strip()
@@ -65,6 +66,8 @@ class HandoffWriter:
             "idempotency_key": f"{session_id}:{event}:{output_path}",
             "context": {},
         }
+        if mailbox_param is not None:
+            payload["mailbox"] = str(mailbox_param)
         if transcript_root_param is not None:
             payload["transcript_root"] = str(transcript_root_param)
 

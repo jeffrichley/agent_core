@@ -155,6 +155,11 @@ pipelines:
         handoff_status_path: "C:\\Users\\jeffr\\.pepper\\Memory\\pepper\\handoff-status.json"
         handoff_jobs_url: "http://127.0.0.1:8788/internal/handoff-jobs"
         agent_name: "Pepper"
+        # Bus endpoint name to route HandoffReady/Failed to. The bus endpoint
+        # above is "pepper" (lowercase); ``agent_name`` is the human identity
+        # ("Pepper", capitalized). Without an explicit mailbox the worker
+        # would publish to "Pepper" and hit "unregistered endpoint".
+        mailbox: "pepper"
 
   SessionEnd:
     - type: builtin.handoff_writer
@@ -164,3 +169,4 @@ pipelines:
         handoff_status_path: "C:\\Users\\jeffr\\.pepper\\Memory\\pepper\\handoff-status.json"
         handoff_jobs_url: "http://127.0.0.1:8788/internal/handoff-jobs"
         agent_name: "Pepper"
+        mailbox: "pepper"
