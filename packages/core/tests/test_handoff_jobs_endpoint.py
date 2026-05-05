@@ -14,9 +14,14 @@ from agent_core.endpoints.handoff_jobs import HandoffJobRequest, HandoffJobsEndp
 
 @pytest.mark.asyncio
 async def test_handoff_jobs_endpoint_writes_status_and_publishes_ready(tmp_path, monkeypatch):
+    # Real Claude Code transcripts live under ~/.claude/projects, NOT inside
+    # any agent vault — mirror that here so tests don't paper over the
+    # cross-root validation.
     vault_root = tmp_path / "vault"
     vault_root.mkdir(parents=True, exist_ok=True)
-    transcript_path = vault_root / "transcript.jsonl"
+    transcript_root = tmp_path / "claude_projects"
+    transcript_root.mkdir(parents=True, exist_ok=True)
+    transcript_path = transcript_root / "session-123.jsonl"
     transcript_path.write_text('{"message":{"role":"user","content":"hello"}}\n', encoding="utf-8")
     handoff_path = vault_root / "handoff.md"
     status_path = vault_root / "handoff-status.json"
@@ -63,6 +68,7 @@ endpoints:
                 "handoff_path": str(handoff_path),
                 "handoff_status_path": str(status_path),
                 "transcript_path": str(transcript_path),
+                "transcript_root": str(transcript_root),
                 "requested_at": datetime.now(UTC).isoformat(),
             }
 
@@ -115,7 +121,9 @@ endpoints:
 async def test_handoff_jobs_endpoint_writes_extractor_output(tmp_path, monkeypatch):
     vault_root = tmp_path / "vault"
     vault_root.mkdir(parents=True, exist_ok=True)
-    transcript_path = vault_root / "transcript.jsonl"
+    transcript_root = tmp_path / "claude_projects"
+    transcript_root.mkdir(parents=True, exist_ok=True)
+    transcript_path = transcript_root / "session-extract.jsonl"
     transcript_path.write_text('{"message":{"role":"user","content":"hello"}}\n', encoding="utf-8")
     handoff_path = vault_root / "handoff.md"
     status_path = vault_root / "handoff-status.json"
@@ -163,6 +171,7 @@ endpoints:
                 "handoff_path": str(handoff_path),
                 "handoff_status_path": str(status_path),
                 "transcript_path": str(transcript_path),
+                "transcript_root": str(transcript_root),
                 "requested_at": datetime.now(UTC).isoformat(),
             }
 
@@ -236,6 +245,67 @@ endpoints:
 
 
 @pytest.mark.asyncio
+async def test_handoff_jobs_endpoint_rejects_transcript_outside_transcript_root(tmp_path):
+    # transcript_path must live under transcript_root (default: ~/.claude/projects/),
+    # not vault_root. Caller can override transcript_root explicitly. This test
+    # locks in that an explicit transcript_root rejects a transcript that
+    # escapes it — symmetric to the vault_root path-traversal check.
+    vault_root = tmp_path / "vault"
+    vault_root.mkdir(parents=True, exist_ok=True)
+    transcript_root = tmp_path / "claude_projects"
+    transcript_root.mkdir(parents=True, exist_ok=True)
+    rogue_transcript = tmp_path / "elsewhere" / "transcript.jsonl"
+    rogue_transcript.parent.mkdir(parents=True, exist_ok=True)
+    rogue_transcript.write_text("{}", encoding="utf-8")
+
+    cfg = tmp_path / "agent_core.yaml"
+    cfg.write_text(
+        f"""
+bus:
+  storage_path: {tmp_path / "bus.sqlite"}
+http:
+  bind_host: 127.0.0.1
+  bind_port: 0
+endpoints:
+  - type: builtin.handoff_jobs
+    name: handoff-jobs
+    params:
+      mount: /internal/handoff-jobs
+  - type: builtin.stub
+    name: pepper
+""",
+        encoding="utf-8",
+    )
+
+    bus, http_host = await build_bus_from_config(cfg)
+    assert http_host is not None
+    await http_host.start()
+    try:
+        await bus.start()
+        try:
+            url = f"http://127.0.0.1:{http_host.port}/internal/handoff-jobs"
+            payload = {
+                "session_id": "session-rogue",
+                "event": "SessionEnd",
+                "agent_name": "pepper",
+                "vault_root": str(vault_root),
+                "handoff_path": str(vault_root / "handoff.md"),
+                "handoff_status_path": str(vault_root / "handoff-status.json"),
+                "transcript_path": str(rogue_transcript),
+                "transcript_root": str(transcript_root),
+                "requested_at": datetime.now(UTC).isoformat(),
+            }
+            async with httpx.AsyncClient(timeout=5.0) as client:
+                resp = await client.post(url, json=payload)
+            assert resp.status_code == 403
+            assert "escapes transcript_root" in resp.json()["error"]
+        finally:
+            await bus.stop()
+    finally:
+        await http_host.stop()
+
+
+@pytest.mark.asyncio
 async def test_extract_handoff_success_uses_model_output(monkeypatch):
     endpoint = HandoffJobsEndpoint(name="handoff-jobs")
     req = HandoffJobRequest(
@@ -289,7 +359,9 @@ async def test_extract_handoff_fallback_on_exception(monkeypatch):
 async def test_worker_retries_then_marks_failed(tmp_path, monkeypatch):
     vault_root = tmp_path / "vault"
     vault_root.mkdir(parents=True, exist_ok=True)
-    transcript_path = vault_root / "transcript.jsonl"
+    transcript_root = tmp_path / "claude_projects"
+    transcript_root.mkdir(parents=True, exist_ok=True)
+    transcript_path = transcript_root / "session-fail.jsonl"
     transcript_path.write_text('{"message":{"role":"user","content":"hello"}}\n', encoding="utf-8")
     handoff_path = vault_root / "handoff.md"
     status_path = vault_root / "handoff-status.json"
@@ -338,6 +410,7 @@ endpoints:
                 "handoff_path": str(handoff_path),
                 "handoff_status_path": str(status_path),
                 "transcript_path": str(transcript_path),
+                "transcript_root": str(transcript_root),
                 "requested_at": datetime.now(UTC).isoformat(),
             }
 

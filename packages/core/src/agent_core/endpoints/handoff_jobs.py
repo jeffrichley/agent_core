@@ -32,6 +32,14 @@ if TYPE_CHECKING:
 log = logging.getLogger(__name__)
 
 
+def _default_transcript_root() -> str:
+    # Claude Code stores per-session transcripts under ``~/.claude/projects/``
+    # by design — outside any agent vault. Match that by default so the daemon
+    # accepts transcript paths from real sessions; explicit override is allowed
+    # via the request field for tests or non-Claude-Code callers.
+    return str(Path.home() / ".claude" / "projects")
+
+
 class HandoffJobRequest(BaseModel):
     session_id: str = Field(min_length=1)
     event: Literal["SessionEnd", "PreCompact"]
@@ -40,6 +48,7 @@ class HandoffJobRequest(BaseModel):
     handoff_path: str = Field(min_length=1)
     handoff_status_path: str = Field(min_length=1)
     transcript_path: str = Field(min_length=1)
+    transcript_root: str = Field(default_factory=_default_transcript_root, min_length=1)
     requested_at: datetime
     idempotency_key: str | None = None
     context: dict[str, Any] = Field(default_factory=dict)
@@ -119,9 +128,12 @@ class HandoffJobsEndpoint:
 
         try:
             vault_root = Path(job_req.vault_root).expanduser().resolve(strict=False)
+            transcript_root = Path(job_req.transcript_root).expanduser().resolve(strict=False)
             self._resolve_under_root(job_req.handoff_path, vault_root)
             status_path = self._resolve_under_root(job_req.handoff_status_path, vault_root)
-            self._resolve_under_root(job_req.transcript_path, vault_root)
+            self._resolve_under_root(
+                job_req.transcript_path, transcript_root, root_label="transcript_root"
+            )
         except ValueError as exc:
             return JSONResponse({"error": str(exc)}, status_code=403)
 
@@ -159,9 +171,12 @@ class HandoffJobsEndpoint:
     async def _process_job(self, job: _QueuedJob) -> None:
         req = job.request
         vault_root = Path(req.vault_root).expanduser().resolve(strict=False)
+        transcript_root = Path(req.transcript_root).expanduser().resolve(strict=False)
         handoff_path = self._resolve_under_root(req.handoff_path, vault_root)
         status_path = self._resolve_under_root(req.handoff_status_path, vault_root)
-        transcript_path = self._resolve_under_root(req.transcript_path, vault_root)
+        transcript_path = self._resolve_under_root(
+            req.transcript_path, transcript_root, root_label="transcript_root"
+        )
         last_error: Exception | None = None
         for attempt in range(1, self._max_attempts + 1):
             try:
@@ -332,12 +347,14 @@ Transcript:
 
     # ---- Status + filesystem helpers ----
     @staticmethod
-    def _resolve_under_root(path_value: str, root: Path) -> Path:
+    def _resolve_under_root(
+        path_value: str, root: Path, *, root_label: str = "vault_root"
+    ) -> Path:
         p = Path(path_value).expanduser().resolve(strict=False)
         try:
             p.relative_to(root)
         except ValueError as exc:
-            raise ValueError(f"path escapes vault_root: {path_value}") from exc
+            raise ValueError(f"path escapes {root_label}: {path_value}") from exc
         return p
 
     @staticmethod

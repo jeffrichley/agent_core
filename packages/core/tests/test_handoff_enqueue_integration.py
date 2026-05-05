@@ -12,9 +12,16 @@ from agent_core.hooks.tools.handoff_writer import HandoffWriter
 
 @pytest.mark.asyncio
 async def test_enqueue_hook_to_daemon_end_to_end(tmp_path, monkeypatch):
+    # Real Claude Code stores transcripts under ``~/.claude/projects/<...>/`` —
+    # NOT under any agent vault. Mirror that topology here so the test catches
+    # the case where the daemon rejects transcript_path simply for not being
+    # under vault_root (caught as a cutover-blocker on 2026-05-05 because the
+    # earlier fixture placed transcript inside vault and hid the regression).
     vault_root = tmp_path / "vault"
     vault_root.mkdir(parents=True, exist_ok=True)
-    transcript_path = vault_root / "transcript.jsonl"
+    transcript_root = tmp_path / "claude_projects"
+    transcript_root.mkdir(parents=True, exist_ok=True)
+    transcript_path = transcript_root / "session-e2e.jsonl"
     transcript_path.write_text('{"message":{"role":"user","content":"hello"}}\n', encoding="utf-8")
     handoff_path = vault_root / "handoff.md"
     status_path = vault_root / "handoff-status.json"
@@ -62,6 +69,7 @@ endpoints:
                     "output_path": str(handoff_path),
                     "handoff_status_path": str(status_path),
                     "vault_root": str(vault_root),
+                    "transcript_root": str(transcript_root),
                     "handoff_jobs_url": f"http://127.0.0.1:{http_host.port}/internal/handoff-jobs",
                 },
             )
