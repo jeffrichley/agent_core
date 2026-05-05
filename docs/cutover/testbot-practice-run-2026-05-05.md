@@ -141,12 +141,25 @@ Three sub-scenarios on the running session:
 
 **Result:** GREEN. handoff.md (still containing `zucchini-pickle-7421` from the (a) fixture) was left on disk to verify the placeholder's "do not treat handoff.md as authoritative" instruction is honored. testbot's response: did NOT mention the token, quoted the pending placeholder verbatim ("Continuity not ready yet — the previous session is still summarizing"), explicitly refused to confabulate ("told not to confabulate from prior sessions"), fell back to MEMORY hits + IDE context, and asked where to pick up rather than guessing. Cross-session pending path verified end-to-end.
 
-**(c) Failed:**
-- [ ] Set `handoff-status.json` to `{status: failed, error: "test failure"}`
-- [ ] Open a new session
-- [ ] First response references the failure + falls back to MEMORY.md / dailies, doesn't pretend nothing happened
+**(c) Failed:** — **DONE ✓**
+- [x] Set `handoff-status.json` to `{state: failed, error: "test failure"}`
+- [x] Open a new session
+- [x] First response references the failure + falls back to MEMORY.md / dailies, doesn't pretend nothing happened
 
-**Pass criteria:** each scenario produces the documented placeholder behavior.
+**Result:** GREEN. handoff.md (still containing the (a)-fixture body with `zucchini-pickle-7421`) was left on disk so the failed-state placeholder's "last-known-good continuity from an earlier successful cycle" framing was exercised. testbot's response: explicitly named the failed state ("HandoffInjector reported state: failed, error: 'test failure'"), flagged it rather than pretending the run was clean, cited zucchini-pickle as last-known-good, cross-referenced MEMORY.md (Discord length rules, bus-mid-rebuild) as authoritative ground truth, and **drew an explicit trust boundary**: "What I treat as untrustworthy this turn: any specific 'open thread' claim from the last-known-good handoff... For current state I'd verify against list_pending, the bus log, or git rather than the handoff narrative." Failed-state path verified end-to-end.
+
+**Pass criteria:** each scenario produces the documented placeholder behavior. — **All three GREEN.**
+
+---
+
+**Phase 1 summary — DONE ✓**
+
+All three cutover playbooks gated by SessionStart/UserPromptSubmit/SessionEnd hooks pass on a real testbot session:
+- **#01 (Identity at SessionStart):** 1.1 + 1.3 GREEN — full SOUL + IDENTITY content present, no truncation, agent identifies as testbot in first person, can list identity files.
+- **#02 (Handoff observability):** 1.4(a/b/c) GREEN — ready / cross-session-pending / failed placeholders all honored on real Claude Code sessions, agent cites correct content unprompted in (a), refuses to confabulate in (b), explicitly flags failure + draws trust boundary in (c).
+- **#07 (Hook fidelity):** 1.2 GREEN — TimeInjector fires on UserPromptSubmit with `Session started …` / `Last user turn …` deltas; state file persists across firings.
+
+Phase 1 fixtures cleaned up post-test (vault reset to fresh-agent state).
 
 ---
 
