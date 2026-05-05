@@ -9,7 +9,7 @@ Nothing new in `agent-core` itself. Skill discovery, slash-command resolution, f
 
 The cutover surface for #05 is therefore **verification-only**: confirm that on the new substrate (agent-core hooks driving Pepper's session), Claude Code's skill mechanism continues to behave as it does today on the legacy `~/.pepper/` substrate. No new code; the existing skill directories at `~/.claude/skills/<name>/SKILL.md` keep working because Claude Code reads them directly.
 
-The "documented path for adding new skills" acceptance criterion is satisfied by the **briefs-author skill** at `~/.claude/skills/briefs-author/SKILL.md` (1863 words; landed as the second cutover-gate-blocking follow-up on #09, authored via `superpowers:writing-skills` TDD methodology). That skill is the canonical exemplar of "this is how a Pepper-facing skill is structured on agent-core"; #05's documentation deliverable cites it rather than reinventing.
+The "documented path for adding new skills" acceptance criterion is satisfied by the **briefs-author skill** at `packages/agent-core-briefs/src/agent_core_briefs/skills/briefs-author/SKILL.md` (~1900 words; landed as the second cutover-gate-blocking follow-up on #09, authored via `superpowers:writing-skills` TDD methodology). The skill ships in the briefs package and installs into `<agent_root>/.claude/skills/briefs-author/` per-agent at init time — same pattern as the existing `email` skill at `packages/core/src/agent_core/skills/email/`. Project-scope, never user-scope: only agents that opt into briefs see the skill. That packaging shape is the canonical exemplar of "this is how a Pepper-facing skill is structured on agent-core"; #05's documentation deliverable cites it rather than reinventing.
 
 ## Acceptance criteria (from spec §"Done looks like")
 
@@ -50,7 +50,7 @@ This step is purely about not regressing Claude Code's documented override seman
 
 ### Step 5 — Documented path for adding new skills
 
-Confirm the briefs-author skill (under `~/.claude/skills/briefs-author/SKILL.md` once Jeff lands it) is reachable as a working example of "this is how a Pepper-facing skill is structured on agent-core." Pepper or Jeff should be able to point a new skill author at it and say "do this." If the briefs-author skill has not landed by cutover time, write a stub README at `~/.claude/skills/_authoring-guide.md` (or under `docs/` in agent-core) covering: directory layout, SKILL.md frontmatter contract, how to test a skill in a real Pepper session, override semantics.
+Confirm the briefs-author skill ships in the package at `packages/agent-core-briefs/src/agent_core_briefs/skills/briefs-author/SKILL.md` and lands at `<agent_root>/.claude/skills/briefs-author/SKILL.md` after agent init. The packaging shape is the working example of "this is how a Pepper-facing skill is structured on agent-core" — Pepper or Jeff can point a new skill author at the source location and say "do this; agent init will install it per-agent." Cross-reference: the `email` skill at `packages/core/src/agent_core/skills/email/` follows the same convention.
 
 ## Pass/fail summary
 
