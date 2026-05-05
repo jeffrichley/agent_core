@@ -221,6 +221,61 @@ async def test_submit_with_validation_issues_skips_delivery(tmp_path: Path):
 
 
 @pytest.mark.asyncio
+async def test_submit_enriches_section_title_from_spec_when_agent_omits_it(
+    tmp_path: Path,
+):
+    """The agent's submission only carries content (section_id + fields).
+    Title and color are spec authority — submit_brief enriches each
+    submitted section with title + color from the session's spec before
+    handing off to destinations. Without this, renderers produce empty
+    ``## `` headers (caught on testbot 2026-05-05 in the first live
+    morning_brief).
+    """
+    registry = SessionRegistry()
+    spec = SectionSpec(
+        section_id="greeting",
+        title="🌅 Morning, Jeff",
+        color=5814783,
+        required=True,
+        fields=[FieldSpec(name="Today", required=True, max_chars=500)],
+    )
+    session = _make_session(
+        sections=[spec],
+        sections_required=["greeting"],
+        destinations=[{"type": "markdown_file", "config": {"path": str(tmp_path / "out.md")}}],
+    )
+    token = registry.create(session)
+    markdown = _RecordingDestination("markdown_file", result=DeliveryResult(True, ref=str(tmp_path / "out.md")))
+    factories = {"markdown_file": lambda: markdown}
+    audit = AuditLog(tmp_path / "audit.jsonl")
+
+    # Agent submits content-only — no title, no color (the natural shape
+    # when the agent only echoes back what get_section_spec told it +
+    # the fields it composed).
+    submitted_no_metadata = {
+        "section_id": "greeting",
+        "fields": [{"name": "Today", "value": "Tuesday, May 5."}],
+    }
+    result = await submit_brief(
+        registry=registry,
+        token=token,
+        sections=[submitted_no_metadata],
+        destination_factories=factories,
+        bus_handle=_StubBusHandle(),
+        audit_log=audit,
+    )
+
+    assert result.success is True
+    # The destination MUST have received a section dict with the spec's
+    # title + color, regardless of the agent omitting them.
+    delivered_sections = markdown.calls[0]["sections"]
+    assert delivered_sections[0]["title"] == "🌅 Morning, Jeff"
+    assert delivered_sections[0]["color"] == 5814783
+    # Field content the agent did supply still flows through.
+    assert delivered_sections[0]["fields"][0]["value"] == "Tuesday, May 5."
+
+
+@pytest.mark.asyncio
 async def test_submit_consumes_session_token_after_validation(tmp_path: Path):
     """After successful validation, the session token is consumed (one-shot)."""
     registry = SessionRegistry()

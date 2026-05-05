@@ -32,6 +32,14 @@ destinations:
   - type: discord_embed
     config:
       channel_id: "REPLACE_WITH_CHANNEL_ID"
+      # Bus endpoint name of the Discord adapter that will publish this
+      # embed. Default is ``discord``; override when the DiscordEndpoint
+      # is registered under a different name (e.g. ``discord-pepper`` if
+      # following the agent-* convention). Caught on testbot 2026-05-05:
+      # without this, the brief silently failed Discord delivery with
+      # ``publish to unregistered endpoint 'discord'`` while markdown
+      # delivered fine. See cutover-agent-playbook bug #6.
+      discord_endpoint_name: "REPLACE_WITH_DISCORD_ENDPOINT_NAME"
   - type: markdown_file
     config:
       path: ${agent_root}/Memory/daily/briefs/{{when.date}}-morning.md

@@ -37,10 +37,12 @@ from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 
 from agent_core_briefs.audit import AuditEvent, AuditLog
+from agent_core_briefs.playbook import resolve_colors_for_sections
 from agent_core_briefs.protocol import (
     DeliveryResult,
     Destination,
     PlaybookRef,
+    SectionSpec,
 )
 from agent_core_briefs.session import SessionRegistry
 from agent_core_briefs.validators import ValidationIssue, validate_submission
@@ -162,7 +164,23 @@ async def submit_brief(
         sections_conditional_active=list(session.sections_conditional_active),
     )
 
-    # 3. Fan out to destinations. One destination's failure does NOT
+    # 3. Enrich submitted sections with title + resolved color from the
+    # spec. The playbook is single-source-of-truth for section metadata
+    # (title, color) — the agent's submission is content-only (fields).
+    # Without this enrichment, destinations render empty ``## `` headers
+    # and lose all visual structure (caught on testbot 2026-05-05 in
+    # the first live morning_brief — agent had no reason to retype
+    # spec metadata, the framework should derive it).
+    enriched_sections = _enrich_sections_with_spec(
+        sections,
+        session_specs=list(session.sections)
+        + list(session.extension_sections)
+        + list(session.conditional_sections),
+        palette=session.colors_palette,
+        context=session.context,
+    )
+
+    # 4. Fan out to destinations. One destination's failure does NOT
     # stop the others; capture every outcome.
     deliveries: list[DestinationOutcome] = []
     for dest_config in session.destinations:
@@ -219,7 +237,7 @@ async def submit_brief(
 
         try:
             result = await destination.deliver(
-                sections=sections,
+                sections=enriched_sections,
                 playbook=playbook_ref,
                 scope=session.scope,
                 when=session.when,
@@ -300,6 +318,47 @@ async def _audit_deliver(
             },
         )
     )
+
+
+def _enrich_sections_with_spec(
+    submitted: list[dict],
+    *,
+    session_specs: list[SectionSpec],
+    palette: dict[str, int],
+    context: dict,
+) -> list[dict]:
+    """Override title + color on each submitted section with spec authority.
+
+    Title and color are owned by the playbook, not the agent. The agent's
+    submit_brief call carries content (section_id + fields); spec metadata
+    is filled in here so destinations always render a complete header.
+    Sections whose ``section_id`` doesn't match any spec pass through
+    unchanged — defensive (validation should already reject these).
+    """
+    spec_by_id = {spec.section_id: spec for spec in session_specs}
+    enriched: list[dict] = []
+    for raw in submitted:
+        section_id = raw.get("section_id")
+        spec = spec_by_id.get(section_id) if isinstance(section_id, str) else None
+        if spec is None:
+            enriched.append(dict(raw))
+            continue
+        # ``resolve_colors_for_sections`` handles palette names and
+        # dynamic ``{dynamic, expr, if_true, if_false}`` shapes; an
+        # already-resolved int (from test fixtures or extension sections
+        # with literal colors) bypasses resolution.
+        if isinstance(spec.color, int):
+            color: int = spec.color
+        else:
+            [resolved_spec] = resolve_colors_for_sections(
+                [spec], palette, context=context
+            )
+            color = resolved_spec.color  # type: ignore[assignment]
+        out = dict(raw)
+        out["title"] = spec.title
+        out["color"] = color
+        enriched.append(out)
+    return enriched
 
 
 __all__ = ["DestinationOutcome", "SubmitResult", "submit_brief"]
