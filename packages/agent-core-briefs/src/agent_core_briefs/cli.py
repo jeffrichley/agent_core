@@ -44,6 +44,14 @@ briefs_app = typer.Typer(
     no_args_is_help=True,
 )
 
+# Built-in fetcher source directory. The orchestrator auto-prepends this
+# to ``fetcher_paths`` at boot; the CLI mirrors that contract so
+# ``briefs fetchers list/test`` always sees ``cli`` / ``filesystem_read``
+# / ``now`` even without an explicit ``--fetcher-path``. Operators get
+# the built-ins for free; ``--fetcher-path`` adds custom directories on
+# top.
+_BUILTIN_FETCHERS_DIR = Path(__file__).parent / "fetchers"
+
 fetchers_app = typer.Typer(
     name="fetchers",
     help="Inspect and exercise registered fetchers in isolation.",
@@ -79,12 +87,19 @@ def _validate_fetcher_paths(paths: list[Path]) -> list[Path]:
 def _load_fetcher_catalog(paths: list[Path]) -> dict[str, type[Fetcher]]:
     """Wrap :func:`discover_implementations` with operator-friendly errors.
 
+    Always prepends ``_BUILTIN_FETCHERS_DIR`` so the three built-ins
+    (``cli``, ``filesystem_read``, ``now``) are discoverable without an
+    explicit ``--fetcher-path`` — mirrors the orchestrator's contract
+    (operators don't have to copy package source into their custom
+    fetcher dirs).
+
     ``LoaderError`` (duplicate type_id, syntax error, etc.) is re-raised as
     ``BadParameter`` so the operator sees a one-line surface instead of a
     traceback.
     """
+    resolved = [_BUILTIN_FETCHERS_DIR, *paths]
     try:
-        return discover_implementations(paths, protocol=Fetcher)
+        return discover_implementations(resolved, protocol=Fetcher)
     except LoaderError as exc:
         raise typer.BadParameter(str(exc), param_hint="--fetcher-path") from exc
 

@@ -173,15 +173,22 @@ def fetcher_config_yaml(tmp_path: Path) -> Path:
 # ---- briefs fetchers list ----
 
 
-def test_fetchers_list_with_no_paths_returns_empty():
+def test_fetchers_list_with_no_paths_returns_built_ins():
+    """No ``--fetcher-path``: only the three built-ins appear (cli,
+    filesystem_read, now). Mirrors the orchestrator's auto-prepend
+    contract — operators don't have to copy package source to see the
+    framework's own fetchers."""
     runner = CliRunner()
     result = runner.invoke(app, ["briefs", "fetchers", "list"])
     assert result.exit_code == 0, result.output
     parsed = json.loads(result.output)
-    assert parsed == []
+    type_ids = {entry["type_id"] for entry in parsed}
+    assert type_ids == {"cli", "filesystem_read", "now"}
 
 
-def test_fetchers_list_returns_registered_fetcher(fetcher_dir: Path):
+def test_fetchers_list_returns_built_ins_plus_registered_fetcher(fetcher_dir: Path):
+    """``--fetcher-path`` adds operator fetchers on top of the built-ins.
+    Result includes the stub PLUS cli/filesystem_read/now."""
     runner = CliRunner()
     result = runner.invoke(
         app,
@@ -190,12 +197,12 @@ def test_fetchers_list_returns_registered_fetcher(fetcher_dir: Path):
     assert result.exit_code == 0, result.output
     parsed = json.loads(result.output)
     assert isinstance(parsed, list)
-    assert len(parsed) == 1
-    entry = parsed[0]
-    assert entry["type_id"] == "stub.test"
-    assert entry["namespace"] == "stub_ns"
-    assert entry["source"].endswith("stub_fetcher.py")
-    assert "last_modified" in entry
+    type_ids = {entry["type_id"] for entry in parsed}
+    assert type_ids == {"cli", "filesystem_read", "now", "stub.test"}
+    stub_entry = next(entry for entry in parsed if entry["type_id"] == "stub.test")
+    assert stub_entry["namespace"] == "stub_ns"
+    assert stub_entry["source"].endswith("stub_fetcher.py")
+    assert "last_modified" in stub_entry
 
 
 def test_fetchers_list_rejects_nonexistent_path(tmp_path: Path):
