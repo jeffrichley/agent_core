@@ -327,6 +327,11 @@ class _FakeDiscordClient:
         self.user = _FakeUser(id="bot-1", name="testbot", bot=True)
         self._channels: dict[str, _FakeChannel] = {}
         self._guilds: dict[str, _FakeGuild] = {}
+        # Real ``discord.Client.get_user(user_id)`` returns the cached
+        # ``User`` or ``None``. Tests pre-seed via ``add_user`` so handlers
+        # that resolve display names from raw events have something to
+        # find.
+        self._users: dict[str, _FakeUser] = {}
         self._closed = False
         self._logged_in = False
         self._handlers: dict[str, Callable] = {}
@@ -345,6 +350,13 @@ class _FakeDiscordClient:
 
     def get_channel(self, channel_id: int | str) -> _FakeChannel | None:
         return self._channels.get(str(channel_id))
+
+    def get_user(self, user_id: int | str) -> _FakeUser | None:
+        """Mirrors ``discord.Client.get_user`` — cache lookup, ``None`` if absent."""
+        return self._users.get(str(user_id))
+
+    def add_user(self, user: _FakeUser) -> None:
+        self._users[str(user.id)] = user
 
     def get_guild(self, guild_id: int | str) -> _FakeGuild | None:
         return self._guilds.get(str(guild_id))

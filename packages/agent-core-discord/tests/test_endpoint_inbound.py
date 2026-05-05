@@ -384,6 +384,7 @@ class _FakeRawMessageUpdate:
 @pytest.mark.asyncio
 async def test_on_raw_poll_vote_add_publishes_event_envelope(monkeypatch):
     ep, handle, fake = await _start_endpoint(monkeypatch)
+    fake.add_user(_FakeUser(id="100", name="alice", display_name="Alice"))
     raw = _FakeRawPollVote(
         message_id=1501308103499452467,
         channel_id=1499028901257805874,
@@ -403,6 +404,31 @@ async def test_on_raw_poll_vote_add_publishes_event_envelope(monkeypatch):
         assert env.payload.data["user_id"] == "100"
         assert env.payload.data["guild_id"] == "1229523821820772392"
         assert env.payload.data["answer_id"] == 1
+        # Symmetry with discord.reaction_add: poll-vote events also
+        # surface the voter's display name when the User is in the
+        # client's cache. testbot 2026-05-05 round-2 verification
+        # surfaced this asymmetry as Obs 1.
+        assert env.payload.data["user_display_name"] == "Alice"
+    finally:
+        await ep.stop()
+
+
+@pytest.mark.asyncio
+async def test_on_raw_poll_vote_add_uncached_user_empty_display_name(monkeypatch):
+    """If the voting User is not in the client's cache, ``user_display_name``
+    is the empty string — agents can resolve it lazily via ``fetch_messages``
+    or their own User cache. Mirrors discord.py's ``get_user`` returning
+    ``None`` for uncached users."""
+    ep, handle, fake = await _start_endpoint(monkeypatch)
+    # Deliberately do NOT seed user 999.
+    raw = _FakeRawPollVote(
+        message_id=1, channel_id=2, user_id=999, guild_id=3, answer_id=1
+    )
+    try:
+        await fake.fire("on_raw_poll_vote_add", raw)
+        env = handle.published[0]
+        assert env.payload.data["user_id"] == "999"
+        assert env.payload.data["user_display_name"] == ""
     finally:
         await ep.stop()
 
@@ -427,6 +453,7 @@ async def test_on_raw_poll_vote_add_dm_context(monkeypatch):
 @pytest.mark.asyncio
 async def test_on_raw_poll_vote_remove_publishes_event_envelope(monkeypatch):
     ep, handle, fake = await _start_endpoint(monkeypatch)
+    fake.add_user(_FakeUser(id="30", name="bob", display_name="Bob"))
     raw = _FakeRawPollVote(
         message_id=10, channel_id=20, user_id=30, guild_id=40, answer_id=2
     )
@@ -437,6 +464,8 @@ async def test_on_raw_poll_vote_remove_publishes_event_envelope(monkeypatch):
         assert env.payload.type == "discord.poll_vote_remove"
         assert env.payload.data["message_id"] == "10"
         assert env.payload.data["answer_id"] == 2
+        # Display name resolution applies symmetrically to the remove path.
+        assert env.payload.data["user_display_name"] == "Bob"
     finally:
         await ep.stop()
 

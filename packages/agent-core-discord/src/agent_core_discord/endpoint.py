@@ -874,10 +874,23 @@ class DiscordEndpoint:
             if self_id is not None and str(getattr(raw, "user_id", "")) == str(self_id):
                 return
 
+            # Resolve the voter's display name from the client's user
+            # cache for parity with ``discord.reaction_add`` (which gets
+            # ``user_display_name`` for free because discord.py passes
+            # the resolved User into the cached event). Falls back to
+            # ``""`` when uncached — agents can resolve lazily.
+            voter = (
+                self._client.get_user(int(raw.user_id))
+                if self._client is not None
+                else None
+            )
+            user_display_name = getattr(voter, "display_name", "") or ""
+
             data: dict[str, Any] = {
                 "message_id": str(raw.message_id),
                 "channel_id": str(raw.channel_id),
                 "user_id": str(raw.user_id),
+                "user_display_name": user_display_name,
                 "guild_id": str(raw.guild_id) if raw.guild_id else "",
                 "answer_id": int(raw.answer_id),
             }
