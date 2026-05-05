@@ -38,7 +38,9 @@ class _FakePollAnswer:
 class _FakePoll:
     """Lightweight stand-in for ``discord.Poll``.
 
-    Real ``discord.Poll`` exposes ``question.text``, ``answers`` (list),
+    Real ``discord.Poll`` exposes ``question`` as a flat ``str`` (it's a
+    ``@property`` that returns ``self._question_media.text`` — see
+    discord.py's ``poll.py``), ``answers`` (list of PollAnswer),
     ``multiselect`` (bool), ``duration`` (timedelta), ``expires_at``
     (datetime), and ``is_finalised()`` / ``total_votes``. The fake exposes
     enough to verify the fetch-side serializer reads the right attributes.
@@ -55,9 +57,17 @@ class _FakePoll:
         is_finalised: bool = False,
         total_votes: int = 0,
     ) -> None:
-        # Real discord.py wraps the question text in a small object —
-        # mirror that so production reading ``poll.question.text`` works.
-        self.question = SimpleNamespace(text=question_text)
+        # Real ``discord.Poll.question`` is a flat ``str``, NOT a nested
+        # object with ``.text``. Mirroring real strictly: a fake that
+        # exposed ``question.text`` would let production code reading
+        # the wrong shape green-test against fake data while hitting
+        # ``""`` on real polls (the exact failure mode caught on testbot
+        # 2026-05-05 Phase 6 verification).
+        self.question = question_text
+        # Internal mirror for any test that wants to model discord.py's
+        # underlying ``_question_media`` shape; not used by the
+        # serializer, which goes through the public ``.question`` only.
+        self._question_media = SimpleNamespace(text=question_text)
         self.answers = list(answers or [])
         self.multiselect = multiselect
         # ``duration`` on real Poll is a ``datetime.timedelta``; tests can

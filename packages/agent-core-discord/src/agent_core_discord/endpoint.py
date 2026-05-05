@@ -148,8 +148,12 @@ def _serialize_poll(poll: Any) -> dict[str, Any] | None:
     """
     if poll is None:
         return None
-    question_obj = getattr(poll, "question", None)
-    question_text = getattr(question_obj, "text", "") if question_obj is not None else ""
+    # ``discord.Poll.question`` is a ``@property`` returning a flat ``str``
+    # (it reads ``self._question_media.text`` internally — see discord.py
+    # poll.py). Earlier code here read ``.question.text`` which silently
+    # returned ``""`` against every real poll; the regression was caught
+    # on testbot 2026-05-05 Phase 6 verification.
+    question_text = str(getattr(poll, "question", "") or "")
     answers_out: list[dict[str, Any]] = []
     for ans in getattr(poll, "answers", None) or []:
         emoji = getattr(ans, "emoji", None)
