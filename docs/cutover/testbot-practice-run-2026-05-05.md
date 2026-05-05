@@ -134,10 +134,12 @@ Three sub-scenarios on the running session:
 
 **Result:** GREEN. Fixture handoff.md embedded a distinctive token (`zucchini-pickle-7421`); first response to `"where are we?"` volunteered the token + Phase 1.4 context unprompted. State-ready → HandoffInjector → file-read path verified end-to-end on a real Claude Code session.
 
-**(b) Pending at boot:**
-- [ ] Set `handoff-status.json` to `{status: pending, session_id: <some-other-id>}`
-- [ ] Open a new session — `session_id` mismatch means cross-session pending
-- [ ] First response should reference the pending placeholder ("continuity still summarizing…"), not confabulate
+**(b) Pending at boot:** — **DONE ✓**
+- [x] Set `handoff-status.json` to `{state: pending, session_id: <some-other-id>}`
+- [x] Open a new session — `session_id` mismatch means cross-session pending
+- [x] First response should reference the pending placeholder ("continuity still summarizing…"), not confabulate
+
+**Result:** GREEN. handoff.md (still containing `zucchini-pickle-7421` from the (a) fixture) was left on disk to verify the placeholder's "do not treat handoff.md as authoritative" instruction is honored. testbot's response: did NOT mention the token, quoted the pending placeholder verbatim ("Continuity not ready yet — the previous session is still summarizing"), explicitly refused to confabulate ("told not to confabulate from prior sessions"), fell back to MEMORY hits + IDE context, and asked where to pick up rather than guessing. Cross-session pending path verified end-to-end.
 
 **(c) Failed:**
 - [ ] Set `handoff-status.json` to `{status: failed, error: "test failure"}`
