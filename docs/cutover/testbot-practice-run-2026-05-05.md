@@ -414,13 +414,33 @@ testbot drove all 10 verbs in sequence (some in parallel where independent), eac
 
 Three regression tests cover the fixes: `test_get_channel_info_dm_channel_returns_empty_guild_id`, `test_download_attachments_records_content_type_from_response`, `test_fetch_surfaces_poll_content`. Discord suite 133/133, full repo 672 passing.
 
-**Bus-meta observation (punch-list):** wake-channel notifications occasionally reported `urgency_max: "yellow"` while every envelope in the queue at the time was actually green. testbot saw it twice during the run, both around send→ack races. Timing window in the wake builder — it samples `urgency_max` slightly out of sync with what `list_pending` later returns. Not blocking; caused testbot to suspect failures that didn't exist.
+**Round-1 live verification (15:11 boot, testbot drove all 4 verbs against real channel 1499028901257805874):**
+- `get_channel_info` → `guild_id: "1229523821820772392"` ✅ matches `list_channels`
+- `download_attachments` → `content_type: "text/plain; charset=utf-8"` ✅ on the same `phase6-attach.txt` from Phase 6
+- `fetch_messages` → every message dict has `poll` key (null for non-polls) ✅
+- `create_thread` docstring on disk ✅
+
+But round-1 also surfaced a regression of finding 3 (the poll-surfacing fix). The poll dict structurally surfaced, but `poll.question` was always `""` regardless of poll state (active, finalised, with or without votes). testbot diagnosed it cleanly: `_serialize_poll` read `poll.question.text`, but real `discord.py`'s `Poll.question` is a `@property` returning a flat `str` (it reads `self._question_media.text` internally — see `discord/poll.py:488-491`). The unit test passed because `_FakePoll.question = SimpleNamespace(text=...)` codified the wrong mental model. **Same fakes-mirror-real pathology as findings 4 and 7** — third instance of the day.
+
+testbot also observed that her own poll-vote and message-edit/delete events did NOT surface to her at all: the adapter only wired `on_message` and `on_reaction_add`. Anything outside that — votes, edits, deletes — went unsurfaced. Caught only because she was prompted to look; otherwise invisible.
+
+**Both findings landed as `a0b88bf` (poll.question regression fix) + `4a5484c` (four new raw engagement-event listeners: `on_raw_poll_vote_add` / `_remove`, `on_raw_message_edit`, `on_raw_message_delete` → `discord.poll_vote_add` / `_remove` / `message_edit` / `message_delete` Event envelopes).**
+
+**Round-2 live verification (16:09 bus restart, all 4 verbs PASS):**
+- Finding A: `fetch_messages` on poll `1501308103499452467` returned `"question": "phase6-vote-test: which substrate should Pepper graduate to first?"` ✅. Bonus: the older finalised poll `1501286855302184992` also showed populated question text retroactively.
+- Finding B (poll vote): Jeff changed his vote answer 1 → answer 2; both `discord.poll_vote_remove` (answer_id 1) AND `discord.poll_vote_add` (answer_id 2) Events fired automatically with all IDs populated, no pull required ✅.
+- Finding B (message edit): testbot's own `edit_message` call surfaced as a `discord.message_edit` Event with `{message_id, channel_id, guild_id}` ✅.
+- Finding B (message delete): Jeff deleted `phase6-delete-target` from the Discord UI; `discord.message_delete` Event fired with all IDs populated ✅.
+
+**Test coverage:** 138/138 in the discord suite (was 133 pre-round-2; +5 inbound-listener tests + 1 hardening assertion across all four new handlers), 677/680 in full repo. Test fakes (`_FakeRawPollVote`, `_FakeRawMessageDelete`, `_FakeRawMessageUpdate`) mirror real `discord.py` raw event shapes.
+
+**Bus-meta observation (punch-list, confirmed twice):** wake-channel notifications occasionally reported `urgency_max: "yellow"` and counts that snapshot a queue state slightly behind reality. testbot saw it during the original run AND during round-2 verification. Timing window in the wake builder — it samples slightly out of sync with what `list_pending` later returns. Not blocking; caused testbot to suspect failures that didn't exist.
 
 ---
 
 ## Sign-off — 2026-05-05 testbot practice run — **GREEN**
 
-**All six phases GREEN. All nine cutover playbooks observed end-to-end on real testbot conditions.** The practice-run policy paid for itself many times over: **7 cutover-blockers caught and fixed before Pepper ever touched the new substrate.**
+**All six phases GREEN. All nine cutover playbooks observed end-to-end on real testbot conditions.** The practice-run policy paid for itself many times over: **9 cutover-blockers caught and fixed before Pepper ever touched the new substrate** (7 from the original phase walk-throughs + 2 from round-1 live verification of the verb-parity fix that surfaced a regression and a deeper engagement-listener gap).
 
 ### Cutover-blockers caught + fixed (full list)
 
@@ -431,6 +451,8 @@ Three regression tests cover the fixes: `test_get_channel_info_dm_channel_return
 5. `ac535bd` — `_publish_result` used `agent_name` for both human identity AND bus routing. New `mailbox` field decouples them. Repo fix. **Pepper's runtime config must add `mailbox: "pepper"`** to PreCompact + SessionEnd handoff_writer params.
 6. `33fb1f9` — Briefs framework: agent's `submit_brief` carries content-only (section_id + fields); destinations rendered empty `## ` headers because title + color weren't being enriched from the spec. AND testbot's playbook didn't set `discord_endpoint_name`. Repo fix + example yaml update. **Pepper's runtime playbook must set `discord_endpoint_name`** to her actual Discord endpoint name.
 7. `4b3e5ad` — Discord adapter verb-parity polish: `get_channel_info` returned empty `guild_id` (read wrong attribute on `discord.TextChannel`); `download_attachments` dropped `content_type` (helper threw away response header); `fetch_messages` didn't surface `message.poll`; `create_thread` invariant `thread_id == message_id` undocumented. Repo fix + 3 regression tests + test fake updated to mirror real `discord.TextChannel.guild` shape.
+8. `a0b88bf` — Round-1 live verification of `4b3e5ad` surfaced a regression in the poll-surfacing fix: `_serialize_poll` read `poll.question.text` but real `discord.py`'s `Poll.question` is a `@property` returning flat `str` — every poll's question was empty regardless of state. Third fakes-mirror-real violation of the day; the `_FakePoll` codified the wrong mental model. Repo fix + corrected test fake.
+9. `4a5484c` — Round-1 also surfaced that the adapter only wired `on_message` and `on_reaction_add` — poll votes, message edits, and message deletes were invisible to agents. Wired four new raw-event listeners (`on_raw_poll_vote_add` / `_remove` / `on_raw_message_edit` / `on_raw_message_delete`) publishing `discord.poll_vote_add` / `_remove` / `message_edit` / `message_delete` Event envelopes. Verified live in round-2 against real Discord (vote change surfaced both Events, self-edit bounced back, Jeff's manual delete fired). Repo fix + 5 regression tests + hardening assertion.
 
 ### Live observations satisfied
 
