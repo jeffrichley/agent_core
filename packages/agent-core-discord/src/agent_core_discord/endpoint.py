@@ -135,6 +135,59 @@ def _check_embeds_within_caps(embeds: list[dict[str, Any]]) -> None:
         )
 
 
+def _serialize_poll(poll: Any) -> dict[str, Any] | None:
+    """Convert a ``discord.Poll`` to a JSON-friendly dict.
+
+    Returns ``None`` when ``poll`` is ``None`` (the common case — most
+    messages aren't polls). When present, the dict carries the question
+    text, answer list (each with id / text / emoji / vote_count if loaded),
+    multiselect flag, duration in seconds, ISO expires_at, finalised
+    flag, and total vote count. Mirrors the ``discord.Poll`` shape closely
+    enough that agents reading the dict don't need access to discord.py's
+    types to understand what they're looking at.
+    """
+    if poll is None:
+        return None
+    question_obj = getattr(poll, "question", None)
+    question_text = getattr(question_obj, "text", "") if question_obj is not None else ""
+    answers_out: list[dict[str, Any]] = []
+    for ans in getattr(poll, "answers", None) or []:
+        emoji = getattr(ans, "emoji", None)
+        answers_out.append(
+            {
+                "id": int(getattr(ans, "id", 0)) if getattr(ans, "id", None) is not None else 0,
+                "text": str(getattr(ans, "text", "")),
+                "emoji": str(emoji) if emoji is not None else None,
+                "vote_count": int(getattr(ans, "vote_count", 0) or 0),
+            }
+        )
+    duration = getattr(poll, "duration", None)
+    duration_seconds: int | None = None
+    if duration is not None:
+        # ``discord.Poll.duration`` is a ``datetime.timedelta``; serialize
+        # to seconds for transport. Tests may pass other shapes.
+        total_seconds = getattr(duration, "total_seconds", None)
+        if callable(total_seconds):
+            duration_seconds = int(total_seconds())
+    expires_at = getattr(poll, "expires_at", None)
+    expires_iso: str = ""
+    if expires_at is not None:
+        iso = getattr(expires_at, "isoformat", None)
+        if callable(iso):
+            expires_iso = iso()
+    is_finalised_method = getattr(poll, "is_finalised", None)
+    is_finalised = bool(is_finalised_method()) if callable(is_finalised_method) else False
+    return {
+        "question": question_text,
+        "answers": answers_out,
+        "multiselect": bool(getattr(poll, "multiselect", False)),
+        "duration_seconds": duration_seconds,
+        "expires_at": expires_iso,
+        "is_finalised": is_finalised,
+        "total_votes": int(getattr(poll, "total_votes", 0) or 0),
+    }
+
+
 def _safe_filename(url: str) -> str:
     """Extract a safe filename from a URL.
 
@@ -1086,12 +1139,25 @@ class DiscordEndpoint:
                     else "",
                     "embeds": embeds,
                     "attachments": attachments,
+                    # ``message.poll`` is a first-class Discord attribute that
+                    # returns a ``discord.Poll`` when the message carries a
+                    # poll, otherwise ``None``. Surface it so agents reading
+                    # channel state can see active polls — without this, a
+                    # poll message comes back as ``content: ""`` and looks
+                    # empty (caught on testbot 2026-05-05 Phase 6 verb-parity
+                    # smoke).
+                    "poll": _serialize_poll(getattr(m, "poll", None)),
                 }
             )
         return out
 
-    async def _download_url(self, url: str) -> bytes:
-        """Fetch a URL's bytes. Override in tests to avoid network."""
+    async def _download_url(self, url: str) -> tuple[bytes, str]:
+        """Fetch a URL's bytes + Content-Type header.
+
+        Returns ``(body, content_type)``. ``content_type`` is the value of
+        the response's Content-Type header (empty string if missing).
+        Override in tests to avoid network — return a 2-tuple.
+        """
         try:
             import httpx
         except ImportError as exc:
@@ -1099,7 +1165,7 @@ class DiscordEndpoint:
         async with httpx.AsyncClient(timeout=30.0) as client:
             resp = await client.get(url)
             resp.raise_for_status()
-            return resp.content
+            return resp.content, resp.headers.get("content-type", "")
 
     async def _download_attachments(self, args: _DownloadAttachmentsArgs) -> dict:
         if not args.attachment_urls:
@@ -1126,7 +1192,7 @@ class DiscordEndpoint:
                         f"download_attachments: refused unsafe dedup path for {url!r}"
                     ) from exc
             try:
-                data = await self._download_url(url)
+                data, content_type = await self._download_url(url)
             except Exception as exc:
                 raise _ToolError(f"download failed for {url}: {exc}") from exc
             path.write_bytes(data)
@@ -1134,7 +1200,11 @@ class DiscordEndpoint:
                 {
                     "filename": path.name,
                     "path": str(path),
-                    "content_type": "",
+                    # Content-Type from the HTTP response header — populated
+                    # so callers don't need a second ``fetch_messages`` round
+                    # trip just to learn what they downloaded. Empty string
+                    # if the server didn't send the header.
+                    "content_type": content_type,
                     "size_bytes": len(data),
                 }
             )
@@ -1153,7 +1223,11 @@ class DiscordEndpoint:
                         "id": str(ch.id),
                         "name": getattr(ch, "name", ""),
                         "type": str(getattr(ch, "type", "text")),
-                        "guild_id": str(getattr(ch, "guild_id", g.id)),
+                        # We're iterating from ``g``, so ``g.id`` is always
+                        # the right answer. Don't ``getattr(ch, "guild_id")``
+                        # — discord.py text channels don't have that flat
+                        # attribute (see _get_channel_info comment).
+                        "guild_id": str(g.id),
                         "topic": getattr(ch, "topic", "") or "",
                     }
                 )
@@ -1161,11 +1235,17 @@ class DiscordEndpoint:
 
     async def _get_channel_info(self, args: _GetChannelInfoArgs) -> dict:
         ch = await self._resolve_channel(args.channel_id)
+        # discord.py text channels expose ``.guild`` (a Guild object), NOT a
+        # flat ``.guild_id`` attribute. Reading ``getattr(ch, "guild_id", "")``
+        # silently returned "" for every real text channel — caught on testbot
+        # 2026-05-05 during Phase 6 verb-parity smoke. DM channels have
+        # ``ch.guild is None`` and correctly return "".
+        guild = getattr(ch, "guild", None)
         return {
             "id": str(ch.id),
             "name": getattr(ch, "name", ""),
             "type": str(getattr(ch, "type", "text")),
-            "guild_id": str(getattr(ch, "guild_id", "") or ""),
+            "guild_id": str(guild.id) if guild is not None else "",
             "topic": getattr(ch, "topic", "") or "",
             "nsfw": bool(getattr(ch, "nsfw", False)),
         }
@@ -1316,6 +1396,17 @@ class DiscordEndpoint:
         return out
 
     async def _create_thread(self, args: _CreateThreadArgs) -> dict:
+        """Create a thread in the channel, optionally anchored to a message.
+
+        Note on ``thread_id`` vs ``message_id``: when a thread is anchored
+        to a message (``args.message_id`` provided), Discord's API uses the
+        parent message's snowflake as the thread's ID. So the returned
+        ``thread_id`` will equal the ``message_id`` you passed in. This is
+        Discord API design, not a collision — threads and messages share
+        an ID space when one is created from the other. Callers that store
+        thread IDs should not assume separate-namespace uniqueness vs
+        message IDs in the same channel.
+        """
         ch = await self._resolve_channel(args.channel_id)
         create = getattr(ch, "create_thread", None)
         if create is None:

@@ -32,6 +32,8 @@ from tests.conftest import (
     _FakeDiscordClient,
     _FakeGuild,
     _FakeMessage,
+    _FakePoll,
+    _FakePollAnswer,
     _FakeUser,
 )
 
@@ -841,6 +843,80 @@ async def test_fetch_returns_recent_messages(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_fetch_surfaces_poll_content(monkeypatch):
+    """``message.poll`` is a first-class Discord attribute. ``fetch_messages``
+    must serialize it into the returned message dict, otherwise agents
+    reading channel state see polls as empty messages (caught on testbot
+    2026-05-05 Phase 6 verb-parity smoke).
+    """
+    ep, handle, fake = await _started(monkeypatch)
+    ch = _FakeChannel(id="200", guild_id="g1")
+    poll = _FakePoll(
+        question_text="Lunch?",
+        answers=[
+            _FakePollAnswer(id=1, text="Tacos", emoji="🌮", vote_count=3),
+            _FakePollAnswer(id=2, text="Pizza", emoji="🍕", vote_count=5),
+        ],
+        multiselect=False,
+        duration_seconds=3600,
+        is_finalised=False,
+        total_votes=8,
+    )
+    m = _FakeMessage(id="m-poll", channel_id="200", content="", poll=poll)
+    m.author = type(
+        "A", (), {"id": "100", "name": "alice", "bot": False, "display_name": "Alice"}
+    )()
+    m.created_at = datetime.now(UTC)
+    m.embeds = []
+    m.attachments = []
+    ch._messages[m.id] = m
+
+    # And a sibling non-poll message so we lock in that ``poll: None`` is
+    # the right value for messages without polls.
+    plain = _FakeMessage(id="m-plain", channel_id="200", content="hi")
+    plain.author = m.author
+    plain.created_at = datetime.now(UTC)
+    plain.embeds = []
+    plain.attachments = []
+    ch._messages[plain.id] = plain
+
+    fake.add_channel(ch)
+    try:
+        env = _envelope(
+            "e",
+            "agent-test",
+            "discord-test",
+            _toolcall("fetch", {"channel_id": "200", "limit": 10}),
+        )
+        await ep.deliver(env)
+        ack = [e for e in handle.published if e.kind == "Acknowledgment"][0]
+        result = json.loads(ack.payload.note)
+        by_id = {entry["id"]: entry for entry in result}
+
+        # Poll message: poll dict surfaced with the right shape.
+        poll_entry = by_id["m-poll"]
+        assert poll_entry["poll"] is not None
+        assert poll_entry["poll"]["question"] == "Lunch?"
+        assert poll_entry["poll"]["multiselect"] is False
+        assert poll_entry["poll"]["duration_seconds"] == 3600
+        assert poll_entry["poll"]["is_finalised"] is False
+        assert poll_entry["poll"]["total_votes"] == 8
+        answers = poll_entry["poll"]["answers"]
+        assert {a["id"] for a in answers} == {1, 2}
+        by_id_a = {a["id"]: a for a in answers}
+        assert by_id_a[1]["text"] == "Tacos"
+        assert by_id_a[1]["emoji"] == "🌮"
+        assert by_id_a[1]["vote_count"] == 3
+        assert by_id_a[2]["text"] == "Pizza"
+        assert by_id_a[2]["vote_count"] == 5
+
+        # Plain message: poll is None (NOT missing — explicit absence).
+        assert by_id["m-plain"]["poll"] is None
+    finally:
+        await ep.stop()
+
+
+@pytest.mark.asyncio
 async def test_fetch_unknown_channel_returns_error(monkeypatch):
     ep, handle, fake = await _started(monkeypatch)
     try:
@@ -875,8 +951,8 @@ async def test_download_attachments_saves_files(monkeypatch, tmp_path):
     await ep.start(handle)
 
     # Install a fake httpx-style downloader to avoid network.
-    async def _fake_download(url: str) -> bytes:
-        return b"data:" + url.encode()
+    async def _fake_download(url: str) -> tuple[bytes, str]:
+        return b"data:" + url.encode(), ""
 
     ep._download_url = _fake_download  # type: ignore[attr-defined]
 
@@ -910,6 +986,67 @@ async def test_download_attachments_saves_files(monkeypatch, tmp_path):
 
 
 @pytest.mark.asyncio
+async def test_download_attachments_records_content_type_from_response(
+    monkeypatch, tmp_path
+):
+    """The Content-Type header from the download response must land on the
+    saved record. Caught on testbot 2026-05-05 Phase 6 verb-parity smoke —
+    old code hard-coded ``content_type: ""`` even though the header was
+    available, forcing callers into a redundant ``fetch_messages`` round
+    trip just to learn what they downloaded.
+    """
+    monkeypatch.setenv("X_TOK", "tok")
+    handle = _Recording()
+    fake = _FakeDiscordClient()
+    ep = DiscordEndpoint(
+        name="discord-test",
+        target="agent-test",
+        token_env="X_TOK",
+        attachments_dir=str(tmp_path / "att"),
+        _client_factory=lambda **kw: fake,
+    )
+    await ep.start(handle)
+
+    # Per-URL content type so we verify the value is plumbed through, not
+    # uniformly hardcoded.
+    types_by_url = {
+        "https://example.com/a.pdf": "application/pdf",
+        "https://example.com/b.png": "image/png",
+    }
+
+    async def _fake_download(url: str) -> tuple[bytes, str]:
+        return b"data:" + url.encode(), types_by_url[url]
+
+    ep._download_url = _fake_download  # type: ignore[attr-defined]
+
+    try:
+        env = _envelope(
+            "e",
+            "agent-test",
+            "discord-test",
+            _toolcall(
+                "download_attachments",
+                {
+                    "channel_id": "200",
+                    "message_id": "m-mime",
+                    "attachment_urls": [
+                        "https://example.com/a.pdf",
+                        "https://example.com/b.png",
+                    ],
+                },
+            ),
+        )
+        await ep.deliver(env)
+        ack = [e for e in handle.published if e.kind == "Acknowledgment"][0]
+        result = json.loads(ack.payload.note)
+        saved = {item["filename"]: item for item in result["saved"]}
+        assert saved["a.pdf"]["content_type"] == "application/pdf"
+        assert saved["b.png"]["content_type"] == "image/png"
+    finally:
+        await ep.stop()
+
+
+@pytest.mark.asyncio
 async def test_download_attachments_rejects_path_traversal(monkeypatch, tmp_path):
     """A URL crafted to escape the target dir gets sanitized — never writes outside."""
     monkeypatch.setenv("X_TOK", "tok")
@@ -924,8 +1061,8 @@ async def test_download_attachments_rejects_path_traversal(monkeypatch, tmp_path
     )
     await ep.start(handle)
 
-    async def _fake_download(url: str) -> bytes:
-        return b"x"
+    async def _fake_download(url: str) -> tuple[bytes, str]:
+        return b"x", ""
 
     ep._download_url = _fake_download  # type: ignore[attr-defined]
     try:
@@ -978,8 +1115,8 @@ async def test_download_attachments_caps_long_filenames(monkeypatch, tmp_path):
     )
     await ep.start(handle)
 
-    async def _fake_download(url: str) -> bytes:
-        return b"x"
+    async def _fake_download(url: str) -> tuple[bytes, str]:
+        return b"x", ""
 
     ep._download_url = _fake_download  # type: ignore[attr-defined]
     try:
@@ -1023,8 +1160,8 @@ async def test_download_attachments_dedups_same_filename(monkeypatch, tmp_path):
     )
     await ep.start(handle)
 
-    async def _fake_download(url: str) -> bytes:
-        return url.encode()  # different bytes per URL
+    async def _fake_download(url: str) -> tuple[bytes, str]:
+        return url.encode(), ""  # different bytes per URL
 
     ep._download_url = _fake_download  # type: ignore[attr-defined]
     try:
@@ -1071,8 +1208,8 @@ async def test_download_attachments_empty_url_uses_uuid_fallback(monkeypatch, tm
     )
     await ep.start(handle)
 
-    async def _fake_download(url: str) -> bytes:
-        return b"y"
+    async def _fake_download(url: str) -> tuple[bytes, str]:
+        return b"y", ""
 
     ep._download_url = _fake_download  # type: ignore[attr-defined]
     try:
@@ -1208,6 +1345,34 @@ async def test_get_channel_info_returns_metadata(monkeypatch):
         assert result["id"] == "200"
         assert result["name"] == "general"
         assert result["topic"] == "the main channel"
+        # guild_id must come from ``ch.guild.id`` (real discord.py shape)
+        # not a fabricated flat ``ch.guild_id`` attribute. Caught on testbot
+        # 2026-05-05 Phase 6 verb-parity smoke — old code returned "" here.
+        assert result["guild_id"] == "g1"
+    finally:
+        await ep.stop()
+
+
+@pytest.mark.asyncio
+async def test_get_channel_info_dm_channel_returns_empty_guild_id(monkeypatch):
+    """DM channels have ``ch.guild is None`` and should return empty
+    guild_id (not crash, not return some sentinel). Locks the
+    ``if guild is not None`` branch in the production fix."""
+    ep, handle, fake = await _started(monkeypatch)
+    ch = _FakeChannel(id="dm", name="", guild_id=None)
+    fake.add_channel(ch)
+    try:
+        env = _envelope(
+            "e",
+            "agent-test",
+            "discord-test",
+            _toolcall("get_channel_info", {"channel_id": "dm"}),
+        )
+        await ep.deliver(env)
+        ack = [e for e in handle.published if e.kind == "Acknowledgment"][0]
+        result = json.loads(ack.payload.note)
+        assert result["id"] == "dm"
+        assert result["guild_id"] == ""
     finally:
         await ep.stop()
 

@@ -8,15 +8,89 @@ from __future__ import annotations
 import asyncio
 import uuid
 from collections.abc import Callable
+from types import SimpleNamespace
 from typing import Any
 
 
+class _FakePollAnswer:
+    """Lightweight stand-in for ``discord.PollAnswer``.
+
+    Real ``discord.Poll`` exposes answers as objects with ``id``, ``text``,
+    ``emoji``, and (when results are loaded) ``vote_count``. The fake mirrors
+    that shape so production code that reads ``answer.text`` etc. works
+    without the real discord.py types.
+    """
+
+    def __init__(
+        self,
+        *,
+        id: int,
+        text: str,
+        emoji: str | None = None,
+        vote_count: int = 0,
+    ) -> None:
+        self.id = id
+        self.text = text
+        self.emoji = emoji
+        self.vote_count = vote_count
+
+
+class _FakePoll:
+    """Lightweight stand-in for ``discord.Poll``.
+
+    Real ``discord.Poll`` exposes ``question.text``, ``answers`` (list),
+    ``multiselect`` (bool), ``duration`` (timedelta), ``expires_at``
+    (datetime), and ``is_finalised()`` / ``total_votes``. The fake exposes
+    enough to verify the fetch-side serializer reads the right attributes.
+    """
+
+    def __init__(
+        self,
+        *,
+        question_text: str,
+        answers: list[_FakePollAnswer] | None = None,
+        multiselect: bool = False,
+        duration_seconds: int | None = None,
+        expires_at: Any = None,
+        is_finalised: bool = False,
+        total_votes: int = 0,
+    ) -> None:
+        # Real discord.py wraps the question text in a small object —
+        # mirror that so production reading ``poll.question.text`` works.
+        self.question = SimpleNamespace(text=question_text)
+        self.answers = list(answers or [])
+        self.multiselect = multiselect
+        # ``duration`` on real Poll is a ``datetime.timedelta``; tests can
+        # pass an int seconds for convenience (the serializer converts).
+        if duration_seconds is None:
+            self.duration = None
+        else:
+            from datetime import timedelta as _td
+
+            self.duration = _td(seconds=duration_seconds)
+        self.expires_at = expires_at
+        self._is_finalised = is_finalised
+        self.total_votes = total_votes
+
+    def is_finalised(self) -> bool:
+        return self._is_finalised
+
+
 class _FakeMessage:
-    def __init__(self, *, id: str, channel_id: str, content: str = "", author=None):
+    def __init__(
+        self,
+        *,
+        id: str,
+        channel_id: str,
+        content: str = "",
+        author=None,
+        poll: _FakePoll | None = None,
+    ):
         self.id = id
         self.channel_id = channel_id
         self.content = content
         self.author = author
+        self.poll = poll
         self.reactions: list[str] = []
         self.edits: list[dict[str, Any]] = []
 
@@ -49,7 +123,15 @@ class _FakeChannel:
         self.id = id
         self.name = name
         self.type = channel_type
-        self.guild_id = guild_id
+        # Real discord.py text channels do NOT expose a flat ``.guild_id``
+        # attribute — they expose ``.guild`` (a Guild object) with ``.id``.
+        # Mirror that shape so production code reading ``ch.guild.id`` works
+        # the same way real discord.py does. Tests may still pass
+        # ``guild_id="..."`` to _FakeChannel for ergonomic setup; we wire
+        # it into ``self.guild.id`` here. ``self._guild_id`` is a private
+        # backref kept for thread-creation propagation.
+        self._guild_id = guild_id
+        self.guild = SimpleNamespace(id=guild_id) if guild_id is not None else None
         self.topic = ""
         self.nsfw = False
         self.sent: list[dict[str, Any]] = []
@@ -112,7 +194,7 @@ class _FakeChannel:
             id=tid,
             name=name,
             channel_type="public_thread",
-            guild_id=self.guild_id,
+            guild_id=self._guild_id,
         )
         th._fake_client = self._fake_client
         if self._fake_client is not None:
