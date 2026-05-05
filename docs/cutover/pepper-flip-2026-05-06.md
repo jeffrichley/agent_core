@@ -78,6 +78,16 @@ agent-core vault plan-dry-run --base C:\Users\jeffr\.pepper 2>&1 | Tee-Object pe
 
 Expected: `configs: []`. If anything appears, do NOT proceed — investigate before the flip window.
 
+### 5b. Snapshot Pepper's scheduled-tasks inventory
+
+The 17 active jobs in `~/.pepper/scheduler.db` will go silent the moment we stop `pepper-scheduler.exe` in step 7. Pepper rebuilds her schedule against the new `SchedulerEndpoint` post-flip — but she needs to know what was there. The full inventory (with prompts decoded) is already captured at [`pepper-flip-2026-05-06-config/scheduled-tasks-inventory.md`](pepper-flip-2026-05-06-config/scheduled-tasks-inventory.md) — 532 lines, every job with cron, args, and full prompt text.
+
+Independently, ask Pepper to take her own inventory pass before going offline (in her current session, before /exit):
+
+> Inventory your active scheduled tasks. List every job: name, cron expression, what it does, what channel it posts to (if any), how critical it is. We're flipping you to a new substrate tomorrow morning and the scheduler doesn't auto-migrate — you'll recreate the schedule from your own list post-flip. Cross-reference with `docs/cutover/pepper-flip-2026-05-06-config/scheduled-tasks-inventory.md` to confirm we both see the same set.
+
+Two independent sources reduce the chance of a job being lost in the cutover.
+
 ### 6. Provision the Discord endpoint env file
 
 ```powershell
@@ -95,16 +105,39 @@ Confirm the channel id Pepper currently posts to from her existing morning-brief
 
 ## Cutover window (Pepper offline)
 
-### 7. Stop Pepper's existing process(es)
+### 7. Stop Pepper's existing processes
 
-If Pepper has any long-lived process running (in-process scheduler, bot worker, etc.), stop them. Discord-side: if her old setup had its own bot connection on the same token, kill it before we start the new bus-side discord-pepper endpoint, otherwise both will compete for the same gateway session.
+Pepper's pre-cutover tree (audited 2026-05-05):
+
+| Process | Role | Cutover action |
+|---|---|---|
+| `pepper.exe start` | Supervisor — auto-restarts the others | Stop FIRST so the others don't respawn |
+| `pepper-discord.exe` | Holds Discord token gateway connection | **MUST stop** before `discord-pepper` starts (else gateway session conflict) |
+| `pepper-scheduler.exe` | Fires the 17 scheduled jobs | Stop. Pepper recreates schedule from inventory post-flip (see [`pepper-flip-2026-05-06-config/scheduled-tasks-inventory.md`](pepper-flip-2026-05-06-config/scheduled-tasks-inventory.md)) |
+| `pepper-channel.exe` chain (3 procs) | Old MCP server on **port 8788** | Stop. Daemon stays on 8789; port 8788 frees up |
+| `claude.exe` (Pepper's session) | Active Claude Code session attached to pepper-channel | `/exit` gracefully BEFORE stopping pepper-channel |
+
+You stop them; reboot is acceptable if anything's stuck. Then verify everything came down with this single check:
 
 ```powershell
-# Inspect what's running under .pepper:
-Get-CimInstance Win32_Process | Where-Object { $_.CommandLine -like '*\.pepper\*' } | Select-Object ProcessId,CommandLine
+$leftover = Get-CimInstance Win32_Process | Where-Object {
+    $_.CommandLine -like '*\.pepper\*' -or
+    $_.CommandLine -like '*pepper-channel*' -or
+    $_.CommandLine -like '*pepper-discord*' -or
+    $_.CommandLine -like '*pepper-scheduler*' -or
+    $_.ExecutablePath -like '*\uv\tools\pepper\*'
+} | Select-Object ProcessId,Name,@{Name='Cmd';Expression={$_.CommandLine.Substring(0, [Math]::Min(120, $_.CommandLine.Length))}}
+if ($leftover) {
+    Write-Output "STILL RUNNING — review and kill or reboot:"
+    $leftover | Format-Table -AutoSize -Wrap
+} else {
+    Write-Output "CLEAN — no Pepper processes remain. Safe to proceed to step 8."
+}
 ```
 
-Stop anything you don't recognize as needed.
+If `STILL RUNNING` shows your active Claude Code window (the one driving the cutover), that's expected — exclude that one and treat anything else as something that needs killing or rebooting.
+
+Optional: `uv tool uninstall pepper` to remove the old Python tool entirely. Not required for the flip — the tool can sit dormant — but it prevents accidental re-launch later.
 
 ### 8. Stop the bus daemon
 
@@ -116,13 +149,20 @@ Stop-Process -Id $old -ErrorAction Stop
 
 ### 9. Replace Pepper's project-scope yaml
 
-The new shape is in [`docs/examples/pepper-agent-core.yaml`](../examples/pepper-agent-core.yaml) (lines 103-172 — the `pipelines:` + `bus_hooks:` block). Pepper's existing `agent_core.yaml` uses the deprecated `tool:` key and the old synchronous HandoffWriter — replace it entirely with the new shape.
+A literal copy target is pre-staged at [`pepper-flip-2026-05-06-config/agent_core.yaml`](pepper-flip-2026-05-06-config/agent_core.yaml) — already filled in with Pepper's paths, mailbox, the post-fix port (8789), the three-block identity split, and the dedicated HandoffInjector. Just copy it:
 
-Key facts for tomorrow:
-- `mailbox: "pepper"` MUST be present on PreCompact + SessionEnd handoff_writer params (Bug #5 — without it, every SessionEnd raises "publish to unregistered endpoint" and burns 2-3 SDK calls per session via the retry loop).
-- `handoff_jobs_url` port: **8789** (the example yaml is now consistent with the daemon's operational port; the code-default 8788 doesn't apply because `~/.agent-core/agent_core.yaml` overrides it).
+```powershell
+Copy-Item E:\workspaces\ai\agents\agent_core\docs\cutover\pepper-flip-2026-05-06-config\agent_core.yaml `
+          C:\Users\jeffr\.pepper\agent_core.yaml -Force
+```
+
+Pepper's existing `agent_core.yaml` uses the deprecated `tool:` key and the old synchronous HandoffWriter — the copy fully replaces it.
+
+Quick spot-checks against the new file (paranoia for tomorrow):
+- `mailbox: "pepper"` present on PreCompact AND SessionEnd handoff_writer params.
+- `handoff_jobs_url` port is **8789** (matches the daemon's operational port).
 - `vault_root` is `C:\Users\jeffr\.pepper\Memory\pepper` (NOT the broader `Memory` dir).
-- Identity files: keep Pepper's three-block split (SOUL / IDENTITY / preferences) plus the dedicated HandoffInjector for handoff.md.
+- Five SessionStart blocks total: TimeInjector → 3× IdentityInjector (SOUL/IDENTITY/preferences) → HandoffInjector.
 
 ### 10. Add Pepper's endpoints to the daemon yaml
 
@@ -278,7 +318,12 @@ Pepper's `.claude/settings.json` doesn't need rollback — the hook commands (`u
 
 These are explicitly out of scope for tomorrow morning:
 
-- **Brief framework adoption.** Migrate `morning-brief.md` from hand-authored prose-with-JSON to the new `brief_type: morning_brief` MD/YAML format. Design exercise: section specs, color palette, fetcher catalog (calendar / gmail / tasks / projects / weather), gather YAML. Delivery via `discord_embed` + `markdown_file` destinations. Until then, Pepper's existing morning-brief flow continues to work as a Pepper-authored process.
+- **Pepper recreates her 17 scheduled tasks.** Cross-reference her own inventory against [`pepper-flip-2026-05-06-config/scheduled-tasks-inventory.md`](pepper-flip-2026-05-06-config/scheduled-tasks-inventory.md) and recreate each via the new `SchedulerEndpoint`'s `create_job` MCP tool. Two architectural notes:
+  - Most jobs (`morning_briefing`, `daily_sync`, `evening_routine`, `weekly_*`, etc.) are prompt-driven and drop into the new shape directly — `SchedulerEndpoint` publishes a `TextMessage` envelope to Pepper at the cron time; she acts on the prompt.
+  - Infrastructure jobs (`attachment_cleanup`, `vault_backup`, `github_backup`, `heartbeat`) used `pepper.scheduler.core:execute_function_job` to invoke Python directly. The new substrate doesn't have an equivalent — these need a different shape (Pepper-authored subprocess invocation? Windows Task Scheduler? Skip and re-evaluate?). Pepper's call.
+  - **Time-critical:** `whoi_trip_briefing` is date-triggered for **2026-05-08 09:00 ET** (Friday). Recreate this one first.
+  - **Daily-critical:** `morning_briefing` fires 7:28 ET. If it's not recreated by then, tomorrow morning is silent — but you'll be awake doing the cutover at that point, so just recreate it before walking away.
+- **Brief framework adoption.** Migrate `morning-brief.md` from hand-authored prose-with-JSON to the new `brief_type: morning_brief` MD/YAML format. Design exercise: section specs, color palette, fetcher catalog (calendar / gmail / tasks / projects / weather), gather YAML. Delivery via `discord_embed` + `markdown_file` destinations. Until then, Pepper's existing morning-brief flow continues to work as a Pepper-authored process. Pepper already knows she'll need to rebuild her briefs.
 - **issue [#33](https://github.com/jeffrichley/agent_core/issues/33)** — bus wake-builder count + urgency_max snapshot lag. Confirmed 4+ times during the practice run; functionally harmless. Pick up when convenient.
 - **Briefs CLI UX** — duplicate `--fetcher-path` to the built-in dir produces a confusing "duplicate type_id" error. Loader should de-dupe paths.
 - **Claude Code skill loading from secondary working directories.** testbot noticed three skills in `e:\workspaces\businesses\47tabs\.claude\skills` aren't surfaced. Likely intentional isolation; worth confirming with Anthropic.

@@ -1,0 +1,118 @@
+# Pepper — agent_core.yaml (project-scope)
+#
+# Literal copy target for the 2026-05-06 cutover flip. Step 9 of the
+# checklist (`docs/cutover/pepper-flip-2026-05-06.md`):
+#
+#   Copy-Item docs/cutover/pepper-flip-2026-05-06-config/agent_core.yaml `
+#             C:\Users\jeffr\.pepper\agent_core.yaml -Force
+#
+# Read by `agent-core hooks run <event>` when Claude Code fires a hook from
+# Pepper's project directory. Daemon-level config (bus, http, endpoints,
+# bus_hooks) lives at ~/.agent-core/agent_core.yaml — keep them separate.
+#
+# Pipeline shape mirrors testbot's project-scope yaml (which exercised the
+# same surface end-to-end during the 2026-05-05 practice run). Differences
+# from the wider example yaml at docs/examples/pepper-agent-core.yaml:
+# - Daemon block (bus / http / endpoints / bus_hooks) is NOT here; it's in
+#   the daemon yaml. The example unifies them for reading; the deployment
+#   splits them by scope.
+# - Three IdentityInjector blocks (SOUL / IDENTITY / preferences) plus a
+#   dedicated HandoffInjector for handoff.md — same shape testbot used.
+# - mailbox: "pepper" on PreCompact + SessionEnd handoff_writer params
+#   (Bug #5 fix from practice run — without it, every SessionEnd raises
+#   "publish to unregistered endpoint" against the bus).
+# - handoff_jobs_url port is 8789 — matches the daemon's operational port,
+#   not the http_host code default of 8788.
+#
+# .claude/settings.json hooks already point at:
+#   "command": "uv run agent-core hooks run SessionStart"
+#   "command": "uv run agent-core hooks run UserPromptSubmit"
+#   "command": "uv run agent-core hooks run PreCompact"
+#   "command": "uv run agent-core hooks run SessionEnd"
+# (Confirmed already correct in Pepper's existing settings.json — only the
+#  yaml schema changes today.)
+
+pipelines:
+  SessionStart:
+    # 1. Tell Pepper what time it is.
+    - type: builtin.time_injector
+      params:
+        format: "%A, %B %d, %Y %I:%M %p %Z"
+
+    # 2. Critical-core identity (must survive any truncation; missing is fatal).
+    - type: builtin.identity_injector
+      params:
+        base_path: "C:\\Users\\jeffr\\.pepper\\Memory"
+        files:
+          - "SOUL.md"
+        heading: "Identity — Critical Core"
+        missing_file_behavior: "error"
+
+    # 3. Self-model / behavioral rules (warn-only if missing).
+    - type: builtin.identity_injector
+      params:
+        base_path: "C:\\Users\\jeffr\\.pepper\\Memory"
+        files:
+          - "IDENTITY.md"
+        heading: "Identity — Self-model"
+        missing_file_behavior: "warn"
+
+    # 4. Personal preferences (warn-only — Pepper-specific layer).
+    - type: builtin.identity_injector
+      params:
+        base_path: "C:\\Users\\jeffr\\.pepper\\Memory"
+        files:
+          - "pepper/preferences.md"
+        heading: "Identity — Preferences"
+        missing_file_behavior: "warn"
+
+    # 5. Handoff continuity (sidecar-status-aware — won't load if the daemon
+    #    worker's status file says the handoff is stale or failed).
+    - type: builtin.handoff_injector
+      params:
+        base_path: "C:\\Users\\jeffr\\.pepper\\Memory"
+        files:
+          - "pepper/handoff.md"
+        heading: "Continuity"
+        missing_file_behavior: "warn"
+
+  UserPromptSubmit:
+    # Re-fire time on every turn so day-of-week / time-of-day stays fresh
+    # and Pepper sees relative-time deltas to re-anchor against drift.
+    # track_session persists per-session timestamps to
+    # ~/.agent_core/time-state.json (cutover #07).
+    - type: builtin.time_injector
+      params:
+        format: "%A, %B %d, %Y %I:%M %p %Z"
+        track_session: true
+
+  PreCompact:
+    # Async daemon-side handoff job. Writes are NOT synchronous — the hook
+    # enqueues a job at handoff_jobs_url and returns; the daemon worker
+    # produces handoff.md + handoff-status.json. The next SessionStart
+    # consults the status file before loading handoff.md (cutover #02).
+    - type: builtin.handoff_writer
+      params:
+        output_path: "C:\\Users\\jeffr\\.pepper\\Memory\\pepper\\handoff.md"
+        vault_root: "C:\\Users\\jeffr\\.pepper\\Memory\\pepper"
+        handoff_status_path: "C:\\Users\\jeffr\\.pepper\\Memory\\pepper\\handoff-status.json"
+        handoff_jobs_url: "http://127.0.0.1:8789/internal/handoff-jobs"
+        agent_name: "Pepper"
+        # Bus endpoint name for HandoffReady/Failed routing. The bus
+        # endpoint is "pepper" (lowercase); agent_name is the human
+        # identity "Pepper" (capitalized). Without an explicit mailbox
+        # the worker would publish to "Pepper" and hit "unregistered
+        # endpoint" — Bug #5 from the 2026-05-05 practice run.
+        mailbox: "pepper"
+
+  SessionEnd:
+    # Same shape as PreCompact. Daemon-side worker dedupes against an
+    # already-written handoff if both fire (PreCompact then SessionEnd).
+    - type: builtin.handoff_writer
+      params:
+        output_path: "C:\\Users\\jeffr\\.pepper\\Memory\\pepper\\handoff.md"
+        vault_root: "C:\\Users\\jeffr\\.pepper\\Memory\\pepper"
+        handoff_status_path: "C:\\Users\\jeffr\\.pepper\\Memory\\pepper\\handoff-status.json"
+        handoff_jobs_url: "http://127.0.0.1:8789/internal/handoff-jobs"
+        agent_name: "Pepper"
+        mailbox: "pepper"
