@@ -177,6 +177,20 @@ Update this table whenever a ticket moves. Status values: **Not started · In pr
 
 ---
 
+## Bugs caught + fixes landed during testbot practice run (2026-05-05)
+
+The cutover gate was practice-run against a fresh test agent at `~/.testbot/` before flipping Pepper — see [`docs/cutover/testbot-practice-run-2026-05-05.md`](../cutover/testbot-practice-run-2026-05-05.md) for the full runbook. Three real cutover-blocker bugs surfaced and were fixed during Phase 0 setup. Pepper would have hit all three on day one of her own cutover. Fixes:
+
+| # | Bug | Fix | Repo or environmental |
+|---|---|---|---|
+| 1 | Runner forwarded all `params:` keys to endpoint `__init__()`, including plugin-managed cross-endpoint keys (`briefs_orchestrator`). First daemon boot with the example yaml crashed. | `1a38463` — new `reserved_endpoint_params` pluggy hookspec; runner pops plugin-managed params before construction. Briefs plugin returns `["briefs_orchestrator"]`. Test `test_reserved_endpoint_params_pop_before_construction` locks the contract. | **Repo** — Pepper picks it up with `git pull`. |
+| 2 | `agent-core briefs fetchers list/test` CLI didn't auto-prepend the built-in fetchers directory like the orchestrator does. CLI returned 0 built-ins, breaking cutover #09 Step 3 + operator debugging. | `4c4b7bd` — CLI's `_load_fetcher_catalog` prepends `_BUILTIN_FETCHERS_DIR` to mirror the orchestrator. Tests updated to assert all three built-ins appear. | **Repo** — Pepper picks it up with `git pull`. |
+| 3 | Globally-installed `agent-core` CLI tool (via `uv tools`) had stale schema (`tool:` key) vs the repo's current schema (`type:` key). Every hook firing from `<agent_root>` (no `pyproject.toml` → falls back to global tool) crashed with a Pydantic validation error. **Claude Code swallows non-zero hook exits**, so the failure mode was silent identity + time + handoff absence. | `uv tool install --reinstall ./packages/core` — refreshes the global tool. **No commit.** | **Environmental** — per-machine. Documented as Step 0 prerequisite in [`07-hook-fidelity.md`](../cutover/test-playbooks/07-hook-fidelity.md). Must run on Pepper's machine before the cutover. |
+
+The practice-run policy (testbot first, never Pepper) paid for itself within 90 minutes of setup. Fix 3 is the most dangerous because it's silent — without the practice run, Pepper would have come up missing critical context with no obvious error, and we'd have been hunting a "she's distant on Mondays" symptom for hours.
+
+---
+
 ## Stranded GitHub PRs
 
 Three PRs were opened by removed agents and never merged. They will not be rebased by their original authors. For each, the choice is: cherry-pick the salvageable parts onto a fresh local branch, or close the PR and reimplement against the spec.

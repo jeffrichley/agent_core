@@ -31,6 +31,26 @@ A multi-turn session over a real working day shows:
 
 ## Verification steps (end-of-cutover)
 
+### Step 0 — Environmental prerequisite (caught during testbot practice run 2026-05-05)
+
+**Before opening any Claude Code session at `<agent_root>`**, ensure the globally-installed `agent-core` CLI tool is built from the current repo. The hooks in `.claude/settings.json` invoke `uv run agent-core hooks run <event>` — when fired from `<agent_root>` (which has no `pyproject.toml`), `uv run` falls back to the `uv tools` global install. If the global tool is older than the repo's current schema (e.g., the repo moved from `tool:` to `type:` for pipeline tool entries), every hook firing will crash with a Pydantic validation error and the agent will boot without identity / time / handoff context.
+
+```powershell
+# Refresh the global tool to the current repo:
+cd E:\workspaces\ai\agents\agent_core
+uv tool install --reinstall ./packages/core
+```
+
+Verify by tail of `agent-core --version` or, more diagnostically, fire the hook from the agent root and confirm clean JSON:
+
+```powershell
+cd C:\Users\jeffr\.pepper
+echo '{}' | uv run agent-core hooks run SessionStart
+# Expected: JSON output with `additionalContext`, no Pydantic error.
+```
+
+This step is environmental and per-machine — the fix doesn't ride along with a `git pull`. The testbot practice run on 2026-05-05 caught this as a real cutover-blocker; without the reinstall step, Pepper's first SessionStart on the new substrate would have crashed silently (Claude Code swallows non-zero hook exits, so identity + time + handoff would just be absent without an obvious error).
+
 ### Step 1 — Automated tests for the per-turn re-anchoring + wiring tripwire
 
 ```powershell

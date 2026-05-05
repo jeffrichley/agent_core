@@ -32,6 +32,8 @@ Status values: **Not started · In progress · Implementation complete · Verifi
 
 **Cutover gate:** every row reaches **Verified** before Pepper's live runtime flips to agent-core. #01, #02, #06 are the non-negotiables; the rest are the working-functional set. **#09 was added post-epic** as a ninth ticket once the brief-framework design landed; it sits in the working-functional set alongside #03/#04/#05/#07/#08. Both #09 follow-ups have now landed: cross-endpoint MCP tool mounting (`0660b41` + `975c31d`) and the Pepper-facing briefs-author skill, which ships in the briefs package at `packages/agent-core-briefs/src/agent_core_briefs/skills/briefs-author/SKILL.md` (authored via `superpowers:writing-skills`) and installs into `<agent_root>/.claude/skills/briefs-author/` at agent init time — see [`09-brief-framework.md`](../cutover/test-playbooks/09-brief-framework.md) §"Cutover-gate-blocking follow-ups".
 
+**Pre-cutover environmental check (caught during testbot practice run 2026-05-05):** before opening any Claude Code session under `~/.pepper/` on the new substrate, refresh the globally-installed `agent-core` CLI tool from the current repo: `uv tool install --reinstall <repo>/packages/core`. The hooks defined in `.claude/settings.json` invoke `uv run agent-core hooks run <event>`, which from a directory without `pyproject.toml` falls back to the `uv tools` global install. A stale global tool will silently crash every hook firing (Claude Code swallows non-zero hook exits) and Pepper will boot without identity, time, or handoff context. Also see the playbook ledger §"Bugs caught + fixes landed during testbot practice run" for the full list of three blockers caught + fixes applied.
+
 ---
 
 ## How to read this doc
