@@ -342,7 +342,7 @@ Pepper inherits the fix with `git pull` — documented in [`pepper-cutover-agent
 
 ---
 
-## Phase 4 — Vault dry-run (#06)
+## Phase 4 — Vault dry-run (#06) — **GREEN ✓**
 
 ```powershell
 uv run agent-core vault plan-dry-run --vault C:\Users\jeffr\.testbot
@@ -351,6 +351,12 @@ uv run agent-core vault plan-dry-run --vault C:\Users\jeffr\.testbot
 **Expected:** clean dry-run output (testbot's vault has no internal references to migrate; the test is "the tool runs without false-positives").
 
 **Note:** the operator-file-moves step from cutover #06 is N/A on testbot — testbot wasn't migrated from anywhere. We're validating the tooling, not exercising a real move.
+
+- [x] Tool runs without crashing
+- [x] Enumerates 16 files in testbot's vault (SOUL.md, IDENTITY.md, MEMORY.md, playbooks, gather, daily/briefs, etc.)
+- [x] **`configs: []`** — zero migration actions proposed. No false-positives. Exactly what the spec wanted.
+
+The "missing_recommended_files" list (IDENTITY.md, SOUL.md, etc. expected at vault root rather than under `Memory/`) reflects testbot's slightly different vault structure choice — not a tool bug. Pepper's vault has these at the documented locations.
 
 ---
 
