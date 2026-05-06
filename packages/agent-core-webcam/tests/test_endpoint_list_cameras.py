@@ -9,6 +9,7 @@ from agent_core_webcam.endpoint import (
     WebcamEndpoint,
 )
 from agent_core_webcam.fake import FakeCameraBackend
+from agent_core_webcam.protocol import CameraBackend
 
 
 async def test_list_returns_enumeration(tmp_path):
@@ -52,3 +53,29 @@ async def test_list_disabled_returns_kill_switch_error(tmp_path):
     result = await ep.list_cameras_safe()
     assert isinstance(result, ListCamerasError)
     assert "disabled" in result.message
+
+
+async def test_list_swallows_unexpected_backend_exception(tmp_path):
+    """An unexpected exception from the backend list_cameras must NOT propagate
+    past list_cameras_safe — the MCP boundary expects ListCamerasError, not raises.
+    """
+
+    class _BrokenBackend:
+        def list_cameras(self):
+            raise RuntimeError("camera driver crashed")
+
+        def capture(self, index, resolution):
+            return b""  # unused in this test
+
+    ep = WebcamEndpoint(
+        name="webcam-test",
+        captures_root=tmp_path / "captures",
+        audit_log_path=tmp_path / "audit.jsonl",
+        camera_backend=_BrokenBackend(),
+    )
+    result = await ep.list_cameras_safe()
+    assert isinstance(result, ListCamerasError)
+    assert "failed to enumerate" in result.message.lower() or "camera driver" in result.message.lower()
+    line = json.loads(ep.audit_log.path.read_text(encoding="utf-8").strip().splitlines()[-1])
+    assert line["result"] == "error"
+    assert "backend list_cameras failed" in line["data"]["error"]

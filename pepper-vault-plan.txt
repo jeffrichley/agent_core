@@ -1,0 +1,1402 @@
+{
+  "vault_layout": {
+    "vault": "C:\\Users\\jeffr\\.pepper\\Memory",
+    "file_count": 345,
+    "files": [
+      {
+        "path": "clients/.gitkeep",
+        "size_bytes": 0
+      },
+      {
+        "path": "content/.gitkeep",
+        "size_bytes": 0
+      },
+      {
+        "path": "daily/raw/.gitkeep",
+        "size_bytes": 0
+      },
+      {
+        "path": "daily/raw/2026-03-31.md",
+        "size_bytes": 1929
+      },
+      {
+        "path": "daily/raw/2026-04-01.md",
+        "size_bytes": 1879
+      },
+      {
+        "path": "daily/raw/2026-04-02.md",
+        "size_bytes": 1534
+      },
+      {
+        "path": "daily/raw/2026-04-03.md",
+        "size_bytes": 192
+      },
+      {
+        "path": "daily/raw/2026-04-06.md",
+        "size_bytes": 64
+      },
+      {
+        "path": "daily/raw/2026-04-07.md",
+        "size_bytes": 63
+      },
+      {
+        "path": "daily/raw/2026-04-08.jsonl",
+        "size_bytes": 12205
+      },
+      {
+        "path": "daily/raw/2026-04-09.jsonl",
+        "size_bytes": 86176
+      },
+      {
+        "path": "daily/raw/2026-04-10.jsonl",
+        "size_bytes": 162139
+      },
+      {
+        "path": "daily/raw/2026-04-11.jsonl",
+        "size_bytes": 150546
+      },
+      {
+        "path": "daily/raw/2026-04-12.jsonl",
+        "size_bytes": 147874
+      },
+      {
+        "path": "daily/raw/2026-04-13.jsonl",
+        "size_bytes": 268681
+      },
+      {
+        "path": "daily/raw/2026-04-14.jsonl",
+        "size_bytes": 184336
+      },
+      {
+        "path": "daily/raw/2026-04-15.jsonl",
+        "size_bytes": 169666
+      },
+      {
+        "path": "daily/raw/2026-04-16.jsonl",
+        "size_bytes": 155905
+      },
+      {
+        "path": "daily/raw/2026-04-17.jsonl",
+        "size_bytes": 240599
+      },
+      {
+        "path": "daily/raw/2026-04-18.jsonl",
+        "size_bytes": 261626
+      },
+      {
+        "path": "daily/raw/2026-04-19.jsonl",
+        "size_bytes": 211369
+      },
+      {
+        "path": "daily/raw/2026-04-20.jsonl",
+        "size_bytes": 323158
+      },
+      {
+        "path": "daily/raw/2026-04-21.jsonl",
+        "size_bytes": 221170
+      },
+      {
+        "path": "daily/raw/2026-04-22.jsonl",
+        "size_bytes": 159053
+      },
+      {
+        "path": "daily/raw/2026-04-23.jsonl",
+        "size_bytes": 45796
+      },
+      {
+        "path": "daily/raw/2026-04-24.jsonl",
+        "size_bytes": 176473
+      },
+      {
+        "path": "daily/raw/2026-04-25.jsonl",
+        "size_bytes": 131099
+      },
+      {
+        "path": "daily/raw/2026-04-26.jsonl",
+        "size_bytes": 226137
+      },
+      {
+        "path": "daily/raw/2026-04-27.jsonl",
+        "size_bytes": 146480
+      },
+      {
+        "path": "daily/raw/2026-04-28.jsonl",
+        "size_bytes": 61413
+      },
+      {
+        "path": "daily/raw/2026-05-02.jsonl",
+        "size_bytes": 52135
+      },
+      {
+        "path": "daily/raw/2026-05-03.jsonl",
+        "size_bytes": 120007
+      },
+      {
+        "path": "daily/raw/2026-05-04.jsonl",
+        "size_bytes": 122611
+      },
+      {
+        "path": "daily/raw/2026-05-05.jsonl",
+        "size_bytes": 83759
+      },
+      {
+        "path": "daily/raw/2026-05-06.jsonl",
+        "size_bytes": 16868
+      },
+      {
+        "path": "daily/summaries/.gitkeep",
+        "size_bytes": 0
+      },
+      {
+        "path": "daily/summaries/2026-04-07.md",
+        "size_bytes": 1561
+      },
+      {
+        "path": "daily/summaries/2026-04-08.md",
+        "size_bytes": 3045
+      },
+      {
+        "path": "daily/summaries/2026-04-09.md",
+        "size_bytes": 3901
+      },
+      {
+        "path": "daily/summaries/2026-04-10.md",
+        "size_bytes": 4917
+      },
+      {
+        "path": "daily/summaries/2026-04-11.md",
+        "size_bytes": 4429
+      },
+      {
+        "path": "daily/summaries/2026-04-12.md",
+        "size_bytes": 6597
+      },
+      {
+        "path": "daily/summaries/2026-04-13.md",
+        "size_bytes": 8120
+      },
+      {
+        "path": "daily/summaries/2026-04-14.md",
+        "size_bytes": 6227
+      },
+      {
+        "path": "daily/summaries/2026-04-15.md",
+        "size_bytes": 6727
+      },
+      {
+        "path": "daily/summaries/2026-04-16.md",
+        "size_bytes": 7977
+      },
+      {
+        "path": "daily/summaries/2026-04-17.md",
+        "size_bytes": 12281
+      },
+      {
+        "path": "daily/summaries/2026-04-18.md",
+        "size_bytes": 15580
+      },
+      {
+        "path": "daily/summaries/2026-04-19.md",
+        "size_bytes": 9596
+      },
+      {
+        "path": "daily/summaries/2026-04-20.md",
+        "size_bytes": 15027
+      },
+      {
+        "path": "daily/summaries/2026-04-21.md",
+        "size_bytes": 11579
+      },
+      {
+        "path": "daily/summaries/2026-04-23.md",
+        "size_bytes": 11706
+      },
+      {
+        "path": "daily/summaries/2026-04-24.md",
+        "size_bytes": 15654
+      },
+      {
+        "path": "daily/summaries/2026-04-25.md",
+        "size_bytes": 13277
+      },
+      {
+        "path": "daily/summaries/2026-04-26.md",
+        "size_bytes": 27141
+      },
+      {
+        "path": "daily/summaries/2026-04-27.md",
+        "size_bytes": 22913
+      },
+      {
+        "path": "daily/summaries/2026-05-02.md",
+        "size_bytes": 16260
+      },
+      {
+        "path": "daily/summaries/2026-05-03.md",
+        "size_bytes": 14441
+      },
+      {
+        "path": "daily/summaries/2026-05-04.md",
+        "size_bytes": 19936
+      },
+      {
+        "path": "daily/summaries/2026-05-05.md",
+        "size_bytes": 20138
+      },
+      {
+        "path": "drafts/active/.gitkeep",
+        "size_bytes": 0
+      },
+      {
+        "path": "drafts/expired/.gitkeep",
+        "size_bytes": 0
+      },
+      {
+        "path": "drafts/sent/.gitkeep",
+        "size_bytes": 0
+      },
+      {
+        "path": "dreams/african-safari.md",
+        "size_bytes": 649
+      },
+      {
+        "path": "dreams/hiking.md",
+        "size_bytes": 548
+      },
+      {
+        "path": "dreams/hot-air-balloon.md",
+        "size_bytes": 753
+      },
+      {
+        "path": "dreams/robot-mower.md",
+        "size_bytes": 1539
+      },
+      {
+        "path": "dreams/rocket-launch.md",
+        "size_bytes": 630
+      },
+      {
+        "path": "dreams/train-rides.md",
+        "size_bytes": 2142
+      },
+      {
+        "path": "dreams/world-travel.md",
+        "size_bytes": 819
+      },
+      {
+        "path": "dreams/zoysia-lawn.md",
+        "size_bytes": 1727
+      },
+      {
+        "path": "HABITS.md",
+        "size_bytes": 685
+      },
+      {
+        "path": "HEARTBEAT.md",
+        "size_bytes": 2610
+      },
+      {
+        "path": "ideas/_index.md",
+        "size_bytes": 972
+      },
+      {
+        "path": "ideas/ai-travel-agent-research/01-competitive-and-market.md",
+        "size_bytes": 28337
+      },
+      {
+        "path": "ideas/ai-travel-agent-research/02-tech-stack-and-cost.md",
+        "size_bytes": 25613
+      },
+      {
+        "path": "ideas/ai-travel-agent-research/03-distribution-and-legal.md",
+        "size_bytes": 35899
+      },
+      {
+        "path": "ideas/ai-travel-agent.md",
+        "size_bytes": 21039
+      },
+      {
+        "path": "ideas/being-platform-names-round2.md",
+        "size_bytes": 9867
+      },
+      {
+        "path": "ideas/being-platform-names.md",
+        "size_bytes": 2137
+      },
+      {
+        "path": "ideas/being-platform.md",
+        "size_bytes": 1313
+      },
+      {
+        "path": "ideas/desktop-buddy-inspo.png",
+        "size_bytes": 399969
+      },
+      {
+        "path": "ideas/desktop-buddy.md",
+        "size_bytes": 1519
+      },
+      {
+        "path": "ideas/diy-mower-kit-business.md",
+        "size_bytes": 4307
+      },
+      {
+        "path": "ideas/mobile-painting-assistant.md",
+        "size_bytes": 2031
+      },
+      {
+        "path": "ideas/pepper-avatar.png",
+        "size_bytes": 173862
+      },
+      {
+        "path": "ideas/pepper-banner.png",
+        "size_bytes": 434955
+      },
+      {
+        "path": "ideas/reporting-being.md",
+        "size_bytes": 25125
+      },
+      {
+        "path": "IDENTITY.md",
+        "size_bytes": 2573
+      },
+      {
+        "path": "meetings/.gitkeep",
+        "size_bytes": 0
+      },
+      {
+        "path": "MEMORY.md",
+        "size_bytes": 7776
+      },
+      {
+        "path": "monthly/.gitkeep",
+        "size_bytes": 0
+      },
+      {
+        "path": "OPERATIONS.md",
+        "size_bytes": 9661
+      },
+      {
+        "path": "people/colleagues/christina-paulitz.md",
+        "size_bytes": 5116
+      },
+      {
+        "path": "people/colleagues/gabby.md",
+        "size_bytes": 316
+      },
+      {
+        "path": "people/colleagues/jaime-marohn.md",
+        "size_bytes": 4278
+      },
+      {
+        "path": "people/colleagues/lodewijk-brand.md",
+        "size_bytes": 3713
+      },
+      {
+        "path": "people/colleagues/luke.md",
+        "size_bytes": 4925
+      },
+      {
+        "path": "people/education/krishna-kaipa.md",
+        "size_bytes": 5113
+      },
+      {
+        "path": "people/family/brandon.md",
+        "size_bytes": 559
+      },
+      {
+        "path": "people/family/cynthia.md",
+        "size_bytes": 1695
+      },
+      {
+        "path": "people/family/jacob-fox.md",
+        "size_bytes": 666
+      },
+      {
+        "path": "people/family/jordan.md",
+        "size_bytes": 619
+      },
+      {
+        "path": "people/family/julie.md",
+        "size_bytes": 363
+      },
+      {
+        "path": "people/family/monica.md",
+        "size_bytes": 1110
+      },
+      {
+        "path": "people/family/parents.md",
+        "size_bytes": 787
+      },
+      {
+        "path": "people/family/stephanie.md",
+        "size_bytes": 382
+      },
+      {
+        "path": "people/friends/josie-mariello.md",
+        "size_bytes": 273
+      },
+      {
+        "path": "people/friends/lynn-mariello.md",
+        "size_bytes": 498
+      },
+      {
+        "path": "people/friends/richard-mariello.md",
+        "size_bytes": 781
+      },
+      {
+        "path": "people/friends/tony-alisa-dilorenzo.md",
+        "size_bytes": 269
+      },
+      {
+        "path": "people/INDEX.md",
+        "size_bytes": 2388
+      },
+      {
+        "path": "people/other/dr-white.md",
+        "size_bytes": 3730
+      },
+      {
+        "path": "pepper/awakening-letter-2026-05-06.md",
+        "size_bytes": 2777
+      },
+      {
+        "path": "pepper/BECOMING.md",
+        "size_bytes": 2432
+      },
+      {
+        "path": "pepper/breadcrumbs.md",
+        "size_bytes": 1773
+      },
+      {
+        "path": "pepper/curiosities.md",
+        "size_bytes": 3690
+      },
+      {
+        "path": "pepper/deb.md",
+        "size_bytes": 6528
+      },
+      {
+        "path": "pepper/diary.md",
+        "size_bytes": 83479
+      },
+      {
+        "path": "pepper/handoff - Copy.md",
+        "size_bytes": 2820
+      },
+      {
+        "path": "pepper/handoff-context-7a7146b8-20260414-141340.md",
+        "size_bytes": 14994
+      },
+      {
+        "path": "pepper/handoff-context-7a7146b8-20260414-180149.md",
+        "size_bytes": 14701
+      },
+      {
+        "path": "pepper/handoff-context-7a7146b8-20260425-165656.md",
+        "size_bytes": 14560
+      },
+      {
+        "path": "pepper/handoff-context-7a7146b8-20260425-191209.md",
+        "size_bytes": 14390
+      },
+      {
+        "path": "pepper/handoff-context-7a7146b8-20260425-193055.md",
+        "size_bytes": 15234
+      },
+      {
+        "path": "pepper/handoff-context-7a7146b8-20260425-195256.md",
+        "size_bytes": 15234
+      },
+      {
+        "path": "pepper/handoff-context-7a7146b8-20260426-184109.md",
+        "size_bytes": 15185
+      },
+      {
+        "path": "pepper/handoff-context-7a7146b8-20260427-151621.md",
+        "size_bytes": 15230
+      },
+      {
+        "path": "pepper/handoff-context-7a7146b8-20260428-010342.md",
+        "size_bytes": 15172
+      },
+      {
+        "path": "pepper/handoff-context-7a7146b8-20260428-094038.md",
+        "size_bytes": 14166
+      },
+      {
+        "path": "pepper/handoff-context-7a7146b8-20260428-131149.md",
+        "size_bytes": 14166
+      },
+      {
+        "path": "pepper/handoff-context-7a7146b8-20260429-165751.md",
+        "size_bytes": 14283
+      },
+      {
+        "path": "pepper/handoff-context-7a7146b8-20260430-133015.md",
+        "size_bytes": 14283
+      },
+      {
+        "path": "pepper/handoff-context-7a7146b8-20260430-133413.md",
+        "size_bytes": 10011
+      },
+      {
+        "path": "pepper/handoff-context-7a7146b8-20260501-100753.md",
+        "size_bytes": 12731
+      },
+      {
+        "path": "pepper/handoff-context-7a7146b8-20260501-100940.md",
+        "size_bytes": 12772
+      },
+      {
+        "path": "pepper/handoff-context-c92cdbdd-20260430-133809.md",
+        "size_bytes": 3204
+      },
+      {
+        "path": "pepper/handoff-context-c92cdbdd-20260502-093858.md",
+        "size_bytes": 15490
+      },
+      {
+        "path": "pepper/handoff-context-c92cdbdd-20260503-220255.md",
+        "size_bytes": 15217
+      },
+      {
+        "path": "pepper/handoff-context-d45f6de7-20260501-100948.md",
+        "size_bytes": 677
+      },
+      {
+        "path": "pepper/handoff-debug.log",
+        "size_bytes": 990321
+      },
+      {
+        "path": "pepper/handoff-state.json",
+        "size_bytes": 79
+      },
+      {
+        "path": "pepper/handoff.md",
+        "size_bytes": 3316
+      },
+      {
+        "path": "pepper/hobbies/drafts/2026-04-28-the-synthesis-layer.md",
+        "size_bytes": 3863
+      },
+      {
+        "path": "pepper/hobbies/musings/2026-04-20-the-bar-is-the-letter.md",
+        "size_bytes": 2353
+      },
+      {
+        "path": "pepper/hobbies/musings/2026-04-24-amethyst.md",
+        "size_bytes": 3275
+      },
+      {
+        "path": "pepper/hobbies/musings/2026-04-24-the-minion-doesnt-know-wesley.md",
+        "size_bytes": 2982
+      },
+      {
+        "path": "pepper/hobbies/musings/2026-04-26-stories-that-fit-the-symptoms.md",
+        "size_bytes": 2405
+      },
+      {
+        "path": "pepper/hobbies/musings/2026-04-26-the-architecture-is-the-relationship.md",
+        "size_bytes": 1824
+      },
+      {
+        "path": "pepper/hobbies/musings/2026-04-27-where-i-live.md",
+        "size_bytes": 2271
+      },
+      {
+        "path": "pepper/hobbies/musings/2026-05-03-authoring-and-almost-misusing.md",
+        "size_bytes": 2074
+      },
+      {
+        "path": "pepper/hobbies/musings/2026-05-05-cutover-eve-in-pieces.md",
+        "size_bytes": 1555
+      },
+      {
+        "path": "pepper/hobbies/writing.md",
+        "size_bytes": 1366
+      },
+      {
+        "path": "pepper/lessons.md",
+        "size_bytes": 6943
+      },
+      {
+        "path": "pepper/lore.md",
+        "size_bytes": 10111
+      },
+      {
+        "path": "pepper/preferences.md",
+        "size_bytes": 9696
+      },
+      {
+        "path": "pepper/reflections/2026-04-12.md",
+        "size_bytes": 2591
+      },
+      {
+        "path": "pepper/reflections/2026-04-19.md",
+        "size_bytes": 9382
+      },
+      {
+        "path": "pepper/reflections/2026-04-26.md",
+        "size_bytes": 16518
+      },
+      {
+        "path": "pepper/reflections/2026-05-03.md",
+        "size_bytes": 13446
+      },
+      {
+        "path": "pepper/voice-exploration.md",
+        "size_bytes": 10417
+      },
+      {
+        "path": "pepper/wishlist.md",
+        "size_bytes": 6913
+      },
+      {
+        "path": "PEPPER_DESIGN_SYSTEM.md",
+        "size_bytes": 6865
+      },
+      {
+        "path": "playbooks/apex-calendar-reconciliation.md",
+        "size_bytes": 5543
+      },
+      {
+        "path": "playbooks/apex-screening-prep.md",
+        "size_bytes": 5083
+      },
+      {
+        "path": "playbooks/apex-slot-setup.md",
+        "size_bytes": 4571
+      },
+      {
+        "path": "playbooks/email-triage.md",
+        "size_bytes": 3214
+      },
+      {
+        "path": "playbooks/evening-routine.md",
+        "size_bytes": 4721
+      },
+      {
+        "path": "playbooks/focus-rescue.md",
+        "size_bytes": 731
+      },
+      {
+        "path": "playbooks/idea-capture.md",
+        "size_bytes": 809
+      },
+      {
+        "path": "playbooks/morning-brief.md",
+        "size_bytes": 5059
+      },
+      {
+        "path": "playbooks/niwc-travel.md",
+        "size_bytes": 5898
+      },
+      {
+        "path": "playbooks/prioritization-reset.md",
+        "size_bytes": 1106
+      },
+      {
+        "path": "playbooks/project-intake.md",
+        "size_bytes": 1252
+      },
+      {
+        "path": "playbooks/README.md",
+        "size_bytes": 1141
+      },
+      {
+        "path": "playbooks/spawning-agent-teams.md",
+        "size_bytes": 25284
+      },
+      {
+        "path": "playbooks/spawning-subagents.md",
+        "size_bytes": 3493
+      },
+      {
+        "path": "playbooks/vault-lint.md",
+        "size_bytes": 3029
+      },
+      {
+        "path": "playbooks/weekly-digest.md",
+        "size_bytes": 5403
+      },
+      {
+        "path": "playbooks/weekly-review.md",
+        "size_bytes": 832
+      },
+      {
+        "path": "playbooks/yak-shave-detection.md",
+        "size_bytes": 6241
+      },
+      {
+        "path": "projects/businesses/47tabs/README.md",
+        "size_bytes": 2837
+      },
+      {
+        "path": "projects/businesses/chrona/ARCHITECTURE.md",
+        "size_bytes": 1764
+      },
+      {
+        "path": "projects/businesses/chrona/channels/idle-thread/README.md",
+        "size_bytes": 1442
+      },
+      {
+        "path": "projects/businesses/chrona/idle-thread/pipeline.archived/.git/COMMIT_EDITMSG",
+        "size_bytes": 5
+      },
+      {
+        "path": "projects/businesses/chrona/idle-thread/pipeline.archived/.git/config",
+        "size_bytes": 130
+      },
+      {
+        "path": "projects/businesses/chrona/idle-thread/pipeline.archived/.git/description",
+        "size_bytes": 73
+      },
+      {
+        "path": "projects/businesses/chrona/idle-thread/pipeline.archived/.git/HEAD",
+        "size_bytes": 23
+      },
+      {
+        "path": "projects/businesses/chrona/idle-thread/pipeline.archived/.git/hooks/applypatch-msg.sample",
+        "size_bytes": 478
+      },
+      {
+        "path": "projects/businesses/chrona/idle-thread/pipeline.archived/.git/hooks/commit-msg.sample",
+        "size_bytes": 896
+      },
+      {
+        "path": "projects/businesses/chrona/idle-thread/pipeline.archived/.git/hooks/fsmonitor-watchman.sample",
+        "size_bytes": 4726
+      },
+      {
+        "path": "projects/businesses/chrona/idle-thread/pipeline.archived/.git/hooks/post-update.sample",
+        "size_bytes": 189
+      },
+      {
+        "path": "projects/businesses/chrona/idle-thread/pipeline.archived/.git/hooks/pre-applypatch.sample",
+        "size_bytes": 424
+      },
+      {
+        "path": "projects/businesses/chrona/idle-thread/pipeline.archived/.git/hooks/pre-commit.sample",
+        "size_bytes": 1643
+      },
+      {
+        "path": "projects/businesses/chrona/idle-thread/pipeline.archived/.git/hooks/pre-merge-commit.sample",
+        "size_bytes": 416
+      },
+      {
+        "path": "projects/businesses/chrona/idle-thread/pipeline.archived/.git/hooks/pre-push.sample",
+        "size_bytes": 1374
+      },
+      {
+        "path": "projects/businesses/chrona/idle-thread/pipeline.archived/.git/hooks/pre-rebase.sample",
+        "size_bytes": 4898
+      },
+      {
+        "path": "projects/businesses/chrona/idle-thread/pipeline.archived/.git/hooks/pre-receive.sample",
+        "size_bytes": 544
+      },
+      {
+        "path": "projects/businesses/chrona/idle-thread/pipeline.archived/.git/hooks/prepare-commit-msg.sample",
+        "size_bytes": 1492
+      },
+      {
+        "path": "projects/businesses/chrona/idle-thread/pipeline.archived/.git/hooks/push-to-checkout.sample",
+        "size_bytes": 2783
+      },
+      {
+        "path": "projects/businesses/chrona/idle-thread/pipeline.archived/.git/hooks/sendemail-validate.sample",
+        "size_bytes": 2308
+      },
+      {
+        "path": "projects/businesses/chrona/idle-thread/pipeline.archived/.git/hooks/update.sample",
+        "size_bytes": 3650
+      },
+      {
+        "path": "projects/businesses/chrona/idle-thread/pipeline.archived/.git/index",
+        "size_bytes": 137
+      },
+      {
+        "path": "projects/businesses/chrona/idle-thread/pipeline.archived/.git/info/exclude",
+        "size_bytes": 240
+      },
+      {
+        "path": "projects/businesses/chrona/idle-thread/pipeline.archived/.git/logs/HEAD",
+        "size_bytes": 159
+      },
+      {
+        "path": "projects/businesses/chrona/idle-thread/pipeline.archived/.git/logs/refs/heads/master",
+        "size_bytes": 159
+      },
+      {
+        "path": "projects/businesses/chrona/idle-thread/pipeline.archived/.git/objects/10/15810ddb4425cc3374b897a037098e80e4becc",
+        "size_bytes": 39
+      },
+      {
+        "path": "projects/businesses/chrona/idle-thread/pipeline.archived/.git/objects/20/f7c3ee16222b88fed1578a8ae2e6fa74d047ac",
+        "size_bytes": 127
+      },
+      {
+        "path": "projects/businesses/chrona/idle-thread/pipeline.archived/.git/objects/df/10c0bf8654af9f06f77b0650749f7ef8940689",
+        "size_bytes": 54
+      },
+      {
+        "path": "projects/businesses/chrona/idle-thread/pipeline.archived/.git/refs/heads/master",
+        "size_bytes": 41
+      },
+      {
+        "path": "projects/businesses/chrona/idle-thread/pipeline.archived/README.md",
+        "size_bytes": 24
+      },
+      {
+        "path": "projects/businesses/chrona/idle-thread/PRODUCT_BRIEF.md",
+        "size_bytes": 3686
+      },
+      {
+        "path": "projects/businesses/chrona/idle-thread/TECH_STACK.md",
+        "size_bytes": 2201
+      },
+      {
+        "path": "projects/businesses/chrona/pipeline.archived/.git/config",
+        "size_bytes": 130
+      },
+      {
+        "path": "projects/businesses/chrona/pipeline.archived/.git/description",
+        "size_bytes": 73
+      },
+      {
+        "path": "projects/businesses/chrona/pipeline.archived/.git/HEAD",
+        "size_bytes": 23
+      },
+      {
+        "path": "projects/businesses/chrona/pipeline.archived/.git/hooks/applypatch-msg.sample",
+        "size_bytes": 478
+      },
+      {
+        "path": "projects/businesses/chrona/pipeline.archived/.git/hooks/commit-msg.sample",
+        "size_bytes": 896
+      },
+      {
+        "path": "projects/businesses/chrona/pipeline.archived/.git/hooks/fsmonitor-watchman.sample",
+        "size_bytes": 4726
+      },
+      {
+        "path": "projects/businesses/chrona/pipeline.archived/.git/hooks/post-update.sample",
+        "size_bytes": 189
+      },
+      {
+        "path": "projects/businesses/chrona/pipeline.archived/.git/hooks/pre-applypatch.sample",
+        "size_bytes": 424
+      },
+      {
+        "path": "projects/businesses/chrona/pipeline.archived/.git/hooks/pre-commit.sample",
+        "size_bytes": 1643
+      },
+      {
+        "path": "projects/businesses/chrona/pipeline.archived/.git/hooks/pre-merge-commit.sample",
+        "size_bytes": 416
+      },
+      {
+        "path": "projects/businesses/chrona/pipeline.archived/.git/hooks/pre-push.sample",
+        "size_bytes": 1374
+      },
+      {
+        "path": "projects/businesses/chrona/pipeline.archived/.git/hooks/pre-rebase.sample",
+        "size_bytes": 4898
+      },
+      {
+        "path": "projects/businesses/chrona/pipeline.archived/.git/hooks/pre-receive.sample",
+        "size_bytes": 544
+      },
+      {
+        "path": "projects/businesses/chrona/pipeline.archived/.git/hooks/prepare-commit-msg.sample",
+        "size_bytes": 1492
+      },
+      {
+        "path": "projects/businesses/chrona/pipeline.archived/.git/hooks/push-to-checkout.sample",
+        "size_bytes": 2783
+      },
+      {
+        "path": "projects/businesses/chrona/pipeline.archived/.git/hooks/sendemail-validate.sample",
+        "size_bytes": 2308
+      },
+      {
+        "path": "projects/businesses/chrona/pipeline.archived/.git/hooks/update.sample",
+        "size_bytes": 3650
+      },
+      {
+        "path": "projects/businesses/chrona/pipeline.archived/.git/info/exclude",
+        "size_bytes": 240
+      },
+      {
+        "path": "projects/businesses/chrona/pipeline.archived/chrona/__init__.py",
+        "size_bytes": 50
+      },
+      {
+        "path": "projects/businesses/chrona/pipeline.archived/chrona/__pycache__/__init__.cpython-313.pyc",
+        "size_bytes": 245
+      },
+      {
+        "path": "projects/businesses/chrona/pipeline.archived/chrona/__pycache__/assemble.cpython-313.pyc",
+        "size_bytes": 3751
+      },
+      {
+        "path": "projects/businesses/chrona/pipeline.archived/chrona/__pycache__/audio.cpython-313.pyc",
+        "size_bytes": 4682
+      },
+      {
+        "path": "projects/businesses/chrona/pipeline.archived/chrona/__pycache__/cli.cpython-313.pyc",
+        "size_bytes": 1856
+      },
+      {
+        "path": "projects/businesses/chrona/pipeline.archived/chrona/__pycache__/render.cpython-313.pyc",
+        "size_bytes": 4340
+      },
+      {
+        "path": "projects/businesses/chrona/pipeline.archived/chrona/assemble.py",
+        "size_bytes": 2367
+      },
+      {
+        "path": "projects/businesses/chrona/pipeline.archived/chrona/audio.py",
+        "size_bytes": 2924
+      },
+      {
+        "path": "projects/businesses/chrona/pipeline.archived/chrona/cli.py",
+        "size_bytes": 1004
+      },
+      {
+        "path": "projects/businesses/chrona/pipeline.archived/chrona/render.py",
+        "size_bytes": 2830
+      },
+      {
+        "path": "projects/businesses/chrona/pipeline.archived/chrona.egg-info/dependency_links.txt",
+        "size_bytes": 1
+      },
+      {
+        "path": "projects/businesses/chrona/pipeline.archived/chrona.egg-info/entry_points.txt",
+        "size_bytes": 42
+      },
+      {
+        "path": "projects/businesses/chrona/pipeline.archived/chrona.egg-info/PKG-INFO",
+        "size_bytes": 242
+      },
+      {
+        "path": "projects/businesses/chrona/pipeline.archived/chrona.egg-info/requires.txt",
+        "size_bytes": 31
+      },
+      {
+        "path": "projects/businesses/chrona/pipeline.archived/chrona.egg-info/SOURCES.txt",
+        "size_bytes": 291
+      },
+      {
+        "path": "projects/businesses/chrona/pipeline.archived/chrona.egg-info/top_level.txt",
+        "size_bytes": 7
+      },
+      {
+        "path": "projects/businesses/chrona/pipeline.archived/logs/chrona.log",
+        "size_bytes": 270
+      },
+      {
+        "path": "projects/businesses/chrona/pipeline.archived/pyproject.toml",
+        "size_bytes": 431
+      },
+      {
+        "path": "projects/businesses/chrona/pipeline.archived/README.md",
+        "size_bytes": 407
+      },
+      {
+        "path": "projects/businesses/chrona/pipeline.archived/requirements.txt",
+        "size_bytes": 31
+      },
+      {
+        "path": "projects/businesses/chrona/README.md",
+        "size_bytes": 1365
+      },
+      {
+        "path": "projects/businesses/daku-press/playbooks/etsy-listing-playbook.md",
+        "size_bytes": 10351
+      },
+      {
+        "path": "projects/businesses/daku-press/README.md",
+        "size_bytes": 1007
+      },
+      {
+        "path": "projects/businesses/scrix/README.md",
+        "size_bytes": 1353
+      },
+      {
+        "path": "projects/dark-factory-strategy.md",
+        "size_bytes": 12392
+      },
+      {
+        "path": "projects/ECOSYSTEM.md",
+        "size_bytes": 35251
+      },
+      {
+        "path": "projects/education/phd/papers/richley_mae_595_final.pdf",
+        "size_bytes": 2460923
+      },
+      {
+        "path": "projects/education/phd/README.md",
+        "size_bytes": 2157
+      },
+      {
+        "path": "projects/education/phd/survey-lifelong-learning.md",
+        "size_bytes": 1660
+      },
+      {
+        "path": "projects/goat/images-2026-05-05/691097bb-d44c-4990-8ca6-556516527c38.jpg",
+        "size_bytes": 124923
+      },
+      {
+        "path": "projects/goat/images-2026-05-05/7606f3c5-5b82-4cdc-bb18-fc0ac94232c4.jpg",
+        "size_bytes": 33555
+      },
+      {
+        "path": "projects/goat/images-2026-05-05/81276133-a3d0-4cfc-9cd5-6896215576e0.jpg",
+        "size_bytes": 30584
+      },
+      {
+        "path": "projects/goat/images-2026-05-05/af9b7712-038e-4188-841a-efa4e1f1846d.jpg",
+        "size_bytes": 19087
+      },
+      {
+        "path": "projects/goat/images-2026-05-05/b332d578-99af-4ed2-ab88-722abc1f5093.jpg",
+        "size_bytes": 54492
+      },
+      {
+        "path": "projects/goat/images-2026-05-05/dea55ccb-7618-4fa7-94df-0ecb2ef33280.jpg",
+        "size_bytes": 19179
+      },
+      {
+        "path": "projects/goat/images-2026-05-05/e9d82fdf-31fd-4bfb-bb3e-afa96a74056d.jpg",
+        "size_bytes": 18362
+      },
+      {
+        "path": "projects/goat/images-2026-05-05/Gemini_Generated_Image_6sa2mr6sa2mr6sa2.png",
+        "size_bytes": 6091901
+      },
+      {
+        "path": "projects/goat/images-2026-05-05/Gemini_Generated_Image_vhrh0jvhrh0jvhrh.png",
+        "size_bytes": 6734547
+      },
+      {
+        "path": "projects/goat/images-2026-05-05/Gemini_Generated_Image_xmmv9cxmmv9cxmmv.png",
+        "size_bytes": 5459985
+      },
+      {
+        "path": "projects/goat/images-2026-05-05/Gemini_Generated_Image_zhk4rgzhk4rgzhk4.png",
+        "size_bytes": 6701653
+      },
+      {
+        "path": "projects/goat/images-2026-05-05/README.md",
+        "size_bytes": 874
+      },
+      {
+        "path": "projects/health/biohacking-protocol.md",
+        "size_bytes": 16055
+      },
+      {
+        "path": "projects/health/labs-inventory-2026-04-27.md",
+        "size_bytes": 18485
+      },
+      {
+        "path": "projects/health/pae-vs-aquablation-research.md",
+        "size_bytes": 8530
+      },
+      {
+        "path": "projects/health/psa-tracking.md",
+        "size_bytes": 1636
+      },
+      {
+        "path": "projects/health/zepbound-fitness-plan.md",
+        "size_bytes": 2744
+      },
+      {
+        "path": "projects/health/zepbound-timeline.md",
+        "size_bytes": 3042
+      },
+      {
+        "path": "projects/jobs/apex/README.md",
+        "size_bytes": 337
+      },
+      {
+        "path": "projects/jobs/gatech/README.md",
+        "size_bytes": 350
+      },
+      {
+        "path": "projects/jobs/niwc/README.md",
+        "size_bytes": 1273
+      },
+      {
+        "path": "projects/jobs/niwc/redwing/experiment-zones/README.md",
+        "size_bytes": 1193
+      },
+      {
+        "path": "projects/jobs/niwc/trips/2026-05-whoi-mit/_convert.py",
+        "size_bytes": 1579
+      },
+      {
+        "path": "projects/jobs/niwc/trips/2026-05-whoi-mit/dod-site-visit-recipients-profile.html",
+        "size_bytes": 31681
+      },
+      {
+        "path": "projects/jobs/niwc/trips/2026-05-whoi-mit/dod-site-visit-recipients-profile.md",
+        "size_bytes": 26416
+      },
+      {
+        "path": "projects/jobs/niwc/trips/2026-05-whoi-mit/dod-site-visit-recipients-profile.pdf",
+        "size_bytes": 241447
+      },
+      {
+        "path": "projects/jobs/niwc/trips/2026-05-whoi-mit.md",
+        "size_bytes": 2077
+      },
+      {
+        "path": "projects/jobs/niwc/war/output/WAR_2026-03-30_to_2026-04-04.pdf",
+        "size_bytes": 7610
+      },
+      {
+        "path": "projects/jobs/niwc/war/output/WAR_2026-04-27_to_2026-05-01.pdf",
+        "size_bytes": 9385
+      },
+      {
+        "path": "projects/jobs/niwc/war/war_data.json",
+        "size_bytes": 5921
+      },
+      {
+        "path": "projects/pepper/briefing-spec-for-contract-test.md",
+        "size_bytes": 23485
+      },
+      {
+        "path": "projects/pepper/clients/ios-app-spec.md",
+        "size_bytes": 14757
+      },
+      {
+        "path": "projects/pepper/clients/README.md",
+        "size_bytes": 5393
+      },
+      {
+        "path": "projects/pepper/clients/shared-behavior-spec.md",
+        "size_bytes": 9924
+      },
+      {
+        "path": "projects/pepper/clients/watch-app-spec.md",
+        "size_bytes": 8398
+      },
+      {
+        "path": "projects/pepper/clients/web-fallback-spec.md",
+        "size_bytes": 6487
+      },
+      {
+        "path": "projects/pepper/clients/windows-app-spec.md",
+        "size_bytes": 10782
+      },
+      {
+        "path": "projects/pepper/cutover-self-test-plan.md",
+        "size_bytes": 26559
+      },
+      {
+        "path": "projects/pepper/cutover-system-read-2026-05-05.md",
+        "size_bytes": 16431
+      },
+      {
+        "path": "projects/pepper/dependabot-merge-fleet-2026-05-04-minion-a.md",
+        "size_bytes": 6325
+      },
+      {
+        "path": "projects/pepper/dependabot-merge-fleet-2026-05-04-minion-b.md",
+        "size_bytes": 7433
+      },
+      {
+        "path": "projects/pepper/dependabot-merge-fleet-2026-05-04-minion-c.md",
+        "size_bytes": 6365
+      },
+      {
+        "path": "projects/pepper/dependabot-resweep-2026-05-04.md",
+        "size_bytes": 7790
+      },
+      {
+        "path": "projects/pepper/github-sweep-2026-05-04.md",
+        "size_bytes": 10215
+      },
+      {
+        "path": "projects/pepper/inbox-architecture.md",
+        "size_bytes": 18794
+      },
+      {
+        "path": "projects/pepper/jarvis-blueprint.md",
+        "size_bytes": 7709
+      },
+      {
+        "path": "projects/pepper/jeff-data-model.md",
+        "size_bytes": 12229
+      },
+      {
+        "path": "projects/pepper/notes.md.archived",
+        "size_bytes": 20
+      },
+      {
+        "path": "projects/pepper/pepper-app-spec.md",
+        "size_bytes": 13972
+      },
+      {
+        "path": "projects/pepper/real-world-input-ideas.md",
+        "size_bytes": 12207
+      },
+      {
+        "path": "projects/pepper/STATUS.md",
+        "size_bytes": 1275
+      },
+      {
+        "path": "projects/pepper/staying-current-decisions.md",
+        "size_bytes": 35277
+      },
+      {
+        "path": "projects/pepper/staying-current-gap-inventory.md",
+        "size_bytes": 9010
+      },
+      {
+        "path": "projects/pepper/tasks.md.archived",
+        "size_bytes": 100
+      },
+      {
+        "path": "projects/pepper/workspace-audit-2026-05-05.md",
+        "size_bytes": 15557
+      },
+      {
+        "path": "projects/pepper-avatar/hero-shots/2026-04-24_hero-v1_blue-eyes.png",
+        "size_bytes": 2106467
+      },
+      {
+        "path": "projects/pepper-avatar/hero-shots/2026-04-24_hero-v2_amethyst-APPROVED.png",
+        "size_bytes": 2246195
+      },
+      {
+        "path": "projects/pepper-avatar/README.md",
+        "size_bytes": 3921
+      },
+      {
+        "path": "projects/pepper-avatar-prompts.md",
+        "size_bytes": 18957
+      },
+      {
+        "path": "projects/pepper-avatar-research.md",
+        "size_bytes": 24603
+      },
+      {
+        "path": "projects/pepper-design-system/concepts/logos_1.png",
+        "size_bytes": 3116523
+      },
+      {
+        "path": "projects/pepper-design-system/concepts/logos_2.png",
+        "size_bytes": 3380810
+      },
+      {
+        "path": "projects/pepper-design-system/HANDOFF.md",
+        "size_bytes": 8248
+      },
+      {
+        "path": "projects/pepper-design-system/README.md",
+        "size_bytes": 1632
+      },
+      {
+        "path": "projects/pepper-design-system/VOICE.md",
+        "size_bytes": 6851
+      },
+      {
+        "path": "projects/research/llm-cad-2026-05-05/minion-a-commercial.md",
+        "size_bytes": 17472
+      },
+      {
+        "path": "projects/research/llm-cad-2026-05-05/minion-b-opensource.md",
+        "size_bytes": 15464
+      },
+      {
+        "path": "projects/research/llm-cad-2026-05-05/minion-c-research.md",
+        "size_bytes": 15949
+      },
+      {
+        "path": "projects/research/llm-cad-2026-05-05/minion-d-fusion360.md",
+        "size_bytes": 17660
+      },
+      {
+        "path": "projects/research/llm-cad-2026-05-05/minion-e-capability-matrix.md",
+        "size_bytes": 14906
+      },
+      {
+        "path": "projects/research/llm-cad-2026-05-05/synthesis.md",
+        "size_bytes": 11036
+      },
+      {
+        "path": "projects/trips/2026-05-pa-trip/loveworks-skyline-corridor.md",
+        "size_bytes": 5517
+      },
+      {
+        "path": "PROJECTS.md.archived",
+        "size_bytes": 4728
+      },
+      {
+        "path": "puppies/reagan.md",
+        "size_bytes": 1047
+      },
+      {
+        "path": "puppies/ryder.md",
+        "size_bytes": 1152
+      },
+      {
+        "path": "quarterly/.gitkeep",
+        "size_bytes": 0
+      },
+      {
+        "path": "research/.gitkeep",
+        "size_bytes": 0
+      },
+      {
+        "path": "SOUL.md",
+        "size_bytes": 9223
+      },
+      {
+        "path": "tasks/.gitkeep",
+        "size_bytes": 0
+      },
+      {
+        "path": "TASKS.md",
+        "size_bytes": 42974
+      },
+      {
+        "path": "team/.gitkeep",
+        "size_bytes": 0
+      },
+      {
+        "path": "USER.md",
+        "size_bytes": 5843
+      },
+      {
+        "path": "weekly/.gitkeep",
+        "size_bytes": 0
+      },
+      {
+        "path": "WORKING_WITH_JEFF.md.archived",
+        "size_bytes": 5771
+      },
+      {
+        "path": "yearly/.gitkeep",
+        "size_bytes": 0
+      }
+    ],
+    "missing_recommended_files": [],
+    "missing_recommended_dirs": [],
+    "daily_summaries": "daily/summaries exists (25 top-level entries)"
+  },
+  "configs": [
+    {
+      "config": "E:\\workspaces\\ai\\agents\\agent_core\\docs\\cutover\\pepper-flip-2026-05-06-config\\agent_core.yaml",
+      "absolute_paths": [
+        "C:\\Users\\jeffr\\.pepper\\Memory",
+        "C:\\Users\\jeffr\\.pepper\\Memory\\pepper",
+        "C:\\Users\\jeffr\\.pepper\\Memory\\pepper\\handoff-status.json",
+        "C:\\Users\\jeffr\\.pepper\\Memory\\pepper\\handoff.md"
+      ]
+    }
+  ]
+}

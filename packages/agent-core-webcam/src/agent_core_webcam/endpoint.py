@@ -64,6 +64,8 @@ class ListCamerasSuccess:
 
 @dataclass(frozen=True)
 class ListCamerasError:
+    """list_cameras_safe failure — message is the agent-readable string."""
+
     message: str
 
 
@@ -306,7 +308,24 @@ class WebcamEndpoint:
                     "Ask the operator if this is unexpected."
                 )
             )
-        cams = await asyncio.to_thread(self._backend.list_cameras)
+        try:
+            cams = await asyncio.to_thread(self._backend.list_cameras)
+        except Exception as exc:
+            timestamp = datetime.now(timezone.utc).astimezone()
+            await self.audit_log.write(
+                AuditEvent(
+                    timestamp=timestamp,
+                    tool="list_cameras",
+                    result="error",
+                    data={"error": f"backend list_cameras failed: {exc}"},
+                )
+            )
+            return ListCamerasError(
+                message=(
+                    f"error: failed to enumerate cameras: {exc}. "
+                    f"Check that the camera driver is responsive."
+                )
+            )
         timestamp = datetime.now(timezone.utc).astimezone()
         await self.audit_log.write(
             AuditEvent(
