@@ -20,7 +20,52 @@ These have defaults; override only if you have a specific reason.
 
 ## Pre-flip preparation (do BEFORE Pepper goes offline)
 
-### 1. Snapshot the current state (rollback insurance)
+### 0. Comprehensive backup (do TONIGHT, then again tomorrow morning)
+
+**Don't lose Pepper.** The 4-file snapshot in earlier drafts of this checklist isn't enough — Pepper's full state spans `~/.pepper/` (195M including `credentials.kdbx`, `scheduler.db`, `attachments/`, identity files, the whole vault) PLUS `~/.claude/projects/C--Users-jeffr--pepper/` (237M of Claude Code session history + auto-memory).
+
+Pepper's existing daily GitHub push to `pepperrichley/peppers-life` covers the Memory vault and tracked config but `.gitignore` excludes:
+- `credentials.kdbx` (KeePass — encrypted but local-only)
+- `google/` (OAuth tokens — refresh tokens you can't easily regenerate)
+- `discord/` (access config)
+- `scheduler.db` (the 17 active jobs from the inventory)
+- `attachments/`
+- `*.log`, `__pycache__`, etc.
+
+And the entire `~/.claude/projects/C--Users-jeffr--pepper/` is outside `~/.pepper/` — in zero backup today.
+
+A comprehensive backup script is pre-staged at [`pepper-flip-2026-05-06-config/backup-pepper.ps1`](pepper-flip-2026-05-06-config/backup-pepper.ps1). Run it twice:
+
+**Tonight (live mode — Pepper still running, locked-DB-friendly via robocopy `/B`):**
+
+```powershell
+pwsh E:\workspaces\ai\agents\agent_core\docs\cutover\pepper-flip-2026-05-06-config\backup-pepper.ps1
+# default destination: C:\pepper-backups\pepper-snapshot-<ts>-live\
+```
+
+Optional: also trigger Pepper's GitHub push tonight while she's still up so the cloud copy is current. Run from her bash:
+```bash
+bash ~/.pepper/hooks/backup-to-github.sh
+```
+
+**Tomorrow morning AFTER step 7 (clean mode — Pepper fully stopped, simple Copy-Item-style):**
+
+```powershell
+pwsh E:\workspaces\ai\agents\agent_core\docs\cutover\pepper-flip-2026-05-06-config\backup-pepper.ps1 -Mode clean
+# refuses to run unless Pepper processes are gone
+```
+
+Both snapshots include:
+- `~/.pepper/` (entire tree including .gitignored secrets + scheduler.db + attachments)
+- `~/.claude/projects/C--Users-jeffr--pepper/` (session history + auto-memory)
+- `~/.agent-core/agent_core.yaml` (daemon config that gets rewritten in step 10)
+- A manifest.txt summarizing what was captured + any warnings
+
+Total snapshot size ~432 MB. Two snapshots = ~864 MB. **Strongly recommend copying tonight's snapshot to off-disk storage** (external drive, second computer, encrypted cloud) since same-disk backup doesn't protect against drive failure. The script prints the recommendation when it finishes; the off-disk copy is your call.
+
+### 1. Quick rollback set (small files, redundant with Step 0 but fast to read)
+
+The full backups in step 0 are the real safety net. This is just the four most-likely-to-be-edited config files extracted into a flat dir for quick `git diff`-style inspection if something looks wrong post-flip:
 
 ```powershell
 $snap = "C:\Users\jeffr\.pepper-pre-cutover-$(Get-Date -Format 'yyyyMMdd-HHmmss')"
@@ -28,10 +73,8 @@ Copy-Item C:\Users\jeffr\.pepper\agent_core.yaml "$snap-agent_core.yaml"
 Copy-Item C:\Users\jeffr\.pepper\.claude\settings.json "$snap-settings.json"
 Copy-Item C:\Users\jeffr\.pepper\Memory\pepper\handoff.md "$snap-handoff.md" -ErrorAction SilentlyContinue
 Copy-Item C:\Users\jeffr\.agent-core\agent_core.yaml "$snap-daemon-agent_core.yaml"
-Write-Output "snapshots: $snap-*"
+Write-Output "rollback set: $snap-*"
 ```
-
-If anything goes sideways, these four files are the rollback set.
 
 ### 2. Pull the latest agent-core repo
 
