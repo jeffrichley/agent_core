@@ -153,8 +153,11 @@ class WebcamEndpoint:
         async with lock:
             png_bytes = await asyncio.to_thread(self._backend.capture, idx, res)
         timestamp = datetime.now(timezone.utc).astimezone()
-        all_cams = await asyncio.to_thread(self._backend.list_cameras)
-        cam_name = next((c.name for c in all_cams if c.index == idx), f"camera {idx}")
+        try:
+            all_cams = await asyncio.to_thread(self._backend.list_cameras)
+            cam_name = next((c.name for c in all_cams if c.index == idx), f"camera {idx}")
+        except Exception:
+            cam_name = f"camera {idx}"
         file_path: Path | None = None
         if save:
             file_path = self.captures_root / timestamp.strftime("%Y-%m-%d") / (
@@ -176,6 +179,7 @@ class WebcamEndpoint:
                 result="ok",
                 data={
                     "camera_index": idx,
+                    "camera_name": cam_name,
                     "resolution": list(res),
                     "save": save,
                     "note": note,
@@ -247,8 +251,11 @@ class WebcamEndpoint:
                 note=note,
             )
         except CameraNotFoundError:
-            cams = await asyncio.to_thread(self._backend.list_cameras)
-            available = [c.index for c in cams]
+            try:
+                cams = await asyncio.to_thread(self._backend.list_cameras)
+                available = [c.index for c in cams]
+            except Exception:
+                available = []
             return await self._error(
                 user_message=(
                     f"error: no camera at index {idx} "
@@ -262,11 +269,14 @@ class WebcamEndpoint:
                 note=note,
             )
         except CameraBusyError:
-            cams = await asyncio.to_thread(self._backend.list_cameras)
-            cam_name = next(
-                (c.name for c in cams if c.index == idx),
-                f"camera {idx}",
-            )
+            try:
+                cams = await asyncio.to_thread(self._backend.list_cameras)
+                cam_name = next(
+                    (c.name for c in cams if c.index == idx),
+                    f"camera {idx}",
+                )
+            except Exception:
+                cam_name = f"camera {idx}"
             return await self._error(
                 user_message=(
                     f"error: camera {idx} ({cam_name}) is busy. "
