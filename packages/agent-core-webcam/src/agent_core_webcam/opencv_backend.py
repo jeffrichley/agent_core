@@ -13,6 +13,7 @@ from agent_core_webcam.protocol import (
     CameraInfo,
     CameraNotFoundError,
     ReadTimeoutError,
+    WebcamError,
 )
 
 # Probe up to this many camera indices when listing. Most consumer hosts
@@ -80,10 +81,12 @@ class OpenCVCameraBackend:
                 # commonly means another process holds the video pin
                 # exclusively (Zoom, browser camera, etc.).
                 raise CameraBusyError(f"camera {index} opened but read failed")
-            # cv2 frames are BGR; PNG encoder is channel-agnostic, output is valid sRGB.
-            ok2, buf = cv2.imencode(".png", frame)
+            # cv2 frames are BGR; convert to RGB so the PNG decodes correctly in
+            # vision models and standard PNG viewers.
+            rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+            ok2, buf = cv2.imencode(".png", rgb)
             if not ok2:
-                raise ReadTimeoutError(f"camera {index} returned a frame but PNG encode failed")
+                raise WebcamError(f"camera {index} returned a frame but PNG encode failed")
             return bytes(buf.tobytes())
         finally:
             cap.release()
