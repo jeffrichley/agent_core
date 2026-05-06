@@ -79,6 +79,7 @@ testpaths = [
     "packages/credentials/tests",
     "packages/agent-core-discord/tests",
     "packages/agent-core-channel/tests",
+    "packages/agent-core-webcam/tests",
 ]
 asyncio_mode = "auto"
 addopts = "--import-mode=importlib"
