@@ -206,12 +206,14 @@ She gets a clean, agent-readable explanation instead of a silently-missing tool.
 `~/.agent-core/webcam/<endpoint>/audit.jsonl`:
 
 ```jsonl
-{"timestamp": "2026-05-06T14:23:07.481-04:00", "tool": "capture_webcam_frame", "camera_index": 0, "camera_name": "Integrated Camera", "resolution": [1280, 720], "save": true, "file_path": "C:\\Users\\jeffr\\.agent-core\\webcam\\pepper\\2026-05-06\\142307-481.png", "filesize": 184312, "note": "checking what's on my desk", "session_id": "<mcp session id if available>", "result": "ok"}
-{"timestamp": "2026-05-06T14:23:42.117-04:00", "tool": "list_cameras", "result": "ok", "camera_count": 2}
-{"timestamp": "2026-05-06T14:24:01.220-04:00", "tool": "capture_webcam_frame", "camera_index": 0, "result": "error", "error": "camera 0 busy (in use by another process)"}
+{"timestamp": "2026-05-06T14:23:07.481-04:00", "tool": "capture_webcam_frame", "result": "ok", "data": {"camera_index": 0, "camera_name": "Integrated Camera", "resolution": [1280, 720], "save": true, "file_path": "C:\\Users\\jeffr\\.agent-core\\webcam\\pepper\\2026-05-06\\142307-481.png", "filesize": 184312, "note": "checking what's on my desk", "session_id": "<mcp session id if available>"}}
+{"timestamp": "2026-05-06T14:23:42.117-04:00", "tool": "list_cameras", "result": "ok", "data": {"camera_count": 2}}
+{"timestamp": "2026-05-06T14:24:01.220-04:00", "tool": "capture_webcam_frame", "result": "error", "data": {"camera_index": 0, "error": "camera busy"}}
 ```
 
-**Schema covers:** every successful capture (with file path, so audit + filesystem stay in sync), every `list_cameras` call (cheap, useful for noticing repeated probing), every error (so failures don't disappear). The `session_id` is the MCP session identifier if exposed by the host — best-effort; not a hard requirement.
+**Schema shape:** four top-level keys per line — `timestamp`, `tool`, `result` (`"ok"` or `"error"`), and `data` (a per-tool sub-object carrying everything else). This mirrors `agent_core_briefs.audit`'s envelope so a workspace-wide log reader can use one parser. Tool-specific fields (camera_index, file_path, camera_count, error message) live in `data`. The `session_id` is the MCP session identifier if exposed by the host — best-effort; not a hard requirement.
+
+**Schema covers:** every successful capture (with file path, so audit + filesystem stay in sync), every `list_cameras` call (cheap, useful for noticing repeated probing), every error (so failures don't disappear).
 
 **Rotation:** none in v1. Single file, append-only. If it grows unwieldy, add daily rotation later (mirror `daily_raw_jsonl`'s design). The audit log is meant to be readable by Jeff and by Pepper if she wants to introspect her own history.
 
