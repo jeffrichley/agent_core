@@ -47,7 +47,7 @@ def wire_endpoints_after_registration(
     services: "RunnerServices",
 ) -> None:
     """Mount webcam tools on every MCP endpoint that names a webcam endpoint."""
-    del services  # unused
+    del services  # unused — kept for hookspec parity
     from agent_core.endpoints.claude_code_mcp import ClaudeCodeMCPEndpoint
     from agent_core_webcam.endpoint import WebcamEndpoint
     from agent_core_webcam.mcp import register_webcam_tools
@@ -61,13 +61,14 @@ def wire_endpoints_after_registration(
         if not webcam_name:
             continue
         webcam = endpoints.get(webcam_name)
-        available = sorted(n for n, e in endpoints.items() if isinstance(e, WebcamEndpoint))
         if webcam is None:
+            available = sorted(n for n, e in endpoints.items() if isinstance(e, WebcamEndpoint))
             raise ValueError(
                 f"endpoint {name!r} names webcam={webcam_name!r} but no endpoint with "
                 f"that name is registered. Available WebcamEndpoint names: {available}"
             )
         if not isinstance(webcam, WebcamEndpoint):
+            available = sorted(n for n, e in endpoints.items() if isinstance(e, WebcamEndpoint))
             raise ValueError(
                 f"endpoint {name!r} names webcam={webcam_name!r}, but that endpoint is "
                 f"a {type(webcam).__name__}, not a WebcamEndpoint. "
