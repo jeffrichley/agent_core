@@ -9,12 +9,18 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import TYPE_CHECKING
 
 from agent_core_webcam.audit import AuditEvent, AuditLog
-from agent_core_webcam.protocol import CameraBackend
+from agent_core_webcam.protocol import (
+    CameraBackend,
+    CameraBusyError,
+    CameraNotFoundError,
+    ReadTimeoutError,
+)
 
 if TYPE_CHECKING:
     from agent_core.bus.envelope import Envelope
@@ -31,6 +37,22 @@ def _to_tuple(value: tuple[int, int] | list[int]) -> tuple[int, int]:
     if isinstance(value, list) and len(value) == 2:
         return (int(value[0]), int(value[1]))
     raise ValueError(f"resolution must be [width, height], got {value!r}")
+
+
+@dataclass(frozen=True)
+class CaptureSuccess:
+    """Successful capture result."""
+
+    png_bytes: bytes
+    file_path: Path | None
+    metadata: dict
+
+
+@dataclass(frozen=True)
+class CaptureError:
+    """Failed capture — message is the agent-readable string."""
+
+    message: str
 
 
 class WebcamEndpoint:
@@ -137,10 +159,141 @@ class WebcamEndpoint:
         )
         return png_bytes, file_path, meta
 
+    async def capture_frame_safe(
+        self,
+        *,
+        camera_index: int | None = None,
+        resolution: tuple[int, int] | list[int] | None = None,
+        save: bool = True,
+        note: str | None = None,
+    ) -> "CaptureSuccess | CaptureError":
+        """Like ``capture_frame`` but maps every error to a CaptureError + audit.
+
+        The MCP tool wrapper uses this — it never wants to raise into FastMCP.
+        """
+        if not self.enabled:
+            return await self._error(
+                user_message=(
+                    "error: webcam endpoint is disabled (enabled=false in config). "
+                    "Ask the operator if this is unexpected."
+                ),
+                audit_error="endpoint disabled",
+                camera_index=camera_index,
+                save=save,
+                note=note,
+            )
+
+        # Resolution cap.
+        idx = camera_index if camera_index is not None else self.default_camera_index
+        res = _to_tuple(resolution) if resolution is not None else self.default_resolution
+        if res[0] > self.max_resolution[0] or res[1] > self.max_resolution[1]:
+            return await self._error(
+                user_message=(
+                    f"error: requested resolution {res[0]}x{res[1]} exceeds "
+                    f"configured max {self.max_resolution[0]}x{self.max_resolution[1]}."
+                ),
+                audit_error="resolution capped",
+                camera_index=idx,
+                resolution=res,
+                save=save,
+                note=note,
+            )
+
+        try:
+            png_bytes, file_path, meta = await self.capture_frame(
+                camera_index=idx,
+                resolution=res,
+                save=save,
+                note=note,
+            )
+        except CameraNotFoundError:
+            available = [c.index for c in self._backend.list_cameras()]
+            return await self._error(
+                user_message=(
+                    f"error: no camera at index {idx} "
+                    f"(host has {len(available)} cameras: indices {available}). "
+                    f"Call list_cameras to see what's available."
+                ),
+                audit_error=f"camera {idx} not found",
+                camera_index=idx,
+                resolution=res,
+                save=save,
+                note=note,
+            )
+        except CameraBusyError:
+            cam_name = next(
+                (c.name for c in self._backend.list_cameras() if c.index == idx),
+                f"camera {idx}",
+            )
+            return await self._error(
+                user_message=(
+                    f"error: camera {idx} ({cam_name}) is busy. "
+                    f"Likely in use by another application (Zoom, browser, etc.). "
+                    f"Try again in a moment."
+                ),
+                audit_error="camera busy",
+                camera_index=idx,
+                resolution=res,
+                save=save,
+                note=note,
+            )
+        except ReadTimeoutError:
+            return await self._error(
+                user_message=(
+                    f"error: camera opened but returned no frame within "
+                    f"{self.capture_timeout_seconds}s. Camera may be initializing or obstructed."
+                ),
+                audit_error="read timeout",
+                camera_index=idx,
+                resolution=res,
+                save=save,
+                note=note,
+            )
+        except OSError as exc:
+            return await self._error(
+                user_message=(
+                    f"error: capture succeeded but failed to write to disk: {exc}. "
+                    f"Image is unavailable; retry or set save=false."
+                ),
+                audit_error=f"disk write failed: {exc}",
+                camera_index=idx,
+                resolution=res,
+                save=save,
+                note=note,
+            )
+        return CaptureSuccess(png_bytes=png_bytes, file_path=file_path, metadata=meta)
+
+    async def _error(
+        self,
+        *,
+        user_message: str,
+        audit_error: str,
+        camera_index: int | None = None,
+        resolution: tuple[int, int] | None = None,
+        save: bool = True,
+        note: str | None = None,
+    ) -> "CaptureError":
+        timestamp = datetime.now(timezone.utc).astimezone()
+        await self.audit_log.write(
+            AuditEvent(
+                timestamp=timestamp,
+                tool="capture_webcam_frame",
+                result="error",
+                data={
+                    "camera_index": camera_index,
+                    "resolution": list(resolution) if resolution else None,
+                    "save": save,
+                    "note": note,
+                    "error": audit_error,
+                },
+            )
+        )
+        return CaptureError(message=user_message)
+
     @staticmethod
     def _write_png(path: Path, data: bytes) -> None:
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_bytes(data)
 
 
-__all__ = ["WebcamEndpoint"]
+__all__ = ["CaptureError", "CaptureSuccess", "WebcamEndpoint"]
