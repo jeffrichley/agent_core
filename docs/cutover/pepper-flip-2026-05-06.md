@@ -10,17 +10,20 @@
 
 These have defaults; override only if you have a specific reason.
 
-- [ ] **Discord endpoint name: `discord-pepper`** (mirrors testbot's `discord-*` convention; matches what Bug #6's example placeholder assumes).
-- [ ] **Bus mailbox: `pepper`** (lowercase). Matches the example yaml; decouples bus routing from the human identity `"Pepper"` (Bug #5).
-- [ ] **testbot endpoints stay registered.** Same daemon serves both agents post-flip. testbot remains available for ad-hoc verification without spinning up new infra. Cost: 6 endpoints instead of 3 in `~/.agent-core/agent_core.yaml`.
-- [ ] **Brief framework: NOT adopted tomorrow.** Pepper's existing `morning-brief.md` is hand-authored prose with embedded JSON — converting it to the new orchestrator format is a separate design exercise. Tomorrow's flip is bus + identity + handoff + Discord verbs only. Brief framework migration scheduled later.
-- [ ] **Vault location stays at `C:\Users\jeffr\.pepper\Memory\pepper\`.** Cutover #06 dry-run already confirmed zero false-positive migration findings; no operator file moves needed (run [`agent-core vault plan-dry-run --base C:\Users\jeffr\.pepper`](test-playbooks/06-vault-continuity.md) one more time tomorrow to confirm).
+- [x] **Discord endpoint name: `discord-pepper`** (mirrors testbot's `discord-*` convention; matches what Bug #6's example placeholder assumes). *Confirmed 2026-05-06 morning.*
+- [x] **Bus mailbox: `pepper`** (lowercase). Matches the example yaml; decouples bus routing from the human identity `"Pepper"` (Bug #5). *Confirmed 2026-05-06 morning.*
+- [x] **testbot endpoints stay registered.** Same daemon serves both agents post-flip. testbot remains available for ad-hoc verification without spinning up new infra. Cost: 6 endpoints instead of 3 in `~/.agent-core/agent_core.yaml`. *Confirmed 2026-05-06 morning. Channel-allowlist lockdown for testbot deferred to post-flip work (untested today; DM workaround used instead — `dm_policy` defaults to `"open"`).*
+- [x] **Brief framework: NOT adopted tomorrow.** Pepper's existing `morning-brief.md` is hand-authored prose with embedded JSON — converting it to the new orchestrator format is a separate design exercise. Tomorrow's flip is bus + identity + handoff + Discord verbs only. Brief framework migration scheduled later. *Confirmed 2026-05-06 morning.*
+- [x] **Vault location stays at `C:\Users\jeffr\.pepper\Memory\pepper\`.** Cutover #06 dry-run already confirmed zero false-positive migration findings; no operator file moves needed (run [`agent-core vault plan-dry-run --base C:\Users\jeffr\.pepper`](test-playbooks/06-vault-continuity.md) one more time tomorrow to confirm). *Confirmed 2026-05-06 morning.*
 
 ---
 
 ## Pre-flip preparation (do BEFORE Pepper goes offline)
 
-### 0. Comprehensive backup (do TONIGHT, then again tomorrow morning)
+### 0. Comprehensive backup (do TONIGHT, then again tomorrow morning) — ✅ DONE 2026-05-06 07:57
+
+Pepper was already stopped pre-backup (no log churn during snapshot), so we ran `-Mode clean` directly on three destinations: `C:\pepper-backups\`, `D:\pepper-backups\` (external), `E:\pepper-backups\` (HDD). 448.7 MB / 1146 files per snapshot. Critical files (`SOUL.md`, `IDENTITY.md`, `credentials.kdbx`, `scheduler.db`) SHA256-verified byte-identical across source + all three snapshots. Three independent failure surfaces confirmed.
+
 
 **Don't lose Pepper.** The 4-file snapshot in earlier drafts of this checklist isn't enough — Pepper's full state spans `~/.pepper/` (195M including `credentials.kdbx`, `scheduler.db`, `attachments/`, identity files, the whole vault) PLUS `~/.claude/projects/C--Users-jeffr--pepper/` (237M of Claude Code session history + auto-memory).
 
@@ -63,7 +66,10 @@ Both snapshots include:
 
 Total snapshot size ~432 MB. Two snapshots = ~864 MB. **Strongly recommend copying tonight's snapshot to off-disk storage** (external drive, second computer, encrypted cloud) since same-disk backup doesn't protect against drive failure. The script prints the recommendation when it finishes; the off-disk copy is your call.
 
-### 1. Quick rollback set (small files, redundant with Step 0 but fast to read)
+### 1. Quick rollback set (small files, redundant with Step 0 but fast to read) — ✅ DONE 2026-05-06 08:00
+
+Four files captured at `C:\Users\jeffr\.pepper-pre-cutover-20260506-080046-*`: agent_core.yaml (2025 b), daemon-agent_core.yaml (3347 b), handoff.md (3316 b), settings.json (1234 b).
+
 
 The full backups in step 0 are the real safety net. This is just the four most-likely-to-be-edited config files extracted into a flat dir for quick `git diff`-style inspection if something looks wrong post-flip:
 
