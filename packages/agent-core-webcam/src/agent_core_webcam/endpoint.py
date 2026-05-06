@@ -7,11 +7,13 @@ endpoint exists so MCP tools have somewhere to live and config to read.
 
 from __future__ import annotations
 
+import asyncio
 import logging
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from agent_core_webcam.audit import AuditLog
+from agent_core_webcam.audit import AuditEvent, AuditLog
 from agent_core_webcam.protocol import CameraBackend
 
 if TYPE_CHECKING:
@@ -86,6 +88,59 @@ class WebcamEndpoint:
     async def stop(self) -> None:
         self._handle = None
         log.info("WebcamEndpoint(name=%s) stopped", self.name)
+
+    async def capture_frame(
+        self,
+        *,
+        camera_index: int | None = None,
+        resolution: tuple[int, int] | list[int] | None = None,
+        save: bool = True,
+        note: str | None = None,
+    ) -> tuple[bytes, Path | None, dict]:
+        """Capture one frame; return (png_bytes, file_path, metadata).
+
+        Returns ``file_path=None`` when ``save=False``. Always appends an
+        audit entry. Errors raise — Task 7 maps them to user-facing
+        messages at the MCP boundary.
+        """
+        idx = camera_index if camera_index is not None else self.default_camera_index
+        res = _to_tuple(resolution) if resolution is not None else self.default_resolution
+        png_bytes = await asyncio.to_thread(self._backend.capture, idx, res)
+        timestamp = datetime.now(timezone.utc).astimezone()
+        file_path: Path | None = None
+        if save:
+            file_path = self.captures_root / timestamp.strftime("%Y-%m-%d") / (
+                timestamp.strftime("%H%M%S-") + f"{timestamp.microsecond // 1000:03d}.png"
+            )
+            await asyncio.to_thread(self._write_png, file_path, png_bytes)
+        meta = {
+            "camera_index": idx,
+            "resolution": res,
+            "timestamp": timestamp.isoformat(),
+            "filesize": len(png_bytes),
+            "file_path": str(file_path) if file_path else None,
+        }
+        await self.audit_log.write(
+            AuditEvent(
+                timestamp=timestamp,
+                tool="capture_webcam_frame",
+                result="ok",
+                data={
+                    "camera_index": idx,
+                    "resolution": list(res),
+                    "save": save,
+                    "note": note,
+                    "file_path": str(file_path) if file_path else None,
+                    "filesize": len(png_bytes),
+                },
+            )
+        )
+        return png_bytes, file_path, meta
+
+    @staticmethod
+    def _write_png(path: Path, data: bytes) -> None:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(data)
 
 
 __all__ = ["WebcamEndpoint"]
