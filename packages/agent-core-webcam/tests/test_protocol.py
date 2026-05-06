@@ -4,6 +4,10 @@ These tests pin the surface that fake and real backends must implement.
 """
 from __future__ import annotations
 
+import dataclasses
+
+import pytest
+
 from agent_core_webcam.protocol import (
     CameraBackend,
     CameraBusyError,
@@ -19,6 +23,9 @@ def test_camera_info_is_a_simple_dataclass():
     assert info.index == 0
     assert info.name == "Integrated Camera"
     assert info.available is True
+
+    with pytest.raises(dataclasses.FrozenInstanceError):
+        info.index = 99
 
 
 def test_exception_hierarchy_descends_from_webcam_error():
