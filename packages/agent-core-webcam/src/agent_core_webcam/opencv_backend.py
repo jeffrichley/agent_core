@@ -7,8 +7,6 @@ are mapped onto our protocol exception taxonomy.
 
 from __future__ import annotations
 
-import logging
-
 from agent_core_webcam.protocol import (
     CameraBackend,
     CameraBusyError,
@@ -16,8 +14,6 @@ from agent_core_webcam.protocol import (
     CameraNotFoundError,
     ReadTimeoutError,
 )
-
-log = logging.getLogger(__name__)
 
 # Probe up to this many camera indices when listing. Most consumer hosts
 # have 0–2 cameras; 8 is a generous ceiling without making list_cameras
@@ -84,8 +80,8 @@ class OpenCVCameraBackend:
                 # commonly means another process holds the video pin
                 # exclusively (Zoom, browser camera, etc.).
                 raise CameraBusyError(f"camera {index} opened but read failed")
-            rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-            ok2, buf = cv2.imencode(".png", cv2.cvtColor(rgb, cv2.COLOR_RGB2BGR))
+            # cv2 frames are BGR; PNG encoder is channel-agnostic, output is valid sRGB.
+            ok2, buf = cv2.imencode(".png", frame)
             if not ok2:
                 raise ReadTimeoutError(f"camera {index} returned a frame but PNG encode failed")
             return bytes(buf.tobytes())
@@ -95,7 +91,7 @@ class OpenCVCameraBackend:
 
 # Static protocol satisfaction check (running the constructor is fine —
 # cv2 is lazy-loaded inside method bodies).
-_: CameraBackend = OpenCVCameraBackend()  # noqa: F841
+_: CameraBackend = OpenCVCameraBackend()
 
 
 __all__ = ["OpenCVCameraBackend"]

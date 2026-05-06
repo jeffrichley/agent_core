@@ -12,7 +12,6 @@ import pytest
 from agent_core_webcam.opencv_backend import OpenCVCameraBackend
 from agent_core_webcam.protocol import CameraNotFoundError
 
-
 pytestmark = pytest.mark.skipif(
     os.environ.get("WEBCAM_INTEGRATION_TEST") != "1",
     reason="set WEBCAM_INTEGRATION_TEST=1 to run real cv2 tests",
