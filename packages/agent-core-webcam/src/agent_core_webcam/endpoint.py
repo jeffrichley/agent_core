@@ -23,6 +23,8 @@ log = logging.getLogger(__name__)
 
 def _to_tuple(value: tuple[int, int] | list[int]) -> tuple[int, int]:
     if isinstance(value, tuple):
+        if len(value) != 2:
+            raise ValueError(f"resolution must be [width, height], got {value!r}")
         return value
     if isinstance(value, list) and len(value) == 2:
         return (int(value[0]), int(value[1]))
@@ -73,12 +75,13 @@ class WebcamEndpoint:
         log.info("WebcamEndpoint(name=%s) started; captures=%s", self.name, self.captures_root)
 
     async def deliver(self, envelope: "Envelope") -> None:
-        # Webcam is tool-only — envelopes addressed to us are unexpected
-        # but we don't crash. Log at debug; nothing to ack (no bus handle
-        # required to discard).
+        # Webcam is tool-only; envelopes addressed to us are unexpected.
+        # Log at debug, then ack so the bus doesn't redeliver or dead-letter.
         log.debug(
             "WebcamEndpoint(name=%s) ignoring delivered envelope %s", self.name, envelope.id
         )
+        if self._handle is not None:
+            await self._handle.ack(envelope.id)
 
     async def stop(self) -> None:
         self._handle = None

@@ -68,8 +68,19 @@ async def test_start_stores_bus_handle_and_stop_clears_it(endpoint: WebcamEndpoi
     assert endpoint._handle is None
 
 
-async def test_deliver_is_a_noop(endpoint: WebcamEndpoint):
-    """Webcam is tool-only; receiving an envelope is unexpected but must not crash."""
+async def test_deliver_is_a_noop_and_acks(endpoint: WebcamEndpoint):
+    """Webcam is tool-only; deliver must not crash AND must ack the envelope."""
+
+    class _FakeHandle:
+        def __init__(self):
+            self.acked: list[str] = []
+
+        async def ack(self, envelope_id: str) -> None:
+            self.acked.append(envelope_id)
+
+    handle = _FakeHandle()
+    await endpoint.start(handle)
+
     env = Envelope(
         id="env-1",
         correlation_id="corr-1",
@@ -79,8 +90,8 @@ async def test_deliver_is_a_noop(endpoint: WebcamEndpoint):
         payload=EventPayload(type="Stray", data={}),
         created_at=datetime(2026, 1, 1, tzinfo=timezone.utc),
     )
-    # Must not raise.
     await endpoint.deliver(env)
+    assert handle.acked == ["env-1"], "deliver must ack so the bus doesn't redeliver"
 
 
 def test_resolution_lists_are_normalized_to_tuples(tmp_path):
