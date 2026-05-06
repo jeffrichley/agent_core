@@ -10,7 +10,7 @@ from __future__ import annotations
 import asyncio
 import logging
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -106,15 +106,15 @@ class WebcamEndpoint:
             from agent_core_webcam.opencv_backend import OpenCVCameraBackend
             camera_backend = OpenCVCameraBackend(timeout_seconds=capture_timeout_seconds)
         self._backend: CameraBackend = camera_backend
-        self._handle: "BusHandle | None" = None
+        self._handle: BusHandle | None = None
         self._camera_locks: dict[int, asyncio.Lock] = {}
         self._camera_locks_guard = asyncio.Lock()
 
-    async def start(self, bus: "BusHandle") -> None:
+    async def start(self, bus: BusHandle) -> None:
         self._handle = bus
         log.info("WebcamEndpoint(name=%s) started; captures=%s", self.name, self.captures_root)
 
-    async def deliver(self, envelope: "Envelope") -> None:
+    async def deliver(self, envelope: Envelope) -> None:
         # Webcam is tool-only; envelopes addressed to us are unexpected.
         # Log at debug, then ack so the bus doesn't redeliver or dead-letter.
         log.debug(
@@ -152,7 +152,7 @@ class WebcamEndpoint:
         lock = await self._lock_for(idx)
         async with lock:
             png_bytes = await asyncio.to_thread(self._backend.capture, idx, res)
-        timestamp = datetime.now(timezone.utc).astimezone()
+        timestamp = datetime.now(UTC).astimezone()
         try:
             all_cams = await asyncio.to_thread(self._backend.list_cameras)
             cam_name = next((c.name for c in all_cams if c.index == idx), f"camera {idx}")
@@ -197,7 +197,7 @@ class WebcamEndpoint:
         resolution: tuple[int, int] | list[int] | None = None,
         save: bool = True,
         note: str | None = None,
-    ) -> "CaptureSuccess | CaptureError":
+    ) -> CaptureSuccess | CaptureError:
         """Like ``capture_frame`` but maps every error to a CaptureError + audit.
 
         The MCP tool wrapper uses this — it never wants to raise into FastMCP.
@@ -315,10 +315,10 @@ class WebcamEndpoint:
             )
         return CaptureSuccess(png_bytes=png_bytes, file_path=file_path, metadata=meta)
 
-    async def list_cameras_safe(self) -> "ListCamerasSuccess | ListCamerasError":
+    async def list_cameras_safe(self) -> ListCamerasSuccess | ListCamerasError:
         """Enumerate cameras, return list with audit. Best-effort — never raises."""
         if not self.enabled:
-            timestamp = datetime.now(timezone.utc).astimezone()
+            timestamp = datetime.now(UTC).astimezone()
             await self.audit_log.write(
                 AuditEvent(
                     timestamp=timestamp,
@@ -336,7 +336,7 @@ class WebcamEndpoint:
         try:
             cams = await asyncio.to_thread(self._backend.list_cameras)
         except Exception as exc:
-            timestamp = datetime.now(timezone.utc).astimezone()
+            timestamp = datetime.now(UTC).astimezone()
             await self.audit_log.write(
                 AuditEvent(
                     timestamp=timestamp,
@@ -351,7 +351,7 @@ class WebcamEndpoint:
                     f"Check that the camera driver is responsive."
                 )
             )
-        timestamp = datetime.now(timezone.utc).astimezone()
+        timestamp = datetime.now(UTC).astimezone()
         await self.audit_log.write(
             AuditEvent(
                 timestamp=timestamp,
@@ -371,8 +371,8 @@ class WebcamEndpoint:
         resolution: tuple[int, int] | None = None,
         save: bool = True,
         note: str | None = None,
-    ) -> "CaptureError":
-        timestamp = datetime.now(timezone.utc).astimezone()
+    ) -> CaptureError:
+        timestamp = datetime.now(UTC).astimezone()
         await self.audit_log.write(
             AuditEvent(
                 timestamp=timestamp,

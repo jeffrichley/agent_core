@@ -12,7 +12,6 @@ from agent_core_webcam.protocol import (
     CameraBusyError,
     CameraInfo,
     CameraNotFoundError,
-    ReadTimeoutError,
     WebcamError,
 )
 

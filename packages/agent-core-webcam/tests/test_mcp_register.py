@@ -8,6 +8,7 @@ from agent_core_webcam.endpoint import WebcamEndpoint
 from agent_core_webcam.fake import FakeCameraBackend
 from agent_core_webcam.mcp import register_webcam_tools
 from fastmcp import FastMCP
+from pydantic import ValidationError
 
 
 def _new_endpoint(tmp_path: Path, **overrides) -> WebcamEndpoint:
@@ -76,7 +77,7 @@ async def test_capture_tool_resolution_validation_at_mcp_boundary(tmp_path: Path
     """Pydantic should reject a malformed resolution before reaching the endpoint."""
     mcp = FastMCP("test-server")
     register_webcam_tools(mcp=mcp, endpoint=_new_endpoint(tmp_path))
-    with pytest.raises(Exception):
+    with pytest.raises(ValidationError):
         # A dict where a [w, h] list is expected — should fail validation.
         await mcp.call_tool(
             "capture_webcam_frame",
