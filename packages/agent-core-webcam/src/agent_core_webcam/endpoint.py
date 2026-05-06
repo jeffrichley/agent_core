@@ -55,6 +55,18 @@ class CaptureError:
     message: str
 
 
+@dataclass(frozen=True)
+class ListCamerasSuccess:
+    """list_cameras_safe success."""
+
+    cameras: list  # list[CameraInfo] — avoid forward-ref import dance
+
+
+@dataclass(frozen=True)
+class ListCamerasError:
+    message: str
+
+
 class WebcamEndpoint:
     """Tool-only bus endpoint backing the webcam MCP tool surface."""
 
@@ -93,6 +105,8 @@ class WebcamEndpoint:
             camera_backend = OpenCVCameraBackend(timeout_seconds=capture_timeout_seconds)
         self._backend: CameraBackend = camera_backend
         self._handle: "BusHandle | None" = None
+        self._camera_locks: dict[int, asyncio.Lock] = {}
+        self._camera_locks_guard = asyncio.Lock()
 
     async def start(self, bus: "BusHandle") -> None:
         self._handle = bus
@@ -111,6 +125,12 @@ class WebcamEndpoint:
         self._handle = None
         log.info("WebcamEndpoint(name=%s) stopped", self.name)
 
+    async def _lock_for(self, camera_index: int) -> asyncio.Lock:
+        async with self._camera_locks_guard:
+            if camera_index not in self._camera_locks:
+                self._camera_locks[camera_index] = asyncio.Lock()
+            return self._camera_locks[camera_index]
+
     async def capture_frame(
         self,
         *,
@@ -127,7 +147,9 @@ class WebcamEndpoint:
         """
         idx = camera_index if camera_index is not None else self.default_camera_index
         res = _to_tuple(resolution) if resolution is not None else self.default_resolution
-        png_bytes = await asyncio.to_thread(self._backend.capture, idx, res)
+        lock = await self._lock_for(idx)
+        async with lock:
+            png_bytes = await asyncio.to_thread(self._backend.capture, idx, res)
         timestamp = datetime.now(timezone.utc).astimezone()
         file_path: Path | None = None
         if save:
@@ -266,6 +288,36 @@ class WebcamEndpoint:
             )
         return CaptureSuccess(png_bytes=png_bytes, file_path=file_path, metadata=meta)
 
+    async def list_cameras_safe(self) -> "ListCamerasSuccess | ListCamerasError":
+        """Enumerate cameras, return list with audit. Best-effort — never raises."""
+        if not self.enabled:
+            timestamp = datetime.now(timezone.utc).astimezone()
+            await self.audit_log.write(
+                AuditEvent(
+                    timestamp=timestamp,
+                    tool="list_cameras",
+                    result="error",
+                    data={"error": "endpoint disabled"},
+                )
+            )
+            return ListCamerasError(
+                message=(
+                    "error: webcam endpoint is disabled (enabled=false in config). "
+                    "Ask the operator if this is unexpected."
+                )
+            )
+        cams = await asyncio.to_thread(self._backend.list_cameras)
+        timestamp = datetime.now(timezone.utc).astimezone()
+        await self.audit_log.write(
+            AuditEvent(
+                timestamp=timestamp,
+                tool="list_cameras",
+                result="ok",
+                data={"camera_count": len(cams)},
+            )
+        )
+        return ListCamerasSuccess(cameras=list(cams))
+
     async def _error(
         self,
         *,
@@ -299,4 +351,10 @@ class WebcamEndpoint:
         path.write_bytes(data)
 
 
-__all__ = ["CaptureError", "CaptureSuccess", "WebcamEndpoint"]
+__all__ = [
+    "CaptureError",
+    "CaptureSuccess",
+    "ListCamerasError",
+    "ListCamerasSuccess",
+    "WebcamEndpoint",
+]
