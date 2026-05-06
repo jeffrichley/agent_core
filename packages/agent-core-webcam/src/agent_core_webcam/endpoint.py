@@ -179,6 +179,7 @@ class WebcamEndpoint:
                 ),
                 audit_error="endpoint disabled",
                 camera_index=camera_index,
+                resolution=_to_tuple(resolution) if resolution is not None else None,
                 save=save,
                 note=note,
             )
@@ -207,7 +208,8 @@ class WebcamEndpoint:
                 note=note,
             )
         except CameraNotFoundError:
-            available = [c.index for c in self._backend.list_cameras()]
+            cams = await asyncio.to_thread(self._backend.list_cameras)
+            available = [c.index for c in cams]
             return await self._error(
                 user_message=(
                     f"error: no camera at index {idx} "
@@ -221,8 +223,9 @@ class WebcamEndpoint:
                 note=note,
             )
         except CameraBusyError:
+            cams = await asyncio.to_thread(self._backend.list_cameras)
             cam_name = next(
-                (c.name for c in self._backend.list_cameras() if c.index == idx),
+                (c.name for c in cams if c.index == idx),
                 f"camera {idx}",
             )
             return await self._error(

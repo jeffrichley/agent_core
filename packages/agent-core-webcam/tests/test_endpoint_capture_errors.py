@@ -125,3 +125,20 @@ async def test_success_path_returns_capture_success(tmp_path, fake_backend):
     assert isinstance(result, CaptureSuccess)
     assert result.png_bytes[:8] == b"\x89PNG\r\n\x1a\n"
     assert result.file_path is not None
+
+
+async def test_disabled_endpoint_with_resolution_records_in_audit(tmp_path, fake_backend):
+    """Kill-switch audit must record the requested resolution (not silently drop it)."""
+    ep = WebcamEndpoint(
+        name="webcam-test",
+        captures_root=tmp_path / "captures",
+        audit_log_path=tmp_path / "audit.jsonl",
+        enabled=False,
+        camera_backend=fake_backend,
+    )
+    result = await ep.capture_frame_safe(camera_index=0, resolution=(1920, 1080))
+    assert isinstance(result, CaptureError)
+    line = json.loads(ep.audit_log.path.read_text(encoding="utf-8").strip().splitlines()[-1])
+    assert line["data"]["resolution"] == [1920, 1080], (
+        f"kill-switch audit must include the requested resolution, got: {line['data']}"
+    )
