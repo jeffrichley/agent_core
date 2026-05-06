@@ -22,6 +22,7 @@ async def test_capture_returns_png_bytes_and_path_and_metadata(endpoint: WebcamE
     assert file_path.exists()
     assert file_path.read_bytes() == png_bytes
     assert meta["camera_index"] == 0
+    assert "camera_name" in meta
     assert meta["resolution"] == (1280, 720)
     assert meta["filesize"] == len(png_bytes)
     assert "timestamp" in meta

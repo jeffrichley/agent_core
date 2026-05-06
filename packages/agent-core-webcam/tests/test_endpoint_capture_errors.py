@@ -142,3 +142,19 @@ async def test_disabled_endpoint_with_resolution_records_in_audit(tmp_path, fake
     assert line["data"]["resolution"] == [1920, 1080], (
         f"kill-switch audit must include the requested resolution, got: {line['data']}"
     )
+
+
+async def test_invalid_resolution_returns_clean_error(tmp_path, fake_backend):
+    """A malformed resolution (wrong length) must produce a clean CaptureError,
+    not an unhandled ValueError."""
+    ep = WebcamEndpoint(
+        name="webcam-test",
+        captures_root=tmp_path / "captures",
+        audit_log_path=tmp_path / "audit.jsonl",
+        camera_backend=fake_backend,
+    )
+    result = await ep.capture_frame_safe(camera_index=0, resolution=[640, 480, 1])
+    assert isinstance(result, CaptureError)
+    assert "invalid resolution" in result.message.lower()
+    line = json.loads(ep.audit_log.path.read_text(encoding="utf-8").strip().splitlines()[-1])
+    assert line["data"]["error"].startswith("invalid resolution")

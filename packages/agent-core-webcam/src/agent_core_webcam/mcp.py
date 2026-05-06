@@ -48,10 +48,9 @@ def register_webcam_tools(*, mcp: "FastMCP", endpoint: "WebcamEndpoint") -> None
         note: str | None = None,
     ) -> list[Any]:
         """Capture one frame; return [ImageContent, TextContent] on success."""
-        res_tuple = tuple(resolution) if resolution else None
         result = await endpoint.capture_frame_safe(
             camera_index=camera_index,
-            resolution=res_tuple,
+            resolution=list(resolution) if resolution else None,
             save=save,
             note=note,
         )
@@ -59,12 +58,8 @@ def register_webcam_tools(*, mcp: "FastMCP", endpoint: "WebcamEndpoint") -> None
             return [TextContent(type="text", text=result.message)]
         assert isinstance(result, CaptureSuccess)
         meta = result.metadata
-        cam_name = next(
-            (c.name for c in endpoint._backend.list_cameras() if c.index == meta["camera_index"]),
-            f"camera {meta['camera_index']}",
-        )
         text = (
-            f"Captured frame from camera {meta['camera_index']} ({cam_name}) "
+            f"Captured frame from camera {meta['camera_index']} ({meta['camera_name']}) "
             f"at {meta['resolution'][0]}x{meta['resolution'][1]}.\n"
             f"Path: {meta['file_path']}\n"
             f"Timestamp: {meta['timestamp']}\n"

@@ -153,6 +153,8 @@ class WebcamEndpoint:
         async with lock:
             png_bytes = await asyncio.to_thread(self._backend.capture, idx, res)
         timestamp = datetime.now(timezone.utc).astimezone()
+        all_cams = await asyncio.to_thread(self._backend.list_cameras)
+        cam_name = next((c.name for c in all_cams if c.index == idx), f"camera {idx}")
         file_path: Path | None = None
         if save:
             file_path = self.captures_root / timestamp.strftime("%Y-%m-%d") / (
@@ -161,6 +163,7 @@ class WebcamEndpoint:
             await asyncio.to_thread(self._write_png, file_path, png_bytes)
         meta = {
             "camera_index": idx,
+            "camera_name": cam_name,
             "resolution": res,
             "timestamp": timestamp.isoformat(),
             "filesize": len(png_bytes),
@@ -208,9 +211,21 @@ class WebcamEndpoint:
                 note=note,
             )
 
-        # Resolution cap.
+        # Resolution validation + cap.
         idx = camera_index if camera_index is not None else self.default_camera_index
-        res = _to_tuple(resolution) if resolution is not None else self.default_resolution
+        try:
+            res = _to_tuple(resolution) if resolution is not None else self.default_resolution
+        except ValueError as exc:
+            return await self._error(
+                user_message=(
+                    f"error: invalid resolution: {exc}. "
+                    f"Expected [width, height] (a list of two ints)."
+                ),
+                audit_error=f"invalid resolution: {exc}",
+                camera_index=idx,
+                save=save,
+                note=note,
+            )
         if res[0] > self.max_resolution[0] or res[1] > self.max_resolution[1]:
             return await self._error(
                 user_message=(
