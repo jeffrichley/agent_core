@@ -74,11 +74,24 @@ class FakeCameraBackend:
     def with_cameras(cls, indices: list[int]) -> "FakeCameraBackend":
         return cls(available_indices=list(indices))
 
+    # Each _FluentMode below must have a matching `set[int]` field in the dataclass.
+    # Adding a new `with_X = _FluentMode("_X")` without also declaring
+    # `_X: set[int] = field(default_factory=set)` above will raise AttributeError
+    # on first use.
     with_busy = _FluentMode("_busy")
     with_missing = _FluentMode("_missing")
     with_read_timeout = _FluentMode("_timeout")
 
     def list_cameras(self) -> list[CameraInfo]:
+        """List available cameras with their status.
+
+        Cameras marked `with_missing(idx)` where idx is NOT in `available_indices`
+        are NOT enumerated — "missing" means "this index doesn't exist on the host,"
+        so the fake mirrors real OpenCV's silence about indices it cannot open.
+        Cameras marked `with_busy(idx)` where idx IS in `available_indices` DO
+        appear in the list with `available=False` — "busy" means "exists but currently
+        in use elsewhere."
+        """
         out: list[CameraInfo] = []
         for idx in self.available_indices:
             available = idx not in self._busy and idx not in self._missing
