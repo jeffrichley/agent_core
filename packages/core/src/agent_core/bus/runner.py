@@ -24,6 +24,7 @@ from agent_core.plugins.manager import (
     get_endpoint_types,
 )
 from agent_core.plugins.specs import RunnerServices
+from agent_core.mcp_audit.writer import MCPAuditWriter
 
 
 class BusBootError(Exception):
@@ -67,7 +68,28 @@ async def build_bus_from_config(path: Path) -> tuple[Bus, HTTPHost | None]:
     # constructed below can be wired to publish push summaries through it,
     # and HTTPHost can serve subscribers off the same instance.
     notify_broker = NotificationBroker()
-    services = RunnerServices(notify_broker=notify_broker)
+
+    # MCP audit (top-level `mcp_audit:` YAML block, optional).
+    audit_cfg = raw.get("mcp_audit", {}) or {}
+    audit_enabled = bool(audit_cfg.get("enabled", True))
+    mcp_audit_writer: MCPAuditWriter | None = None
+    mcp_audit_skip_tools: frozenset[str] = frozenset()
+    if audit_enabled:
+        log_root = audit_cfg.get("log_root", "~/.agent-core/bus/mcp-audit")
+        tz = audit_cfg.get("timezone", "US/Eastern")
+        mcp_audit_writer = MCPAuditWriter(log_root=log_root, timezone=tz)
+        skip_raw = audit_cfg.get("skip_tools", []) or []
+        if not isinstance(skip_raw, list):
+            raise BusBootError(
+                f"mcp_audit.skip_tools must be a list, got {type(skip_raw).__name__}"
+            )
+        mcp_audit_skip_tools = frozenset(str(s) for s in skip_raw)
+
+    services = RunnerServices(
+        notify_broker=notify_broker,
+        mcp_audit_writer=mcp_audit_writer,
+        mcp_audit_skip_tools=mcp_audit_skip_tools,
+    )
 
     # Hooks (no auth-aware filtering yet — Phase 2 will add it).
     # TODO(Phase 2): scan loaded hooks for auth-hook interface and set True.
