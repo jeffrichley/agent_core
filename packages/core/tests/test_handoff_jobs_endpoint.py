@@ -676,6 +676,80 @@ endpoints:
         await http_host.stop()
 
 
+def test_derive_idempotency_key_includes_transcript_size(tmp_path):
+    transcript_a = tmp_path / "a.jsonl"
+    transcript_a.write_text("a" * 100, encoding="utf-8")
+    transcript_b = tmp_path / "b.jsonl"
+    transcript_b.write_text("a" * 200, encoding="utf-8")
+
+    endpoint = HandoffJobsEndpoint(name="test")
+
+    req_a = HandoffJobRequest(
+        session_id="session-x",
+        event="SessionEnd",
+        agent_name="pepper",
+        vault_root=str(tmp_path),
+        handoff_path=str(tmp_path / "handoff.md"),
+        handoff_status_path=str(tmp_path / "handoff-status.json"),
+        transcript_path=str(transcript_a),
+        transcript_root=str(tmp_path),
+        requested_at=datetime.now(UTC),
+    )
+    req_b = req_a.model_copy(update={"transcript_path": str(transcript_b)})
+
+    key_a = endpoint._derive_idempotency_key(req_a)
+    key_b = endpoint._derive_idempotency_key(req_b)
+
+    assert key_a != key_b
+
+
+def test_derive_idempotency_key_stable_for_same_size(tmp_path):
+    transcript = tmp_path / "t.jsonl"
+    transcript.write_text("hello world", encoding="utf-8")
+
+    endpoint = HandoffJobsEndpoint(name="test")
+
+    req = HandoffJobRequest(
+        session_id="session-x",
+        event="SessionEnd",
+        agent_name="pepper",
+        vault_root=str(tmp_path),
+        handoff_path=str(tmp_path / "handoff.md"),
+        handoff_status_path=str(tmp_path / "handoff-status.json"),
+        transcript_path=str(transcript),
+        transcript_root=str(tmp_path),
+        requested_at=datetime.now(UTC),
+    )
+
+    key_first = endpoint._derive_idempotency_key(req)
+    key_second = endpoint._derive_idempotency_key(req)
+
+    assert key_first == key_second
+
+
+def test_derive_idempotency_key_handles_missing_transcript(tmp_path):
+    endpoint = HandoffJobsEndpoint(name="test")
+
+    req = HandoffJobRequest(
+        session_id="session-x",
+        event="SessionEnd",
+        agent_name="pepper",
+        vault_root=str(tmp_path),
+        handoff_path=str(tmp_path / "handoff.md"),
+        handoff_status_path=str(tmp_path / "handoff-status.json"),
+        transcript_path=str(tmp_path / "does-not-exist.jsonl"),
+        transcript_root=str(tmp_path),
+        requested_at=datetime.now(UTC),
+    )
+
+    # Must not raise; must produce a deterministic key
+    key_a = endpoint._derive_idempotency_key(req)
+    key_b = endpoint._derive_idempotency_key(req)
+    assert key_a == key_b
+    assert isinstance(key_a, str)
+    assert len(key_a) == 64  # sha256 hex
+
+
 def test_read_transcript_tail_returns_whole_file_when_small(tmp_path):
     f = tmp_path / "small.jsonl"
     content = '{"a":1}\n{"b":2}\n'
@@ -1187,6 +1261,190 @@ endpoints:
             assert log_file.exists(), f"per-job log not written at {log_file}"
             log_content = log_file.read_text(encoding="utf-8")
             assert "transcript too large" in log_content or "exit code 1" in log_content
+        finally:
+            await bus.stop()
+    finally:
+        await http_host.stop()
+
+
+@pytest.mark.asyncio
+async def test_post_job_dedupes_when_transcript_unchanged(tmp_path, monkeypatch):
+    vault_root = tmp_path / "vault"
+    vault_root.mkdir(parents=True, exist_ok=True)
+    transcript_root = tmp_path / "claude_projects"
+    transcript_root.mkdir(parents=True, exist_ok=True)
+    transcript_path = transcript_root / "session-dedupe.jsonl"
+    transcript_path.write_text(
+        '{"message":{"role":"user","content":"hello"}}\n', encoding="utf-8"
+    )
+    handoff_path = vault_root / "handoff.md"
+    status_path = vault_root / "handoff-status.json"
+
+    cfg = tmp_path / "agent_core.yaml"
+    cfg.write_text(
+        f"""
+bus:
+  storage_path: {tmp_path / "bus.sqlite"}
+http:
+  bind_host: 127.0.0.1
+  bind_port: 0
+endpoints:
+  - type: builtin.handoff_jobs
+    name: handoff-jobs
+    params:
+      mount: /internal/handoff-jobs
+  - type: builtin.stub
+    name: pepper
+""",
+        encoding="utf-8",
+    )
+
+    bus, http_host = await build_bus_from_config(cfg)
+    assert http_host is not None
+    await http_host.start()
+    extract_calls = 0
+    try:
+        await bus.start()
+        try:
+            endpoint = bus._endpoints_by_name["handoff-jobs"].endpoint
+
+            async def _counting_extract(self, req, transcript_text, *args, **kwargs):
+                nonlocal extract_calls
+                extract_calls += 1
+                return "# Handoff\n"
+
+            monkeypatch.setattr(type(endpoint), "_extract_handoff", _counting_extract)
+            url = f"http://127.0.0.1:{http_host.port}/internal/handoff-jobs"
+            payload = {
+                "session_id": "session-dedupe",
+                "event": "SessionEnd",
+                "agent_name": "pepper",
+                "vault_root": str(vault_root),
+                "handoff_path": str(handoff_path),
+                "handoff_status_path": str(status_path),
+                "transcript_path": str(transcript_path),
+                "transcript_root": str(transcript_root),
+                "requested_at": datetime.now(UTC).isoformat(),
+            }
+
+            async with httpx.AsyncClient(timeout=5.0) as client:
+                resp_first = await client.post(url, json=payload)
+                resp_second = await client.post(url, json=payload)
+
+            assert resp_first.status_code == 202
+            assert resp_second.status_code == 202
+            job_first = resp_first.json()["job_id"]
+            job_second = resp_second.json()["job_id"]
+            # This dedup-contract stability check would also pass with the
+            # OLD key formula (no transcript_size). It proves the rapid-dupe
+            # protection survives the #42 fix; the bug-fix proof is in
+            # test_post_job_creates_new_job_when_transcript_grows.
+            assert job_first == job_second
+
+            for _ in range(40):
+                if status_path.exists():
+                    state = json.loads(status_path.read_text(encoding="utf-8")).get("state")
+                    if state == "ready":
+                        break
+                await asyncio.sleep(0.05)
+
+            assert extract_calls == 1  # worker ran once, not twice
+        finally:
+            await bus.stop()
+    finally:
+        await http_host.stop()
+
+
+@pytest.mark.asyncio
+async def test_post_job_creates_new_job_when_transcript_grows(tmp_path, monkeypatch):
+    vault_root = tmp_path / "vault"
+    vault_root.mkdir(parents=True, exist_ok=True)
+    transcript_root = tmp_path / "claude_projects"
+    transcript_root.mkdir(parents=True, exist_ok=True)
+    transcript_path = transcript_root / "session-grow.jsonl"
+    transcript_path.write_text(
+        '{"message":{"role":"user","content":"first"}}\n', encoding="utf-8"
+    )
+    handoff_path = vault_root / "handoff.md"
+    status_path = vault_root / "handoff-status.json"
+
+    cfg = tmp_path / "agent_core.yaml"
+    cfg.write_text(
+        f"""
+bus:
+  storage_path: {tmp_path / "bus.sqlite"}
+http:
+  bind_host: 127.0.0.1
+  bind_port: 0
+endpoints:
+  - type: builtin.handoff_jobs
+    name: handoff-jobs
+    params:
+      mount: /internal/handoff-jobs
+  - type: builtin.stub
+    name: pepper
+""",
+        encoding="utf-8",
+    )
+
+    bus, http_host = await build_bus_from_config(cfg)
+    assert http_host is not None
+    await http_host.start()
+    extract_calls = 0
+    try:
+        await bus.start()
+        try:
+            endpoint = bus._endpoints_by_name["handoff-jobs"].endpoint
+
+            async def _counting_extract(self, req, transcript_text, *args, **kwargs):
+                nonlocal extract_calls
+                extract_calls += 1
+                return "# Handoff\n"
+
+            monkeypatch.setattr(type(endpoint), "_extract_handoff", _counting_extract)
+            url = f"http://127.0.0.1:{http_host.port}/internal/handoff-jobs"
+            payload = {
+                "session_id": "session-grow",
+                "event": "SessionEnd",
+                "agent_name": "pepper",
+                "vault_root": str(vault_root),
+                "handoff_path": str(handoff_path),
+                "handoff_status_path": str(status_path),
+                "transcript_path": str(transcript_path),
+                "transcript_root": str(transcript_root),
+                "requested_at": datetime.now(UTC).isoformat(),
+            }
+
+            async with httpx.AsyncClient(timeout=5.0) as client:
+                resp_first = await client.post(url, json=payload)
+
+            # wait for first job to complete so its status becomes ready
+            for _ in range(40):
+                if status_path.exists():
+                    state = json.loads(status_path.read_text(encoding="utf-8")).get("state")
+                    if state == "ready":
+                        break
+                await asyncio.sleep(0.05)
+
+            # simulate conversation activity by appending to the transcript
+            with transcript_path.open("a", encoding="utf-8") as fh:
+                fh.write('{"message":{"role":"assistant","content":"second"}}\n')
+
+            async with httpx.AsyncClient(timeout=5.0) as client:
+                resp_second = await client.post(url, json=payload)
+
+            assert resp_first.status_code == 202
+            assert resp_second.status_code == 202
+            job_first = resp_first.json()["job_id"]
+            job_second = resp_second.json()["job_id"]
+            assert job_first != job_second  # transcript grew = new job
+
+            for _ in range(40):
+                if extract_calls >= 2:
+                    break
+                await asyncio.sleep(0.05)
+
+            assert extract_calls == 2, f"expected 2 extract calls, got {extract_calls}"
         finally:
             await bus.stop()
     finally:

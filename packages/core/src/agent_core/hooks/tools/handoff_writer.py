@@ -63,7 +63,6 @@ class HandoffWriter:
             "handoff_status_path": str(status_path),
             "transcript_path": transcript_path_str,
             "requested_at": datetime.now(UTC).isoformat(),
-            "idempotency_key": f"{session_id}:{event}:{output_path}",
             "context": {},
         }
         if mailbox_param is not None:
