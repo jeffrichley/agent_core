@@ -40,6 +40,59 @@ def _default_transcript_root() -> str:
     return str(Path.home() / ".claude" / "projects")
 
 
+def _read_transcript_tail(
+    transcript_path: Path,
+    *,
+    max_bytes: int = 256 * 1024,
+    max_messages: int = 200,
+) -> str:
+    """Return the tail of a jsonl transcript, line-aligned and capped both ways.
+
+    For files at or below ``max_bytes`` returns the full file. For larger
+    files seeks ``max_bytes`` from the end, drops the first (potentially
+    partial) line, and additionally caps to the last ``max_messages`` lines
+    if the byte tail still exceeds that count.
+    """
+    if not transcript_path.exists():
+        raise FileNotFoundError(f"transcript does not exist: {transcript_path}")
+
+    file_size = transcript_path.stat().st_size
+    if file_size == 0:
+        return ""
+
+    if file_size <= max_bytes:
+        text = transcript_path.read_text(encoding="utf-8")
+    else:
+        with transcript_path.open("rb") as fh:
+            fh.seek(file_size - max_bytes)
+            tail_bytes = fh.read()
+        # Drop the partial first line (always — even if the seek happened to
+        # land on a newline, the next byte starts a new line cleanly).
+        nl_index = tail_bytes.find(b"\n")
+        if nl_index >= 0:
+            tail_bytes = tail_bytes[nl_index + 1:]
+        text = tail_bytes.decode("utf-8", errors="replace")
+
+    # Normalize line endings to \n (handles Windows CRLF line endings).
+    text = text.replace("\r\n", "\n")
+
+    # Cap by message count (line count) if needed.
+    lines = text.split("\n")
+    # ``split`` produces a trailing empty string when text ends with newline;
+    # treat empty trailing entry as a sentinel rather than a message.
+    has_trailing_newline = text.endswith("\n")
+    if has_trailing_newline:
+        lines = lines[:-1]
+
+    if len(lines) > max_messages:
+        lines = lines[-max_messages:]
+
+    result = "\n".join(lines)
+    if has_trailing_newline and result:
+        result += "\n"
+    return result
+
+
 class HandoffJobRequest(BaseModel):
     session_id: str = Field(min_length=1)
     event: Literal["SessionEnd", "PreCompact"]

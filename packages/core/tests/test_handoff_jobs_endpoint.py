@@ -674,3 +674,75 @@ endpoints:
     finally:
         await http_host.stop()
 
+
+import json as _json  # alias to avoid shadowing the existing top-level `json`
+
+from agent_core.endpoints.handoff_jobs import _read_transcript_tail
+
+
+def test_read_transcript_tail_returns_whole_file_when_small(tmp_path):
+    f = tmp_path / "small.jsonl"
+    content = '{"a":1}\n{"b":2}\n'
+    f.write_text(content, encoding="utf-8")
+
+    result = _read_transcript_tail(f, max_bytes=1024, max_messages=100)
+    assert result == content
+
+
+def test_read_transcript_tail_caps_by_bytes_aligned_to_newline(tmp_path):
+    f = tmp_path / "big.jsonl"
+    lines = [f'{{"i":{i},"data":"{"x" * 80}"}}' for i in range(100)]
+    content = "\n".join(lines) + "\n"
+    f.write_text(content, encoding="utf-8")
+    assert len(content.encode("utf-8")) > 1024
+
+    result = _read_transcript_tail(f, max_bytes=1024, max_messages=10000)
+
+    assert len(result.encode("utf-8")) <= 1024
+    first_line = result.split("\n", 1)[0]
+    parsed = _json.loads(first_line)
+    assert "i" in parsed
+    assert result.endswith("\n")
+
+
+def test_read_transcript_tail_caps_by_message_count(tmp_path):
+    f = tmp_path / "many.jsonl"
+    lines = [f'{{"i":{i}}}' for i in range(50)]
+    content = "\n".join(lines) + "\n"
+    f.write_text(content, encoding="utf-8")
+
+    result = _read_transcript_tail(f, max_bytes=10**9, max_messages=10)
+    result_lines = [ln for ln in result.split("\n") if ln]
+    assert len(result_lines) == 10
+    assert _json.loads(result_lines[0]) == {"i": 40}
+    assert _json.loads(result_lines[-1]) == {"i": 49}
+
+
+def test_read_transcript_tail_drops_partial_first_line_after_byte_seek(tmp_path):
+    f = tmp_path / "big.jsonl"
+    lines = [f'{{"line":{i},"x":"{"a" * 100}"}}' for i in range(20)]
+    content = "\n".join(lines) + "\n"
+    f.write_text(content, encoding="utf-8")
+
+    result = _read_transcript_tail(f, max_bytes=250, max_messages=10000)
+
+    for line in result.split("\n"):
+        if line:
+            _json.loads(line)  # raises ValueError on partial JSON
+
+
+def test_read_transcript_tail_handles_empty_file(tmp_path):
+    f = tmp_path / "empty.jsonl"
+    f.write_text("", encoding="utf-8")
+    result = _read_transcript_tail(f, max_bytes=1024, max_messages=100)
+    assert result == ""
+
+
+def test_read_transcript_tail_handles_file_with_no_trailing_newline(tmp_path):
+    f = tmp_path / "no_trail.jsonl"
+    content = '{"a":1}\n{"b":2}'
+    f.write_text(content, encoding="utf-8")
+    result = _read_transcript_tail(f, max_bytes=1024, max_messages=100)
+    assert '{"a":1}' in result
+    assert '{"b":2}' in result
+
