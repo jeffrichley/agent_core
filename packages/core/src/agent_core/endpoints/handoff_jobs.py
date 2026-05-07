@@ -71,7 +71,7 @@ def _read_transcript_tail(
         nl_index = tail_bytes.find(b"\n")
         if nl_index >= 0:
             tail_bytes = tail_bytes[nl_index + 1:]
-        text = tail_bytes.decode("utf-8", errors="replace")
+        text = tail_bytes.decode("utf-8")
 
     # Normalize line endings to \n (handles Windows CRLF line endings).
     text = text.replace("\r\n", "\n")

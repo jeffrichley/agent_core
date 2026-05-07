@@ -9,7 +9,11 @@ import pytest
 
 from agent_core.bus.envelope import EventPayload
 from agent_core.bus.runner import build_bus_from_config
-from agent_core.endpoints.handoff_jobs import HandoffJobRequest, HandoffJobsEndpoint
+from agent_core.endpoints.handoff_jobs import (
+    HandoffJobRequest,
+    HandoffJobsEndpoint,
+    _read_transcript_tail,
+)
 
 
 @pytest.mark.asyncio
@@ -675,11 +679,6 @@ endpoints:
         await http_host.stop()
 
 
-import json as _json  # alias to avoid shadowing the existing top-level `json`
-
-from agent_core.endpoints.handoff_jobs import _read_transcript_tail
-
-
 def test_read_transcript_tail_returns_whole_file_when_small(tmp_path):
     f = tmp_path / "small.jsonl"
     content = '{"a":1}\n{"b":2}\n'
@@ -700,7 +699,7 @@ def test_read_transcript_tail_caps_by_bytes_aligned_to_newline(tmp_path):
 
     assert len(result.encode("utf-8")) <= 1024
     first_line = result.split("\n", 1)[0]
-    parsed = _json.loads(first_line)
+    parsed = json.loads(first_line)
     assert "i" in parsed
     assert result.endswith("\n")
 
@@ -714,8 +713,8 @@ def test_read_transcript_tail_caps_by_message_count(tmp_path):
     result = _read_transcript_tail(f, max_bytes=10**9, max_messages=10)
     result_lines = [ln for ln in result.split("\n") if ln]
     assert len(result_lines) == 10
-    assert _json.loads(result_lines[0]) == {"i": 40}
-    assert _json.loads(result_lines[-1]) == {"i": 49}
+    assert json.loads(result_lines[0]) == {"i": 40}
+    assert json.loads(result_lines[-1]) == {"i": 49}
 
 
 def test_read_transcript_tail_drops_partial_first_line_after_byte_seek(tmp_path):
@@ -728,7 +727,7 @@ def test_read_transcript_tail_drops_partial_first_line_after_byte_seek(tmp_path)
 
     for line in result.split("\n"):
         if line:
-            _json.loads(line)  # raises ValueError on partial JSON
+            json.loads(line)  # raises ValueError on partial JSON
 
 
 def test_read_transcript_tail_handles_empty_file(tmp_path):
