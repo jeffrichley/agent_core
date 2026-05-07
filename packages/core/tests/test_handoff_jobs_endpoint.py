@@ -827,3 +827,47 @@ endpoints:
     finally:
         await http_host.stop()
 
+
+def test_summarize_stderr_returns_full_text_when_short():
+    text = "first line\nlast line"
+    result = HandoffJobsEndpoint._summarize_stderr(text, max_chars=500)
+    assert "first line" in result
+    assert "last line" in result
+
+
+def test_summarize_stderr_truncates_with_ellipsis_when_long():
+    long_middle = "middle\n" * 1000
+    text = f"first line\n{long_middle}last line"
+    result = HandoffJobsEndpoint._summarize_stderr(text, max_chars=80)
+    assert len(result) <= 80
+    assert "first line" in result
+    assert "last line" in result
+    assert "..." in result
+
+
+def test_summarize_stderr_skips_empty_lines():
+    text = "\n\nfirst real line\n\n\nlast real line\n\n"
+    result = HandoffJobsEndpoint._summarize_stderr(text, max_chars=500)
+    assert "first real line" in result
+    assert "last real line" in result
+
+
+def test_summarize_stderr_handles_empty_input():
+    result = HandoffJobsEndpoint._summarize_stderr("", max_chars=500)
+    assert result == ""
+
+
+def test_capture_subprocess_stderr_extracts_from_chained_exception():
+    inner = RuntimeError("subprocess died: file too large")
+    outer = RuntimeError("Command failed with exit code 1")
+    outer.__cause__ = inner
+    result = HandoffJobsEndpoint._capture_subprocess_stderr(outer)
+    assert "file too large" in result or "subprocess died" in result
+
+
+def test_capture_subprocess_stderr_falls_back_to_repr_when_no_chain():
+    exc = ValueError("nothing structured here")
+    result = HandoffJobsEndpoint._capture_subprocess_stderr(exc)
+    assert result
+    assert "nothing structured here" in result
+

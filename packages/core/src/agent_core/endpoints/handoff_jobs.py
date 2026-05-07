@@ -417,6 +417,55 @@ Transcript:
 
     # ---- Status + filesystem helpers ----
     @staticmethod
+    def _summarize_stderr(text: str, *, max_chars: int = 500) -> str:
+        """Return a short summary of stderr text capped at ``max_chars``.
+
+        Uses the first and last non-empty lines, joined with " ... " when the
+        full text would exceed the cap. Returns the full text untruncated when
+        it already fits.
+        """
+        if not text:
+            return ""
+        non_empty = [ln.strip() for ln in text.split("\n") if ln.strip()]
+        if not non_empty:
+            return text[:max_chars]
+        if len(text) <= max_chars:
+            return text
+        first = non_empty[0]
+        last = non_empty[-1] if len(non_empty) > 1 else ""
+        if not last or first == last:
+            return first[:max_chars]
+        sep = " ... "
+        # Reserve room for separator and last line; truncate first if needed.
+        budget = max_chars - len(sep) - len(last)
+        if budget <= 0:
+            # last line alone is too long; fall back to truncated first line
+            return first[:max_chars]
+        return f"{first[:budget]}{sep}{last}"
+
+    @staticmethod
+    def _capture_subprocess_stderr(exc: BaseException) -> str:
+        """Best-effort extraction of subprocess stderr from an exception.
+
+        Walks the ``__cause__`` chain looking for messages that mention stderr
+        or subprocess exit. Falls back to ``repr(exc)`` when nothing structured
+        is found.
+        """
+        parts: list[str] = []
+        seen: set[int] = set()
+        current: BaseException | None = exc
+        while current is not None and id(current) not in seen:
+            seen.add(id(current))
+            msg = str(current)
+            if msg:
+                parts.append(msg)
+            current = current.__cause__ or current.__context__
+
+        if parts:
+            return "\n".join(parts)
+        return repr(exc)
+
+    @staticmethod
     def _resolve_under_root(
         path_value: str, root: Path, *, root_label: str = "vault_root"
     ) -> Path:
