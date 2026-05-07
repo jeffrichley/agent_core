@@ -676,6 +676,80 @@ endpoints:
         await http_host.stop()
 
 
+def test_derive_idempotency_key_includes_transcript_size(tmp_path):
+    transcript_a = tmp_path / "a.jsonl"
+    transcript_a.write_text("a" * 100, encoding="utf-8")
+    transcript_b = tmp_path / "b.jsonl"
+    transcript_b.write_text("a" * 200, encoding="utf-8")
+
+    endpoint = HandoffJobsEndpoint(name="test")
+
+    req_a = HandoffJobRequest(
+        session_id="session-x",
+        event="SessionEnd",
+        agent_name="pepper",
+        vault_root=str(tmp_path),
+        handoff_path=str(tmp_path / "handoff.md"),
+        handoff_status_path=str(tmp_path / "handoff-status.json"),
+        transcript_path=str(transcript_a),
+        transcript_root=str(tmp_path),
+        requested_at=datetime.now(UTC),
+    )
+    req_b = req_a.model_copy(update={"transcript_path": str(transcript_b)})
+
+    key_a = endpoint._derive_idempotency_key(req_a)
+    key_b = endpoint._derive_idempotency_key(req_b)
+
+    assert key_a != key_b
+
+
+def test_derive_idempotency_key_stable_for_same_size(tmp_path):
+    transcript = tmp_path / "t.jsonl"
+    transcript.write_text("hello world", encoding="utf-8")
+
+    endpoint = HandoffJobsEndpoint(name="test")
+
+    req = HandoffJobRequest(
+        session_id="session-x",
+        event="SessionEnd",
+        agent_name="pepper",
+        vault_root=str(tmp_path),
+        handoff_path=str(tmp_path / "handoff.md"),
+        handoff_status_path=str(tmp_path / "handoff-status.json"),
+        transcript_path=str(transcript),
+        transcript_root=str(tmp_path),
+        requested_at=datetime.now(UTC),
+    )
+
+    key_first = endpoint._derive_idempotency_key(req)
+    key_second = endpoint._derive_idempotency_key(req)
+
+    assert key_first == key_second
+
+
+def test_derive_idempotency_key_handles_missing_transcript(tmp_path):
+    endpoint = HandoffJobsEndpoint(name="test")
+
+    req = HandoffJobRequest(
+        session_id="session-x",
+        event="SessionEnd",
+        agent_name="pepper",
+        vault_root=str(tmp_path),
+        handoff_path=str(tmp_path / "handoff.md"),
+        handoff_status_path=str(tmp_path / "handoff-status.json"),
+        transcript_path=str(tmp_path / "does-not-exist.jsonl"),
+        transcript_root=str(tmp_path),
+        requested_at=datetime.now(UTC),
+    )
+
+    # Must not raise; must produce a deterministic key
+    key_a = endpoint._derive_idempotency_key(req)
+    key_b = endpoint._derive_idempotency_key(req)
+    assert key_a == key_b
+    assert isinstance(key_a, str)
+    assert len(key_a) == 64  # sha256 hex
+
+
 def test_read_transcript_tail_returns_whole_file_when_small(tmp_path):
     f = tmp_path / "small.jsonl"
     content = '{"a":1}\n{"b":2}\n'

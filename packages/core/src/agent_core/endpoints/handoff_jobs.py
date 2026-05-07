@@ -503,9 +503,21 @@ Transcript:
             raise ValueError(f"path escapes {root_label}: {path_value}") from exc
         return p
 
-    @staticmethod
-    def _derive_idempotency_key(req: HandoffJobRequest) -> str:
-        raw = f"{req.session_id}|{req.event}|{req.handoff_path}"
+    def _derive_idempotency_key(self, req: HandoffJobRequest) -> str:
+        """Derive a content-varying idempotency key.
+
+        Includes ``transcript_size`` so real session activity produces a
+        fresh key (the original ``--continue`` collision bug, #42). For
+        files that no longer exist at intake time, falls back to size=-1 —
+        the worker will fail loudly with FileNotFoundError downstream,
+        which is the correct loud-failure behavior.
+        """
+        transcript_path = Path(req.transcript_path).expanduser()
+        try:
+            size = transcript_path.stat().st_size
+        except OSError:
+            size = -1
+        raw = f"{req.session_id}|{req.event}|{req.handoff_path}|{size}"
         return hashlib.sha256(raw.encode("utf-8")).hexdigest()
 
     @staticmethod
