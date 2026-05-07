@@ -9,7 +9,6 @@ from agent_core_webcam.endpoint import (
     WebcamEndpoint,
 )
 from agent_core_webcam.fake import FakeCameraBackend
-from agent_core_webcam.protocol import CameraBackend
 
 
 async def test_list_returns_enumeration(tmp_path):

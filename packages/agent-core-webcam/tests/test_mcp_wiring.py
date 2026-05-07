@@ -16,7 +16,6 @@ from agent_core.bus.notify_broker import NotificationBroker
 from agent_core.endpoints.claude_code_mcp import ClaudeCodeMCPEndpoint
 from agent_core.plugins.specs import RunnerServices
 
-
 _EXPECTED = {"capture_webcam_frame", "list_cameras"}
 
 

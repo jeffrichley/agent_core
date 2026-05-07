@@ -3,7 +3,6 @@ from __future__ import annotations
 
 import json
 import struct
-from pathlib import Path
 
 from agent_core_webcam.endpoint import WebcamEndpoint
 

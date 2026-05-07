@@ -42,9 +42,9 @@ def reserved_endpoint_params() -> list[str]:
 
 @hookimpl
 def wire_endpoints_after_registration(
-    endpoints: dict[str, "Endpoint"],
+    endpoints: dict[str, Endpoint],
     raw_endpoint_configs: dict[str, dict[str, Any]],
-    services: "RunnerServices",
+    services: RunnerServices,
 ) -> None:
     """Mount webcam tools on every MCP endpoint that names a webcam endpoint."""
     del services  # unused — kept for hookspec parity

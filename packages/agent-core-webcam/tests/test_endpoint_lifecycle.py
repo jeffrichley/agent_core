@@ -1,10 +1,9 @@
 """WebcamEndpoint lifecycle tests — construction, defaults, start/stop, deliver no-op."""
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 
-import pytest
 from agent_core_webcam.endpoint import WebcamEndpoint
 from agent_core_webcam.fake import FakeCameraBackend
 
@@ -88,7 +87,7 @@ async def test_deliver_is_a_noop_and_acks(endpoint: WebcamEndpoint):
         to="webcam-test",
         kind="Event",
         payload=EventPayload(type="Stray", data={}),
-        created_at=datetime(2026, 1, 1, tzinfo=timezone.utc),
+        created_at=datetime(2026, 1, 1, tzinfo=UTC),
     )
     await endpoint.deliver(env)
     assert handle.acked == ["env-1"], "deliver must ack so the bus doesn't redeliver"
