@@ -71,6 +71,10 @@ def _read_transcript_tail(
         nl_index = tail_bytes.find(b"\n")
         if nl_index >= 0:
             tail_bytes = tail_bytes[nl_index + 1:]
+        # Strict decode is correct after the nl_index+1 skip: bytes start at a
+        # clean line boundary (0x0a is single-byte ASCII, never a UTF-8
+        # continuation byte). Invalid UTF-8 propagates as UnicodeDecodeError →
+        # _write_failed (correct loud-failure behavior, not silent corruption).
         text = tail_bytes.decode("utf-8")
 
     # Normalize line endings to \n (handles Windows CRLF line endings).

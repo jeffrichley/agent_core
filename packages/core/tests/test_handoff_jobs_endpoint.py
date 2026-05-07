@@ -1101,8 +1101,8 @@ endpoints:
             status = json.loads(status_path.read_text(encoding="utf-8"))
             assert status["state"] == "failed"
             err = status["error"]
-            # Status error must be bounded — allow generous slack for outer wrapping.
-            assert len(err) <= 700
+            # Bound: len("summarizer failed: ") + max_chars(500) = 519. Allow 1 char of slack.
+            assert len(err) <= 520
         finally:
             await bus.stop()
     finally:
