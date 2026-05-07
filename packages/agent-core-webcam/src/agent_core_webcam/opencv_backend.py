@@ -80,11 +80,15 @@ class OpenCVCameraBackend:
                 # commonly means another process holds the video pin
                 # exclusively (Zoom, browser camera, etc.).
                 raise CameraBusyError(f"camera {index} opened but read failed")
-            # cv2.imencode expects BGR input (matching cv2's in-memory convention)
-            # and writes RGB-ordered PNG bytes — i.e. it handles the channel swap
-            # itself. Do NOT pre-convert to RGB; that produces a doubly-swapped
-            # PNG with R and B reversed. Verified empirically 2026-05-06.
-            ok2, buf = cv2.imencode(".png", frame)
+            # Empirical: with this camera (MSMF backend) + this OpenCV build,
+            # passing the raw frame to imencode produces a PNG whose R and B
+            # channels are swapped on disk. Pre-converting BGR→RGB before encode
+            # gives correct colors. Verified 2026-05-06 with side-by-side variants.
+            # (Synthetic numpy-literal tests of imencode disagree with this — they
+            # behave as if imencode swaps internally — but the real camera path
+            # needs the explicit conversion. Trust the displayed image, not docs.)
+            rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+            ok2, buf = cv2.imencode(".png", rgb)
             if not ok2:
                 raise WebcamError(f"camera {index} returned a frame but PNG encode failed")
             return bytes(buf.tobytes())
