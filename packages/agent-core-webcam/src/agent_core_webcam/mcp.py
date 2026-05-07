@@ -28,7 +28,7 @@ if TYPE_CHECKING:
     from agent_core_webcam.endpoint import WebcamEndpoint
 
 
-def register_webcam_tools(*, mcp: "FastMCP", endpoint: "WebcamEndpoint") -> None:
+def register_webcam_tools(*, mcp: FastMCP, endpoint: WebcamEndpoint) -> None:
     """Register the two webcam tools on a FastMCP server."""
 
     @mcp.tool(

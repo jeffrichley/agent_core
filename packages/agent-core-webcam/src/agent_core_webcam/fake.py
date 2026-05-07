@@ -41,7 +41,7 @@ class _FluentMode:
 
         if obj is None:
             # Called on the class: FakeCameraBackend.with_busy(0)
-            def class_call(index: int) -> "FakeCameraBackend":
+            def class_call(index: int) -> FakeCameraBackend:
                 inst = FakeCameraBackend()
                 getattr(inst, attr).add(index)
                 return inst
@@ -49,7 +49,7 @@ class _FluentMode:
             return class_call
         else:
             # Called on an instance: fake.with_busy(0)
-            def instance_call(index: int) -> "FakeCameraBackend":
+            def instance_call(index: int) -> FakeCameraBackend:
                 getattr(obj, attr).add(index)
                 return obj
 
@@ -71,7 +71,7 @@ class FakeCameraBackend:
     _timeout: set[int] = field(default_factory=set)
 
     @classmethod
-    def with_cameras(cls, indices: list[int]) -> "FakeCameraBackend":
+    def with_cameras(cls, indices: list[int]) -> FakeCameraBackend:
         return cls(available_indices=list(indices))
 
     # Each _FluentMode below must have a matching `set[int]` field in the dataclass.
