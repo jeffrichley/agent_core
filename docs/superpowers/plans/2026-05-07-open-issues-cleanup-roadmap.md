@@ -401,7 +401,7 @@ Each phase's status is tracked here. Update as work lands.
 | Phase | Status | Started | Completed | Notes |
 |---|---|---|---|---|
 | 0 — Quick wins | ⬜ Not started | — | — | |
-| 1 — Reliability bugs | ⬜ Not started | — | — | |
+| 1 — Reliability bugs | ✅ Done | 2026-05-07 | 2026-05-07 | #44 (PR #46) + #42 (PR #47) merged + validated on Pepper. #43 superseded. #45 was a measurement artifact (hook fires correctly). |
 | 2 — Observability | ⬜ Not started | — | — | |
 | 3 — UX | ⬜ Not started | — | — | |
 | 4 — Bus reliability | ⬜ Not started | — | — | |
