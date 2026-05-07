@@ -257,7 +257,9 @@ class HandoffJobsEndpoint:
                     max_bytes=self._transcript_tail_max_bytes,
                     max_messages=self._transcript_tail_max_messages,
                 )
-                handoff_content = await self._extract_handoff(req, transcript_text)
+                handoff_content = await self._extract_handoff(
+                    req, transcript_text, job.job_id,
+                )
                 normalized_handoff = handoff_content.rstrip() + "\n"
                 self._atomic_write(handoff_path, normalized_handoff)
                 sha = hashlib.sha256(normalized_handoff.encode("utf-8")).hexdigest()
@@ -300,9 +302,13 @@ class HandoffJobsEndpoint:
             error=error_text,
         )
 
-    async def _extract_handoff(self, req: HandoffJobRequest, transcript_text: str) -> str:
+    async def _extract_handoff(
+        self, req: HandoffJobRequest, transcript_text: str, job_id: str
+    ) -> str:
         try:
-            response_text = await self._call_agent_sdk(req=req, transcript_text=transcript_text)
+            response_text = await self._call_agent_sdk(
+                req=req, transcript_text=transcript_text, job_id=job_id,
+            )
             if response_text.strip():
                 return response_text
             raise RuntimeError("empty handoff extraction")
@@ -316,7 +322,34 @@ class HandoffJobsEndpoint:
                 f"Extraction fallback used: {exc}"
             )
 
-    async def _call_agent_sdk(self, *, req: HandoffJobRequest, transcript_text: str) -> str:
+    async def _call_agent_sdk(
+        self, *, req: HandoffJobRequest, transcript_text: str, job_id: str
+    ) -> str:
+        """Run the SDK summarizer; capture stderr to per-job log on failure."""
+        try:
+            return await self._run_sdk_query(req=req, transcript_text=transcript_text)
+        except Exception as exc:
+            stderr_text = self._capture_subprocess_stderr(exc)
+            job_log_path = self._jobs_log_dir / f"{job_id}.log"
+            try:
+                job_log_path.parent.mkdir(parents=True, exist_ok=True)
+                job_log_path.write_text(stderr_text, encoding="utf-8")
+            except OSError:
+                log.exception(
+                    "failed to write per-job log for handoff job %s at %s",
+                    job_id, job_log_path,
+                )
+            log.error(
+                "handoff job %s SDK call failed; full stderr at %s: %s",
+                job_id, job_log_path, str(exc)[:500],
+            )
+            summary = self._summarize_stderr(stderr_text, max_chars=500)
+            raise RuntimeError(f"summarizer failed: {summary}") from exc
+
+    async def _run_sdk_query(
+        self, *, req: HandoffJobRequest, transcript_text: str
+    ) -> str:
+        """Inner SDK invocation. Tests monkeypatch this; the outer wrapper still runs."""
         from claude_agent_sdk import (
             AssistantMessage,
             ClaudeAgentOptions,
