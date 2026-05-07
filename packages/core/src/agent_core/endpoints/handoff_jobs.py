@@ -305,22 +305,12 @@ class HandoffJobsEndpoint:
     async def _extract_handoff(
         self, req: HandoffJobRequest, transcript_text: str, job_id: str
     ) -> str:
-        try:
-            response_text = await self._call_agent_sdk(
-                req=req, transcript_text=transcript_text, job_id=job_id,
-            )
-            if response_text.strip():
-                return response_text
-            raise RuntimeError("empty handoff extraction")
-        except Exception as exc:
-            generated_at = datetime.now(UTC).isoformat()
-            return (
-                f"# Handoff ({req.agent_name})\n\n"
-                f"- session_id: {req.session_id}\n"
-                f"- event: {req.event}\n"
-                f"- generated_at: {generated_at}\n\n"
-                f"Extraction fallback used: {exc}"
-            )
+        response_text = await self._call_agent_sdk(
+            req=req, transcript_text=transcript_text, job_id=job_id,
+        )
+        if response_text.strip():
+            return response_text
+        raise RuntimeError("empty handoff extraction")
 
     async def _call_agent_sdk(
         self, *, req: HandoffJobRequest, transcript_text: str, job_id: str

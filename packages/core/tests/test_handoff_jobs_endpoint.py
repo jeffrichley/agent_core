@@ -552,10 +552,10 @@ async def test_extract_handoff_success_uses_model_output(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_extract_handoff_fallback_on_exception(monkeypatch):
+async def test_extract_handoff_propagates_exception_on_sdk_failure(monkeypatch):
     endpoint = HandoffJobsEndpoint(name="handoff-jobs")
     req = HandoffJobRequest(
-        session_id="session-fallback",
+        session_id="session-propagate",
         event="PreCompact",
         agent_name="pepper",
         vault_root="/vault",
@@ -570,11 +570,8 @@ async def test_extract_handoff_fallback_on_exception(monkeypatch):
 
     monkeypatch.setattr(HandoffJobsEndpoint, "_call_agent_sdk", _raise)
 
-    fallback = await endpoint._extract_handoff(req, "transcript text", "test-job-id")
-    assert fallback.startswith("# Handoff (pepper)")
-    assert "- session_id: session-fallback" in fallback
-    assert "- event: PreCompact" in fallback
-    assert "Extraction fallback used: sdk boom" in fallback
+    with pytest.raises(RuntimeError, match="sdk boom"):
+        await endpoint._extract_handoff(req, "transcript text", "test-job-id")
 
 
 @pytest.mark.asyncio
@@ -870,6 +867,246 @@ def test_capture_subprocess_stderr_falls_back_to_repr_when_no_chain():
     result = HandoffJobsEndpoint._capture_subprocess_stderr(exc)
     assert result
     assert "nothing structured here" in result
+
+
+@pytest.mark.asyncio
+async def test_handoff_worker_marks_failed_when_sdk_raises(tmp_path, monkeypatch):
+    vault_root = tmp_path / "vault"
+    vault_root.mkdir(parents=True, exist_ok=True)
+    transcript_root = tmp_path / "claude_projects"
+    transcript_root.mkdir(parents=True, exist_ok=True)
+    transcript_path = transcript_root / "session-marked.jsonl"
+    transcript_path.write_text('{"message":{"role":"user","content":"hi"}}\n', encoding="utf-8")
+    handoff_path = vault_root / "handoff.md"
+    status_path = vault_root / "handoff-status.json"
+
+    cfg = tmp_path / "agent_core.yaml"
+    cfg.write_text(
+        f"""
+bus:
+  storage_path: {tmp_path / "bus.sqlite"}
+http:
+  bind_host: 127.0.0.1
+  bind_port: 0
+endpoints:
+  - type: builtin.handoff_jobs
+    name: handoff-jobs
+    params:
+      mount: /internal/handoff-jobs
+      retry_backoff_seconds: 0.0
+      jobs_log_dir: {tmp_path / "jobs_logs"}
+  - type: builtin.stub
+    name: pepper
+""",
+        encoding="utf-8",
+    )
+
+    bus, http_host = await build_bus_from_config(cfg)
+    assert http_host is not None
+    await http_host.start()
+    try:
+        await bus.start()
+        try:
+            endpoint = bus._endpoints_by_name["handoff-jobs"].endpoint
+
+            async def _always_fail(self, *, req, transcript_text):
+                raise RuntimeError("subprocess stderr: kaboom")
+
+            monkeypatch.setattr(type(endpoint), "_run_sdk_query", _always_fail)
+
+            url = f"http://127.0.0.1:{http_host.port}/internal/handoff-jobs"
+            payload = {
+                "session_id": "session-marked",
+                "event": "SessionEnd",
+                "agent_name": "pepper",
+                "vault_root": str(vault_root),
+                "handoff_path": str(handoff_path),
+                "handoff_status_path": str(status_path),
+                "transcript_path": str(transcript_path),
+                "transcript_root": str(transcript_root),
+                "requested_at": datetime.now(UTC).isoformat(),
+            }
+
+            async with httpx.AsyncClient(timeout=5.0) as client:
+                resp = await client.post(url, json=payload)
+            assert resp.status_code == 202
+
+            for _ in range(60):
+                if status_path.exists():
+                    state = json.loads(status_path.read_text(encoding="utf-8")).get("state")
+                    if state in ("ready", "failed"):
+                        break
+                await asyncio.sleep(0.05)
+
+            status = json.loads(status_path.read_text(encoding="utf-8"))
+            assert status["state"] == "failed"
+            assert status.get("error")
+            assert "kaboom" in status["error"] or "summarizer failed" in status["error"]
+        finally:
+            await bus.stop()
+    finally:
+        await http_host.stop()
+
+
+@pytest.mark.asyncio
+async def test_handoff_worker_does_not_overwrite_handoff_md_when_failed(tmp_path, monkeypatch):
+    vault_root = tmp_path / "vault"
+    vault_root.mkdir(parents=True, exist_ok=True)
+    transcript_root = tmp_path / "claude_projects"
+    transcript_root.mkdir(parents=True, exist_ok=True)
+    transcript_path = transcript_root / "session-preserve.jsonl"
+    transcript_path.write_text('{"message":{"role":"user","content":"hi"}}\n', encoding="utf-8")
+    handoff_path = vault_root / "handoff.md"
+    status_path = vault_root / "handoff-status.json"
+
+    pre_existing = "# Last good handoff\n\n- session: prior\n- decision: keep this content\n"
+    handoff_path.write_text(pre_existing, encoding="utf-8")
+
+    cfg = tmp_path / "agent_core.yaml"
+    cfg.write_text(
+        f"""
+bus:
+  storage_path: {tmp_path / "bus.sqlite"}
+http:
+  bind_host: 127.0.0.1
+  bind_port: 0
+endpoints:
+  - type: builtin.handoff_jobs
+    name: handoff-jobs
+    params:
+      mount: /internal/handoff-jobs
+      retry_backoff_seconds: 0.0
+      jobs_log_dir: {tmp_path / "jobs_logs"}
+  - type: builtin.stub
+    name: pepper
+""",
+        encoding="utf-8",
+    )
+
+    bus, http_host = await build_bus_from_config(cfg)
+    assert http_host is not None
+    await http_host.start()
+    try:
+        await bus.start()
+        try:
+            endpoint = bus._endpoints_by_name["handoff-jobs"].endpoint
+
+            async def _always_fail(self, *, req, transcript_text):
+                raise RuntimeError("subprocess stderr: kaboom")
+
+            monkeypatch.setattr(type(endpoint), "_run_sdk_query", _always_fail)
+
+            url = f"http://127.0.0.1:{http_host.port}/internal/handoff-jobs"
+            payload = {
+                "session_id": "session-preserve",
+                "event": "SessionEnd",
+                "agent_name": "pepper",
+                "vault_root": str(vault_root),
+                "handoff_path": str(handoff_path),
+                "handoff_status_path": str(status_path),
+                "transcript_path": str(transcript_path),
+                "transcript_root": str(transcript_root),
+                "requested_at": datetime.now(UTC).isoformat(),
+            }
+
+            async with httpx.AsyncClient(timeout=5.0) as client:
+                resp = await client.post(url, json=payload)
+            assert resp.status_code == 202
+
+            for _ in range(60):
+                if status_path.exists():
+                    state = json.loads(status_path.read_text(encoding="utf-8")).get("state")
+                    if state in ("ready", "failed"):
+                        break
+                await asyncio.sleep(0.05)
+
+            assert handoff_path.read_text(encoding="utf-8") == pre_existing
+        finally:
+            await bus.stop()
+    finally:
+        await http_host.stop()
+
+
+@pytest.mark.asyncio
+async def test_handoff_worker_truncates_stderr_in_status_error_field(tmp_path, monkeypatch):
+    vault_root = tmp_path / "vault"
+    vault_root.mkdir(parents=True, exist_ok=True)
+    transcript_root = tmp_path / "claude_projects"
+    transcript_root.mkdir(parents=True, exist_ok=True)
+    transcript_path = transcript_root / "session-trunc.jsonl"
+    transcript_path.write_text('{"message":{"role":"user","content":"hi"}}\n', encoding="utf-8")
+    handoff_path = vault_root / "handoff.md"
+    status_path = vault_root / "handoff-status.json"
+
+    cfg = tmp_path / "agent_core.yaml"
+    cfg.write_text(
+        f"""
+bus:
+  storage_path: {tmp_path / "bus.sqlite"}
+http:
+  bind_host: 127.0.0.1
+  bind_port: 0
+endpoints:
+  - type: builtin.handoff_jobs
+    name: handoff-jobs
+    params:
+      mount: /internal/handoff-jobs
+      retry_backoff_seconds: 0.0
+      jobs_log_dir: {tmp_path / "jobs_logs"}
+  - type: builtin.stub
+    name: pepper
+""",
+        encoding="utf-8",
+    )
+
+    bus, http_host = await build_bus_from_config(cfg)
+    assert http_host is not None
+    await http_host.start()
+    try:
+        await bus.start()
+        try:
+            endpoint = bus._endpoints_by_name["handoff-jobs"].endpoint
+
+            huge_msg = "first line of error\n" + ("noise " * 5000) + "\nlast line of error"
+
+            async def _huge_fail(self, *, req, transcript_text):
+                raise RuntimeError(huge_msg)
+
+            monkeypatch.setattr(type(endpoint), "_run_sdk_query", _huge_fail)
+
+            url = f"http://127.0.0.1:{http_host.port}/internal/handoff-jobs"
+            payload = {
+                "session_id": "session-trunc",
+                "event": "SessionEnd",
+                "agent_name": "pepper",
+                "vault_root": str(vault_root),
+                "handoff_path": str(handoff_path),
+                "handoff_status_path": str(status_path),
+                "transcript_path": str(transcript_path),
+                "transcript_root": str(transcript_root),
+                "requested_at": datetime.now(UTC).isoformat(),
+            }
+
+            async with httpx.AsyncClient(timeout=5.0) as client:
+                resp = await client.post(url, json=payload)
+            assert resp.status_code == 202
+
+            for _ in range(60):
+                if status_path.exists():
+                    state = json.loads(status_path.read_text(encoding="utf-8")).get("state")
+                    if state in ("ready", "failed"):
+                        break
+                await asyncio.sleep(0.05)
+
+            status = json.loads(status_path.read_text(encoding="utf-8"))
+            assert status["state"] == "failed"
+            err = status["error"]
+            # Status error must be bounded — allow generous slack for outer wrapping.
+            assert len(err) <= 700
+        finally:
+            await bus.stop()
+    finally:
+        await http_host.stop()
 
 
 @pytest.mark.asyncio
