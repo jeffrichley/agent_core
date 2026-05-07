@@ -16,6 +16,7 @@ from agent_core.bus.core import Bus, BusConfig, BusHookSpec, EndpointSpec
 from agent_core.bus.http_host import HTTPHost, MCPHostable
 from agent_core.bus.notify_broker import NotificationBroker
 from agent_core.bus.protocol import BusHook, Endpoint
+from agent_core.mcp_audit.writer import MCPAuditWriter
 from agent_core.plugins.manager import (
     apply_endpoint_wiring,
     collect_reserved_endpoint_params,
@@ -24,7 +25,6 @@ from agent_core.plugins.manager import (
     get_endpoint_types,
 )
 from agent_core.plugins.specs import RunnerServices
-from agent_core.mcp_audit.writer import MCPAuditWriter
 
 
 class BusBootError(Exception):

@@ -65,3 +65,14 @@ async def test_runner_uses_configured_log_root_and_timezone(tmp_path: Path):
     # No endpoints in this config means no writer activation, but the
     # build itself must accept the block. Behavioral verification of
     # log_root/timezone/skip_tools lives in the integration test.
+
+
+@pytest.mark.asyncio
+async def test_runner_raises_bus_boot_error_when_skip_tools_is_not_a_list(tmp_path: Path):
+    yaml_body = _BASE_YAML.format(storage=(tmp_path / "bus.sqlite").as_posix()) + (
+        'mcp_audit:\n  skip_tools: "list_pending"\n'
+    )
+    cfg = _write_yaml(tmp_path / "config.yaml", yaml_body)
+    from agent_core.bus.runner import BusBootError
+    with pytest.raises(BusBootError, match="skip_tools must be a list"):
+        await build_bus_from_config(cfg)
