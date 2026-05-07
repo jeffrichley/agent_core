@@ -44,6 +44,7 @@ from agent_core.bus_log.writer import default_log_root
 
 if TYPE_CHECKING:
     from agent_core.bus.handle import BusHandle
+    from agent_core.mcp_audit.writer import MCPAuditWriter
 
 log = logging.getLogger(__name__)
 _META_KEY_RE = re.compile(r"^[A-Za-z0-9_]+$")
@@ -216,6 +217,27 @@ class ClaudeCodeMCPEndpoint:
     def attach_notify_broker(self, broker: NotificationBroker) -> None:
         """Optional runner hook: attach broker after endpoint construction."""
         self._notify_broker = broker
+
+    def attach_audit_writer(
+        self,
+        writer: MCPAuditWriter,
+        skip_tools: frozenset[str],
+    ) -> None:
+        """Optional runner hook: install the audit middleware on this MCP server.
+
+        Called once during ``configure_endpoint_instance``. Idempotent in
+        practice because the runner only calls it when the runner has a
+        writer to give and only does so once per endpoint instance.
+        """
+        from agent_core.mcp_audit.middleware import MCPAuditMiddleware
+
+        self._mcp.add_middleware(
+            MCPAuditMiddleware(
+                endpoint_name=self.name,
+                writer=writer,
+                skip_tools=skip_tools,
+            )
+        )
 
     async def _show_my_day_impl(
         self,

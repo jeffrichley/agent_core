@@ -14,6 +14,7 @@ if TYPE_CHECKING:
     from agent_core.bus.notify_broker import NotificationBroker
     from agent_core.bus.protocol import BusHook, Endpoint
     from agent_core.hooks.protocol import HookTool
+    from agent_core.mcp_audit.writer import MCPAuditWriter
 
 
 @dataclass(frozen=True)
@@ -21,6 +22,8 @@ class RunnerServices:
     """Shared runtime services a plugin may use during wiring."""
 
     notify_broker: NotificationBroker
+    mcp_audit_writer: MCPAuditWriter | None = None
+    mcp_audit_skip_tools: frozenset[str] = frozenset()
 
 
 class AgentCoreSpecs:
