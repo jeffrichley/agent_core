@@ -80,10 +80,11 @@ class OpenCVCameraBackend:
                 # commonly means another process holds the video pin
                 # exclusively (Zoom, browser camera, etc.).
                 raise CameraBusyError(f"camera {index} opened but read failed")
-            # cv2 frames are BGR; convert to RGB so the PNG decodes correctly in
-            # vision models and standard PNG viewers.
-            rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-            ok2, buf = cv2.imencode(".png", rgb)
+            # cv2.imencode expects BGR input (matching cv2's in-memory convention)
+            # and writes RGB-ordered PNG bytes — i.e. it handles the channel swap
+            # itself. Do NOT pre-convert to RGB; that produces a doubly-swapped
+            # PNG with R and B reversed. Verified empirically 2026-05-06.
+            ok2, buf = cv2.imencode(".png", frame)
             if not ok2:
                 raise WebcamError(f"camera {index} returned a frame but PNG encode failed")
             return bytes(buf.tobytes())
