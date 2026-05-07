@@ -52,7 +52,7 @@ endpoints:
         await bus.start()
         try:
             endpoint = bus._endpoints_by_name["handoff-jobs"].endpoint
-            async def _fake_extract(self, req, transcript_text):
+            async def _fake_extract(self, req, transcript_text, job_id):
                 return "# Handoff\n"
 
             # Must restore after the test — ``setattr`` on the class leaks across the

@@ -40,6 +40,63 @@ def _default_transcript_root() -> str:
     return str(Path.home() / ".claude" / "projects")
 
 
+def _read_transcript_tail(
+    transcript_path: Path,
+    *,
+    max_bytes: int = 256 * 1024,
+    max_messages: int = 200,
+) -> str:
+    """Return the tail of a jsonl transcript, line-aligned and capped both ways.
+
+    For files at or below ``max_bytes`` returns the full file. For larger
+    files seeks ``max_bytes`` from the end, drops the first (potentially
+    partial) line, and additionally caps to the last ``max_messages`` lines
+    if the byte tail still exceeds that count.
+    """
+    if not transcript_path.exists():
+        raise FileNotFoundError(f"transcript does not exist: {transcript_path}")
+
+    file_size = transcript_path.stat().st_size
+    if file_size == 0:
+        return ""
+
+    if file_size <= max_bytes:
+        text = transcript_path.read_text(encoding="utf-8")
+    else:
+        with transcript_path.open("rb") as fh:
+            fh.seek(file_size - max_bytes)
+            tail_bytes = fh.read()
+        # Drop the partial first line (always — even if the seek happened to
+        # land on a newline, the next byte starts a new line cleanly).
+        nl_index = tail_bytes.find(b"\n")
+        if nl_index >= 0:
+            tail_bytes = tail_bytes[nl_index + 1:]
+        # Strict decode is correct after the nl_index+1 skip: bytes start at a
+        # clean line boundary (0x0a is single-byte ASCII, never a UTF-8
+        # continuation byte). Invalid UTF-8 propagates as UnicodeDecodeError →
+        # _write_failed (correct loud-failure behavior, not silent corruption).
+        text = tail_bytes.decode("utf-8")
+
+    # Normalize line endings to \n (handles Windows CRLF line endings).
+    text = text.replace("\r\n", "\n")
+
+    # Cap by message count (line count) if needed.
+    lines = text.split("\n")
+    # ``split`` produces a trailing empty string when text ends with newline;
+    # treat empty trailing entry as a sentinel rather than a message.
+    has_trailing_newline = text.endswith("\n")
+    if has_trailing_newline:
+        lines = lines[:-1]
+
+    if len(lines) > max_messages:
+        lines = lines[-max_messages:]
+
+    result = "\n".join(lines)
+    if has_trailing_newline and result:
+        result += "\n"
+    return result
+
+
 class HandoffJobRequest(BaseModel):
     session_id: str = Field(min_length=1)
     event: Literal["SessionEnd", "PreCompact"]
@@ -81,11 +138,20 @@ class HandoffJobsEndpoint:
         mount: str = "/internal/handoff-jobs",
         max_attempts: int = 3,
         retry_backoff_seconds: float = 0.25,
+        transcript_tail_max_bytes: int = 256 * 1024,
+        transcript_tail_max_messages: int = 200,
+        jobs_log_dir: str | Path | None = None,
     ):
         self.name = name
         self.mount = mount
         self._max_attempts = max(1, max_attempts)
         self._retry_backoff_seconds = max(0.0, retry_backoff_seconds)
+        self._transcript_tail_max_bytes = max(1, transcript_tail_max_bytes)
+        self._transcript_tail_max_messages = max(1, transcript_tail_max_messages)
+        if jobs_log_dir is not None:
+            self._jobs_log_dir = Path(jobs_log_dir).expanduser()
+        else:
+            self._jobs_log_dir = Path("~/.agent-core/handoffs/jobs").expanduser()
         self._handle: BusHandle | None = None
         self._jobs: asyncio.Queue[_QueuedJob] = asyncio.Queue()
         self._worker_task: asyncio.Task[None] | None = None
@@ -190,8 +256,14 @@ class HandoffJobsEndpoint:
         last_error: Exception | None = None
         for attempt in range(1, self._max_attempts + 1):
             try:
-                transcript_text = self._read_transcript_text(transcript_path)
-                handoff_content = await self._extract_handoff(req, transcript_text)
+                transcript_text = _read_transcript_tail(
+                    transcript_path,
+                    max_bytes=self._transcript_tail_max_bytes,
+                    max_messages=self._transcript_tail_max_messages,
+                )
+                handoff_content = await self._extract_handoff(
+                    req, transcript_text, job.job_id,
+                )
                 normalized_handoff = handoff_content.rstrip() + "\n"
                 self._atomic_write(handoff_path, normalized_handoff)
                 sha = hashlib.sha256(normalized_handoff.encode("utf-8")).hexdigest()
@@ -234,29 +306,44 @@ class HandoffJobsEndpoint:
             error=error_text,
         )
 
-    @staticmethod
-    def _read_transcript_text(transcript_path: Path) -> str:
-        if not transcript_path.exists():
-            raise FileNotFoundError(f"transcript does not exist: {transcript_path}")
-        return transcript_path.read_text(encoding="utf-8")
+    async def _extract_handoff(
+        self, req: HandoffJobRequest, transcript_text: str, job_id: str
+    ) -> str:
+        response_text = await self._call_agent_sdk(
+            req=req, transcript_text=transcript_text, job_id=job_id,
+        )
+        if response_text.strip():
+            return response_text
+        raise RuntimeError("empty handoff extraction")
 
-    async def _extract_handoff(self, req: HandoffJobRequest, transcript_text: str) -> str:
+    async def _call_agent_sdk(
+        self, *, req: HandoffJobRequest, transcript_text: str, job_id: str
+    ) -> str:
+        """Run the SDK summarizer; capture stderr to per-job log on failure."""
         try:
-            response_text = await self._call_agent_sdk(req=req, transcript_text=transcript_text)
-            if response_text.strip():
-                return response_text
-            raise RuntimeError("empty handoff extraction")
+            return await self._run_sdk_query(req=req, transcript_text=transcript_text)
         except Exception as exc:
-            generated_at = datetime.now(UTC).isoformat()
-            return (
-                f"# Handoff ({req.agent_name})\n\n"
-                f"- session_id: {req.session_id}\n"
-                f"- event: {req.event}\n"
-                f"- generated_at: {generated_at}\n\n"
-                f"Extraction fallback used: {exc}"
+            stderr_text = self._capture_subprocess_stderr(exc)
+            job_log_path = self._jobs_log_dir / f"{job_id}.log"
+            try:
+                job_log_path.parent.mkdir(parents=True, exist_ok=True)
+                job_log_path.write_text(stderr_text, encoding="utf-8")
+            except OSError:
+                log.exception(
+                    "failed to write per-job log for handoff job %s at %s",
+                    job_id, job_log_path,
+                )
+            log.error(
+                "handoff job %s SDK call failed; full stderr at %s: %s",
+                job_id, job_log_path, str(exc)[:500],
             )
+            summary = self._summarize_stderr(stderr_text, max_chars=500)
+            raise RuntimeError(f"summarizer failed: {summary}") from exc
 
-    async def _call_agent_sdk(self, *, req: HandoffJobRequest, transcript_text: str) -> str:
+    async def _run_sdk_query(
+        self, *, req: HandoffJobRequest, transcript_text: str
+    ) -> str:
+        """Inner SDK invocation. Tests monkeypatch this; the outer wrapper still runs."""
         from claude_agent_sdk import (
             AssistantMessage,
             ClaudeAgentOptions,
@@ -356,6 +443,55 @@ Transcript:
         await self._handle.publish(env)
 
     # ---- Status + filesystem helpers ----
+    @staticmethod
+    def _summarize_stderr(text: str, *, max_chars: int = 500) -> str:
+        """Return a short summary of stderr text capped at ``max_chars``.
+
+        Uses the first and last non-empty lines, joined with " ... " when the
+        full text would exceed the cap. Returns the full text untruncated when
+        it already fits.
+        """
+        if not text:
+            return ""
+        non_empty = [ln.strip() for ln in text.split("\n") if ln.strip()]
+        if not non_empty:
+            return text[:max_chars]
+        if len(text) <= max_chars:
+            return text
+        first = non_empty[0]
+        last = non_empty[-1] if len(non_empty) > 1 else ""
+        if not last or first == last:
+            return first[:max_chars]
+        sep = " ... "
+        # Reserve room for separator and last line; truncate first if needed.
+        budget = max_chars - len(sep) - len(last)
+        if budget <= 0:
+            # last line alone is too long; fall back to truncated first line
+            return first[:max_chars]
+        return f"{first[:budget]}{sep}{last}"
+
+    @staticmethod
+    def _capture_subprocess_stderr(exc: BaseException) -> str:
+        """Best-effort extraction of subprocess stderr from an exception.
+
+        Walks the ``__cause__`` chain looking for messages that mention stderr
+        or subprocess exit. Falls back to ``repr(exc)`` when nothing structured
+        is found.
+        """
+        parts: list[str] = []
+        seen: set[int] = set()
+        current: BaseException | None = exc
+        while current is not None and id(current) not in seen:
+            seen.add(id(current))
+            msg = str(current)
+            if msg:
+                parts.append(msg)
+            current = current.__cause__ or current.__context__
+
+        if parts:
+            return "\n".join(parts)
+        return repr(exc)
+
     @staticmethod
     def _resolve_under_root(
         path_value: str, root: Path, *, root_label: str = "vault_root"
