@@ -134,11 +134,21 @@ class HandoffJobsEndpoint:
         mount: str = "/internal/handoff-jobs",
         max_attempts: int = 3,
         retry_backoff_seconds: float = 0.25,
+        transcript_tail_max_bytes: int = 256 * 1024,
+        transcript_tail_max_messages: int = 200,
+        jobs_log_dir: Path | None = None,
     ):
         self.name = name
         self.mount = mount
         self._max_attempts = max(1, max_attempts)
         self._retry_backoff_seconds = max(0.0, retry_backoff_seconds)
+        self._transcript_tail_max_bytes = max(1, transcript_tail_max_bytes)
+        self._transcript_tail_max_messages = max(1, transcript_tail_max_messages)
+        self._jobs_log_dir = (
+            jobs_log_dir
+            if jobs_log_dir is not None
+            else Path("~/.agent-core/handoffs/jobs").expanduser()
+        )
         self._handle: BusHandle | None = None
         self._jobs: asyncio.Queue[_QueuedJob] = asyncio.Queue()
         self._worker_task: asyncio.Task[None] | None = None
@@ -243,7 +253,11 @@ class HandoffJobsEndpoint:
         last_error: Exception | None = None
         for attempt in range(1, self._max_attempts + 1):
             try:
-                transcript_text = self._read_transcript_text(transcript_path)
+                transcript_text = _read_transcript_tail(
+                    transcript_path,
+                    max_bytes=self._transcript_tail_max_bytes,
+                    max_messages=self._transcript_tail_max_messages,
+                )
                 handoff_content = await self._extract_handoff(req, transcript_text)
                 normalized_handoff = handoff_content.rstrip() + "\n"
                 self._atomic_write(handoff_path, normalized_handoff)
@@ -286,12 +300,6 @@ class HandoffJobsEndpoint:
             handoff_status_path=status_path,
             error=error_text,
         )
-
-    @staticmethod
-    def _read_transcript_text(transcript_path: Path) -> str:
-        if not transcript_path.exists():
-            raise FileNotFoundError(f"transcript does not exist: {transcript_path}")
-        return transcript_path.read_text(encoding="utf-8")
 
     async def _extract_handoff(self, req: HandoffJobRequest, transcript_text: str) -> str:
         try:

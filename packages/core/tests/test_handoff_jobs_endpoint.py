@@ -745,3 +745,85 @@ def test_read_transcript_tail_handles_file_with_no_trailing_newline(tmp_path):
     assert '{"a":1}' in result
     assert '{"b":2}' in result
 
+
+@pytest.mark.asyncio
+async def test_handoff_worker_uses_tail_for_oversized_transcripts(tmp_path, monkeypatch):
+    vault_root = tmp_path / "vault"
+    vault_root.mkdir(parents=True, exist_ok=True)
+    transcript_root = tmp_path / "claude_projects"
+    transcript_root.mkdir(parents=True, exist_ok=True)
+    transcript_path = transcript_root / "session-tail.jsonl"
+
+    # Build a transcript larger than the tail bound so we can see truncation.
+    lines = [f'{{"i":{i},"data":"{"x" * 200}"}}\n' for i in range(2000)]
+    transcript_path.write_text("".join(lines), encoding="utf-8")
+
+    handoff_path = vault_root / "handoff.md"
+    status_path = vault_root / "handoff-status.json"
+
+    cfg = tmp_path / "agent_core.yaml"
+    cfg.write_text(
+        f"""
+bus:
+  storage_path: {tmp_path / "bus.sqlite"}
+http:
+  bind_host: 127.0.0.1
+  bind_port: 0
+endpoints:
+  - type: builtin.handoff_jobs
+    name: handoff-jobs
+    params:
+      mount: /internal/handoff-jobs
+      transcript_tail_max_bytes: 4096
+      transcript_tail_max_messages: 50
+  - type: builtin.stub
+    name: pepper
+""",
+        encoding="utf-8",
+    )
+
+    bus, http_host = await build_bus_from_config(cfg)
+    assert http_host is not None
+    await http_host.start()
+    received_lengths: list[int] = []
+    try:
+        await bus.start()
+        try:
+            endpoint = bus._endpoints_by_name["handoff-jobs"].endpoint
+
+            async def _capture_extract(self, req, transcript_text, *args, **kwargs):
+                received_lengths.append(len(transcript_text.encode("utf-8")))
+                return "# Handoff\n"
+
+            monkeypatch.setattr(type(endpoint), "_extract_handoff", _capture_extract)
+            url = f"http://127.0.0.1:{http_host.port}/internal/handoff-jobs"
+            payload = {
+                "session_id": "session-tail",
+                "event": "SessionEnd",
+                "agent_name": "pepper",
+                "vault_root": str(vault_root),
+                "handoff_path": str(handoff_path),
+                "handoff_status_path": str(status_path),
+                "transcript_path": str(transcript_path),
+                "transcript_root": str(transcript_root),
+                "requested_at": datetime.now(UTC).isoformat(),
+            }
+
+            async with httpx.AsyncClient(timeout=5.0) as client:
+                resp = await client.post(url, json=payload)
+            assert resp.status_code == 202
+
+            for _ in range(40):
+                if status_path.exists():
+                    state = json.loads(status_path.read_text(encoding="utf-8")).get("state")
+                    if state == "ready":
+                        break
+                await asyncio.sleep(0.05)
+
+            assert received_lengths, "_extract_handoff was not called"
+            assert received_lengths[0] <= 4096
+        finally:
+            await bus.stop()
+    finally:
+        await http_host.stop()
+
