@@ -102,3 +102,21 @@ class TestHandoffWriter:
         )
         assert result.heading == "Handoff Job Enqueue Failed"
         assert "Cannot reach handoff daemon endpoint" in result.content
+
+    @patch("agent_core.hooks.tools.handoff_writer.urllib.request.urlopen")
+    def test_does_not_send_idempotency_key(self, mock_urlopen, tmp_path: Path):
+        mock_urlopen.return_value = _FakeResponse({"job_id": "job-x", "status": "accepted"})
+        transcript = tmp_path / "transcript.jsonl"
+        transcript.write_text("{}", encoding="utf-8")
+        output = tmp_path / "handoff.md"
+
+        tool = HandoffWriter()
+        tool.execute(
+            event="SessionEnd",
+            hook_input={"transcript_path": str(transcript), "session_id": "session-1"},
+            params={"output_path": str(output)},
+        )
+
+        req = mock_urlopen.call_args.args[0]
+        payload = json.loads(req.data.decode("utf-8"))
+        assert "idempotency_key" not in payload
