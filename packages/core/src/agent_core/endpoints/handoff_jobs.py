@@ -136,7 +136,7 @@ class HandoffJobsEndpoint:
         retry_backoff_seconds: float = 0.25,
         transcript_tail_max_bytes: int = 256 * 1024,
         transcript_tail_max_messages: int = 200,
-        jobs_log_dir: Path | None = None,
+        jobs_log_dir: str | Path | None = None,
     ):
         self.name = name
         self.mount = mount
@@ -144,11 +144,10 @@ class HandoffJobsEndpoint:
         self._retry_backoff_seconds = max(0.0, retry_backoff_seconds)
         self._transcript_tail_max_bytes = max(1, transcript_tail_max_bytes)
         self._transcript_tail_max_messages = max(1, transcript_tail_max_messages)
-        self._jobs_log_dir = (
-            jobs_log_dir
-            if jobs_log_dir is not None
-            else Path("~/.agent-core/handoffs/jobs").expanduser()
-        )
+        if jobs_log_dir is not None:
+            self._jobs_log_dir = Path(jobs_log_dir).expanduser()
+        else:
+            self._jobs_log_dir = Path("~/.agent-core/handoffs/jobs").expanduser()
         self._handle: BusHandle | None = None
         self._jobs: asyncio.Queue[_QueuedJob] = asyncio.Queue()
         self._worker_task: asyncio.Task[None] | None = None
