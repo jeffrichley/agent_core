@@ -48,9 +48,7 @@ class MCPAuditMiddleware(Middleware):
     ) -> None:
         self._endpoint_name = endpoint_name
         self._writer = writer
-        self._skip_tools: frozenset[str] = (
-            frozenset(skip_tools) if skip_tools else frozenset()
-        )
+        self._skip_tools: frozenset[str] = frozenset(skip_tools) if skip_tools else frozenset()
 
     async def on_call_tool(
         self,
@@ -71,7 +69,14 @@ class MCPAuditMiddleware(Middleware):
             return await call_next(context)
         except Exception as exc:
             result_status = "error"
-            error = {"type": type(exc).__name__, "message": str(exc)}
+            # FastMCP wraps non-FastMCP tool exceptions into ``ToolError`` at
+            # the server layer (``raise ToolError(...) from e``), which means
+            # by the time the middleware sees the exception the original
+            # type is on ``__cause__``. The spec wants the *underlying*
+            # exception type recorded (e.g. ``CameraBusyError``), not the
+            # transport wrapper.
+            origin = exc.__cause__ if exc.__cause__ is not None else exc
+            error = {"type": type(origin).__name__, "message": str(origin)}
             raise
         finally:
             duration_ms = int((perf_counter() - start) * 1000)
