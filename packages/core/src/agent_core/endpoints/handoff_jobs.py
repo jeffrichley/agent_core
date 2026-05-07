@@ -213,6 +213,8 @@ class HandoffJobsEndpoint:
         except ValueError as exc:
             return JSONResponse({"error": str(exc)}, status_code=403)
 
+        # Explicit key from direct-API callers wins; hook-driven traffic
+        # leaves the field None and always falls through to derive.
         idem = job_req.idempotency_key or self._derive_idempotency_key(job_req)
         if idem in self._idempotency_index:
             return JSONResponse(
@@ -513,6 +515,9 @@ Transcript:
         which is the correct loud-failure behavior.
         """
         transcript_path = Path(req.transcript_path).expanduser()
+        # No .resolve() needed: stat() follows symlinks transparently, and
+        # _post_job's _resolve_under_root already rejected paths escaping
+        # transcript_root before this method is called.
         try:
             size = transcript_path.stat().st_size
         except OSError:

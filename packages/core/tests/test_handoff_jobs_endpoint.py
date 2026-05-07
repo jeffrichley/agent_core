@@ -1335,7 +1335,11 @@ endpoints:
             assert resp_second.status_code == 202
             job_first = resp_first.json()["job_id"]
             job_second = resp_second.json()["job_id"]
-            assert job_first == job_second  # dedup: identical state = same job
+            # This dedup-contract stability check would also pass with the
+            # OLD key formula (no transcript_size). It proves the rapid-dupe
+            # protection survives the #42 fix; the bug-fix proof is in
+            # test_post_job_creates_new_job_when_transcript_grows.
+            assert job_first == job_second
 
             for _ in range(40):
                 if status_path.exists():
@@ -1440,7 +1444,7 @@ endpoints:
                     break
                 await asyncio.sleep(0.05)
 
-            assert extract_calls == 2  # worker ran twice
+            assert extract_calls == 2, f"expected 2 extract calls, got {extract_calls}"
         finally:
             await bus.stop()
     finally:
