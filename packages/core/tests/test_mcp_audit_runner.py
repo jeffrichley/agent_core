@@ -76,3 +76,14 @@ async def test_runner_raises_bus_boot_error_when_skip_tools_is_not_a_list(tmp_pa
     from agent_core.bus.runner import BusBootError
     with pytest.raises(BusBootError, match="skip_tools must be a list"):
         await build_bus_from_config(cfg)
+
+
+@pytest.mark.asyncio
+async def test_runner_raises_bus_boot_error_when_timezone_is_invalid(tmp_path: Path):
+    yaml_body = _BASE_YAML.format(storage=(tmp_path / "bus.sqlite").as_posix()) + (
+        'mcp_audit:\n  timezone: "US/Estern"\n'
+    )
+    cfg = _write_yaml(tmp_path / "config.yaml", yaml_body)
+    from agent_core.bus.runner import BusBootError
+    with pytest.raises(BusBootError, match="timezone is invalid"):
+        await build_bus_from_config(cfg)

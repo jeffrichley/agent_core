@@ -9,6 +9,7 @@ from __future__ import annotations
 
 from pathlib import Path
 from typing import Any
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 import yaml
 
@@ -77,6 +78,12 @@ async def build_bus_from_config(path: Path) -> tuple[Bus, HTTPHost | None]:
     if audit_enabled:
         log_root = audit_cfg.get("log_root", "~/.agent-core/bus/mcp-audit")
         tz = audit_cfg.get("timezone", "US/Eastern")
+        try:
+            ZoneInfo(tz)
+        except ZoneInfoNotFoundError as exc:
+            raise BusBootError(
+                f"mcp_audit.timezone is invalid: {tz!r}"
+            ) from exc
         mcp_audit_writer = MCPAuditWriter(log_root=log_root, timezone=tz)
         skip_raw = audit_cfg.get("skip_tools", []) or []
         if not isinstance(skip_raw, list):
