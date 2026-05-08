@@ -194,7 +194,6 @@ class ClaudeCodeMCPEndpoint:
         }
         self._debounce_task: asyncio.Task | None = None
         self._debounce_deadline: float | None = None
-        self._debounce_urgency_floor: Literal["red", "yellow", "green"] | None = None
         self._notify_broker = notify_broker
         self._recent_outbound_ids: dict[str, float] = {}
         self._missing_ack_tasks: dict[str, asyncio.Task[None]] = {}
@@ -584,7 +583,6 @@ class ClaudeCodeMCPEndpoint:
                 pass
         self._debounce_task = None
         self._debounce_deadline = None
-        self._debounce_urgency_floor = None
         log.info("ClaudeCodeMCPEndpoint(name=%s) stopped", self.name)
 
     # --- MCPHostable Protocol ---
@@ -608,24 +606,13 @@ class ClaudeCodeMCPEndpoint:
 
     # --- Internal ---
 
-    def _build_summary(
-        self, urgency_floor: Literal["red", "yellow", "green"] | None = None
-    ) -> dict:
-        """Temporary shim — Task 2 will remove this in favor of _build_wake_summary().
+    def snapshot(self) -> dict:
+        """Public wrapper used by Bus.snapshot_for_agent.
 
-        For now, return the minimal wake shape so callers (debounced wake path,
-        snapshot()) get the new contract immediately. urgency_floor is ignored
-        (the new wake carries no urgency).
+        Emits the same minimal wake shape as a regular debounced wake (see
+        issue #33) — one contract for everything wake-shaped.
         """
         return self._build_wake_summary()
-
-    def snapshot(self) -> dict:
-        """Public wrapper around _build_summary; used by Bus.snapshot_for_agent.
-
-        Returns the same dict shape as the push pipeline produces, so a
-        snapshot emitted on relay connect looks identical to a real push.
-        """
-        return self._build_summary()
 
     def _make_channel_notification(self, summary: dict) -> SessionMessage:
         """Wrap the summary into a JSON-RPC notification SessionMessage."""
@@ -656,26 +643,19 @@ class ClaudeCodeMCPEndpoint:
         return out
 
     async def _notify_mail_arrived(self, urgency: str = "green") -> None:
-        """Schedule a debounced push summarizing the current mailbox.
+        """Schedule a debounced push announcing inbox activity.
 
-        Called by `deliver()` on each arrival. Red arrivals wake promptly,
-        yellow waits briefly, and green waits long enough to collect
-        human-paced bursts. A more urgent arrival shortens a pending timer;
-        less urgent arrivals never delay an already pending urgent push.
+        Called by deliver() on each arrival. Red arrivals wake promptly,
+        yellow waits briefly, green waits long enough to collect bursts.
+        A more urgent arrival shortens a pending timer; less urgent
+        arrivals never delay an already-pending urgent push.
+
+        The wake notification itself carries no queue-state — see issue #33.
+        The urgency parameter only affects debounce timing, not wake content.
         """
         delay = self._notify_debounce_seconds_by_urgency.get(urgency, 1.0)
         loop = asyncio.get_running_loop()
         deadline = loop.time() + delay
-        incoming_urgency = cast(
-            Literal["red", "yellow", "green"],
-            urgency if urgency in self._URGENCY_RANK else "green",
-        )
-        if self._debounce_urgency_floor is None:
-            self._debounce_urgency_floor = incoming_urgency
-        elif (
-            self._URGENCY_RANK[incoming_urgency] < self._URGENCY_RANK[self._debounce_urgency_floor]
-        ):
-            self._debounce_urgency_floor = incoming_urgency
 
         if self._debounce_task is not None and not self._debounce_task.done():
             if self._debounce_deadline is not None and deadline >= self._debounce_deadline:
@@ -692,11 +672,7 @@ class ClaudeCodeMCPEndpoint:
             return
         if task is self._debounce_task:
             self._debounce_deadline = None
-            urgency_floor = self._debounce_urgency_floor
-            self._debounce_urgency_floor = None
-        else:
-            urgency_floor = None
-        summary = self._build_summary(urgency_floor=urgency_floor)
+        summary = self._build_wake_summary()
 
         # Always publish to the broker so /notify/<agent> subscribers
         # (the channel relay) wake the agent regardless of whether the

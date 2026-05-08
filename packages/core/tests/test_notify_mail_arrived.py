@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import asyncio
-import json
 from datetime import UTC, datetime
 from typing import Any
 
@@ -90,11 +89,11 @@ async def test_notify_pushes_summary_when_session_active():
     assert len(session.sent) == 1
     assert _extract_method(session.sent[0]) == "notifications/claude/channel"
     params = _extract_params(session.sent[0])
-    assert "INBOX: 1 pending" in params["content"]
-    assert params["meta"]["count"] == "1"
+    # Wake content is the fixed "go look" string — no count baked in (issue #33).
+    assert params["content"] == "INBOX: pending (a)"
     assert params["meta"]["endpoint"] == "a"
-    assert params["meta"]["urgency_max"] == "green"
-    assert json.loads(params["meta"]["urgency_counts"]) == {"red": 0, "yellow": 0, "green": 1}
+    # Wake meta is minimal: endpoint + fired_at only.
+    assert set(params["meta"].keys()) == {"endpoint", "fired_at"}
 
 
 @pytest.mark.asyncio
@@ -128,8 +127,9 @@ async def test_notify_channel_meta_values_are_strings_on_http_push_path():
     await asyncio.sleep(0.1)
 
     meta = _extract_params(session.sent[0])["meta"]
-    assert meta["count"] == "1"
-    assert meta["urgency_counts"] == '{"red": 1, "yellow": 0, "green": 0}'
+    # Channel meta is Record<string, string> — even the minimal wake fields
+    # must be coerced to strings.
+    assert meta["endpoint"] == "a"
     assert all(isinstance(v, str) for v in meta.values())
 
 
@@ -147,13 +147,17 @@ async def test_notify_debounces_burst_into_one_push():
     await ep._notify_mail_arrived("green")
     await asyncio.sleep(0.1)  # let debounce fire
 
+    # Three arrivals coalesce into a single wake push. Count is no longer in
+    # wake meta (issue #33) — coalescing is observable as len(session.sent)==1.
     assert len(session.sent) == 1
-    params = _extract_params(session.sent[0])
-    assert params["meta"]["count"] == "3"
 
 
 @pytest.mark.asyncio
-async def test_notify_summary_reports_max_urgency():
+async def test_notify_wake_fires_for_mixed_urgencies():
+    """Wake fires regardless of urgency mix — content/meta are wake-only (issue #33).
+
+    Authoritative urgency_max is now in list_pending's meta, not the wake.
+    """
     ep = ClaudeCodeMCPEndpoint(name="a", mount="/mcp/a")
     _speed_up_debounce(ep)
     session = _RecordingSession()
@@ -167,12 +171,15 @@ async def test_notify_summary_reports_max_urgency():
     await asyncio.sleep(0.1)
 
     params = _extract_params(session.sent[0])
-    assert params["meta"]["urgency_max"] == "red"
-    assert json.loads(params["meta"]["urgency_counts"]) == {"red": 1, "yellow": 1, "green": 1}
+    assert set(params["meta"].keys()) == {"endpoint", "fired_at"}
 
 
 @pytest.mark.asyncio
-async def test_notify_summary_uses_yellow_floor_for_empty_inbox_timeout_wake():
+async def test_notify_fires_on_empty_inbox_timeout_wake():
+    """Missing-ack timeout fires a wake even with empty inbox.
+
+    Wake content is the fixed string regardless of pending count (issue #33).
+    """
     ep = ClaudeCodeMCPEndpoint(name="a", mount="/mcp/a")
     _speed_up_debounce(ep)
     session = _RecordingSession()
@@ -183,30 +190,40 @@ async def test_notify_summary_uses_yellow_floor_for_empty_inbox_timeout_wake():
     await ep._notify_mail_arrived("yellow")
     await asyncio.sleep(0.1)
 
+    assert len(session.sent) == 1
     params = _extract_params(session.sent[0])
-    assert params["meta"]["count"] == "0"
-    assert params["meta"]["urgency_max"] == "yellow"
-    assert json.loads(params["meta"]["urgency_counts"]) == {"red": 0, "yellow": 0, "green": 0}
+    assert params["content"] == "INBOX: pending (a)"
+    assert set(params["meta"].keys()) == {"endpoint", "fired_at"}
 
 
 @pytest.mark.asyncio
-async def test_notify_summary_keeps_red_when_yellow_floor_and_red_pending():
+async def test_notify_yellow_wake_with_red_pending_still_fires_minimal_wake():
+    """Even if wake floor is yellow, the wake meta stays minimal.
+
+    Pre-#33 the wake carried urgency_max; now it carries only endpoint +
+    fired_at and the agent reads urgency_max from list_pending.
+    """
     ep = ClaudeCodeMCPEndpoint(name="a", mount="/mcp/a")
     _speed_up_debounce(ep)
     session = _RecordingSession()
     ep._register_session(session)
     ep._pending = [_env("r1", urgency="red")]
 
-    # Even if wake floor is yellow, red pending should remain red.
     await ep._notify_mail_arrived("yellow")
     await asyncio.sleep(0.1)
 
+    assert len(session.sent) == 1
     params = _extract_params(session.sent[0])
-    assert params["meta"]["urgency_max"] == "red"
+    assert set(params["meta"].keys()) == {"endpoint", "fired_at"}
 
 
 @pytest.mark.asyncio
-async def test_notify_summary_groups_by_sender():
+async def test_notify_wake_does_not_carry_by_sender():
+    """Sender breakdown moved to list_pending's meta (issue #33).
+
+    The wake itself must not embed by_sender — that was the race-prone
+    field. Agents read it from list_pending after waking.
+    """
     ep = ClaudeCodeMCPEndpoint(name="a", mount="/mcp/a")
     _speed_up_debounce(ep)
     session = _RecordingSession()
@@ -220,8 +237,7 @@ async def test_notify_summary_groups_by_sender():
     await asyncio.sleep(0.1)
 
     params = _extract_params(session.sent[0])
-    by_sender = {entry["from"]: entry["count"] for entry in json.loads(params["meta"]["by_sender"])}
-    assert by_sender == {"alice": 2, "bob": 1}
+    assert "by_sender" not in params["meta"]
 
 
 @pytest.mark.asyncio
@@ -262,8 +278,11 @@ async def test_red_arrival_shortens_pending_green_debounce():
     await ep._notify_mail_arrived("red")
     await asyncio.sleep(0.02)
 
+    # The red arrival shortens the debounce; observable as the wake firing
+    # within ~20ms of the red call. Wake meta is minimal (issue #33) — the
+    # agent reads urgency_max from list_pending after waking.
     assert len(session.sent) == 1
-    assert _extract_params(session.sent[0])["meta"]["urgency_max"] == "red"
+    assert set(_extract_params(session.sent[0])["meta"].keys()) == {"endpoint", "fired_at"}
 
 
 @pytest.mark.asyncio
@@ -279,8 +298,10 @@ async def test_green_arrival_does_not_delay_pending_red_debounce():
     await ep._notify_mail_arrived("green")
     await asyncio.sleep(0.02)
 
+    # Red's short debounce wins; only one wake fires within ~25ms total.
+    # Wake meta is minimal — the agent reads urgency_max from list_pending.
     assert len(session.sent) == 1
-    assert _extract_params(session.sent[0])["meta"]["urgency_max"] == "red"
+    assert set(_extract_params(session.sent[0])["meta"].keys()) == {"endpoint", "fired_at"}
 
 
 @pytest.mark.asyncio
@@ -364,10 +385,10 @@ async def test_deliver_kind_agnostic_pushes_for_handoff_ready_event_envelope():
     assert len(session.sent) == 1
     assert _extract_method(session.sent[0]) == "notifications/claude/channel"
     params = _extract_params(session.sent[0])
-    # The summary is generic — the agent then calls list_pending to see specifics.
-    assert "INBOX: 1 pending" in params["content"]
-    assert params["meta"]["count"] == "1"
-    assert params["meta"]["urgency_max"] == "green"
+    # The wake is generic (issue #33) — fixed string, minimal meta.
+    # The agent calls list_pending to see specifics (count, urgency_max, etc.).
+    assert params["content"] == "INBOX: pending (a)"
+    assert set(params["meta"].keys()) == {"endpoint", "fired_at"}
 
 
 @pytest.mark.asyncio
@@ -436,7 +457,7 @@ async def test_mixed_event_and_text_envelopes_surface_together():
 
     assert len(session.sent) == 1
     params = _extract_params(session.sent[0])
-    assert params["meta"]["count"] == "2"
-    assert params["meta"]["urgency_max"] == "yellow"
-    by_sender = {entry["from"]: entry["count"] for entry in json.loads(params["meta"]["by_sender"])}
-    assert by_sender == {"discord": 1, "handoff-jobs": 1}
+    # Wake meta is minimal (issue #33). The agent reads count, urgency_max,
+    # and by_sender from list_pending's meta after waking — it sees both the
+    # Discord TextMessage and the handoff-jobs Event there.
+    assert set(params["meta"].keys()) == {"endpoint", "fired_at"}
