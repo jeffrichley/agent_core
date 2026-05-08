@@ -13,6 +13,7 @@ from agent_core.bus.envelope import EndpointInfo, Envelope
 
 if TYPE_CHECKING:
     from agent_core.bus.core import Bus
+    from agent_core.bus.persistence import Persistence
 
 
 class BusHandle:
@@ -47,3 +48,17 @@ class BusHandle:
     def endpoints(self) -> list[EndpointInfo]:
         """Snapshot of currently-registered endpoints (name + description)."""
         return self._bus._endpoints()
+
+    def persistence(self) -> Persistence:
+        """Return the bus's persistence store.
+
+        Available after Bus.start() has run. Raises RuntimeError if called
+        before the bus's storage layer is initialized — endpoints should
+        call this from start(handle) onward, not __init__.
+
+        Exposed primarily for the read-only audit/tail surface (see
+        agent_core.bus_tail). Most endpoints should publish/ack/nack via
+        this BusHandle's other methods rather than touch persistence
+        directly.
+        """
+        return self._bus._require_store()
