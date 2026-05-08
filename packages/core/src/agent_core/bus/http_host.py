@@ -273,7 +273,7 @@ class HTTPHost:
             async def event_stream() -> AsyncIterator[bytes]:
                 try:
                     initial = snapshot(agent)
-                    if initial is not None and initial.get("meta", {}).get("count", 0) > 0:
+                    if initial is not None:
                         yield f"data: {json.dumps(initial)}\n\n".encode()
                     while True:
                         event = await queue.get()
