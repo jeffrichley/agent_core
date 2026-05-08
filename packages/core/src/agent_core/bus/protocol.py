@@ -57,6 +57,24 @@ class NotificationBrokerAwareEndpoint(Protocol):
 
 
 @runtime_checkable
+class AuditWriterAwareEndpoint(Protocol):
+    """Optional endpoint capability for MCP tool-call audit logging.
+
+    Endpoints that host an MCP server (FastMCP) can opt in to the
+    daemon-wide audit log by implementing this protocol. The runner
+    calls ``attach_audit_writer`` after construction (mirrors the
+    ``NotificationBrokerAwareEndpoint`` wiring).
+    """
+
+    def attach_audit_writer(
+        self,
+        writer: object,  # MCPAuditWriter — referenced by name to avoid an import-cycle here
+        skip_tools: frozenset[str],
+    ) -> None:
+        """Attach the daemon audit writer; register the middleware on this endpoint's MCP server."""
+
+
+@runtime_checkable
 class BusHook(Protocol):
     """A hook that runs at the pre_publish or pre_deliver pipeline stage."""
 

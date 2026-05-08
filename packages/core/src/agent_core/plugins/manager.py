@@ -8,7 +8,11 @@ from typing import TYPE_CHECKING, Any
 
 import pluggy
 
-from agent_core.bus.protocol import Endpoint, NotificationBrokerAwareEndpoint
+from agent_core.bus.protocol import (
+    AuditWriterAwareEndpoint,
+    Endpoint,
+    NotificationBrokerAwareEndpoint,
+)
 from agent_core.plugins.specs import AgentCoreSpecs, RunnerServices
 
 if TYPE_CHECKING:
@@ -29,6 +33,13 @@ class BuiltinRuntimePlugin:
     def configure_endpoint_instance(self, instance, endpoint_name, endpoint_config, services):
         if isinstance(instance, NotificationBrokerAwareEndpoint):
             instance.attach_notify_broker(services.notify_broker)
+        if (
+            isinstance(instance, AuditWriterAwareEndpoint)
+            and services.mcp_audit_writer is not None
+        ):
+            instance.attach_audit_writer(
+                services.mcp_audit_writer, services.mcp_audit_skip_tools
+            )
 
     @hookimpl
     def configure_bus_hook_instance(self, instance, stage, hook_config, services):
