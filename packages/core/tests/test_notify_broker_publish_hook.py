@@ -43,8 +43,10 @@ async def test_endpoint_publishes_to_broker_when_session_active():
     await asyncio.sleep(0.1)  # let debounce fire
 
     event = q.get_nowait()
-    assert event["meta"]["count"] == 1
+    # Wake meta is minimal (issue #33). The agent reads count from
+    # list_pending after waking.
     assert event["meta"]["endpoint"] == "agent-a"
+    assert set(event["meta"].keys()) == {"endpoint", "fired_at"}
 
 
 @pytest.mark.asyncio
@@ -66,7 +68,10 @@ async def test_endpoint_publishes_to_broker_even_when_no_session():
         await ep.deliver(_env("e1", urgency="red"))
 
     event = await asyncio.wait_for(q.get(), timeout=1.0)
-    assert event["meta"]["count"] == 1
+    # Wake meta is minimal (issue #33) — the broker fan-out carries the
+    # same minimal shape as the HTTP-push wake.
+    assert set(event["meta"].keys()) == {"endpoint", "fired_at"}
+    assert event["meta"]["endpoint"] == "agent-a"
 
 
 @pytest.mark.asyncio
@@ -93,7 +98,9 @@ async def test_deliver_publishes_to_broker_when_no_session_attached():
 
     # Wait for the red debounce window to fire (default ~50ms; bound generously).
     summary = await asyncio.wait_for(queue.get(), timeout=1.0)
-    assert summary["meta"]["count"] == 1
+    # Wake meta is minimal (issue #33). The relay's downstream consumer reads
+    # authoritative state via list_pending after the wake.
+    assert set(summary["meta"].keys()) == {"endpoint", "fired_at"}
     assert summary["meta"]["endpoint"] == "agent"
 
 

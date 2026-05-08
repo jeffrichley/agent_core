@@ -171,14 +171,16 @@ class ClaudeCodeMCPEndpoint:
             instructions=(
                 f"You are agent '{name}'. The bus pushes you notifications with method "
                 '"notifications/claude/channel" when envelopes arrive in your mailbox. '
-                'Each notification\'s params contain "content" (a brief summary) and '
-                '"meta" (count, urgency_max, urgency_counts, by_sender, endpoint, '
-                "fired_at). On receipt: call list_pending() to read the actual "
-                "envelopes (set batch_window_seconds=30 to fold human-paced bursts "
-                "from the same sender), process them, then call handle(envelope_id) "
-                "on each to ack and remove from the queue. Send replies via the "
-                "send tool. Treat the notification's content as a hint, not the "
-                "message itself — list_pending is authoritative. "
+                'Each notification\'s params contain "content" (a fixed string of the form '
+                '"INBOX: pending (<endpoint>)") and "meta" (endpoint, fired_at). The '
+                "wake is purely a 'go look' signal — it carries no queue-state. "
+                "On receipt: call list_pending() to read the actual envelopes (set "
+                "batch_window_seconds=30 to fold human-paced bursts from the same "
+                'sender). list_pending returns {"meta": {count, urgency_max, '
+                "urgency_counts, by_sender, endpoint, fetched_at}, \"items\": [...]}; "
+                "meta is the authoritative aggregate, computed atomically with items. "
+                "Process each item, then call handle(envelope_id) on each to ack and "
+                "remove from the queue. Send replies via the send tool. "
                 "Routine delivery Acknowledgments for your own recent outbounds may "
                 "be auto-cleared without a wake; you are still notified for failures, "
                 "urgent acks, other envelope kinds, and missing-ack timeouts."
@@ -194,7 +196,6 @@ class ClaudeCodeMCPEndpoint:
         }
         self._debounce_task: asyncio.Task | None = None
         self._debounce_deadline: float | None = None
-        self._debounce_urgency_floor: Literal["red", "yellow", "green"] | None = None
         self._notify_broker = notify_broker
         self._recent_outbound_ids: dict[str, float] = {}
         self._missing_ack_tasks: dict[str, asyncio.Task[None]] = {}
@@ -386,21 +387,74 @@ class ClaudeCodeMCPEndpoint:
             self._recent_outbound_ids.pop(rid, None)
             self._cancel_missing_ack(rid)
 
-    async def _call_list_pending(self, batch_window_seconds: int = 0) -> list[dict]:
+    def _compute_meta(self) -> dict:
+        """Compute aggregate metadata from the current pending queue.
+
+        Reads self._pending atomically (no awaits). Used by _call_list_pending
+        so meta and items come from the same read — eliminates the wake-vs-
+        list_pending drift that caused issue #33.
+        """
+        pending = list(self._pending)
+        count = len(pending)
+        urg_counts = Counter(e.urgency for e in pending)
+        urg_full: dict[Literal["red", "yellow", "green"], int] = {}
+        for tier in self._URGENCY_ORDER:
+            urgency_key = cast(Literal["red", "yellow", "green"], tier)
+            urg_full[urgency_key] = int(urg_counts.get(urgency_key, 0))
+        urgency_max = "green"
+        for tier in self._URGENCY_ORDER:
+            urgency_key = cast(Literal["red", "yellow", "green"], tier)
+            if urg_full[urgency_key] > 0:
+                urgency_max = tier
+                break
+        sender_index: dict[str, dict] = {}
+        for env in pending:
+            entry = sender_index.setdefault(env.from_, {"from": env.from_, "count": 0, "kinds": []})
+            entry["count"] += 1
+            if env.kind not in entry["kinds"]:
+                entry["kinds"].append(env.kind)
+        by_sender = list(sender_index.values())
+        return {
+            "count": count,
+            "urgency_max": urgency_max,
+            "urgency_counts": urg_full,
+            "by_sender": by_sender,
+            "endpoint": self.name,
+            "fetched_at": datetime.now(UTC).isoformat(),
+        }
+
+    def _build_wake_summary(self) -> dict:
+        """Minimal wake notification — pure 'go look' signal.
+
+        Carries no queue-state metadata. The agent calls list_pending for
+        authoritative count/urgency_max/by_sender, computed atomically with
+        the items list. See issue #33.
+        """
+        return {
+            "content": f"INBOX: pending ({self.name})",
+            "meta": {
+                "endpoint": self.name,
+                "fired_at": datetime.now(UTC).isoformat(),
+            },
+        }
+
+    async def _call_list_pending(self, batch_window_seconds: int = 0) -> dict:
         """Mailbox view sorted by urgency, optionally batched by sender.
 
-        When batch_window_seconds == 0: returns a flat list of envelope dicts
-        (today's behavior). When > 0: consecutive envelopes (within urgency
-        tier and same `from_`) whose created_at fall within the window collapse
-        into one {"type": "batch", ...} entry; standalone entries are wrapped
-        as {"type": "single", "envelope": {...}}.
+        Returns {"meta": {...}, "items": [...]}. meta carries count, urgency_max,
+        urgency_counts, by_sender, endpoint, fetched_at. items is the flat list
+        of envelope dicts (when batch_window_seconds == 0) or batched/single
+        entries (when > 0). meta and items are computed from the same atomic
+        read of self._pending — see issue #33.
         """
+        meta = self._compute_meta()
         sorted_pending = sorted(
             self._pending,
             key=lambda e: (self._URGENCY_RANK[e.urgency], e.created_at),
         )
         if batch_window_seconds <= 0:
-            return [self._envelope_to_dict(env) for env in sorted_pending]
+            items: list[dict] = [self._envelope_to_dict(env) for env in sorted_pending]
+            return {"meta": meta, "items": items}
 
         window = timedelta(seconds=batch_window_seconds)
         groups: list[dict] = []
@@ -438,7 +492,7 @@ class ClaudeCodeMCPEndpoint:
                     }
                 )
             i = j
-        return groups
+        return {"meta": meta, "items": groups}
 
     @staticmethod
     def _envelope_to_dict(env: Envelope) -> dict:
@@ -531,7 +585,6 @@ class ClaudeCodeMCPEndpoint:
                 pass
         self._debounce_task = None
         self._debounce_deadline = None
-        self._debounce_urgency_floor = None
         log.info("ClaudeCodeMCPEndpoint(name=%s) stopped", self.name)
 
     # --- MCPHostable Protocol ---
@@ -555,65 +608,13 @@ class ClaudeCodeMCPEndpoint:
 
     # --- Internal ---
 
-    def _build_summary(
-        self, urgency_floor: Literal["red", "yellow", "green"] | None = None
-    ) -> dict:
-        """Snapshot the current mailbox into a notification summary."""
-        pending = list(self._pending)
-        count = len(pending)
-        # urgency counts
-        urg_counts = Counter(e.urgency for e in pending)
-        urg_full: dict[Literal["red", "yellow", "green"], int] = {}
-        for tier in self._URGENCY_ORDER:
-            urgency_key = cast(Literal["red", "yellow", "green"], tier)
-            urg_full[urgency_key] = int(urg_counts.get(urgency_key, 0))
-        # urgency_max — highest tier present
-        urgency_max = "green"
-        for tier in self._URGENCY_ORDER:
-            urgency_key = cast(Literal["red", "yellow", "green"], tier)
-            if urg_full[urgency_key] > 0:
-                urgency_max = tier
-                break
-        if urgency_floor in self._URGENCY_RANK:
-            floor_rank = self._URGENCY_RANK[urgency_floor]
-            current_rank = self._URGENCY_RANK[urgency_max]
-            if floor_rank < current_rank:
-                urgency_max = urgency_floor
-        # by_sender
-        sender_index: dict[str, dict] = {}
-        for env in pending:
-            entry = sender_index.setdefault(env.from_, {"from": env.from_, "count": 0, "kinds": []})
-            entry["count"] += 1
-            if env.kind not in entry["kinds"]:
-                entry["kinds"].append(env.kind)
-        by_sender = list(sender_index.values())
-        # Headline content — terse, useful for triage.
-        if count == 0:
-            content = "INBOX: 0 pending"
-        else:
-            sender_summary = ", ".join(
-                f"{e['count']} from {e['from']} ({'/'.join(e['kinds'])})" for e in by_sender
-            )
-            content = f"INBOX: {count} pending — {sender_summary}"
-        return {
-            "content": content,
-            "meta": {
-                "count": count,
-                "urgency_max": urgency_max,
-                "urgency_counts": urg_full,
-                "by_sender": by_sender,
-                "endpoint": self.name,
-                "fired_at": datetime.now(UTC).isoformat(),
-            },
-        }
-
     def snapshot(self) -> dict:
-        """Public wrapper around _build_summary; used by Bus.snapshot_for_agent.
+        """Public wrapper used by Bus.snapshot_for_agent.
 
-        Returns the same dict shape as the push pipeline produces, so a
-        snapshot emitted on relay connect looks identical to a real push.
+        Emits the same minimal wake shape as a regular debounced wake (see
+        issue #33) — one contract for everything wake-shaped.
         """
-        return self._build_summary()
+        return self._build_wake_summary()
 
     def _make_channel_notification(self, summary: dict) -> SessionMessage:
         """Wrap the summary into a JSON-RPC notification SessionMessage."""
@@ -644,26 +645,19 @@ class ClaudeCodeMCPEndpoint:
         return out
 
     async def _notify_mail_arrived(self, urgency: str = "green") -> None:
-        """Schedule a debounced push summarizing the current mailbox.
+        """Schedule a debounced push announcing inbox activity.
 
-        Called by `deliver()` on each arrival. Red arrivals wake promptly,
-        yellow waits briefly, and green waits long enough to collect
-        human-paced bursts. A more urgent arrival shortens a pending timer;
-        less urgent arrivals never delay an already pending urgent push.
+        Called by deliver() on each arrival. Red arrivals wake promptly,
+        yellow waits briefly, green waits long enough to collect bursts.
+        A more urgent arrival shortens a pending timer; less urgent
+        arrivals never delay an already-pending urgent push.
+
+        The wake notification itself carries no queue-state — see issue #33.
+        The urgency parameter only affects debounce timing, not wake content.
         """
         delay = self._notify_debounce_seconds_by_urgency.get(urgency, 1.0)
         loop = asyncio.get_running_loop()
         deadline = loop.time() + delay
-        incoming_urgency = cast(
-            Literal["red", "yellow", "green"],
-            urgency if urgency in self._URGENCY_RANK else "green",
-        )
-        if self._debounce_urgency_floor is None:
-            self._debounce_urgency_floor = incoming_urgency
-        elif (
-            self._URGENCY_RANK[incoming_urgency] < self._URGENCY_RANK[self._debounce_urgency_floor]
-        ):
-            self._debounce_urgency_floor = incoming_urgency
 
         if self._debounce_task is not None and not self._debounce_task.done():
             if self._debounce_deadline is not None and deadline >= self._debounce_deadline:
@@ -680,11 +674,7 @@ class ClaudeCodeMCPEndpoint:
             return
         if task is self._debounce_task:
             self._debounce_deadline = None
-            urgency_floor = self._debounce_urgency_floor
-            self._debounce_urgency_floor = None
-        else:
-            urgency_floor = None
-        summary = self._build_summary(urgency_floor=urgency_floor)
+        summary = self._build_wake_summary()
 
         # Always publish to the broker so /notify/<agent> subscribers
         # (the channel relay) wake the agent regardless of whether the
@@ -706,10 +696,9 @@ class ClaudeCodeMCPEndpoint:
         for session in sessions:
             try:
                 log.info(
-                    "endpoint '%s': pushing notifications/claude/channel to session %d (count=%d)",
+                    "endpoint '%s': pushing notifications/claude/channel to session %d",
                     self.name,
                     id(session),
-                    summary["meta"]["count"],
                 )
                 await session.send_message(message)
                 log.info("endpoint '%s': push to session %d returned", self.name, id(session))
@@ -779,15 +768,20 @@ class ClaudeCodeMCPEndpoint:
             return None
 
         @self._mcp.tool()
-        async def list_pending(batch_window_seconds: int = 0) -> list[dict]:
+        async def list_pending(batch_window_seconds: int = 0) -> dict:
             """Return a snapshot of envelopes in this agent's pickup queue,
             sorted by urgency (red → yellow → green) with FIFO within tier.
 
+            Returns {"meta": {...}, "items": [...]}. meta carries count,
+            urgency_max, urgency_counts, by_sender, endpoint, fetched_at —
+            computed atomically with items, so the aggregate cannot drift
+            from the actual queue contents (see issue #33).
+
             When batch_window_seconds > 0, consecutive same-sender same-urgency
             same-kind envelopes whose arrival times fall within the window are
-            collapsed into a single {"type": "batch", ...} entry. Each
-            underlying envelope retains its own id and ack semantics — call
-            handle(envelope_id) per envelope.
+            collapsed into a single {"type": "batch", ...} entry inside items.
+            Each underlying envelope retains its own id and ack semantics —
+            call handle(envelope_id) per envelope.
             """
             return await self._call_list_pending(batch_window_seconds=batch_window_seconds)
 

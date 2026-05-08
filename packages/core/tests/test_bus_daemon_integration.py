@@ -85,11 +85,11 @@ endpoints:
                 # would be notified. Either way, list_pending should surface it.
                 # Allow a short window for async dispatch to settle.
                 for _ in range(40):
-                    pending = (await client.call_tool("list_pending", {})).data
+                    pending = (await client.call_tool("list_pending", {})).data["items"]
                     if pending:
                         break
                     await asyncio.sleep(0.05)
-                pending = (await client.call_tool("list_pending", {})).data
+                pending = (await client.call_tool("list_pending", {})).data["items"]
                 texts = [p["payload"]["text"] for p in pending]
                 assert "hello-agent" in texts
 
@@ -97,7 +97,7 @@ endpoints:
                 env_id = next(p["id"] for p in pending if p["payload"]["text"] == "hello-agent")
                 await client.call_tool("handle", {"envelope_id": env_id})
 
-                pending2 = (await client.call_tool("list_pending", {})).data
+                pending2 = (await client.call_tool("list_pending", {})).data["items"]
                 assert all(p["id"] != env_id for p in pending2)
         finally:
             await bus.stop()

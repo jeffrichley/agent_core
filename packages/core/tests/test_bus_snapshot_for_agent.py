@@ -27,26 +27,26 @@ def _env(eid: str, frm: str = "stub", urgency: str = "green") -> Envelope:
 
 
 @pytest.mark.asyncio
-async def test_snapshot_for_agent_returns_summary_when_pending(tmp_path: Path):
+async def test_snapshot_for_agent_fires_when_pending(tmp_path: Path):
     bus = Bus(BusConfig(storage_path=tmp_path / "bus.sqlite"))
     ep = ClaudeCodeMCPEndpoint(name="agent", mount="/mcp/agent")
     bus.register(EndpointSpec(endpoint=ep))
     ep._pending = [_env("a"), _env("b", urgency="red")]
     summary = bus.snapshot_for_agent("agent")
     assert summary is not None
-    assert summary["meta"]["count"] == 2
-    assert summary["meta"]["urgency_max"] == "red"
+    assert set(summary["meta"].keys()) == {"endpoint", "fired_at"}
     assert summary["meta"]["endpoint"] == "agent"
 
 
 @pytest.mark.asyncio
-async def test_snapshot_for_agent_returns_zero_count_when_empty(tmp_path: Path):
+async def test_snapshot_for_agent_fires_when_empty(tmp_path: Path):
     bus = Bus(BusConfig(storage_path=tmp_path / "bus.sqlite"))
     ep = ClaudeCodeMCPEndpoint(name="agent", mount="/mcp/agent")
     bus.register(EndpointSpec(endpoint=ep))
     summary = bus.snapshot_for_agent("agent")
     assert summary is not None
-    assert summary["meta"]["count"] == 0
+    assert set(summary["meta"].keys()) == {"endpoint", "fired_at"}
+    assert summary["meta"]["endpoint"] == "agent"
 
 
 @pytest.mark.asyncio
