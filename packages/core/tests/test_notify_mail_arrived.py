@@ -393,9 +393,10 @@ async def test_list_pending_surfaces_event_payload_type_and_data():
     ]
 
     listing = await ep._call_list_pending()
-    assert len(listing) == 2
+    assert listing["meta"]["count"] == 2
+    assert len(listing["items"]) == 2
 
-    by_type = {entry["payload"]["type"]: entry for entry in listing}
+    by_type = {entry["payload"]["type"]: entry for entry in listing["items"]}
     assert {"HandoffReady", "HandoffFailed"} <= by_type.keys()
 
     ready = by_type["HandoffReady"]

@@ -31,10 +31,12 @@ async def test_list_pending_batch_window_zero_returns_flat_list():
         _env("b", "alice", age_seconds=8),
         _env("c", "alice", age_seconds=6),
     ]
-    rows = await ep._call_list_pending(batch_window_seconds=0)
+    result = await ep._call_list_pending(batch_window_seconds=0)
+    rows = result["items"]
     # Default 0: no batching — flat list of envelope dicts.
     assert all(row.get("type") in (None, "single") or "envelope" not in row for row in rows)
     assert len(rows) == 3
+    assert result["meta"]["count"] == 3
 
 
 @pytest.mark.asyncio
@@ -45,7 +47,8 @@ async def test_list_pending_batches_three_same_sender_within_window():
         _env("b", "alice", age_seconds=10),
         _env("c", "alice", age_seconds=5),
     ]
-    rows = await ep._call_list_pending(batch_window_seconds=30)
+    result = await ep._call_list_pending(batch_window_seconds=30)
+    rows = result["items"]
     assert len(rows) == 1
     group = rows[0]
     assert group["type"] == "batch"
@@ -63,7 +66,8 @@ async def test_list_pending_does_not_batch_different_senders():
         _env("b", "bob", age_seconds=8),
         _env("c", "alice", age_seconds=6),
     ]
-    rows = await ep._call_list_pending(batch_window_seconds=30)
+    result = await ep._call_list_pending(batch_window_seconds=30)
+    rows = result["items"]
     assert len(rows) == 3
     assert all(r["type"] == "single" for r in rows)
     assert [r["envelope"]["id"] for r in rows] == ["a", "b", "c"]
@@ -78,7 +82,8 @@ async def test_list_pending_batches_only_within_window():
         _env("b", "alice", age_seconds=110),
         _env("c", "alice", age_seconds=5),
     ]
-    rows = await ep._call_list_pending(batch_window_seconds=30)
+    result = await ep._call_list_pending(batch_window_seconds=30)
+    rows = result["items"]
     assert len(rows) == 2
     assert rows[0]["type"] == "batch"
     assert [e["id"] for e in rows[0]["envelopes"]] == ["a", "b"]
@@ -94,7 +99,8 @@ async def test_list_pending_batches_respect_urgency_grouping():
         _env("r1", "alice", age_seconds=10, urgency="red"),
         _env("g1", "alice", age_seconds=5, urgency="green"),
     ]
-    rows = await ep._call_list_pending(batch_window_seconds=30)
+    result = await ep._call_list_pending(batch_window_seconds=30)
+    rows = result["items"]
     # Red comes first (tier sort), green second; they're not in the same group
     # because urgency differs.
     assert len(rows) == 2

@@ -220,10 +220,12 @@ async def test_list_pending_returns_queued_envelopes():
 
         async with Client(ep._mcp) as client:
             res = await client.call_tool("list_pending", {})
-        assert len(res.data) == 1
-        assert res.data[0]["id"] == "env-1"
-        assert res.data[0]["from"] == "stub"
-        assert res.data[0]["kind"] == "TextMessage"
+        items = res.data["items"]
+        assert res.data["meta"]["count"] == 1
+        assert len(items) == 1
+        assert items[0]["id"] == "env-1"
+        assert items[0]["from"] == "stub"
+        assert items[0]["kind"] == "TextMessage"
     finally:
         await ep.stop()
 
@@ -269,7 +271,8 @@ async def test_handle_tool_acks_and_removes_from_pending():
         # And the pending entry is gone.
         async with Client(ep._mcp) as client:
             res = await client.call_tool("list_pending", {})
-        assert res.data == []
+        assert res.data["items"] == []
+        assert res.data["meta"]["count"] == 0
     finally:
         await ep.stop()
 
@@ -290,7 +293,7 @@ async def test_deliver_without_session_raises_endpoint_unavailable_and_queues():
         # internally so a freshly-attached client can pick it up.
         async with Client(ep._mcp) as client:
             res = await client.call_tool("list_pending", {})
-        ids = {item["id"] for item in res.data}
+        ids = {item["id"] for item in res.data["items"]}
         assert "env-q" in ids
     finally:
         await ep.stop()
@@ -358,7 +361,7 @@ async def test_session_registry_tracks_connected_sessions_after_mcp_message():
             await ep.deliver(env)
             # Envelope should be in pending (no EU raised).
             res = await client.call_tool("list_pending", {})
-            ids = {item["id"] for item in res.data}
+            ids = {item["id"] for item in res.data["items"]}
             assert "env-active" in ids
     finally:
         await ep.stop()
