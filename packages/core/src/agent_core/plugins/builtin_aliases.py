@@ -17,6 +17,7 @@ from agent_core.bus_log.projectors import (
     HandoffReadyProjector,
     SchedulerHeartbeatSkipProjector,
 )
+from agent_core.bus_tail.endpoint import BusTailMCPEndpoint
 from agent_core.endpoints.claude_code_mcp import ClaudeCodeMCPEndpoint
 from agent_core.endpoints.handoff_jobs import HandoffJobsEndpoint
 from agent_core.endpoints.scheduler import SchedulerEndpoint
@@ -31,10 +32,11 @@ hookimpl = pluggy.HookimplMarker("agent_core")
 
 
 _ENDPOINT_TYPES: dict[str, type[Any]] = {
+    "builtin.bus_tail_mcp": BusTailMCPEndpoint,
     "builtin.claude_code_mcp": ClaudeCodeMCPEndpoint,
-    "builtin.stub": StubEndpoint,
-    "builtin.scheduler": SchedulerEndpoint,
     "builtin.handoff_jobs": HandoffJobsEndpoint,
+    "builtin.scheduler": SchedulerEndpoint,
+    "builtin.stub": StubEndpoint,
 }
 
 _HOOK_TOOL_TYPES: dict[str, type[Any]] = {
