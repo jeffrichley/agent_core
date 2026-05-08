@@ -8,7 +8,6 @@ varied inbox states.
 
 from __future__ import annotations
 
-import asyncio
 import uuid
 from datetime import UTC, datetime
 
@@ -54,18 +53,14 @@ def _envelope(
         ),
     ],
 )
-def test_list_pending_meta_matches_items(
+async def test_list_pending_meta_matches_items(
     envelopes: list[Envelope], batch_window: int
 ) -> None:
     """meta.count, urgency_max, urgency_counts, by_sender all reconstruct from items."""
-
-    async def _run() -> dict:
-        endpoint = ClaudeCodeMCPEndpoint(name="agent", mount="/mcp/agent")
-        for env in envelopes:
-            endpoint.queue_for_pickup(env)
-        return await endpoint._call_list_pending(batch_window_seconds=batch_window)
-
-    result = asyncio.run(_run())
+    endpoint = ClaudeCodeMCPEndpoint(name="agent", mount="/mcp/agent")
+    for env in envelopes:
+        endpoint.queue_for_pickup(env)
+    result = await endpoint._call_list_pending(batch_window_seconds=batch_window)
 
     assert set(result.keys()) == {"meta", "items"}
     meta = result["meta"]
