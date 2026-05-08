@@ -171,14 +171,16 @@ class ClaudeCodeMCPEndpoint:
             instructions=(
                 f"You are agent '{name}'. The bus pushes you notifications with method "
                 '"notifications/claude/channel" when envelopes arrive in your mailbox. '
-                'Each notification\'s params contain "content" (a brief summary) and '
-                '"meta" (count, urgency_max, urgency_counts, by_sender, endpoint, '
-                "fired_at). On receipt: call list_pending() to read the actual "
-                "envelopes (set batch_window_seconds=30 to fold human-paced bursts "
-                "from the same sender), process them, then call handle(envelope_id) "
-                "on each to ack and remove from the queue. Send replies via the "
-                "send tool. Treat the notification's content as a hint, not the "
-                "message itself — list_pending is authoritative. "
+                'Each notification\'s params contain "content" (a fixed string of the form '
+                '"INBOX: pending (<endpoint>)") and "meta" (endpoint, fired_at). The '
+                "wake is purely a 'go look' signal — it carries no queue-state. "
+                "On receipt: call list_pending() to read the actual envelopes (set "
+                "batch_window_seconds=30 to fold human-paced bursts from the same "
+                'sender). list_pending returns {"meta": {count, urgency_max, '
+                "urgency_counts, by_sender, endpoint, fetched_at}, \"items\": [...]}; "
+                "meta is the authoritative aggregate, computed atomically with items. "
+                "Process each item, then call handle(envelope_id) on each to ack and "
+                "remove from the queue. Send replies via the send tool. "
                 "Routine delivery Acknowledgments for your own recent outbounds may "
                 "be auto-cleared without a wake; you are still notified for failures, "
                 "urgent acks, other envelope kinds, and missing-ack timeouts."

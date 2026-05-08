@@ -33,14 +33,16 @@ log = logging.getLogger(__name__)
 _RELAY_INSTRUCTIONS = (
     "Inbox wake notifications for an agent-core agent. "
     'Messages arrive as JSON-RPC notifications with method "notifications/claude/channel". '
-    'The params object has "content" (a brief inbox summary string, '
-    'e.g. "INBOX: 3 pending - 2 from discord (TextMessage), 1 from email") '
-    'and "meta" (count, by_sender, urgency_counts, urgency_max, endpoint, fired_at). '
+    'The params object has "content" (a fixed "INBOX: pending (<endpoint>)" string) '
+    'and "meta" (endpoint, fired_at). The wake is a pure "go look" signal — it '
+    "carries no queue-state. "
     "When such a notification arrives, treat it as a wake signal: "
-    "call mcp__agent-core__list_pending to fetch the actual envelopes, "
-    "process each, and respond via mcp__agent-core__send when appropriate. "
-    "Higher urgency tiers (red > yellow > green) should be addressed first. "
-    "Do not wait for user input - the notification IS the prompt."
+    "call mcp__agent-core__list_pending to fetch the authoritative "
+    '{"meta": {count, urgency_max, urgency_counts, by_sender, endpoint, '
+    'fetched_at}, "items": [...]} response. Higher urgency tiers '
+    "(red > yellow > green) should be addressed first — read meta.urgency_max "
+    "and the per-item urgency. Respond via mcp__agent-core__send when "
+    "appropriate. Do not wait for user input - the notification IS the prompt."
 )
 
 

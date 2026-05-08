@@ -113,10 +113,12 @@ async def test_bus_arrival_reaches_relay_stdio_stream(tmp_path: Path) -> None:
                 root = received.message.root
                 assert root.method == "notifications/claude/channel"
                 assert root.params is not None
+                # Wake is a pure "go look" signal: meta carries only the
+                # minimal {endpoint, fired_at}. Agents read authoritative
+                # queue-state via list_pending. meta values are stringified
+                # per Claude Code's channel spec (Record<string, string>).
                 meta = root.params["meta"]
-                # meta values are stringified per Claude Code's channel spec
-                # (Record<string, string>).
-                assert int(meta["count"]) >= 1
+                assert set(meta.keys()) == {"endpoint", "fired_at"}
                 assert meta["endpoint"] == "agent"
             finally:
                 relay_task.cancel()
