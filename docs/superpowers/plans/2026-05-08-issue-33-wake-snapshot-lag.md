@@ -8,6 +8,8 @@
 
 **Tech Stack:** Python 3.12, asyncio, FastMCP, pytest, ruff. Branch: `fix/issue-33-wake-snapshot-lag`.
 
+**Test command:** `uv run pytest packages/core/tests packages/agent-core-channel/tests` (the bare `uv run pytest` hits a pre-existing multi-package conftest plugin-name collision unrelated to this work; this targeted command covers everything in scope and runs 615+ tests).
+
 **Spec:** `docs/superpowers/specs/2026-05-08-issue-33-wake-snapshot-lag-design.md`
 
 ---
@@ -264,7 +266,7 @@ Expected: PASS for all.
 
 - [ ] **Step 6: Run the full suite to catch any indirect breakage**
 
-Run: `uv run pytest`
+Run: `uv run pytest packages/core/tests packages/agent-core-channel/tests`
 Expected: PASS for everything that was passing before. (Some wake/snapshot tests may still be passing because of the temporary `_build_summary` shim — that's expected; Task 2 will tighten them.)
 
 - [ ] **Step 7: Commit**
@@ -480,7 +482,7 @@ Expected: PASS for all.
 
 - [ ] **Step 7: Run the full suite**
 
-Run: `uv run pytest`
+Run: `uv run pytest packages/core/tests packages/agent-core-channel/tests`
 Expected: PASS for everything except possibly `test_bus_snapshot_for_agent.py` (handled in Task 3) and `test_stdio_server.py` / `test_end_to_end_relay.py` if they assert on wake meta (handled in Task 4).
 
 - [ ] **Step 8: Commit**
@@ -539,7 +541,7 @@ Expected: PASS.
 
 - [ ] **Step 3: Run the full suite**
 
-Run: `uv run pytest`
+Run: `uv run pytest packages/core/tests packages/agent-core-channel/tests`
 Expected: PASS for everything except possibly `test_stdio_server.py` / `test_end_to_end_relay.py` (handled in Task 4).
 
 - [ ] **Step 4: Commit**
@@ -739,8 +741,8 @@ Expected: PASS.
 
 - [ ] **Step 7: Run the full suite**
 
-Run: `uv run pytest`
-Expected: PASS — should be 597+ existing tests plus the 3 new tests files (~10 new tests total).
+Run: `uv run pytest packages/core/tests packages/agent-core-channel/tests`
+Expected: PASS — should be 615+ existing tests plus the 3 new tests files (~10 new tests total).
 
 - [ ] **Step 8: Commit**
 
@@ -769,8 +771,8 @@ response."
 
 - [ ] **Step 1: Full test suite**
 
-Run: `uv run pytest`
-Expected: All tests pass. New count should be 597 (pre-existing) + ~10 new (invariant tests parametrized + drift-guard + regression) = ~607 passing.
+Run: `uv run pytest packages/core/tests packages/agent-core-channel/tests`
+Expected: All tests pass. New count should be 615 (pre-existing across core + channel) + ~10 new (invariant tests parametrized + drift-guard + regression) = ~625 passing.
 
 - [ ] **Step 2: Lint**
 
@@ -805,7 +807,7 @@ Approved by consumer (Pepper) for Option B (hybrid). Cutover validated on testbo
 
 ## Test plan
 
-- [ ] `uv run pytest` — all green
+- [ ] `uv run pytest packages/core/tests packages/agent-core-channel/tests` — all green
 - [ ] `uv run ruff check .` — clean
 - [ ] Validate on testbot: send mixed-urgency burst, confirm wake content is fixed string and list_pending meta matches items
 - [ ] Then restart Pepper to pick up new contract
