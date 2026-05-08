@@ -50,6 +50,37 @@ class PersistenceReader:
         state: Literal["pending", "in_flight", "acked", "dead_letter", "expired"]
         | None = None,
     ) -> list[Envelope]:
+        rows = await self.tail_rows(
+            limit=limit,
+            since=since,
+            before=before,
+            from_endpoint=from_endpoint,
+            to_endpoint=to_endpoint,
+            kind=kind,
+            urgency=urgency,
+            state=state,
+        )
+        return [_row_to_envelope(r) for r in rows]
+
+    async def tail_rows(
+        self,
+        *,
+        limit: int = DEFAULT_LIMIT,
+        since: datetime | None = None,
+        before: datetime | None = None,
+        from_endpoint: str | None = None,
+        to_endpoint: str | None = None,
+        kind: str | None = None,
+        urgency: Literal["green", "yellow", "red"] | None = None,
+        state: Literal["pending", "in_flight", "acked", "dead_letter", "expired"]
+        | None = None,
+    ) -> list[dict[str, Any]]:
+        """Same filter shape as ``tail()`` but returns raw row dicts.
+
+        Carries state/delivery_count/last_attempted, which the Envelope
+        model does not expose. Used by the MCP ``tail`` tool to build
+        EnvelopeSummary dicts that match the design spec.
+        """
         clauses: list[str] = []
         params: list[Any] = []
         if since is not None:
@@ -87,7 +118,7 @@ class PersistenceReader:
         conn.row_factory = aiosqlite.Row
         async with conn.execute(sql, params) as cur:
             rows = await cur.fetchall()
-        return [_row_to_envelope(dict(r)) for r in rows]
+        return [dict(r) for r in rows]
 
     async def get_envelope(self, id_: str) -> Envelope | None:
         return await self._persistence.get(id_)

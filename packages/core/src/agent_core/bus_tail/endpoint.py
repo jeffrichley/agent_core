@@ -16,6 +16,7 @@ from typing import TYPE_CHECKING
 
 from fastmcp import FastMCP
 
+from agent_core.bus_tail.mcp import register_bus_tail_tools
 from agent_core.bus_tail.reader import PersistenceReader
 
 if TYPE_CHECKING:
@@ -44,7 +45,19 @@ class BusTailMCPEndpoint:
                 "chain by correlation_id), metrics (last-24h aggregates)."
             ),
         )
-        # Tools are registered in Task 5.
+
+        # Tools resolve the reader at call time via this closure so they
+        # work after start() populates self._reader. Calling a tool before
+        # start() raises a clear error.
+        def _get_reader() -> PersistenceReader:
+            if self._reader is None:
+                raise RuntimeError(
+                    f"BusTailMCPEndpoint(name={self.name!r}) is not started; "
+                    "call start(bus_handle) before invoking tools"
+                )
+            return self._reader
+
+        register_bus_tail_tools(mcp=self._mcp, get_reader=_get_reader)
 
     # --- Endpoint Protocol ---
 
