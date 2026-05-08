@@ -435,6 +435,66 @@ async def test_list_pending_surfaces_event_payload_type_and_data():
 
 
 @pytest.mark.asyncio
+async def test_wake_and_list_pending_disagreement_eliminated():
+    """Regression test for issue #33: wake/list_pending drift eliminated.
+
+    Reproduces the exact failure shape Pepper caught — pre-fix, the wake
+    notification carried a stale snapshot (e.g. ``count=3``) that could
+    disagree with what ``list_pending`` returned later (e.g. only 1 item
+    actually pending) once the agent had drained envelopes between the
+    wake firing and being consumed.
+
+    Under the post-fix contract this test passes by construction:
+    - the wake meta is minimal (``endpoint`` + ``fired_at`` only) and the
+      content is the fixed ``"INBOX: pending (<endpoint>)"`` string, so
+      the wake cannot lie about queue state, and
+    - ``list_pending``'s ``meta`` is computed from the same atomic read
+      of ``self._pending`` that produces ``items``, so ``meta.count``
+      always agrees with ``len(items)``.
+    """
+    published: list[dict] = []
+
+    class CaptureBroker:
+        async def publish(self, agent: str, event: dict) -> None:
+            published.append(event)
+
+    ep = ClaudeCodeMCPEndpoint(name="agent", mount="/mcp/agent")
+    ep._notify_broker = CaptureBroker()  # type: ignore[assignment]
+
+    # Queue 3 envelopes: red, red, green.
+    e0 = _env("e0", urgency="red")
+    e1 = _env("e1", urgency="red")
+    e2 = _env("e2", urgency="green")
+    ep.queue_for_pickup(e0)
+    ep.queue_for_pickup(e1)
+    ep.queue_for_pickup(e2)
+
+    # Trigger debounce on red (0.05s in defaults).
+    await ep._notify_mail_arrived(urgency="red")
+
+    # Mid-debounce, simulate the agent draining the two red envelopes
+    # between wake-fire and consumption — this is exactly what Pepper
+    # does between wakes when finishing the prior batch.
+    ep._pending = [env for env in ep._pending if env.id not in {e0.id, e1.id}]
+
+    # Let the debounce fire.
+    await asyncio.sleep(0.2)
+
+    # The wake fired and carries no queue-state meta.
+    assert published, "expected wake to fire after debounce"
+    event = published[-1]
+    assert set(event["meta"].keys()) == {"endpoint", "fired_at"}
+    assert event["content"] == "INBOX: pending (agent)"
+
+    # list_pending's meta and items are computed atomically — they agree.
+    listing = await ep._call_list_pending()
+    assert listing["meta"]["count"] == 1
+    assert listing["meta"]["urgency_max"] == "green"
+    assert len(listing["items"]) == 1
+    assert listing["items"][0]["id"] == e2.id
+
+
+@pytest.mark.asyncio
 async def test_mixed_event_and_text_envelopes_surface_together():
     """Discord traffic and bus Events coexist on the same perception surface.
     The agent sees one notification covering both, with grouped sender counts."""
