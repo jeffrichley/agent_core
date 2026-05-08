@@ -6,15 +6,15 @@
 
 - ✅ **Handoff pipeline reliability** — #44, #42, #43, #45 closed (PRs #46, #47).
 - ✅ **Observability foundation** — #39, #16 closed (PRs #48, #49).
+- ✅ **#33 wake snapshot lag** — closed (PR #65). Cutover validated on Pepper 2026-05-08.
 - 🔴 **In-flight: Pepper reliability cleanup** — see RED tier below. Must finish before any GREEN work.
 
 ## Triage
 
-13 open issues:
+12 open issues:
 
 | Tier | # | Title | Why this color | Cost |
 |---|---|---|---|---|
-| 🔴 RED | **#33** | Wake-builder count + urgency_max snapshot lag | Bug. Pepper can drop red-urgency items or get duplicate wakes. | 1-2d |
 | 🔴 RED | **#37** | tools/list_changed not emitted; clients keep stale tool cache | Bit us during 2026-05-06 cutover. Today's workaround is `/exit + relaunch`. | 0.5-1d |
 | 🔴 RED | **#36** | Discord deny_channels blocklist | We kludged "respond everywhere except #test" via Discord perms 2026-05-06. Needs proper fix. | 0.5d |
 | 🔴 RED | **#18** | Enforce expires_at on envelopes | Stale messages get delivered hours later → confusing-bot moments in time-sensitive flows. | 1-2d |
@@ -28,7 +28,7 @@
 | 🟢 GREEN | **#13** | Typing indicator TTL + placeholder + edit | Nice UX. Cheap *after* #19 lands; expensive before (would invent a private convention). | 2-3d post-#19 |
 | ⚪ GRAY | **#14** | Collapse rapid same-sender envelope bursts | Polite-to-have notification dedup. Pepper isn't actively complaining. Safe to leave forever if it never gets noisy. | 1-2d |
 
-**RED total: ~4-6 days.** Items within a tier are mostly independent and parallelizable — see dependency diagram below.
+**RED total: ~3-4 days remaining.** Items within a tier are mostly independent and parallelizable — see dependency diagram below.
 
 ## Dependencies
 
@@ -40,7 +40,6 @@ flowchart TD
     classDef gray fill:#e8e8e8,stroke:#555,color:#000
 
     subgraph RED["🔴 Pepper reliability — do first"]
-        I33["#33 wake snapshot lag"]:::red
         I37["#37 stale tool cache"]:::red
         I36["#36 deny_channels"]:::red
         I18["#18 enforce expires_at"]:::red
@@ -82,4 +81,4 @@ Re-rank tiers if priorities shift. Move issues between tiers freely — that's t
 - Strategic vision: `docs/ROADMAP.md`
 - Deferred design items: `docs/BACKLOG.md`
 - Per-feature plans: `docs/superpowers/plans/`
-- Recent merges: PR #46 (#44), #47 (#42), #48 (#39), #49 (#16)
+- Recent merges: PR #46 (#44), #47 (#42), #48 (#39), #49 (#16), #65 (#33)
