@@ -7,15 +7,15 @@
 - ✅ **Handoff pipeline reliability** — #44, #42, #43, #45 closed (PRs #46, #47).
 - ✅ **Observability foundation** — #39, #16 closed (PRs #48, #49).
 - ✅ **#33 wake snapshot lag** — closed (PR #65). Cutover validated on Pepper 2026-05-08.
+- ❌ **#37 tools/list_changed** — closed as won't-fix (2026-05-08). Brainstorming surfaced that the proposed daemon-side notification doesn't reach Claude Code's actual stale-cache surface (the session-init system-reminder); `/exit + relaunch` is the correct operator response, not a workaround. Reopen if a future code path mutates the tool registry mid-flight post-`bus.start()`.
 - 🔴 **In-flight: Pepper reliability cleanup** — see RED tier below. Must finish before any GREEN work.
 
 ## Triage
 
-12 open issues:
+11 open issues:
 
 | Tier | # | Title | Why this color | Cost |
 |---|---|---|---|---|
-| 🔴 RED | **#37** | tools/list_changed not emitted; clients keep stale tool cache | Bit us during 2026-05-06 cutover. Today's workaround is `/exit + relaunch`. | 0.5-1d |
 | 🔴 RED | **#36** | Discord deny_channels blocklist | We kludged "respond everywhere except #test" via Discord perms 2026-05-06. Needs proper fix. | 0.5d |
 | 🔴 RED | **#18** | Enforce expires_at on envelopes | Stale messages get delivered hours later → confusing-bot moments in time-sensitive flows. | 1-2d |
 | 🔴 RED | **#38 (MVP)** | Discord urgency: sigil prefix replacement | Current regex (`urgent\|now\|stop`) flags "right now we are looking at..." as red. Sigil MVP only — defer full layered design. | 1d |
@@ -28,7 +28,7 @@
 | 🟢 GREEN | **#13** | Typing indicator TTL + placeholder + edit | Nice UX. Cheap *after* #19 lands; expensive before (would invent a private convention). | 2-3d post-#19 |
 | ⚪ GRAY | **#14** | Collapse rapid same-sender envelope bursts | Polite-to-have notification dedup. Pepper isn't actively complaining. Safe to leave forever if it never gets noisy. | 1-2d |
 
-**RED total: ~3-4 days remaining.** Items within a tier are mostly independent and parallelizable — see dependency diagram below.
+**RED total: ~2.5-3.5 days remaining.** Items within a tier are mostly independent and parallelizable — see dependency diagram below.
 
 ## Dependencies
 
@@ -40,7 +40,6 @@ flowchart TD
     classDef gray fill:#e8e8e8,stroke:#555,color:#000
 
     subgraph RED["🔴 Pepper reliability — do first"]
-        I37["#37 stale tool cache"]:::red
         I36["#36 deny_channels"]:::red
         I18["#18 enforce expires_at"]:::red
         I38m["#38 sigil MVP"]:::red
