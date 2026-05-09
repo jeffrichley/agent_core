@@ -595,6 +595,10 @@ class ClaudeCodeMCPEndpoint:
         without an ``/exit + relaunch``. Fired once after deferred tool
         mounters drain in :meth:`start`.
 
+        Any future code path that mutates the tool surface outside the
+        deferred-mounter drain (none today) should call this method after
+        the mutation is complete.
+
         Sessions that raise during the push are unregistered, mirroring the
         channel-push behaviour in :meth:`_fire_after_debounce`.
         """

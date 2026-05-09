@@ -52,7 +52,12 @@ def _is_tools_list_changed(message: SessionMessage) -> bool:
 @pytest.mark.asyncio
 async def test_start_emits_tools_list_changed_after_deferred_mounters_drain() -> None:
     """A session connected before start() must receive a single
-    notifications/tools/list_changed after the deferred mounters drain."""
+    notifications/tools/list_changed after the deferred mounters drain.
+
+    Also pins the wire shape: jsonrpc="2.0", method=
+    notifications/tools/list_changed, params={}. Pepper's Claude Code
+    session was verified against this shape on 2026-05-09 — changing the
+    shape risks breaking already-verified clients."""
     ep = ClaudeCodeMCPEndpoint(name="agent", mount="/mcp/agent")
     session = _RecordingSession()
     ep._register_session(session)
@@ -71,6 +76,11 @@ async def test_start_emits_tools_list_changed_after_deferred_mounters_drain() ->
     assert len(matching) == 1, (
         f"expected exactly one tools/list_changed; got {len(matching)} of {len(session.sent)} total"
     )
+
+    notif = matching[0].message.root
+    assert notif.jsonrpc == "2.0"
+    assert notif.method == "notifications/tools/list_changed"
+    assert notif.params == {}
 
 
 @pytest.mark.asyncio
