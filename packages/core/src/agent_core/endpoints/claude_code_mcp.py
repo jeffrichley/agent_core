@@ -181,9 +181,12 @@ class ClaudeCodeMCPEndpoint:
                 "meta is the authoritative aggregate, computed atomically with items. "
                 "Process each item, then call handle(envelope_id) on each to ack and "
                 "remove from the queue. Send replies via the send tool. "
-                "Routine delivery Acknowledgments for your own recent outbounds may "
-                "be auto-cleared without a wake; you are still notified for failures, "
-                "urgent acks, other envelope kinds, and missing-ack timeouts."
+                "Routine green Acknowledgments matching your outbounds (kind="
+                "Acknowledgment, urgency=green, note not prefixed 'error:', "
+                "in_reply_to set) are auto-cleared by the bus and never reach "
+                "your queue or wake you. You see only failures (yellow/red acks, "
+                "or notes prefixed 'error:'), other envelope kinds, and missing-ack "
+                "timeouts. Auto-clear is shape-based, so it survives daemon restarts."
             ),
         )
         self._handle: BusHandle | None = None
@@ -312,7 +315,18 @@ class ClaudeCodeMCPEndpoint:
             self._recent_outbound_ids.pop(oldest_key)
             self._cancel_missing_ack(oldest_key)
 
-    def _is_routine_green_ack(self, envelope: Envelope, *, now: float) -> bool:
+    def _is_routine_green_ack(self, envelope: Envelope) -> bool:
+        """Decide whether to auto-clear an Acknowledgment by *shape*.
+
+        Issue #54: the gate is shape-only — kind/urgency/note + the
+        in_reply_to/payload.of integrity check. The earlier registry
+        lookup leaked routine acks into the queue any time the daemon
+        restarted between the send and the ack (registry empty until
+        sends warmed it back up). Auto-clear now survives restarts.
+
+        The ``_recent_outbound_ids`` registry stays — it still drives the
+        missing-ack-timeout path. But it no longer gates auto-clear.
+        """
         if self.wake_on_all_acknowledgments:
             return False
         if envelope.kind != "Acknowledgment":
@@ -326,11 +340,6 @@ class ClaudeCodeMCPEndpoint:
             return False
         irt = envelope.in_reply_to
         if irt is None or envelope.payload.of != irt:
-            return False
-        registered_at = self._recent_outbound_ids.get(irt)
-        if registered_at is None:
-            return False
-        if now - registered_at > self._outbound_registry_ttl_seconds:
             return False
         return True
 
@@ -544,7 +553,7 @@ class ClaudeCodeMCPEndpoint:
         """
         now = asyncio.get_running_loop().time()
         self._evict_stale_outbounds(now)
-        if self._is_routine_green_ack(envelope, now=now):
+        if self._is_routine_green_ack(envelope):
             if self._handle is None:
                 raise RuntimeError(f"endpoint '{self.name}' is not started")
             irt = envelope.in_reply_to
