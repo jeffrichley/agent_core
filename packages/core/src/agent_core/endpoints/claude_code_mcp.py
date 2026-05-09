@@ -342,11 +342,14 @@ class ClaudeCodeMCPEndpoint:
             self._recent_inbounds.pop(oldest_key)
 
     def _record_recent_inbound(self, envelope: Envelope, *, now: float) -> None:
+        # Copy ``metadata`` so post-cache mutations of the original envelope's
+        # metadata dict don't bleed into reply() lookups. The cache's whole
+        # point is making routing safe to use after the inbound is gone.
         self._recent_inbounds[envelope.id] = {
             "from": envelope.from_,
             "to": envelope.to,
             "kind": envelope.kind,
-            "metadata": envelope.metadata,
+            "metadata": dict(envelope.metadata),
             "urgency": envelope.urgency,
             "correlation_id": envelope.correlation_id,
             "registered_at": now,
@@ -653,8 +656,11 @@ class ClaudeCodeMCPEndpoint:
         EndpointUnavailable, and we'd otherwise grow stale duplicates.
 
         Used by deliver() when no session is connected, and by tests.
-        Also captures the envelope's routing into the recent-inbounds cache
-        (issue #67) so reply() can look it up after the inbound is acked.
+        When called from inside a running event loop, also captures the
+        envelope's routing into the recent-inbounds cache (issue #67) so
+        reply() can find it after the inbound is acked. Sync test paths
+        without a loop skip the cache record to avoid mixing clock
+        sources with the eviction path (which always runs under a loop).
         """
         if any(e.id == envelope.id for e in self._pending):
             return
@@ -662,12 +668,7 @@ class ClaudeCodeMCPEndpoint:
         try:
             now = asyncio.get_running_loop().time()
         except RuntimeError:
-            # Sync caller without a running loop — fall back to a monotonic
-            # clock. The cache TTL comparison stays correct because all
-            # registrations + evictions go through the same code paths.
-            import time as _time
-
-            now = _time.monotonic()
+            return
         self._record_recent_inbound(envelope, now=now)
 
     # --- Internal ---
@@ -925,12 +926,19 @@ class ClaudeCodeMCPEndpoint:
                         ids.extend(e["id"] for e in item["envelopes"])
                     elif "id" in item:  # flat envelope dict
                         ids.append(item["id"])
+                # Ack everything FIRST; only mutate _pending after the bus has
+                # accepted every ack. If a mid-walk ack raises, _pending is
+                # untouched and the caller can retry the whole consume safely
+                # (bus acks are idempotent). Without this ordering, a partial
+                # failure would drop items from _pending whose ids never made
+                # it back to the caller — a silent data-loss path.
                 for env_id in ids:
-                    env_before = next((e for e in self._pending if e.id == env_id), None)
                     await self._handle.ack(env_id)
-                    if env_before is not None:
-                        self._release_outbound_registry_for_ack_envelope(env_before)
-                    self._pending = [e for e in self._pending if e.id != env_id]
+                drop = set(ids)
+                envs_dropped = [e for e in self._pending if e.id in drop]
+                self._pending = [e for e in self._pending if e.id not in drop]
+                for env in envs_dropped:
+                    self._release_outbound_registry_for_ack_envelope(env)
             return result
 
         @self._mcp.tool()

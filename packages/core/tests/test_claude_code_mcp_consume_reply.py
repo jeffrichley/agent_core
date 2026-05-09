@@ -120,6 +120,28 @@ async def test_consume_auto_ack_false_does_not_ack() -> None:
 
 
 @pytest.mark.asyncio
+async def test_consume_max_items_zero_acks_nothing() -> None:
+    """max_items=0 returns no items and acks none — useful for callers that
+    want to peek at meta without committing to processing."""
+    ep = ClaudeCodeMCPEndpoint(name="agent", mount="/mcp/agent")
+    handle = _RecordingHandle()
+    await ep.start(handle)  # type: ignore[arg-type]
+    try:
+        ep.queue_for_pickup(_inbound_text("a", from_="src-a"))
+        ep.queue_for_pickup(_inbound_text("b", from_="src-b"))
+
+        async with Client(ep._mcp) as client:
+            cons = await client.call_tool("consume", {"max_items": 0})
+
+        assert cons.data["items"] == []  # type: ignore[index]
+        assert cons.data["meta"]["count"] == 2  # type: ignore[index]
+        assert handle.acked == []
+        assert {e.id for e in ep._pending} == {"a", "b"}
+    finally:
+        await ep.stop()
+
+
+@pytest.mark.asyncio
 async def test_consume_max_items_trims_items_meta_unchanged() -> None:
     ep = ClaudeCodeMCPEndpoint(name="agent", mount="/mcp/agent")
     handle = _RecordingHandle()
@@ -333,6 +355,67 @@ async def test_reply_after_consume_uses_recent_inbounds_cache() -> None:
         assert res.data["acked_envelope_id"] == "in-1"  # type: ignore[index]
         assert handle.published[0].to == "discord-pepper"
         assert handle.published[0].metadata == {"discord": {"channel_id": "C1"}}
+    finally:
+        await ep.stop()
+
+
+@pytest.mark.asyncio
+async def test_reply_after_inbound_evicted_from_cache_raises() -> None:
+    """If the inbound has aged out of _recent_inbounds and is no longer in
+    _pending, reply() must surface a clear error rather than silently
+    fabricating routing."""
+    ep = ClaudeCodeMCPEndpoint(name="agent", mount="/mcp/agent")
+    handle = _RecordingHandle()
+    await ep.start(handle)  # type: ignore[arg-type]
+    try:
+        ep.queue_for_pickup(_inbound_text("in-evict"))
+
+        async with Client(ep._mcp) as client:
+            await client.call_tool("consume", {})  # auto_ack=True drains _pending
+            assert "in-evict" in ep._recent_inbounds
+            ep._recent_inbounds.clear()  # simulate TTL eviction
+
+            with pytest.raises(ToolError, match="no inbound found"):
+                await client.call_tool(
+                    "reply",
+                    {
+                        "in_reply_to": "in-evict",
+                        "payload": {"kind": "TextMessage", "text": "too late"},
+                    },
+                )
+    finally:
+        await ep.stop()
+
+
+@pytest.mark.asyncio
+async def test_consume_partial_ack_failure_leaves_pending_intact() -> None:
+    """Important issue from review: if a mid-walk ack raises, _pending must
+    not be partially mutated — caller can retry the whole consume safely
+    and the bus's idempotent acks make the retry correct."""
+
+    class _MidwalkFailingHandle(_RecordingHandle):
+        def __init__(self, fail_on: str) -> None:
+            super().__init__()
+            self._fail_on = fail_on
+
+        async def ack(self, envelope_id: str) -> None:
+            if envelope_id == self._fail_on:
+                raise RuntimeError("simulated bus ack failure")
+            await super().ack(envelope_id)
+
+    ep = ClaudeCodeMCPEndpoint(name="agent", mount="/mcp/agent")
+    handle = _MidwalkFailingHandle(fail_on="b")
+    await ep.start(handle)  # type: ignore[arg-type]
+    try:
+        for env_id in ("a", "b", "c"):
+            ep.queue_for_pickup(_inbound_text(env_id, from_=f"src-{env_id}"))
+
+        async with Client(ep._mcp) as client:
+            with pytest.raises(ToolError, match="simulated bus ack failure"):
+                await client.call_tool("consume", {})
+
+        # _pending must be untouched so the caller's retry sees the same items
+        assert {e.id for e in ep._pending} == {"a", "b", "c"}
     finally:
         await ep.stop()
 
