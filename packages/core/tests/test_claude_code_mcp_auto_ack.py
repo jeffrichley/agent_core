@@ -130,7 +130,12 @@ async def test_auto_ack_without_session_does_not_raise_endpoint_unavailable() ->
 
 @pytest.mark.looptime
 @pytest.mark.asyncio
-async def test_green_ack_without_registered_outbound_still_pushes() -> None:
+async def test_green_ack_without_registered_outbound_is_auto_cleared() -> None:
+    """Issue #54: auto-clear is shape-based. A green Acknowledgment with a
+    valid in_reply_to/payload.of pair clears even when the outbound was
+    never registered (e.g., the agent restarted after sending). Without
+    this, every restart would leak ~12 routine acks/min into the queue
+    until the registry warmed back up."""
     ep = ClaudeCodeMCPEndpoint(name="agent", mount="/mcp/agent")
     _speed_up_debounce(ep)
     stub = _StubHandle()
@@ -139,6 +144,58 @@ async def test_green_ack_without_registered_outbound_still_pushes() -> None:
     ep._register_session(session)
 
     await ep.deliver(_green_ack("ack-2", "unknown-outbound"))
+    await _flush_debounce()
+    assert session.sent == []
+    assert "ack-2" in stub.acked
+    assert all(e.id != "ack-2" for e in ep._pending)
+
+
+@pytest.mark.looptime
+@pytest.mark.asyncio
+async def test_green_ack_after_simulated_restart_is_auto_cleared() -> None:
+    """Cross-restart simulation for issue #54: agent sends, daemon restarts
+    (registry empty), adapter ack arrives — must still auto-clear by shape."""
+    ep = ClaudeCodeMCPEndpoint(name="agent", mount="/mcp/agent")
+    _speed_up_debounce(ep)
+    stub = _StubHandle()
+    await ep.start(stub)  # type: ignore[arg-type]
+    session = _RecordingSession()
+    ep._register_session(session)
+
+    assert ep._recent_outbound_ids == {}
+    await ep.deliver(
+        _green_ack("ack-restart", "outbound-from-before-restart", note='{"status": "sent"}')
+    )
+    await _flush_debounce()
+    assert session.sent == []
+    assert "ack-restart" in stub.acked
+
+
+@pytest.mark.looptime
+@pytest.mark.asyncio
+async def test_green_ack_with_no_in_reply_to_still_pushes() -> None:
+    """The integrity guard (in_reply_to set + payload.of == in_reply_to) keeps
+    malformed acks visible. A green Acknowledgment with no in_reply_to is
+    not auto-cleared."""
+    ep = ClaudeCodeMCPEndpoint(name="agent", mount="/mcp/agent")
+    _speed_up_debounce(ep)
+    stub = _StubHandle()
+    await ep.start(stub)  # type: ignore[arg-type]
+    session = _RecordingSession()
+    ep._register_session(session)
+
+    env = Envelope(
+        id="ack-noref",
+        correlation_id="c-noref",
+        in_reply_to=None,
+        from_="discord",
+        to="agent",
+        kind="Acknowledgment",
+        payload=AcknowledgmentPayload(of="some-outbound", note='{"status": "sent"}'),
+        urgency="green",
+        created_at=datetime.now(UTC),
+    )
+    await ep.deliver(env)
     await _flush_debounce()
     assert len(session.sent) == 1
 
