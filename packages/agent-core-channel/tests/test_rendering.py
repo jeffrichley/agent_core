@@ -362,6 +362,47 @@ class TestApplyCircuitBreaker:
         assert summary["urgency"] == "green"
         assert "bytes" in summary
 
+    def test_unrecognized_item_shape_does_not_crash(self) -> None:
+        """apply_circuit_breaker pairs cleanly with render_item's defensive
+        fallback for unknown item shapes (issue from Task 4 review)."""
+        items = [{"type": "exotic", "weirdness": True}]
+        # Should not raise.
+        result = apply_circuit_breaker(
+            items,
+            max_envelopes=5, max_total_bytes=8192, max_per_envelope_bytes=4096,
+            mode="full",
+        )
+        assert isinstance(result, InlineAll)
+        # The synthetic envelope contributes one rendered block.
+        assert len(result.rendered) == 1
+        assert "render='fallback'" in result.rendered[0]
+
+    def test_per_envelope_truncation_preserves_fallback_marker(self) -> None:
+        """When an envelope renders with render='fallback' (unknown kind) AND
+        exceeds the per-envelope cap, the truncation rebuild must preserve the
+        fallback attribute."""
+        big_unknown = {
+            "id": "big-fb",
+            "from": "discord-pepper",
+            "to": "pepper",
+            "kind": "ExoticUnknownKind",
+            "correlation_id": "c-big-fb",
+            "in_reply_to": None,
+            "payload": {"kind": "ExoticUnknownKind", "blob": "x" * 5000},
+            "metadata": {},
+            "urgency": "green",
+            "created_at": "2026-05-09T03:29:22+00:00",
+        }
+        result = apply_circuit_breaker(
+            [big_unknown],
+            max_envelopes=5, max_total_bytes=20000, max_per_envelope_bytes=1024,
+            mode="full",
+        )
+        assert isinstance(result, InlineAll)
+        block = result.rendered[0]
+        assert "render='fallback'" in block
+        assert "call peek('big-fb')" in block
+
 
 class TestRedeliveryTracker:
     def test_first_sighting_no_marker(self) -> None:

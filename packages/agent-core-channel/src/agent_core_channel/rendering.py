@@ -221,7 +221,18 @@ def _envelopes_from_item(item: dict) -> list[dict]:
         return [item["envelope"]]
     if item["type"] == "batch":
         return list(item["envelopes"])
-    return []
+    # Unknown shape — synthesize a placeholder envelope so apply_circuit_breaker
+    # can pair it 1:1 with render_item's defensive diagnostic block.
+    return [
+        {
+            "id": "<unknown>",
+            "kind": "Unknown",
+            "from": "<unknown>",
+            "urgency": "green",
+            "in_reply_to": None,
+            "payload": {},
+        }
+    ]
 
 
 def _render_with_truncation(env: dict, *, body: str, fallback: bool) -> str:
@@ -321,17 +332,15 @@ def apply_circuit_breaker(
             if mode == "preview":
                 final_block = _render_preview(env)
             else:
-                # Compute the body bytes.
-                # Find the body slice between ">\n" and "\n</inbox>".
-                body_start = block.find(">\n") + 2
-                body_end = block.rfind("\n</inbox>")
-                body = block[body_start:body_end]
-                if len(body.encode("utf-8")) > max_per_envelope_bytes:
+                # Measure full-block bytes (tags included) so the per-envelope
+                # cap is consistent with the summary bytes field.
+                if len(block.encode("utf-8")) > max_per_envelope_bytes:
                     # Replace body with truncation marker, preserving attrs.
+                    had_fallback = "render='fallback'" in block
                     final_block = _render_with_truncation(
                         env,
                         body=truncation_marker(env["id"]),
-                        fallback=False,
+                        fallback=had_fallback,
                     )
                     # Preserve the batch attribute if present in original block.
                     if "batch=" in block:
