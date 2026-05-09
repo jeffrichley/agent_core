@@ -55,6 +55,7 @@ from agent_core_discord.args import (
 from agent_core_discord.briefing import build_briefing_embeds
 from agent_core_discord.chunking import smart_chunk_discord
 from agent_core_discord.send_retry import channel_send_with_retries
+from agent_core_discord.sigil import parse_sigil
 
 if TYPE_CHECKING:
     from agent_core.bus.handle import BusHandle
@@ -773,21 +774,9 @@ class DiscordEndpoint:
                 )
 
             # 6. Build and publish the envelope.
-            #    Apply the urgency-red regex rule. Empty string disables.
-            #    Per-message compile is fine for v1 throughput; a future v2
-            #    can pre-compile in start() if profiling shows it matters.
-            urgency: Any = "green"
-            regex = self._access.urgency_red_regex
-            if regex:
-                try:
-                    if re.search(regex, message.content or ""):
-                        urgency = "red"
-                except re.error:
-                    log.warning(
-                        "discord(%s): invalid urgency_red_regex %r — skipping",
-                        self.name,
-                        regex,
-                    )
+            #    Sigil-prefix urgency: '!' -> red, '?' -> yellow, plain -> green.
+            #    The sigil is stripped from the published payload text. See issue #38.
+            urgency, text = parse_sigil(message.content or "")
 
             metadata: dict[str, Any] = {
                 "discord": {
@@ -807,7 +796,7 @@ class DiscordEndpoint:
                 correlation_id=uuid.uuid4().hex,
                 to=self.target,
                 kind="TextMessage",
-                payload=TextMessagePayload(text=message.content or ""),
+                payload=TextMessagePayload(text=text),
                 metadata=metadata,
                 urgency=urgency,
                 created_at=datetime.now(UTC),
