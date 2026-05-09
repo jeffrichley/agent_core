@@ -102,6 +102,46 @@ def notify(
     typer.echo(f"Notification sent: {title} — {message}")
 
 
+_DEFAULT_WAKE_AUDIT_DIR = Path.home() / ".agent-core" / "wake_audit"
+_DEFAULT_MCP_AUDIT_DIR = Path.home() / ".agent-core" / "mcp_audit"
+_WAKE_AUDIT_DIR_OPTION = typer.Option(
+    _DEFAULT_WAKE_AUDIT_DIR,
+    "--wake-audit-dir",
+    help="Directory holding per-agent wake-audit JSONL files.",
+)
+_MCP_AUDIT_DIR_OPTION = typer.Option(
+    _DEFAULT_MCP_AUDIT_DIR,
+    "--mcp-audit-dir",
+    help="Directory holding per-agent mcp-audit JSONL files.",
+)
+_WINDOW_SECONDS_OPTION = typer.Option(
+    300,
+    "--window-seconds",
+    help="Time window after each wake to look for the next agent call.",
+)
+
+
+@app.command("wake-stats")
+def wake_stats(
+    agent: str = typer.Argument(..., help="Agent name (e.g., 'pepper')."),
+    window_seconds: int = _WINDOW_SECONDS_OPTION,
+    wake_audit_dir: Path = _WAKE_AUDIT_DIR_OPTION,
+    mcp_audit_dir: Path = _MCP_AUDIT_DIR_OPTION,
+) -> None:
+    """Classify each wake's outcome and print rolling rates (issue #70)."""
+    from agent_core.wake_stats import classify_wakes, summarize
+
+    wake_path = wake_audit_dir / f"{agent}.jsonl"
+    audit_path = mcp_audit_dir / f"{agent}.jsonl"
+    outcomes = classify_wakes(
+        wake_audit_path=wake_path,
+        mcp_audit_path=audit_path,
+        window_seconds=window_seconds,
+    )
+    summary = summarize(outcomes)
+    typer.echo(json.dumps(summary, indent=2))
+
+
 # Mount plugin-contributed Typer subapps (e.g. agent-core-briefs ships
 # the ``briefs`` subapp via this hook). Done at module load so
 # ``agent-core --help`` lists them; satellite packages register their
