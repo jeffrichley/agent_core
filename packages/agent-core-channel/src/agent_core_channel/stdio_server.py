@@ -36,6 +36,8 @@ from agent_core_channel.wake_audit import WakeAuditWriter
 if TYPE_CHECKING:
     from mcp.server.models import InitializationOptions
 
+    from agent_core_channel.config import RelayConfig
+
 log = logging.getLogger(__name__)
 
 
@@ -304,7 +306,12 @@ async def _sse_pump(
         )
 
 
-async def run_relay(agent: str, daemon_url: str) -> None:
+async def run_relay(
+    agent: str,
+    daemon_url: str,
+    *,
+    config: RelayConfig | None = None,
+) -> None:
     """Run the channel relay until stdin closes or a fatal error.
 
     Three concurrent tasks under one task group:
@@ -326,7 +333,8 @@ async def run_relay(agent: str, daemon_url: str) -> None:
         experimental_capabilities={"claude/channel": {}},
     )
 
-    config = RelayConfig()  # Phase 9 will wire CLI/env/YAML overrides.
+    if config is None:
+        config = RelayConfig()
     audit_dir = Path.home() / ".agent-core" / "wake_audit"
     audit = WakeAuditWriter(audit_dir / f"{agent}.jsonl")
     redelivery = RedeliveryTracker()
