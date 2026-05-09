@@ -181,6 +181,14 @@ class ClaudeCodeMCPEndpoint:
                 "meta is the authoritative aggregate, computed atomically with items. "
                 "Process each item, then call handle(envelope_id) on each to ack and "
                 "remove from the queue. Send replies via the send tool. "
+                "Two combined tools shave the round-trip floor to 2 calls: "
+                "consume(batch_window_seconds=30, auto_ack=True) reads + acks "
+                "in one call (same shape as list_pending); reply(in_reply_to, "
+                "payload) publishes a TextMessage and acks the inbound in one "
+                "call, inheriting routing/correlation_id from the inbound and "
+                "shallow-merging any metadata override on top. The classic "
+                "list_pending / handle / send tools remain available for "
+                "power-use (manual triage, non-text replies, partial acks). "
                 "Routine green Acknowledgments matching your outbounds (kind="
                 "Acknowledgment, urgency=green, note not prefixed 'error:', "
                 "in_reply_to set) are auto-cleared by the bus and never reach "
@@ -202,6 +210,11 @@ class ClaudeCodeMCPEndpoint:
         self._notify_broker = notify_broker
         self._recent_outbound_ids: dict[str, float] = {}
         self._missing_ack_tasks: dict[str, asyncio.Task[None]] = {}
+        # Issue #67: cache routing of recently-delivered inbounds so reply()
+        # can derive `to`/`metadata`/`urgency`/`correlation_id` even after
+        # the inbound has been acked (e.g., by consume(auto_ack=True)).
+        # TTL'd alongside the outbound registry — same operational concern.
+        self._recent_inbounds: dict[str, dict[str, Any]] = {}
         self._mcp.add_middleware(SessionRegistry(self))
         self._register_tools()
         # T14: plugin-provided tool mounters can register additional MCP
@@ -314,6 +327,30 @@ class ClaudeCodeMCPEndpoint:
             oldest_key = min(self._recent_outbound_ids.items(), key=lambda kv: kv[1])[0]
             self._recent_outbound_ids.pop(oldest_key)
             self._cancel_missing_ack(oldest_key)
+
+    def _evict_stale_inbounds(self, now: float) -> None:
+        ttl = self._outbound_registry_ttl_seconds
+        stale = [
+            k for k, info in self._recent_inbounds.items() if now - info["registered_at"] > ttl
+        ]
+        for k in stale:
+            self._recent_inbounds.pop(k, None)
+        while len(self._recent_inbounds) > self._max_tracked_outbounds:
+            oldest_key = min(
+                self._recent_inbounds.items(), key=lambda kv: kv[1]["registered_at"]
+            )[0]
+            self._recent_inbounds.pop(oldest_key)
+
+    def _record_recent_inbound(self, envelope: Envelope, *, now: float) -> None:
+        self._recent_inbounds[envelope.id] = {
+            "from": envelope.from_,
+            "to": envelope.to,
+            "kind": envelope.kind,
+            "metadata": envelope.metadata,
+            "urgency": envelope.urgency,
+            "correlation_id": envelope.correlation_id,
+            "registered_at": now,
+        }
 
     def _is_routine_green_ack(self, envelope: Envelope) -> bool:
         """Decide whether to auto-clear an Acknowledgment by *shape*.
@@ -553,6 +590,7 @@ class ClaudeCodeMCPEndpoint:
         """
         now = asyncio.get_running_loop().time()
         self._evict_stale_outbounds(now)
+        self._evict_stale_inbounds(now)
         if self._is_routine_green_ack(envelope):
             if self._handle is None:
                 raise RuntimeError(f"endpoint '{self.name}' is not started")
@@ -570,6 +608,9 @@ class ClaudeCodeMCPEndpoint:
             self._cancel_missing_ack(irt)
             return
         self.queue_for_pickup(envelope)
+        # queue_for_pickup also captures routing into _recent_inbounds for
+        # reply() lookups after the inbound is acked (issue #67). Auto-cleared
+        # acks above never reach this point.
         await self._notify_mail_arrived(envelope.urgency)
         if not self._sessions:
             raise EndpointUnavailable(f"no MCP session connected for {self.name}")
@@ -583,6 +624,7 @@ class ClaudeCodeMCPEndpoint:
         if tasks:
             await asyncio.gather(*tasks, return_exceptions=True)
         self._recent_outbound_ids.clear()
+        self._recent_inbounds.clear()
 
         self._handle = None
         self._sessions.clear()
@@ -610,10 +652,23 @@ class ClaudeCodeMCPEndpoint:
         Idempotent on envelope id: the bus retries deliver() on
         EndpointUnavailable, and we'd otherwise grow stale duplicates.
 
-        Used by deliver() when no session is connected, and by tests."""
+        Used by deliver() when no session is connected, and by tests.
+        Also captures the envelope's routing into the recent-inbounds cache
+        (issue #67) so reply() can look it up after the inbound is acked.
+        """
         if any(e.id == envelope.id for e in self._pending):
             return
         self._pending.append(envelope)
+        try:
+            now = asyncio.get_running_loop().time()
+        except RuntimeError:
+            # Sync caller without a running loop — fall back to a monotonic
+            # clock. The cache TTL comparison stays correct because all
+            # registrations + evictions go through the same code paths.
+            import time as _time
+
+            now = _time.monotonic()
+        self._record_recent_inbound(envelope, now=now)
 
     # --- Internal ---
 
@@ -829,6 +884,133 @@ class ClaudeCodeMCPEndpoint:
                 self._release_outbound_registry_for_ack_envelope(env_before)
             self._pending = [e for e in self._pending if e.id != envelope_id]
             return {"status": "nacked", "id": envelope_id, "requeue": requeue}
+
+        @self._mcp.tool()
+        async def consume(
+            batch_window_seconds: int = 30,
+            auto_ack: bool = True,
+            max_items: int | None = None,
+        ) -> dict:
+            """Read pending envelopes and ack them in one call (issue #67).
+
+            Same return shape as ``list_pending``: ``{"meta": {...}, "items": [...]}``.
+            ``meta`` always reflects the current full queue (the ``max_items``
+            cap trims ``items`` only — meta is presentational-of-total, not
+            of-the-trimmed-slice).
+
+            When ``auto_ack=True`` (default), every envelope referenced in the
+            returned ``items`` is ack'd via the bus before this call returns;
+            the items are also dropped from the pickup queue. When False,
+            ``consume`` is a pure read — ack with ``handle()`` later. Set
+            False if you might bail before processing and need redelivery.
+
+            Composes with ``reply()``: a typical Discord round-trip is
+            ``consume()`` → ``reply(in_reply_to=item_id, payload=...)`` (2
+            calls).
+            """
+            if self._handle is None:
+                raise RuntimeError(f"endpoint '{self.name}' is not started")
+            result = await self._call_list_pending(batch_window_seconds=batch_window_seconds)
+            items = result["items"]
+            if max_items is not None and max_items >= 0:
+                items = items[:max_items]
+                result = {"meta": result["meta"], "items": items}
+
+            if auto_ack:
+                ids: list[str] = []
+                for item in items:
+                    if "envelope" in item:  # batched single
+                        ids.append(item["envelope"]["id"])
+                    elif "envelopes" in item:  # batched run
+                        ids.extend(e["id"] for e in item["envelopes"])
+                    elif "id" in item:  # flat envelope dict
+                        ids.append(item["id"])
+                for env_id in ids:
+                    env_before = next((e for e in self._pending if e.id == env_id), None)
+                    await self._handle.ack(env_id)
+                    if env_before is not None:
+                        self._release_outbound_registry_for_ack_envelope(env_before)
+                    self._pending = [e for e in self._pending if e.id != env_id]
+            return result
+
+        @self._mcp.tool()
+        async def reply(
+            in_reply_to: str,
+            payload: dict[str, Any],
+            urgency: str = "green",
+            metadata: dict[str, Any] | None = None,
+        ) -> dict:
+            """Publish an outbound and ack the inbound it answers in one call.
+
+            Routing inherits from the inbound envelope (``to`` ← inbound.from_,
+            ``correlation_id`` ← inbound.correlation_id, ``metadata`` ← inbound
+            metadata, then top-level keys overridden by the ``metadata``
+            argument). The metadata merge is **shallow** — supplying
+            ``{"discord": {"channel_id": "X"}}`` replaces the entire
+            ``discord`` dict, dropping sibling keys like ``guild_id`` from the
+            inbound. Override fully or not at all when touching transport
+            metadata.
+
+            ``urgency`` defaults to ``"green"`` (matching ``send()``); a
+            reply is its own message and inherits no urgency by default.
+            Pass ``"auto"`` to inherit the inbound's urgency (escalating
+            error chains, etc.) or an explicit ``"red"|"yellow"|"green"``
+            override.
+
+            ``in_reply_to`` is looked up in the pickup queue first, then in
+            the recent-inbounds cache (so it works after
+            ``consume(auto_ack=True)``). Raises if the id isn't known.
+
+            The reply's ``kind`` is ``TextMessage`` — for non-text replies,
+            use ``send()`` + ``handle()`` instead.
+
+            Returns ``{"published_envelope_id": ..., "acked_envelope_id": ...}``.
+            """
+            if self._handle is None:
+                raise RuntimeError(f"endpoint '{self.name}' is not started")
+
+            inbound_pending = next((e for e in self._pending if e.id == in_reply_to), None)
+            if inbound_pending is not None:
+                from_ = inbound_pending.from_
+                inbound_metadata = inbound_pending.metadata
+                inbound_urgency = inbound_pending.urgency
+                inbound_correlation = inbound_pending.correlation_id
+            else:
+                cached = self._recent_inbounds.get(in_reply_to)
+                if cached is None:
+                    raise ValueError(
+                        f"reply: no inbound found for in_reply_to={in_reply_to!r}"
+                    )
+                from_ = cached["from"]
+                inbound_metadata = cached["metadata"]
+                inbound_urgency = cached["urgency"]
+                inbound_correlation = cached["correlation_id"]
+
+            out_urgency: str = inbound_urgency if urgency == "auto" else urgency
+            out_metadata = {**inbound_metadata, **(metadata or {})}
+
+            env = Envelope(
+                id=uuid.uuid4().hex,
+                correlation_id=inbound_correlation,
+                in_reply_to=in_reply_to,
+                to=from_,
+                kind="TextMessage",
+                payload=payload,  # type: ignore[arg-type]  # discriminated by kind
+                metadata=out_metadata,
+                urgency=out_urgency,  # type: ignore[arg-type]  # validated by Pydantic
+                created_at=datetime.now(UTC),
+            )
+            await self._handle.publish(env)
+            if not self.wake_on_all_acknowledgments:
+                self._register_outbound_sent(env.id, env.metadata)
+
+            await self._handle.ack(in_reply_to)
+            if inbound_pending is not None:
+                self._release_outbound_registry_for_ack_envelope(inbound_pending)
+            self._pending = [e for e in self._pending if e.id != in_reply_to]
+            self._recent_inbounds.pop(in_reply_to, None)
+
+            return {"published_envelope_id": env.id, "acked_envelope_id": in_reply_to}
 
         @self._mcp.tool()
         async def show_my_day(
