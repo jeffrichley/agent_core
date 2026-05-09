@@ -160,3 +160,235 @@ def render_item(item: dict) -> list[str]:
         f"{diagnostic}\n"
         f"</inbox>"
     ]
+
+
+# ---------------------------------------------------------------------
+# Circuit breaker, truncation marker, and redelivery tracker (issue #70)
+# ---------------------------------------------------------------------
+
+from collections import OrderedDict  # noqa: E402
+from dataclasses import dataclass, field  # noqa: E402
+from typing import Literal  # noqa: E402
+
+
+def truncation_marker(envelope_id: str) -> str:
+    """The body replacement for envelopes that exceed the per-envelope cap.
+
+    Tells the agent how to fetch the full payload via the peek() tool
+    (issue #70).
+    """
+    return f"[content elided; envelope_id='{envelope_id}'; call peek('{envelope_id}') for full payload]"
+
+
+@dataclass(frozen=True)
+class InlineAll:
+    """Circuit breaker passed — emit the rendered envelopes inline."""
+
+    rendered: list[str]
+    inlined_ids: list[str]
+    inlined_envelopes_summary: list[dict] = field(default_factory=list)
+
+
+@dataclass(frozen=True)
+class FallbackToBare:
+    """Circuit breaker tripped — emit today's bare wake; agent calls consume() manually."""
+
+    reason: Literal["envelope_count", "total_bytes"]
+
+
+CircuitBreakerResult = InlineAll | FallbackToBare
+
+
+def _is_failure_envelope(env: dict) -> bool:
+    """Failure envelopes (yellow/red urgency, or notes prefixed 'error:')
+    bypass the BATCH circuit-breaker (loudness invariant). Per-envelope
+    cap still applies."""
+    urgency = env.get("urgency", "green")
+    if urgency in ("yellow", "red"):
+        return True
+    payload = env.get("payload", {}) or {}
+    note = payload.get("note") if isinstance(payload, dict) else None
+    if isinstance(note, str) and note.startswith("error:"):
+        return True
+    return False
+
+
+def _envelopes_from_item(item: dict) -> list[dict]:
+    """Flatten an item from consume()'s response into its underlying envelopes."""
+    if "type" not in item:
+        return [item]  # flat envelope dict
+    if item["type"] == "single":
+        return [item["envelope"]]
+    if item["type"] == "batch":
+        return list(item["envelopes"])
+    return []
+
+
+def _render_with_truncation(env: dict, *, body: str, fallback: bool) -> str:
+    """Render an envelope's <inbox> tag with a custom body (truncated/preview)."""
+    kind = env.get("kind", "Unknown")
+    env_id = env.get("id", "")
+    from_ = env.get("from", "")
+    urgency = env.get("urgency", "green")
+    in_reply_to = env.get("in_reply_to")
+
+    attrs = [
+        f"kind='{kind}'",
+        f"from='{from_}'",
+        f"urgency='{urgency}'",
+        f"envelope_id='{env_id}'",
+    ]
+    if in_reply_to:
+        attrs.append(f"in_reply_to='{in_reply_to}'")
+    if fallback:
+        attrs.append("render='fallback'")
+
+    return f"<inbox {' '.join(attrs)}>\n{body}\n</inbox>"
+
+
+def _render_preview(env: dict, *, preview_chars: int = 200) -> str:
+    """Preview mode: <inbox preview='true'> with first N chars + truncation marker."""
+    env_id = env.get("id", "")
+    kind = env.get("kind", "Unknown")
+    from_ = env.get("from", "")
+    urgency = env.get("urgency", "green")
+    in_reply_to = env.get("in_reply_to")
+
+    # Get the fully-rendered body, then take a preview prefix.
+    full_block = render_envelope(env)
+    body_start = full_block.find(">\n") + 2
+    body_end = full_block.rfind("\n</inbox>")
+    body = full_block[body_start:body_end]
+    preview_body = body[:preview_chars]
+    if len(body) > preview_chars:
+        preview_body += "…"
+    body_with_marker = f"{preview_body}\n{truncation_marker(env_id)}"
+
+    attrs = [
+        f"kind='{kind}'",
+        f"from='{from_}'",
+        f"urgency='{urgency}'",
+        f"envelope_id='{env_id}'",
+        "preview='true'",
+    ]
+    if in_reply_to:
+        attrs.append(f"in_reply_to='{in_reply_to}'")
+    return f"<inbox {' '.join(attrs)}>\n{body_with_marker}\n</inbox>"
+
+
+def apply_circuit_breaker(
+    items: list[dict],
+    *,
+    max_envelopes: int,
+    max_total_bytes: int,
+    max_per_envelope_bytes: int,
+    mode: Literal["full", "preview"],
+) -> CircuitBreakerResult:
+    """Decide what to inline vs. elide vs. fallback.
+
+    Decision order:
+      1. If total envelope count exceeds max_envelopes → FallbackToBare.
+      2. Render each envelope. If a single rendered body exceeds
+         max_per_envelope_bytes, replace its body with the truncation
+         marker (failure envelopes also respect this).
+      3. If total rendered bytes exceeds max_total_bytes AND no failure
+         envelopes are present → FallbackToBare. Failure envelopes
+         bypass this cap (loudness invariant).
+      4. Otherwise → InlineAll.
+    """
+    import re as _re
+
+    # Flatten items to underlying envelopes for count check.
+    all_envelopes: list[dict] = []
+    for item in items:
+        all_envelopes.extend(_envelopes_from_item(item))
+
+    if len(all_envelopes) > max_envelopes:
+        return FallbackToBare(reason="envelope_count")
+
+    has_failure = any(_is_failure_envelope(e) for e in all_envelopes)
+
+    rendered_blocks: list[str] = []
+    summaries: list[dict] = []
+    inlined_ids: list[str] = []
+
+    # We render through render_item to preserve batch-prefix semantics, then
+    # apply per-envelope-cap truncation by post-processing each block.
+    for item in items:
+        envs = _envelopes_from_item(item)
+        item_blocks = render_item(item)
+        for env, block in zip(envs, item_blocks, strict=True):
+            if mode == "preview":
+                final_block = _render_preview(env)
+            else:
+                # Compute the body bytes.
+                # Find the body slice between ">\n" and "\n</inbox>".
+                body_start = block.find(">\n") + 2
+                body_end = block.rfind("\n</inbox>")
+                body = block[body_start:body_end]
+                if len(body.encode("utf-8")) > max_per_envelope_bytes:
+                    # Replace body with truncation marker, preserving attrs.
+                    final_block = _render_with_truncation(
+                        env,
+                        body=truncation_marker(env["id"]),
+                        fallback=False,
+                    )
+                    # Preserve the batch attribute if present in original block.
+                    if "batch=" in block:
+                        m = _re.search(r"batch='[^']*'", block)
+                        if m:
+                            final_block = final_block.replace(
+                                "<inbox ", f"<inbox {m.group(0)} ", 1
+                            )
+                else:
+                    final_block = block
+
+            rendered_blocks.append(final_block)
+            inlined_ids.append(env["id"])
+            summaries.append(
+                {
+                    "id": env["id"],
+                    "kind": env.get("kind"),
+                    "from": env.get("from"),
+                    "urgency": env.get("urgency", "green"),
+                    "bytes": len(final_block.encode("utf-8")),
+                }
+            )
+
+    total_bytes = sum(s["bytes"] for s in summaries)
+    if total_bytes > max_total_bytes and not has_failure:
+        return FallbackToBare(reason="total_bytes")
+
+    return InlineAll(
+        rendered=rendered_blocks,
+        inlined_ids=inlined_ids,
+        inlined_envelopes_summary=summaries,
+    )
+
+
+# ---------------------------------------------------------------------
+# Redelivery tracker — bounded LRU cache.
+# Records seen envelope IDs so a redelivered envelope gets a
+# [RESEND #N] marker.
+# ---------------------------------------------------------------------
+
+
+class RedeliveryTracker:
+    """Bounded LRU cache of envelope IDs. Returns the [RESEND #N] marker
+    on second-and-subsequent sightings of the same id (None on first)."""
+
+    def __init__(self, capacity: int = 200) -> None:
+        self._capacity = capacity
+        self._counts: OrderedDict[str, int] = OrderedDict()
+
+    def note_and_get_marker(self, envelope_id: str) -> str | None:
+        if envelope_id in self._counts:
+            self._counts[envelope_id] += 1
+            self._counts.move_to_end(envelope_id)
+            n = self._counts[envelope_id]
+            return f"[RESEND #{n}] "
+        self._counts[envelope_id] = 1
+        self._counts.move_to_end(envelope_id)
+        if len(self._counts) > self._capacity:
+            self._counts.popitem(last=False)
+        return None

@@ -1,10 +1,20 @@
-"""Issue #70: rendering pipeline — body encoder, per-kind renderers."""
+"""Issue #70: rendering pipeline — body encoder, per-kind renderers,
+circuit breaker, truncation marker, redelivery tracker."""
 
 from __future__ import annotations
 
 import xml.etree.ElementTree as ET
 
-from agent_core_channel.rendering import encode_body, render_envelope, render_item
+from agent_core_channel.rendering import (
+    FallbackToBare,
+    InlineAll,
+    RedeliveryTracker,
+    apply_circuit_breaker,
+    encode_body,
+    render_envelope,
+    render_item,
+    truncation_marker,
+)
 
 
 class TestEncodeBody:
@@ -230,3 +240,149 @@ class TestRenderBatchEntry:
         assert root.attrib.get("reason") == "unrecognized_item_shape"
         # Diagnostic body mentions the malformed type.
         assert "exotic" in block
+
+
+class TestTruncationMarker:
+    def test_format(self) -> None:
+        assert truncation_marker("abc") == (
+            "[content elided; envelope_id='abc'; call peek('abc') for full payload]"
+        )
+
+
+class TestApplyCircuitBreaker:
+    def _flat(self, env_id: str, kind: str = "TextMessage", urgency: str = "green",
+              text: str = "hi") -> dict:
+        return {
+            "id": env_id,
+            "from": "discord-pepper",
+            "to": "pepper",
+            "kind": kind,
+            "correlation_id": f"c-{env_id}",
+            "in_reply_to": None,
+            "payload": {"kind": kind, "text": text},
+            "metadata": {},
+            "urgency": urgency,
+            "created_at": "2026-05-09T03:29:22+00:00",
+        }
+
+    def test_inlines_below_caps(self) -> None:
+        items = [self._flat("e-1", text="hi"), self._flat("e-2", text="there")]
+        result = apply_circuit_breaker(
+            items,
+            max_envelopes=5, max_total_bytes=8192, max_per_envelope_bytes=4096,
+            mode="full",
+        )
+        assert isinstance(result, InlineAll)
+        assert len(result.rendered) == 2
+        assert "e-1" in result.inlined_ids
+        assert "e-2" in result.inlined_ids
+
+    def test_falls_back_when_envelope_count_exceeds(self) -> None:
+        items = [self._flat(f"e-{i}", text="x") for i in range(6)]
+        result = apply_circuit_breaker(
+            items,
+            max_envelopes=5, max_total_bytes=8192, max_per_envelope_bytes=4096,
+            mode="full",
+        )
+        assert isinstance(result, FallbackToBare)
+        assert result.reason == "envelope_count"
+
+    def test_per_envelope_cap_triggers_truncation_marker(self) -> None:
+        big = self._flat("big-1", text="x" * 5000)  # exceeds per-envelope cap
+        small = self._flat("small-1", text="hi")
+        result = apply_circuit_breaker(
+            [small, big],
+            max_envelopes=5, max_total_bytes=20000, max_per_envelope_bytes=1024,
+            mode="full",
+        )
+        assert isinstance(result, InlineAll)
+        # The big one is replaced with the truncation marker.
+        big_block = next(b for b in result.rendered if "envelope_id='big-1'" in b)
+        assert "call peek('big-1')" in big_block
+        # The small one renders normally.
+        small_block = next(b for b in result.rendered if "envelope_id='small-1'" in b)
+        assert "call peek(" not in small_block
+
+    def test_falls_back_when_total_bytes_exceeds(self) -> None:
+        items = [self._flat(f"e-{i}", text="x" * 1000) for i in range(5)]
+        result = apply_circuit_breaker(
+            items,
+            max_envelopes=10, max_total_bytes=2000, max_per_envelope_bytes=2000,
+            mode="full",
+        )
+        assert isinstance(result, FallbackToBare)
+        assert result.reason == "total_bytes"
+
+    def test_failure_envelopes_bypass_total_bytes_cap(self) -> None:
+        # 5 yellow + red envelopes summing past total cap still inline.
+        items = [self._flat(f"f-{i}", urgency="yellow", text="x" * 1000) for i in range(5)]
+        result = apply_circuit_breaker(
+            items,
+            max_envelopes=10, max_total_bytes=2000, max_per_envelope_bytes=2000,
+            mode="full",
+        )
+        assert isinstance(result, InlineAll)
+
+    def test_failure_envelopes_still_respect_per_envelope_cap(self) -> None:
+        items = [self._flat("big-fail", urgency="red", text="x" * 5000)]
+        result = apply_circuit_breaker(
+            items,
+            max_envelopes=10, max_total_bytes=20000, max_per_envelope_bytes=1024,
+            mode="full",
+        )
+        assert isinstance(result, InlineAll)
+        assert "call peek('big-fail')" in result.rendered[0]
+
+    def test_preview_mode_replaces_body_with_marker_with_preview(self) -> None:
+        items = [self._flat("p-1", text="hello world this is a preview message")]
+        result = apply_circuit_breaker(
+            items,
+            max_envelopes=5, max_total_bytes=8192, max_per_envelope_bytes=4096,
+            mode="preview",
+        )
+        assert isinstance(result, InlineAll)
+        block = result.rendered[0]
+        assert "preview='true'" in block
+        assert "hello world" in block  # preview present
+        assert "call peek('p-1')" in block  # marker still appended
+
+    def test_inlined_envelopes_summary_shape(self) -> None:
+        items = [self._flat("s-1", text="hi")]
+        result = apply_circuit_breaker(
+            items,
+            max_envelopes=5, max_total_bytes=8192, max_per_envelope_bytes=4096,
+            mode="full",
+        )
+        assert isinstance(result, InlineAll)
+        assert len(result.inlined_envelopes_summary) == 1
+        summary = result.inlined_envelopes_summary[0]
+        assert summary["id"] == "s-1"
+        assert summary["kind"] == "TextMessage"
+        assert summary["from"] == "discord-pepper"
+        assert summary["urgency"] == "green"
+        assert "bytes" in summary
+
+
+class TestRedeliveryTracker:
+    def test_first_sighting_no_marker(self) -> None:
+        tracker = RedeliveryTracker(capacity=10)
+        assert tracker.note_and_get_marker("e-1") is None
+
+    def test_second_sighting_returns_resend_marker(self) -> None:
+        tracker = RedeliveryTracker(capacity=10)
+        tracker.note_and_get_marker("e-1")
+        assert tracker.note_and_get_marker("e-1") == "[RESEND #2] "
+
+    def test_third_sighting_returns_resend_3(self) -> None:
+        tracker = RedeliveryTracker(capacity=10)
+        tracker.note_and_get_marker("e-1")
+        tracker.note_and_get_marker("e-1")
+        assert tracker.note_and_get_marker("e-1") == "[RESEND #3] "
+
+    def test_lru_evicts_oldest(self) -> None:
+        tracker = RedeliveryTracker(capacity=2)
+        tracker.note_and_get_marker("e-1")
+        tracker.note_and_get_marker("e-2")
+        tracker.note_and_get_marker("e-3")  # evicts e-1
+        # e-1 is now first-sighting again.
+        assert tracker.note_and_get_marker("e-1") is None
