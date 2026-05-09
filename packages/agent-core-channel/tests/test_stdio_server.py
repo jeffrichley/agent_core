@@ -142,16 +142,40 @@ async def test_sse_pump_waits_for_initialization_before_consuming_events(monkeyp
     initialized = anyio.Event()
     send_stream, receive_stream = anyio.create_memory_object_stream(max_buffer_size=8)
 
-    async with anyio.create_task_group() as tg:
-        tg.start_soon(_sse_pump, "agent", "http://daemon", send_stream, initialized)
-        await anyio.sleep(0.01)
-        with pytest.raises(anyio.WouldBlock):
-            receive_stream.receive_nowait()
+    # Stub deps for the new _sse_pump signature.
+    import pathlib
+    import tempfile
 
-        initialized.set()
-        msg = await receive_stream.receive()
-        assert msg.message.root.method == "notifications/claude/channel"
-        tg.cancel_scope.cancel()
+    from agent_core_channel.config import RelayConfig
+    from agent_core_channel.rendering import RedeliveryTracker
+    from agent_core_channel.wake_audit import WakeAuditWriter
+
+    class _StubBus:
+        async def consume_no_ack(self, *, batch_window_seconds: int = 30) -> dict:
+            return {"items": [], "meta": {"count": 0}}
+
+    with tempfile.TemporaryDirectory() as td:
+        audit = WakeAuditWriter(pathlib.Path(td) / "a.jsonl")
+        config = RelayConfig(inline_mode="disabled")  # passthrough: no bus interaction
+        redelivery = RedeliveryTracker()
+        stub_bus = _StubBus()
+
+        async def _pump():
+            await _sse_pump(
+                "agent", "http://daemon", send_stream, initialized,
+                bus=stub_bus, audit=audit, config=config, redelivery=redelivery,
+            )
+
+        async with anyio.create_task_group() as tg:
+            tg.start_soon(_pump)
+            await anyio.sleep(0.01)
+            with pytest.raises(anyio.WouldBlock):
+                receive_stream.receive_nowait()
+
+            initialized.set()
+            msg = await receive_stream.receive()
+            assert msg.message.root.method == "notifications/claude/channel"
+            tg.cancel_scope.cancel()
 
 
 @pytest.mark.asyncio
@@ -168,5 +192,25 @@ async def test_sse_pump_treats_write_failures_as_fatal(monkeypatch):
     initialized = anyio.Event()
     initialized.set()
 
-    with pytest.raises(BrokenResourceError):
-        await _sse_pump("agent", "http://daemon", _BrokenWriteStream(), initialized)
+    # Stub deps for the new _sse_pump signature.
+    import pathlib
+    import tempfile
+
+    from agent_core_channel.config import RelayConfig
+    from agent_core_channel.rendering import RedeliveryTracker
+    from agent_core_channel.wake_audit import WakeAuditWriter
+
+    class _StubBus:
+        async def consume_no_ack(self, *, batch_window_seconds: int = 30) -> dict:
+            return {"items": [], "meta": {"count": 0}}
+
+    with tempfile.TemporaryDirectory() as td:
+        audit = WakeAuditWriter(pathlib.Path(td) / "a.jsonl")
+        config = RelayConfig(inline_mode="disabled")  # passthrough: no bus interaction
+        redelivery = RedeliveryTracker()
+
+        with pytest.raises(BrokenResourceError):
+            await _sse_pump(
+                "agent", "http://daemon", _BrokenWriteStream(), initialized,
+                bus=_StubBus(), audit=audit, config=config, redelivery=redelivery,
+            )
