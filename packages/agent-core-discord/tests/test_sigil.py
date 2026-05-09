@@ -11,7 +11,6 @@ The parser must:
 from __future__ import annotations
 
 import pytest
-
 from agent_core_discord.sigil import parse_sigil
 
 
