@@ -808,9 +808,21 @@ class ClaudeCodeMCPEndpoint:
                 expires_at=datetime.fromisoformat(expires_at) if expires_at else None,
                 created_at=datetime.now(UTC),
             )
-            await self._handle.publish(env)
+            # Issue #69: register the outbound BEFORE publishing. The bus is
+            # single-loop and dispatches in-process, so an in-flight routine
+            # ack from the recipient adapter can reach our deliver() while
+            # we're still awaiting publish — the ack's auto-clear path needs
+            # something concrete to cancel, otherwise it pops nothing and a
+            # phantom missing-ack timer scheduled afterward fires a wake.
             if not self.wake_on_all_acknowledgments:
                 self._register_outbound_sent(env.id, env.metadata)
+            try:
+                await self._handle.publish(env)
+            except Exception:
+                if not self.wake_on_all_acknowledgments:
+                    self._recent_outbound_ids.pop(env.id, None)
+                    self._cancel_missing_ack(env.id)
+                raise
             return {"status": "published", "id": env.id}
 
         @self._mcp.tool()
@@ -1008,9 +1020,18 @@ class ClaudeCodeMCPEndpoint:
                 urgency=out_urgency,  # type: ignore[arg-type]  # validated by Pydantic
                 created_at=datetime.now(UTC),
             )
-            await self._handle.publish(env)
+            # Issue #69: register before publishing — see send() for the full
+            # rationale. An in-flight routine ack would otherwise leave the
+            # registry empty on auto-clear and a phantom timer fires later.
             if not self.wake_on_all_acknowledgments:
                 self._register_outbound_sent(env.id, env.metadata)
+            try:
+                await self._handle.publish(env)
+            except Exception:
+                if not self.wake_on_all_acknowledgments:
+                    self._recent_outbound_ids.pop(env.id, None)
+                    self._cancel_missing_ack(env.id)
+                raise
 
             await self._handle.ack(in_reply_to)
             if inbound_pending is not None:
