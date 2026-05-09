@@ -110,3 +110,25 @@ def test_gate_allowlist_dm_policy_does_not_block_guild_messages():
     """allowlist DM policy applies only to DMs, not guild posts."""
     cfg = AccessConfig(dm_policy="allowlist", allow_from=["100"])
     assert gate_message(cfg, _ctx(is_dm=False, author_id="999", channel_id="200")) is True
+
+
+def test_load_access_config_silently_ignores_legacy_urgency_red_regex(tmp_path):
+    """Migration: existing access JSON files with urgencyRedRegex set must
+    still load cleanly under the post-#38 AccessConfig (which doesn't have
+    the field). The key is silently ignored — no warning, no error.
+    """
+    p = tmp_path / "access.json"
+    p.write_text(
+        json.dumps(
+            {
+                "dmPolicy": "open",
+                "ackReaction": "👀",
+                "urgencyRedRegex": r"(?i)\b(urgent|now|stop)\b",
+            }
+        ),
+        encoding="utf-8",
+    )
+    cfg = load_access_config(p)
+    assert cfg.dm_policy == "open"
+    assert cfg.ack_reaction == "👀"
+    assert not hasattr(cfg, "urgency_red_regex")
