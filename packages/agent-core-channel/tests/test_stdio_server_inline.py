@@ -222,5 +222,5 @@ async def test_process_wake_event_render_error_falls_back_to_bare(tmp_path: Path
     # Audit logs the error.
     import json
     line = json.loads(audit_path.read_text().strip())
-    assert line["fallback"] == "render_error"
+    assert line["fallback"] == "bus_unreachable"
     assert "simulated bus failure" in line["error"]

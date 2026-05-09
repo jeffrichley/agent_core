@@ -157,7 +157,7 @@ Decision logic, in order:
 - `{"type": "single", "envelope": E}` → single `<inbox>` block (same as flat, just unwrapped).
 - `{"type": "batch", "envelopes": [E1, E2, ...]}` → N `<inbox>` blocks with a small batch-prefix marker (e.g. `[BATCH 1/3]`) on each, so the agent sees the full content of each underlying envelope and can ack/reply each individually using its own `envelope_id`.
 
-**Redelivery markers:** if an envelope id was previously seen in a wake (tracked in a small in-memory LRU cache, e.g. last 200 IDs), prepend `[RESEND #N] ` to the rendered tag header.
+**Redelivery markers:** if an envelope id was previously seen in a wake (tracked in a small in-memory LRU cache, e.g. last 200 IDs), inject a `resend_count='N'` attribute into the rendered `<inbox>` tag (where N is the sighting number — 2 on second sighting, 3 on third, etc.). Attribute form composes cleanly with the existing tag attributes and survives XML round-trip.
 
 **File:** new `packages/agent-core-channel/src/agent_core_channel/rendering.py`.
 

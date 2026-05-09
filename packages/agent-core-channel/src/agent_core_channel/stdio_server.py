@@ -51,6 +51,9 @@ _RELAY_INSTRUCTIONS = (
     "publish+ack. Dismiss without reply via mcp__agent-core__handle(envelope_id). "
     "If a body shows '[content elided; envelope_id=X; call peek(X) for full payload]', "
     "call mcp__agent-core__peek(envelope_id=X) to fetch the full envelope. "
+    "If an <inbox> tag carries a resend_count='N' attribute, this is a redelivery — "
+    "the same envelope you saw in a previous wake (e.g., you did not ack it). "
+    "Recognize and avoid double-processing. "
     "If params.content is the bare 'INBOX: pending (<endpoint>)' string (circuit "
     "breaker tripped, transient failure, or inline mode disabled), call "
     "mcp__agent-core__consume() for the authoritative queue snapshot and proceed "
@@ -215,7 +218,7 @@ async def process_wake_event(
         await emit_channel_notification(write_stream, wake_summary)
         audit.write_fallback(
             wake_id=wake_id, agent=agent, mode=config.inline_mode,
-            reason="render_error", error_message=str(exc),
+            reason="bus_unreachable", error_message=str(exc),
         )
         return
 
@@ -261,7 +264,10 @@ async def process_wake_event(
         if marker is None:
             final_blocks.append(block)
         else:
-            final_blocks.append(block.replace("<inbox ", f"<inbox resend='{marker.strip()}' ", 1))
+            # marker is "[RESEND #N] "; extract N for a clean XML attribute.
+            m = re.search(r"\[RESEND #(\d+)\]", marker)
+            count = m.group(1) if m else marker.strip()
+            final_blocks.append(block.replace("<inbox ", f"<inbox resend_count='{count}' ", 1))
 
     rich_summary = {
         "content": "\n\n".join(final_blocks),
