@@ -149,5 +149,14 @@ def render_item(item: dict) -> list[str]:
             )
             rendered.append(prefixed)
         return rendered
-    # Unknown item shape — defensive fallback.
-    return [_render_fallback_body(item)]
+    # Unknown item shape — defensive fallback. Emit an inert diagnostic block
+    # so an agent reading this knows the relay couldn't render the item.
+    item_type = item.get("type", "<missing>")
+    diagnostic = encode_body(
+        f"unrecognized consume() item shape: type={item_type!r}; raw={item!r}"
+    )
+    return [
+        f"<inbox kind='Unknown' render='fallback' reason='unrecognized_item_shape'>\n"
+        f"{diagnostic}\n"
+        f"</inbox>"
+    ]

@@ -117,9 +117,13 @@ class TestRenderEnvelope:
             payload={"kind": "Acknowledgment", "of": "out-2", "note": None},
         )
         out = render_envelope(env)
-        # No bare 'None'; some non-empty body.
-        assert "</inbox>" in out
-        assert "None" not in out or "of='out-2'" in out  # any sane representation
+        # Body falls back to JSON-stringified payload.
+        body = out.split(">", 1)[1].rsplit("</inbox>", 1)[0].strip()
+        # The body should be JSON-shaped (contain payload keys), not just "None".
+        assert "&quot;of&quot;" in body or '"of"' in body, (
+            f"Body should contain payload keys, got: {body!r}"
+        )
+        assert body != "None"
 
     def test_event(self) -> None:
         env = _env(
@@ -209,3 +213,20 @@ class TestRenderBatchEntry:
         outs = render_item(env)  # flat envelope (no "type" key)
         assert len(outs) == 1
         assert "envelope_id='flat-1'" in outs[0]
+
+    def test_unknown_item_shape_fallback(self) -> None:
+        """Defensive fallback when consume() returns a malformed item.
+
+        Should produce a parseable <inbox> block with diagnostic info, not
+        crash and not produce structurally broken output."""
+        item = {"type": "exotic", "weirdness": True}
+        outs = render_item(item)
+        assert len(outs) == 1
+        block = outs[0]
+        # Block must be parseable XML.
+        root = ET.fromstring(block)
+        assert root.tag == "inbox"
+        assert root.attrib.get("render") == "fallback"
+        assert root.attrib.get("reason") == "unrecognized_item_shape"
+        # Diagnostic body mentions the malformed type.
+        assert "exotic" in block
