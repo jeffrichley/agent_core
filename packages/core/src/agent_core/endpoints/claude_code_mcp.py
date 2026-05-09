@@ -573,10 +573,56 @@ class ClaudeCodeMCPEndpoint:
         # (FastMCP tools are additive), so re-firing them would either
         # raise on duplicate tool names or silently shadow the prior
         # registration — neither is what callers expect.
+        any_mounter_fired = False
         while self.deferred_tool_mounters:
             mounter = self.deferred_tool_mounters.pop(0)
             mounter(bus)
+            any_mounter_fired = True
+        # Issue #37: after deferred mounters mutate the tool surface, push
+        # one batched notifications/tools/list_changed to every connected
+        # session so MCP clients re-enumerate their tool cache. Static
+        # registries (no deferred mounters) skip the notification — no
+        # spurious wakes.
+        if any_mounter_fired:
+            await self._notify_tools_list_changed()
         log.info("ClaudeCodeMCPEndpoint(name=%s) started at mount=%s", self.name, self.mount)
+
+    async def _notify_tools_list_changed(self) -> None:
+        """Push MCP ``notifications/tools/list_changed`` to all connected sessions.
+
+        Standard server→client notification — supporting clients re-run
+        ``tools/list`` on receipt and pick up the latest tool surface
+        without an ``/exit + relaunch``. Fired once after deferred tool
+        mounters drain in :meth:`start`.
+
+        Sessions that raise during the push are unregistered, mirroring the
+        channel-push behaviour in :meth:`_fire_after_debounce`.
+        """
+        sessions = list(self._sessions)
+        if not sessions:
+            log.info(
+                "endpoint '%s': tools/list_changed has no active session audience",
+                self.name,
+            )
+            return
+        notification = JSONRPCNotification(
+            jsonrpc="2.0",
+            method="notifications/tools/list_changed",
+            params={},
+        )
+        message = SessionMessage(message=JSONRPCMessage(notification))
+        for session in sessions:
+            try:
+                await session.send_message(message)
+            except Exception:
+                log.warning(
+                    "endpoint '%s': tools/list_changed push to session %d failed; "
+                    "unregistering",
+                    self.name,
+                    id(session),
+                    exc_info=True,
+                )
+                self._unregister_session(session)
 
     async def deliver(self, envelope: Envelope) -> None:
         """Push the envelope to the connected agent.
