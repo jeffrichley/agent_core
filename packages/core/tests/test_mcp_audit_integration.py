@@ -10,7 +10,6 @@ from fastmcp import Client
 
 from agent_core.bus.runner import build_bus_from_config
 
-
 _TWO_ENDPOINT_YAML = """\
 bus:
   storage_path: "{storage}"
