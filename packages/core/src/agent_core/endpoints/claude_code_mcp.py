@@ -1092,6 +1092,30 @@ class ClaudeCodeMCPEndpoint:
             return {"published_envelope_id": env.id, "acked_envelope_id": in_reply_to}
 
         @self._mcp.tool()
+        async def peek(envelope_id: str) -> dict:
+            """Return one specific envelope from the pickup queue without acking.
+
+            Used to hydrate a truncated inline preview into the full payload
+            (issue #70). Also useful for power-use cases (manual triage of a
+            specific envelope without disturbing other queue state).
+
+            Pure read: does NOT ack, does NOT remove from the pickup queue.
+            Idempotent — multiple calls return identical data.
+
+            Looks only at the live pickup queue. Does NOT consult the
+            recent-inbounds routing cache (which holds metadata only, not
+            full payload — the cache cannot satisfy peek's contract).
+
+            Raises if ``envelope_id`` is not in the queue.
+            """
+            env = next((e for e in self._pending if e.id == envelope_id), None)
+            if env is None:
+                raise ValueError(
+                    f"peek: envelope_id={envelope_id!r} not in queue"
+                )
+            return {"envelope": self._envelope_to_dict(env)}
+
+        @self._mcp.tool()
         async def show_my_day(
             date: str | None = None,
             projected: bool = True,
