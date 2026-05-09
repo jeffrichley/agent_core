@@ -1,8 +1,10 @@
-"""DiscordEndpoint applies urgency-red regex rule on inbound TextMessage envelopes."""
+"""DiscordEndpoint applies sigil-prefix urgency rule on inbound TextMessage envelopes.
+
+Sigil rules: "!" -> red, "?" -> yellow, anything else -> green. See
+docs/superpowers/specs/2026-05-08-issue-38-discord-urgency-sigil-design.md.
+"""
 
 from __future__ import annotations
-
-import json
 
 import pytest
 from agent_core_discord.endpoint import DiscordEndpoint
@@ -59,76 +61,84 @@ async def test_inbound_default_urgency_is_green(monkeypatch):
     try:
         await fake.fire("on_message", msg)
         assert handle.published[0].urgency == "green"
+        assert handle.published[0].payload.text == "hello world"
     finally:
         await ep.stop()
 
 
 @pytest.mark.asyncio
-async def test_inbound_urgent_keyword_promotes_to_red(monkeypatch):
+async def test_red_sigil_promotes_to_red_and_strips_prefix(monkeypatch):
+    ep, handle, fake = await _start(monkeypatch)
+    fake.add_channel(_FakeChannel(id="200"))
+    msg = _msg("!server is on fire")
+    msg.channel = fake.get_channel("200")
+    try:
+        await fake.fire("on_message", msg)
+        assert handle.published[0].urgency == "red"
+        # The sigil and the optional space after it are stripped from the payload.
+        assert handle.published[0].payload.text == "server is on fire"
+    finally:
+        await ep.stop()
+
+
+@pytest.mark.asyncio
+async def test_yellow_sigil_promotes_to_yellow_and_strips_prefix(monkeypatch):
+    ep, handle, fake = await _start(monkeypatch)
+    fake.add_channel(_FakeChannel(id="200"))
+    msg = _msg("?status check")
+    msg.channel = fake.get_channel("200")
+    try:
+        await fake.fire("on_message", msg)
+        assert handle.published[0].urgency == "yellow"
+        assert handle.published[0].payload.text == "status check"
+    finally:
+        await ep.stop()
+
+
+@pytest.mark.asyncio
+async def test_lancaster_regression_now_in_natural_text_is_not_red(monkeypatch):
+    """Issue #38 regression: 'right now we are looking at...' must not fire red.
+
+    The original regex (urgent|now|stop) matched on the substring 'now'. The
+    sigil-only rule has no such failure mode — 'right now' is plain text,
+    no leading sigil, urgency stays green.
+    """
+    ep, handle, fake = await _start(monkeypatch)
+    fake.add_channel(_FakeChannel(id="200"))
+    msg = _msg("ok, more on the ideas for the lancaster trip. right now we are looking at...")
+    msg.channel = fake.get_channel("200")
+    try:
+        await fake.fire("on_message", msg)
+        assert handle.published[0].urgency == "green"
+        # Payload text is unchanged for green messages — no sigil to strip.
+        assert handle.published[0].payload.text.startswith("ok, more on the ideas")
+    finally:
+        await ep.stop()
+
+
+@pytest.mark.asyncio
+async def test_urgent_keyword_in_plain_text_is_not_red(monkeypatch):
+    """Plain 'URGENT' without a sigil is now green — no regex on free text."""
     ep, handle, fake = await _start(monkeypatch)
     fake.add_channel(_FakeChannel(id="200"))
     msg = _msg("URGENT please look at this")
     msg.channel = fake.get_channel("200")
     try:
         await fake.fire("on_message", msg)
-        assert handle.published[0].urgency == "red"
-    finally:
-        await ep.stop()
-
-
-@pytest.mark.asyncio
-async def test_inbound_now_keyword_case_insensitive(monkeypatch):
-    ep, handle, fake = await _start(monkeypatch)
-    fake.add_channel(_FakeChannel(id="200"))
-    msg = _msg("can you reply Now please")
-    msg.channel = fake.get_channel("200")
-    try:
-        await fake.fire("on_message", msg)
-        assert handle.published[0].urgency == "red"
-    finally:
-        await ep.stop()
-
-
-@pytest.mark.asyncio
-async def test_inbound_substring_does_not_match(monkeypatch):
-    """'now' inside 'snowfall' must not promote — \\b boundaries enforced."""
-    ep, handle, fake = await _start(monkeypatch)
-    fake.add_channel(_FakeChannel(id="200"))
-    msg = _msg("the snowfall is heavy today")
-    msg.channel = fake.get_channel("200")
-    try:
-        await fake.fire("on_message", msg)
         assert handle.published[0].urgency == "green"
     finally:
         await ep.stop()
 
 
 @pytest.mark.asyncio
-async def test_custom_regex_via_access_config(monkeypatch, tmp_path):
-    access = tmp_path / "access.json"
-    access.write_text(json.dumps({"urgencyRedRegex": r"(?i)\bfire\b"}), encoding="utf-8")
-    ep, handle, fake = await _start(monkeypatch, access_path=str(access))
+async def test_red_sigil_with_leading_whitespace(monkeypatch):
+    ep, handle, fake = await _start(monkeypatch)
     fake.add_channel(_FakeChannel(id="200"))
-    msg = _msg("the server is on fire")
+    msg = _msg("  !page on-call now")
     msg.channel = fake.get_channel("200")
     try:
         await fake.fire("on_message", msg)
         assert handle.published[0].urgency == "red"
-    finally:
-        await ep.stop()
-
-
-@pytest.mark.asyncio
-async def test_disabled_regex_via_empty_string(monkeypatch, tmp_path):
-    """Empty urgencyRedRegex disables the rule — all inbound is green."""
-    access = tmp_path / "access.json"
-    access.write_text(json.dumps({"urgencyRedRegex": ""}), encoding="utf-8")
-    ep, handle, fake = await _start(monkeypatch, access_path=str(access))
-    fake.add_channel(_FakeChannel(id="200"))
-    msg = _msg("URGENT URGENT URGENT")
-    msg.channel = fake.get_channel("200")
-    try:
-        await fake.fire("on_message", msg)
-        assert handle.published[0].urgency == "green"
+        assert handle.published[0].payload.text == "page on-call now"
     finally:
         await ep.stop()
