@@ -1,0 +1,11 @@
+main-job:
+  trigger: cron
+  timezone: "America/New_York"
+  schedule:
+    hour: 23
+    minute: 59
+  target: stub
+  envelope_kind: Event
+  payload:
+    type: Heartbeat
+    data: {}

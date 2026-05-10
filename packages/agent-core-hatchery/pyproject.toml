@@ -1,0 +1,13 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "agent-core-hatchery"
+version = "0.0.0"
+description = "Bootstrap system for hatching new agent-core beings (placeholder; Phase 2 fills in deps + entry points)."
+requires-python = ">=3.12"
+dependencies = []
+
+[tool.hatch.build.targets.wheel]
+bypass-selection = true

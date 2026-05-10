@@ -1,0 +1,4 @@
+endpoints:
+  - type: builtin.stub
+    name: fragment-a-stub
+    description: "From fragment a"
