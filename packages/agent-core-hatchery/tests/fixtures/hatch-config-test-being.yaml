@@ -1,0 +1,13 @@
+being_name: TestBeing
+being_emoji: ""
+primary_human_name: Tester
+endpoint_name: testbeing
+channels:
+  discord:
+    enabled: false
+  webcam:
+    enabled: false
+  github_backup:
+    enabled: false
+init_missing: false
+author_letter_in_editor: false
