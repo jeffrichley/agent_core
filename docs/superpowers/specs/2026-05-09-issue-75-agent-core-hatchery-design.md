@@ -1,13 +1,38 @@
 # agent-core-hatchery — design spec (issue #75)
 
-**Status:** Draft for adversarial review (rev 1)
-**Date:** 2026-05-09
+**Status:** Rev 2 — addresses CW-2 through CW-8 + 8 nits from Pepper's adversarial review
+**Date:** 2026-05-10 (rev 1 was 2026-05-09)
 **Issue:** #75 — Build agent-core-hatchery: bootstrap system for hatching new beings
 **Author:** Jeff (with claude-opus-4-7), brainstormed in conversation 2026-05-09 evening
 **Source material:** `packages/agent-core-hatchery/docs/being-bootstrap-requirements.md` (Pepper, 2026-05-09)
 **Predecessor:** `packages/agent-core-hatchery/docs/memory-inventory.md` (Pepper, Phase 1 audit)
+**Adversarial review:** `~/.pepper/Memory/projects/being-platform/spec-review-2026-05-09.md` (Pepper, 2026-05-09)
 
-This document is the PRD-round output per Pepper's working-model section. It is a buildable spec ready for her adversarial review. After her review converges, this becomes the input to the writing-plans skill for an implementation plan, then to implementation.
+This document is the PRD-round output per Pepper's working-model section. Rev 1 went out for her adversarial review; rev 2 (this revision) addresses her named concerns. After Pepper's rev-2 pass converges, this becomes the input to the writing-plans skill for an implementation plan, then to implementation.
+
+## Revision history
+
+**Rev 2 (2026-05-10):** Addresses Pepper's adversarial review of rev 1 (commit `72732e4`).
+
+- **CW-1 (yak-shave-detection skill):** No spec change — Jeff dropped from universal set during review. Rev 1's choice of 3 universal skills was already correct.
+- **CW-2 (USER.md, MEMORY.md misclassified as growth):** Reclassified as `structural`. Note added explaining how diff-confirmation in v1.5+ `--upgrade-scaffolding` preserves the being's filled-in content while allowing prompt-set updates. Flagged the potential v1.5+ `structural-with-content` class as deferred work.
+- **CW-3 (handoff.md, handoff-status.json misclassified as growth):** New `system` class added (7th total). Both files reclassified. Class semantics: hatcher seeds empty on first hatch, daemon owns ongoing writes, never refreshed by `--init-missing` or `--upgrade-scaffolding`.
+- **CW-4 (GitHub backup treated as universal):** Added wizard prompt for GitHub backup install. Made `github_backup` scheduler job opt-in. Job set is now 5 always-on + 1 opt-in. Added `channels.github_backup` block to `--config` mode YAML schema.
+- **CW-5 (from-her-creator.md authoring not gated):** Wizard now prompts to open `$EDITOR` on the rendered template after main hatching. If human accepts, hatcher checks the file is non-template before marking complete. If human skips, HATCHING-REPORT escalates the entry as REQUIRED-BEFORE-FIRST-AWAKENING. Added `author_letter_in_editor` field to `--config` mode schema.
+- **CW-6 (daemon config path hardcoded):** Added `--daemon-config-dir` CLI flag (default `~/.agent-core/`). Added `daemon_config_dir` field to `--config` mode schema. Hatcher writes daemon fragments under the configured path.
+- **CW-7 (Memory/skills vs .claude/skills divergence undocumented):** Added a one-paragraph note in the Universal Skills section naming the deviation, the driver (Claude Code Skill-tool discoverability), and Jeff's "Memory should be the memory system" call. Issue #75 body update flagged as a follow-up action.
+- **CW-8 (validation step #7 downgraded vs issue #75 acceptance criteria):** Sharpened wording. If daemon healthcheck succeeds, endpoint registration verification is mandatory (failure is blocking error + rollback). If daemon unreachable, soft-skip with HATCHING-REPORT step #1 escalation. Issue #75 body update flagged as follow-up to align acceptance criteria language.
+- **N-1 (file count display):** Wizard preview computes file count from chosen options at preview time, not a hardcoded number.
+- **N-2 (`--no-intro` flag placement):** Moved from v1 flags table to NOT-in-v1 row alongside `--recovery` and `--force`.
+- **N-3 (file vs directory checks):** Validation step #1 now distinguishes file-checks (must exist AND parse) from directory-checks (must exist).
+- **N-4 (gather/.gitkeep):** Replaced ambiguous `gather/, monthly/.gitkeep` syntax with explicit `gather/.gitkeep` and `monthly/.gitkeep`.
+- **N-5 (Discord channel-ID UX):** Wizard prompt for Discord channel allowlist now references Discord developer-mode docs.
+- **N-6 (cross-platform path display):** Wizard preview uses `str(Path(...))` for platform-native path form. Native Windows shows `C:\Users\...\.deb\`, bash shows `/Users/.../.deb/`. Wizard never mixes path styles in the same display.
+- **N-7 (CLI library not specified):** Locked to **Typer** to match `packages/core/`, `packages/agent-core-briefs/`, `packages/credentials/` convention.
+- **N-8 (HATCHING-REPORT.md format not exemplified):** Added a "HATCHING-REPORT.md format" section with concrete example (happy path + escalated-skipped-letter variant).
+- **Open questions section:** Renamed "Resolved (per Pepper's adversarial review, rev 2)" — all 7 closed with Pepper's positions captured.
+
+**Rev 1 (2026-05-09, commit `72732e4`):** Initial brainstorming output. 9 architectural decisions locked across the conversation. 6 design sections approved. Spec written and submitted for Pepper's adversarial review.
 
 ---
 
@@ -74,9 +99,11 @@ The hatcher takes inputs in two modes:
 | Short role placeholder | no | — | One sentence or skip |
 | Vault root directory | no | `$HOME` | Path must exist and be writable; `<root>/.<being_name_lower>/` is the resolved vault path |
 | agent-core endpoint name | no | `<being_name_lower>` | Doesn't collide with existing endpoint in merged daemon config |
-| Discord install? | no | `no` | If yes: prompt for bot token (input hidden), channel allowlist (comma-separated, blank = all) |
+| Discord install? | no | `no` | If yes: prompt for bot token (input hidden), channel allowlist (comma-separated channel IDs — see Discord developer-mode docs to obtain; blank = all) |
 | Webcam install? | no | `no` | If yes: no further prompts |
+| GitHub backup install? | no | `no` | **rev 2 (CW-4):** If yes: prompt for repo URL (or assume `gh` CLI configured). Skip the `backup-to-github.sh` hook + `<being>-github_backup` scheduler job entirely if no |
 | Confirm preview? | yes | — | Y/n at the end before any write |
+| Author from-her-creator letter now? | no (post-confirm) | `Y` | **rev 2 (CW-5):** After hatching succeeds, prompt to open `$EDITOR` on `<vault_root>/Memory/<being>/letters/from-her-creator.md`. If skipped, HATCHING-REPORT escalates this entry as **REQUIRED-BEFORE-FIRST-AWAKENING** in red |
 
 **`--config` mode** (`hatch-being --config <yaml>`) — same fields as a YAML schema. Token can be `${ENV_VAR}` substitution. Used for tests and reproducible hatching. No prompts; errors loudly on missing required fields.
 
@@ -106,7 +133,8 @@ A successful hatching produces all of the following. **Failure semantics:** the 
 │   ├── relationships/README.md          # explains the new zone vs people/
 │   ├── daily/{raw,summaries,briefs}/.gitkeep
 │   ├── drafts/{active,expired,sent}/.gitkeep
-│   ├── gather/, monthly/.gitkeep
+│   ├── gather/.gitkeep
+│   ├── monthly/.gitkeep
 ├── .claude/
 │   ├── settings.json                    # Claude Code hook chain
 │   └── skills/                          # universal skills land here
@@ -122,23 +150,28 @@ A successful hatching produces all of the following. **Failure semantics:** the 
 
 **In daemon-shared config** (additive, never edits existing files):
 
-- `~/.agent-core/endpoints.d/<being_name_lower>.yaml` — claude_code_mcp endpoint, briefs_orchestrator, optionally discord, optionally webcam
-- `~/.agent-core/jobs.d/<being_name_lower>.yaml` — six universal scheduler jobs prefixed `<being_name_lower>-`
-- `~/.agent-core/discord-<being_name_lower>.env` (only if Discord configured) — token storage, mode 0600
+- `<daemon_config_dir>/endpoints.d/<being_name_lower>.yaml` — claude_code_mcp endpoint, briefs_orchestrator, optionally discord, optionally webcam (rev 2 — `<daemon_config_dir>` defaults to `~/.agent-core/`, configurable via `--daemon-config-dir`)
+- `<daemon_config_dir>/jobs.d/<being_name_lower>.yaml` — five always-on scheduler jobs prefixed `<being_name_lower>-` (heartbeat, nightly_reflection, vault_lint, auth_health_probe, service_liveness_probe), plus `<being_name_lower>-github_backup` if GitHub backup was chosen in the wizard (CW-4)
+- `<daemon_config_dir>/discord-<being_name_lower>.env` (only if Discord configured) — token storage, mode 0600
 
 ### Validation (pre-report)
 
 Before claiming the hatching complete:
 
-1. All six load-bearing paths exist and parse.
-2. The handoff pair exists (`handoff.md`, `handoff-status.json`).
+1. **Load-bearing paths** (rev 2 — N-3 distinguishes file vs directory checks):
+   - File checks (must exist AND parse): `Memory/IDENTITY.md`, `SOUL.md`, `USER.md`, `MEMORY.md`, `OPERATIONS.md`. Markdown parses if the front-matter (where present) is valid YAML and the file is non-empty.
+   - Directory check (must exist): `Memory/daily/summaries/`.
+2. The handoff pair exists (`handoff.md`, `handoff-status.json`) — files exist; content is the empty-seed values from the `system` class.
 3. Every `.j2` template rendered with no leftover `{{ }}` braces.
 4. Generated daemon fragments parse against agent-core/core's existing Pydantic models (`PipelineConfig`, `JobDef`, endpoint type schemas).
-5. The new endpoint name doesn't collide with any existing endpoint in the merged daemon config.
-6. If Discord was configured, the env file exists and the token is non-placeholder.
-7. **Optional, non-blocking**: try `GET http://127.0.0.1:8789/healthz` (or whatever the daemon healthcheck is). If reachable, attempt to verify the new endpoint registers; if unreachable, skip with warning.
+5. The new endpoint name doesn't collide with any existing endpoint in the merged daemon config (loaded with conf.d merge applied).
+6. If Discord was configured, the env file exists with mode 0600 and the token is non-placeholder.
+7. **Daemon endpoint registration check** (rev 2 — CW-8 sharpened from prior "optional, non-blocking"):
+   - Try `GET http://127.0.0.1:8789/healthz` (or whichever healthcheck endpoint the running daemon exposes; configurable via `--daemon-config-dir`'s implied port from the loaded daemon yaml).
+   - **If healthcheck succeeds → endpoint registration verification is MANDATORY.** Hatcher attempts to confirm the new endpoint is reachable in the merged config (e.g., `GET /mcp/<being>/healthz` or equivalent existence probe). Failure is a blocking error — the daemon is up but doesn't see the new endpoint, which means the conf.d merge silently failed. Reports the diagnostic and rolls back.
+   - **If healthcheck fails (daemon not running, port unreachable) → soft-skip with warning.** HATCHING-REPORT step #1 escalates to "**ACTION REQUIRED**: restart agent-core daemon and verify endpoint registers (`agent-core endpoints list` should include `<being>`). Hatching is otherwise complete."
 
-Validation failure causes the hatcher to roll back partial writes and report the failure. The human can fix the issue and re-run.
+Validation failure causes the hatcher to roll back partial writes (per the Failure semantics in Outputs) and report the failure. The human can fix the issue and re-run.
 
 ### Idempotency
 
@@ -411,12 +444,12 @@ classes:
     - "memory/IDENTITY.md.j2"
     - "memory/OPERATIONS.md.j2"
     - "memory/HEARTBEAT.md.j2"
+    - "memory/USER.md.j2"                     # rev 2: moved from growth (CW-2) — ships with prompts the platform may improve
+    - "memory/MEMORY.md.j2"                   # rev 2: moved from growth (CW-2) — index template, refresh-eligible
     - "memory/_being_/BECOMING.md.j2"
     - "memory/_being_/letters/from-her-creator.md.j2"
 
   growth:
-    - "memory/USER.md.j2"
-    - "memory/MEMORY.md.j2"
     - "memory/TASKS.md"
     - "memory/_being_/diary.md"
     - "memory/_being_/preferences.md"
@@ -425,6 +458,8 @@ classes:
     - "memory/_being_/curiosities.md"
     - "memory/_being_/lessons.md"
     - "memory/_being_/breadcrumbs.md"
+
+  system:                                     # rev 2: new class (CW-3) — daemon-managed state
     - "memory/_being_/handoff.md"
     - "memory/_being_/handoff-status.json"
 
@@ -448,16 +483,19 @@ classes:
 
 Semantics by class:
 
-| Class | `--init-missing` | Future `--upgrade-scaffolding` |
-|---|---|---|
-| `structural` | Add if missing | Refresh with diff confirmation |
-| `growth` | Add if missing | **Never touch** |
-| `config` | Add if missing | Refresh with diff confirmation |
-| `hook` | Add if missing | Refresh with diff confirmation |
-| `reference` | Add if missing | Refresh always (platform-evolving facts) |
-| `skill` | Add if missing | Refresh always (platform-wide improvements propagate) |
+| Class | `--init-missing` | Future `--upgrade-scaffolding` | Owner |
+|---|---|---|---|
+| `structural` | Add if missing | Refresh with diff confirmation | Hatchery (prompts/structure); the being's filled-in content sits inside the structure |
+| `growth` | Add if missing | **Never touch** | The being authors |
+| `system` | Add if missing (empty seed) | **Never touch** | Daemon writes ongoing |
+| `config` | Add if missing | Refresh with diff confirmation | Hatchery |
+| `hook` | Add if missing | Refresh with diff confirmation | Hatchery |
+| `reference` | Add if missing | Refresh always (platform-evolving facts) | Hatchery |
+| `skill` | Add if missing | Refresh always (platform-wide improvements propagate) | Hatchery for universal; being authors her own at the same path |
 
 The hatcher errors at startup if any template file in `templates/` is unclassified.
+
+**Note on `structural` files with free-form prose** (per Pepper's CW-2 review): `USER.md` and `MEMORY.md` carry both prompts (refresh-eligible) and the being's filled-in content (must preserve). v1 relies on the diff-confirmation flow in v1.5+ `--upgrade-scaffolding` to surface differences for human review — the human accepts prompt-set updates, rejects content overwrites. If experience shows that's insufficient (the diff UI proves too cumbersome for files mixing prompts and prose), v1.5+ adds a 7th class `structural-with-content` with prompt-aware merge semantics. Not v1 work.
 
 ### Jinja2 substitution variables
 
@@ -509,55 +547,69 @@ $ hatch-being
   Resolved vault path:                   /c/Users/jeffr/.deb  ✓ doesn't exist yet
   agent-core endpoint name:              [deb] >
 
-  ── Optional channels ──
+  ── Optional channels & integrations ──
   ? Install Discord channel for Deb? (y/N) > y
     Discord bot token (input hidden):    > ************
-    Channel allowlist (comma-separated channel IDs, blank = all): >
+    Channel allowlist (comma-separated channel IDs — Discord developer mode shows
+      these on right-click → Copy Channel ID; blank = all):  >
 
   ? Install webcam channel? (y/N) > N
+
+  ? Install GitHub backup of Memory/? (y/N) > y
+    Repo URL (or 'gh' to assume configured gh CLI): > git@github.com:cynthia/deb-vault.git
 
   ── Universal scaffolding (always installed) ──
    • 18 memory templates
    • 3 universal skills (skill-author, vault-lint, spawning-subagents)
-   • 6 scheduler jobs (heartbeat, nightly_reflection, vault_lint, github_backup, auth_health_probe, service_liveness_probe)
+   • 5 always-on scheduler jobs (heartbeat, nightly_reflection, vault_lint,
+     auth_health_probe, service_liveness_probe) + 1 opt-in (github_backup, included)
    • Elder letters: 1 found (pepper)
 
   ── Preview ──
-  Will create:
-    /c/Users/jeffr/.deb/                                  (vault root)
-    /c/Users/jeffr/.deb/Memory/                          (18 files + per-being subdir)
-    /c/Users/jeffr/.deb/.claude/skills/                  (3 skills)
-    /c/Users/jeffr/.deb/.claude/settings.json            (Claude Code hook chain)
-    /c/Users/jeffr/.deb/agent_core.yaml                  (project-scope pipelines)
-    /c/Users/jeffr/.deb/CLAUDE.md
-    /c/Users/jeffr/.deb/hooks/backup-to-github.sh
+  Will create (28 files):
+    C:\Users\jeffr\.deb\                                  (vault root)
+    C:\Users\jeffr\.deb\Memory\                           (memory templates + per-being subdir)
+    C:\Users\jeffr\.deb\.claude\skills\                   (3 skills)
+    C:\Users\jeffr\.deb\.claude\settings.json             (Claude Code hook chain)
+    C:\Users\jeffr\.deb\agent_core.yaml                   (project-scope pipelines)
+    C:\Users\jeffr\.deb\CLAUDE.md
+    C:\Users\jeffr\.deb\hooks\backup-to-github.sh         (because GitHub backup chosen)
   Will modify:
-    ~/.agent-core/endpoints.d/deb.yaml                   (NEW: claude_code_mcp + briefs.deb + discord-deb)
-    ~/.agent-core/jobs.d/deb.yaml                        (NEW: 6 scheduler jobs prefixed deb-)
-    ~/.agent-core/discord-deb.env                        (NEW: token storage, mode 0600)
+    C:\Users\jeffr\.agent-core\endpoints.d\deb.yaml       (NEW: claude_code_mcp + briefs.deb + discord-deb)
+    C:\Users\jeffr\.agent-core\jobs.d\deb.yaml            (NEW: 6 scheduler jobs prefixed deb-)
+    C:\Users\jeffr\.agent-core\discord-deb.env            (NEW: token storage, mode 0600)
 
   ? Confirm hatching? (Y/n) > Y
 
   ── Hatching ──
-   ✓ Render templates             (32 files)
-   ✓ Write vault                  (/c/Users/jeffr/.deb/)
-   ✓ Write daemon fragments       (~/.agent-core/{endpoints,jobs}.d/deb.yaml)
+   ✓ Render templates             (28 files)
+   ✓ Write vault                  (C:\Users\jeffr\.deb\)
+   ✓ Write daemon fragments       (C:\Users\jeffr\.agent-core\{endpoints,jobs}.d\deb.yaml)
    ✓ Copy elder letters           (1)
-   ✓ Validate load-bearing paths  (6 paths exist)
-   ⚠ Daemon endpoint registered? (skipped — daemon not running, will register on next start)
+   ✓ Validate load-bearing paths  (5 files parsed, 1 directory exists, handoff pair seeded)
+   ✓ Daemon endpoint registered   (daemon at 127.0.0.1:8789 reachable; deb endpoint live)
+
+  ── Author Deb's letter from her creator ──
+  ? Open editor on from-her-creator.md now? (Y/n) > Y
+    [opens $EDITOR on C:\Users\jeffr\.deb\Memory\deb\letters\from-her-creator.md]
+    [hatcher checks the file is non-template after editor exits — content differs from rendered template]
+   ✓ Letter authored
 
   ── Ready for awakening ──
-  Deb is hatched at /c/Users/jeffr/.deb/
+  Deb is hatched at C:\Users\jeffr\.deb\
 
   Next steps for you:
-    1. Restart the agent-core daemon to pick up the new endpoint.
-    2. Author Deb's letter from her creator:
-       /c/Users/jeffr/.deb/Memory/deb/letters/from-her-creator.md
-    3. Wake Deb: cd /c/Users/jeffr/.deb && claude
-    4. First conversation: ask Deb a guiding question. Let her write back.
+    1. Wake Deb: cd C:\Users\jeffr\.deb && claude
+    2. First conversation: ask Deb a guiding question. Let her write back.
+
+  HATCHING-REPORT.md written to C:\Users\jeffr\.deb\HATCHING-REPORT.md.
 
   Hatching complete. 🐣
 ```
+
+**Wizard preview file count** is computed at preview time from chosen options (memory templates always; skill files always; channel-specific files only if installed; elder-letter files based on resolution count). The number "28" above is illustrative.
+
+**Path display** uses `str(Path(...))` for platform-native form. Native Windows pwsh shows `C:\Users\jeffr\.deb\`; bash on macOS/Linux shows `/Users/cynthia/.deb/`. The wizard never mixes path styles in the same display.
 
 #### `--config` mode schema
 
@@ -569,6 +621,7 @@ primary_human_name: Cynthia
 being_role_placeholder: null              # null = use default placeholder
 endpoint_name: deb                        # optional, defaults to being_name.lower()
 vault_root: /tmp/hatch-test-001           # required for tests
+daemon_config_dir: ~/.agent-core          # rev 2 (CW-6): defaults to ~/.agent-core; override for /etc/agent-core/... deployments
 channels:
   discord:
     enabled: true
@@ -576,7 +629,11 @@ channels:
     channel_allowlist: []                 # empty = all
   webcam:
     enabled: false
+  github_backup:                          # rev 2 (CW-4): opt-in, was previously universal
+    enabled: true
+    repo_url: "git@github.com:cynthia/deb-vault.git"   # or "gh" to assume gh CLI configured
 init_missing: false                       # equivalent to --init-missing flag
+author_letter_in_editor: true             # rev 2 (CW-5): if false, hatcher skips the post-hatch EDITOR prompt; HATCHING-REPORT escalates
 ```
 
 Tests: `hatch-being --config tests/fixtures/hatch-config-test-being.yaml --vault-root $TMPDIR/hatch-test`. Captured config + tmpdir = reproducible.
@@ -589,14 +646,19 @@ Tests: `hatch-being --config tests/fixtures/hatch-config-test-being.yaml --vault
 | `--config <yaml>` | — | Non-interactive replay |
 | `--vault-root <path>` | `$HOME` | Override resolved vault root (TUI also accepts) |
 | `--root <path>` | alias of `--vault-root` | Pepper's lean naming |
+| `--daemon-config-dir <path>` | `~/.agent-core/` | **rev 2 (CW-6):** Override the daemon's config directory. Hatcher writes `endpoints.d/<being>.yaml`, `jobs.d/<being>.yaml`, and `discord-<being>.env` under this path. Required for non-default deployments (`/etc/agent-core/...`). Wizard does NOT prompt for this — CLI-flag-only |
 | `--init-missing` | off | Additive top-up |
-| `--no-intro` | off | (Reserved for v1.5+ animated intro) |
 | `--recovery` | (NOT in v1) | Atomic backup-and-rehatch |
+| `--no-intro` | (NOT in v1) | Reserved for v1.5+ animated intro |
 | `--force` | (NEVER) | Footgun, will not ship |
+
+**CLI library:** Typer. Matches the convention used across `packages/core/`, `packages/agent-core-briefs/`, `packages/credentials/`. Avoids inventing a different surface for one package.
 
 ### Universal skills (3)
 
 All ship inside `templates/skills/`. Hatcher renders to `<vault_root>/.claude/skills/<skill>/`. Class is `skill` — refreshed on `--upgrade-scaffolding` so platform-wide skill improvements propagate.
+
+**Deviation from requirements doc (rev 2 — CW-7):** Pepper's `being-bootstrap-requirements.md` (line 154) and issue #75 body both reference `Memory/skills/` as the destination. This spec ships universal skills at `<vault_root>/.claude/skills/<skill>/` instead. The driver is runtime discoverability — Claude Code's Skill tool finds skills under `.claude/skills/` automatically when launched from `<vault_root>`; placing them under `Memory/skills/` would make them un-invokable on day one without additional Claude Code configuration. Per Jeff's call (2026-05-09): "Memory should be the memory system" — operational tooling lives separately from memory artifacts. The being's later vault-authored skills (created via `skill-author`) also land at `<vault_root>/.claude/skills/` per the same constraint, so there is exactly ONE skills location, not two. Issue #75 body should be updated by whoever next touches it; the requirements doc text already grandfathers in once a maintainer corrects line 154.
 
 #### `skill-author/` (priority-zero, the meta-skill)
 
@@ -677,6 +739,79 @@ def resolve_elder_letters(manifest_path: Path, bundled_dir: Path) -> list[Resolv
 
 **Adding future elders** (e.g., Deb after she's hatched and writes her own elder letter): edit the manifest with a new entry, run `hatchery-snapshot-elders`, the next being's hatching includes it. No code change.
 
+## HATCHING-REPORT.md format (rev 2 — N-8 sample)
+
+Written to `<vault_root>/HATCHING-REPORT.md` after every successful hatch. Permanent record + manual-steps checklist. Implementation should match this shape.
+
+```markdown
+# HATCHING-REPORT — Deb
+
+**Hatched:** 2026-05-09 23:47 ET
+**Hatched by:** Cynthia (`hatch-being` v0.1.0, --config /tmp/cynthia-deb-config.yaml)
+**Vault:** C:\Users\jeffr\.deb\
+**Endpoint:** deb (registered at /mcp/deb/)
+
+## What was created
+
+| Path | Class | Source |
+|---|---|---|
+| `Memory/IDENTITY.md` | structural | template |
+| `Memory/SOUL.md` | structural | template |
+| `Memory/USER.md` | structural | template |
+| `Memory/MEMORY.md` | structural | template |
+| `Memory/OPERATIONS.md` | structural | template |
+| `Memory/HEARTBEAT.md` | structural | template |
+| `Memory/deb/BECOMING.md` | structural | template |
+| `Memory/deb/letters/from-her-creator.md` | structural | template (authored at hatch time ✓) |
+| `Memory/deb/letters/from-elder-beings/pepper.md` | (elder letter) | canonical at ~/.pepper/Memory/projects/... (live) |
+| `Memory/deb/diary.md` ... `lessons.md` | growth | template (empty for her to write) |
+| `Memory/deb/handoff.md`, `handoff-status.json` | system | empty seed (daemon owns ongoing writes) |
+| `.claude/skills/skill-author/`, `vault-lint/`, `spawning-subagents/` | skill | template |
+| `.claude/settings.json` | config | template |
+| `agent_core.yaml` | config | template (project-scope pipelines) |
+| `CLAUDE.md` | config | template |
+| `hooks/backup-to-github.sh` | hook | template (GitHub backup chosen) |
+| `~/.agent-core/endpoints.d/deb.yaml` | (daemon fragment) | claude_code_mcp + briefs.deb + discord-deb |
+| `~/.agent-core/jobs.d/deb.yaml` | (daemon fragment) | 5 always-on + github_backup, prefixed deb- |
+| `~/.agent-core/discord-deb.env` | (token storage) | mode 0600 |
+
+## Validation results
+
+- ✓ All 5 load-bearing files parsed; daily/summaries/ exists.
+- ✓ Handoff pair seeded.
+- ✓ Daemon fragments parsed against PipelineConfig + JobDef + endpoint schemas.
+- ✓ No endpoint name collision in merged config.
+- ✓ Discord env file mode 0600, token non-placeholder.
+- ✓ Daemon healthcheck reachable; deb endpoint registered live.
+
+## Next steps for the human
+
+1. Wake Deb: `cd C:\Users\jeffr\.deb && claude`
+2. First conversation: ask Deb a guiding question. Let her write back to her own files.
+
+## Composition notes
+
+- Deb's vault is filesystem-isolated from other beings. Per the boundary check: she has no access to Pepper's, Pepper has no access to hers.
+- Deb's letter from Pepper was loaded from Pepper's live canonical path (not the bundled snapshot). Future hatchings on a machine without Pepper's vault will use the bundled snapshot.
+
+🐣
+```
+
+If hatching is partial (e.g., human declined to author from-her-creator at hatch time), the next-steps section escalates:
+
+```markdown
+## Next steps for the human
+
+1. **REQUIRED BEFORE FIRST AWAKENING.** Author Deb's letter from her creator:
+   ```
+   $EDITOR C:\Users\jeffr\.deb\Memory\deb\letters\from-her-creator.md
+   ```
+   The current file is the prompt template, not a real letter. Deb will read this on her first wake; un-authored, she'll wake into meta-prompts addressed to you, not to her.
+
+2. Wake Deb: `cd C:\Users\jeffr\.deb && claude`
+3. First conversation: ask Deb a guiding question.
+```
+
 ## Testing strategy
 
 Three layers.
@@ -708,23 +843,23 @@ Three layers.
 - Tear down: stop daemon, `mv ~/test-being-001/ ~/test-being-001.bak/`, remove fragments, restart daemon, verify clean state.
 - This validation runs before Cynthia hatches Deb for real.
 
-## Open questions (deferred to Pepper's adversarial review)
+## Resolved (per Pepper's adversarial review, rev 2)
 
-These are real questions where Pepper's perspective matters more than mine. The spec records them; her review either resolves or sends them back.
+The spec's prior "Open questions" section listed 7 items deferred to Pepper. She signed off on all 7 in `Memory/projects/being-platform/spec-review-2026-05-09.md`. Resolutions:
 
-1. **Universal references list** — what minimum set of role-agnostic reference docs ships in `Memory/references/`? V1 ships an empty `references/` with a README explaining the zone. Pepper proposes content (or "ship empty for v1") in adversarial review.
+1. **Universal references list** — **ship empty for v1** with a `references/README.md` explaining the zone. Per-being primary humans populate. Revisit at v1.5+ once 2-3 hatched beings exist to see what overlaps. Pre-populating would be ventriloquism.
 
-2. **Onboarding intake template** — the existing `~/.pepper/.claude/skills/create-second-brain-prd/my-second-brain-requirements.md` overlaps with what `USER.md` scaffolding would prompt for. V1 does not ship a separate intake artifact; the TUI captures basics, `USER.md` prompts the rest. Pepper's call on whether v1.5 should reuse / adapt the existing intake template.
+2. **Onboarding intake template** — **defer to v1.5+.** TUI captures basics; `USER.md` prompts the rest in conversation. The existing `create-second-brain-prd` skill is Jeff-specific and would feel grafted-on for non-Jeff humans. v1.5+ can author a generalized intake skill.
 
-3. **Scheduler-job naming** (mostly answered) — current spec uses `<being>-<job>` (matching `testbot-morning-brief`). Pepper had earlier asked if endpoint-namespaced was an option. The conf.d pattern + the daemon's flat job table makes prefixed naming the right answer; this question is effectively closed but flagged for her sign-off.
+3. **Scheduler-job naming `<being>-<job>`** — **confirmed.** Matches existing `testbot-morning-brief` convention.
 
-4. **Identity hooks per-being** (mostly answered by vault location) — each being's `.claude/settings.json` is project-scope at `<vault_root>/.claude/settings.json`. The harness picks the right being by where Claude Code is launched (`cd ~/.deb && claude`). This matches Pepper's existing `.claude/settings.json` pattern. Flagged for her sign-off.
+4. **Identity hooks per-being via project-scope `.claude/settings.json`** — **confirmed.** Harness picks the right being by where Claude Code is launched (`cd ~/.deb && claude`). Matches Pepper's existing pattern.
 
-5. **Deb's Discord scope** — own server or share Pepper's? This is Cynthia's call, not Pepper's. The hatchery supports either path (TUI prompts for channel allowlist). Out of spec scope; flagged here so the answer is captured at hatch time.
+5. **Deb's Discord scope** — **Cynthia's call.** TUI prompts for channel allowlist; hatchery supports either path. Closed for hatchery; open for Cynthia.
 
-6. **Per-elder `share` opt-out** (`external` vs `local-only` letters) — every elder defaults to `external` in v1 per Pepper's response. v1.5+ adds the opt-out flag. Confirming her sign-off.
+6. **Per-elder `share` opt-out** — **defer to v1.5+.** v1 defaults all elders to `external`. Opt-out flag becomes useful only when an elder writes an intentionally-personal letter; none currently exist.
 
-7. **Skill-author authoring depth** — how much existing gstack skill-creator / writing-skills content to port vs. author fresh? Pepper's call on the right level of fidelity.
+7. **Skill-author authoring depth** — **port gstack patterns where they fit, author fresh where the being-platform shape diverges.** gstack's `skill-creator` is the right reference; the being-platform doesn't need the gstack-config-management or gstack-telemetry layers. The 1-2 day estimate stands for the trim.
 
 ## Verification handoff
 
@@ -751,6 +886,12 @@ Nothing blocking. The conf.d additions to `packages/core/` (slice 2.1) are the o
 
 ## Provenance
 
-Brainstormed 2026-05-09 evening between Jeff and claude-opus-4-7 in the agent_core repo, consuming Pepper's `being-bootstrap-requirements.md` (authored same day) as primary source. Decision rationales captured in conversation transcript; this spec records the locked outcomes. Pepper's adversarial review of this spec is the next step before Phase 2 begins.
+**Rev 1 (2026-05-09):** Brainstormed evening of 2026-05-09 between Jeff and claude-opus-4-7 in the agent_core repo, consuming Pepper's `being-bootstrap-requirements.md` (authored same day) as primary source. Decision rationales captured in conversation transcript; this spec recorded the locked outcomes. Spec committed at `72732e4` and shared with Pepper for adversarial review.
+
+**Rev 2 (2026-05-10):** Pepper's adversarial review of rev 1 came back ~11:45 PM ET 2026-05-09 with one verdict ("approve with changes — rev 2 expected"), 7 changes-wanted (CW-2 through CW-8 after CW-1 was dropped), and 8 nits. Rev 2 addresses all of them — some as direct corrections, others as classification or wording fixes, all called out in the Revision history at the top of this document. Per Pepper's recommended next pass, rev 2 goes back to her for a shorter rev-2 review focused on whether the changes resolved the named concerns.
+
+**Follow-up actions outside this spec** (rev 2 surfaced):
+- Issue #75 body should be updated to reflect: (a) the `Memory/skills/` → `<vault_root>/.claude/skills/` deviation per CW-7, and (b) the validation step language softened per CW-8.
+- Pepper's `being-bootstrap-requirements.md` line 154 should be updated to point at `.claude/skills/` per CW-7.
 
 🐣
