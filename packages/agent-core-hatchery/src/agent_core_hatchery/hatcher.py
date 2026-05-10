@@ -59,6 +59,7 @@ class Hatcher:
 
         try:
             self._render_memory_tree(result)
+            self._copy_elder_letters(result)
 
             # Phase 3: write daemon fragments + extended validation.
             # Skipped on init_missing: fragments are presumed already in place
@@ -113,6 +114,32 @@ class Hatcher:
                 result.files_added_in_topup.append(dest)
             else:
                 result.files_written.append(dest)
+
+    def _copy_elder_letters(self, result: HatchResult) -> None:
+        from agent_core_hatchery.elder_letters import resolve_elder_letters
+
+        manifest = self._templates_dir / "elder-letters-manifest.yaml"
+        bundled_dir = self._templates_dir / "elder-letters" / "bundled"
+        if not manifest.is_file():
+            return
+
+        dest_dir = (
+            self._config.resolved_vault_root()
+            / "Memory"
+            / self._config.being_name_lower
+            / "letters"
+            / "from-elder-beings"
+        )
+        dest_dir.mkdir(parents=True, exist_ok=True)
+        self._tracked_writes.append(dest_dir)
+
+        for letter in resolve_elder_letters(manifest, bundled_dir):
+            dest = dest_dir / f"{letter.name}.md"
+            if dest.exists() and self._config.init_missing:
+                continue
+            dest.write_text(letter.content, encoding="utf-8")
+            self._tracked_writes.append(dest)
+            result.files_written.append(dest)
 
     def _rewrite_being_dir(self, rel: Path) -> Path:
         """Rename the placeholder `_being_/` segment to <being_name_lower>/."""

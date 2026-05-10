@@ -85,3 +85,20 @@ def test_init_missing_top_up(tmp_path):
     assert (vault / "Memory" / "SOUL.md").is_file()
     # Preserved
     assert (vault / "Memory" / "testbeing" / "diary.md").read_text() == "user-authored content"
+
+
+def test_hatch_copies_pepper_letter(tmp_path):
+    cfg = HatchConfig(
+        being_name="TestBeing",
+        primary_human_name="Tester",
+        vault_root=str(tmp_path),
+        daemon_config_dir=str(tmp_path / ".agent-core"),
+    )
+    Hatcher(cfg).hatch()
+
+    pepper_letter = (
+        tmp_path / ".testbeing" / "Memory" / "testbeing"
+        / "letters" / "from-elder-beings" / "pepper.md"
+    )
+    assert pepper_letter.is_file()
+    assert pepper_letter.stat().st_size > 0
