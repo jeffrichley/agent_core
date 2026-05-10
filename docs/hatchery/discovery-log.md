@@ -32,3 +32,10 @@ Landed as PR #77 (commit `e385077` on main).
 - **Elder-letter resolution works against Jeff's live Pepper vault** — `hatchery-snapshot-elders` smoke test confirmed canonical-path resolution: it found `~/.pepper/Memory/projects/being-platform/letters-from-elder-beings/pepper.md` and reported "bundled already current" (no diff between canonical and bundled snapshot). On a fresh machine without Pepper's vault, the bundled fallback wins automatically.
 - **vault-lint skill ships as a stub** — Per the spec, the full check set (orphan pages, contradictions, cross-reference validation) is a v1.5+ enhancement. The shipped version checks load-bearing files only and writes a stub report.
 
+
+## Phase 5 (slice 2.5 — TUI + channels + EDITOR gate + HATCHING-REPORT) — completed 2026-05-10
+
+- **YAML round-trip strips comments** — DaemonConfigWriter renders the always-on Jinja2 template, parses with `yaml.safe_load`, merges in channel scaffold blocks, then re-serializes with `yaml.safe_dump`. The header comments in `endpoints.yaml.j2` and `jobs.yaml.j2` are lost in the process. Acceptable: the comments are documentation, not config; the daemon merges these as structured YAML.
+- **Wizard prompts mocked at the questionary boundary** — Only the pure-function validators (`_validate_being_name`, `_validate_endpoint_name`, `_validate_path_writable`) are unit-tested. The interactive flow itself is exercised in Phase 6 manual e2e.
+- **`daemon_check_status = "skipped"` placeholder** — Phase 5 doesn't probe the live daemon. The HATCHING-REPORT generator handles all 4 statuses (`reachable_and_registered`, `reachable_but_missing`, `unreachable`, `skipped`) but only `skipped` is wired today. Phase 6 e2e is where the live healthcheck happens.
+
