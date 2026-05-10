@@ -59,7 +59,22 @@ class Hatcher:
 
         try:
             self._render_memory_tree(result)
+
+            # Phase 3: write daemon fragments + extended validation.
+            # Skipped on init_missing: fragments are presumed already in place
+            # from the original hatch; re-writing would raise FileExistsError
+            # and the top-up flow is vault-only (not daemon-config).
+            if not self._config.init_missing:
+                from agent_core_hatchery.daemon_config import DaemonConfigWriter
+                from agent_core_hatchery.validators import validate_daemon_fragments_parse
+
+                daemon_writes = DaemonConfigWriter(self._config).write_all()
+                self._tracked_writes.extend(daemon_writes)
+                result.files_written.extend(daemon_writes)
+
             validate_load_bearing_paths(self._config)
+            if not self._config.init_missing:
+                validate_daemon_fragments_parse(self._config)
         except (ValidationError, Exception):
             self._rollback()
             raise

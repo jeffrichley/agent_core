@@ -14,6 +14,7 @@ def test_hatch_renders_load_bearing_paths(tmp_path):
         being_name="TestBeing",
         primary_human_name="Tester",
         vault_root=str(tmp_path),
+        daemon_config_dir=str(tmp_path / ".agent-core"),
     )
     hatcher = Hatcher(cfg)
     result = hatcher.hatch()
@@ -42,6 +43,7 @@ def test_hatch_refuses_if_vault_exists(tmp_path):
         being_name="TestBeing",
         primary_human_name="Tester",
         vault_root=str(tmp_path),
+        daemon_config_dir=str(tmp_path / ".agent-core"),
     )
     Hatcher(cfg).hatch()
 
@@ -50,11 +52,24 @@ def test_hatch_refuses_if_vault_exists(tmp_path):
         Hatcher(cfg).hatch()
 
 
+def test_hatch_writes_daemon_fragments(tmp_path):
+    cfg = HatchConfig(
+        being_name="TestBeing",
+        primary_human_name="Tester",
+        vault_root=str(tmp_path),
+        daemon_config_dir=str(tmp_path / ".agent-core"),
+    )
+    Hatcher(cfg).hatch()
+    assert (tmp_path / ".agent-core" / "endpoints.d" / "testbeing.yaml").is_file()
+    assert (tmp_path / ".agent-core" / "jobs.d" / "testbeing.yaml").is_file()
+
+
 def test_init_missing_top_up(tmp_path):
     cfg = HatchConfig(
         being_name="TestBeing",
         primary_human_name="Tester",
         vault_root=str(tmp_path),
+        daemon_config_dir=str(tmp_path / ".agent-core"),
     )
     Hatcher(cfg).hatch()
 

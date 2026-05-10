@@ -19,6 +19,8 @@ def test_config_mode_hatches_into_tmpdir(tmp_path):
             str(FIXTURES / "hatch-config-test-being.yaml"),
             "--vault-root",
             str(tmp_path),
+            "--daemon-config-dir",
+            str(tmp_path / ".agent-core"),
         ],
     )
     assert result.exit_code == 0, result.stdout
