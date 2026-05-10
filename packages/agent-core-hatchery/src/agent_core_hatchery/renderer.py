@@ -39,8 +39,8 @@ class Renderer:
             "primary_human_name": cfg.primary_human_name,
             "hatched_date": cfg.hatched_date,
             "endpoint_name": cfg.endpoint_name,
-            "vault_root": str(cfg.resolved_vault_root()),
-            "vault_memory_path": str(cfg.resolved_vault_memory_path()),
+            "vault_root": cfg.resolved_vault_root().as_posix(),
+            "vault_memory_path": cfg.resolved_vault_memory_path().as_posix(),
             "daemon_handoff_url": "http://127.0.0.1:8789/internal/handoff-jobs",
             "discord_token_env": cfg.discord_token_env,
         }
