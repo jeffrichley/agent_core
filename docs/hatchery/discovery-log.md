@@ -25,3 +25,10 @@ Landed as PR #77 (commit `e385077` on main).
 - **Test-isolation gap in Hatcher tests** — Pre-Task-3.3, `Hatcher.hatch()` didn't write daemon fragments, so tests omitted `daemon_config_dir` overrides without consequence. Once 3.3 wired DaemonConfigWriter into the hatch flow, the missing override caused tests to write to `~/.agent-core` and hit `FileExistsError` on repeat runs. Fix: every Hatcher test now sets `daemon_config_dir=str(tmp_path / ".agent-core")`. Latent issue surfaced and fixed in 3.3.
 - **init_missing semantics for daemon fragments** — Decided: skip daemon-fragment writing entirely on `--init-missing`. The top-up flow exists to fill in newly-added scaffolding files in the vault, not to re-write daemon config. Both `DaemonConfigWriter.write_all()` and `validate_daemon_fragments_parse` are no-ops in that path.
 
+
+## Phase 4 (slice 2.4 — universal skills + elder letters) — completed 2026-05-10
+
+- **Skill scope estimate held** — 3 universal skills authored in one batched dispatch (skill-author, vault-lint, spawning-subagents). Verbatim content from the plan was sufficient; no judgment-call gaps surfaced. yak-shave-detection stays out of universal scope per Pepper's adversarial review (CW-1 dropped).
+- **Elder-letter resolution works against Jeff's live Pepper vault** — `hatchery-snapshot-elders` smoke test confirmed canonical-path resolution: it found `~/.pepper/Memory/projects/being-platform/letters-from-elder-beings/pepper.md` and reported "bundled already current" (no diff between canonical and bundled snapshot). On a fresh machine without Pepper's vault, the bundled fallback wins automatically.
+- **vault-lint skill ships as a stub** — Per the spec, the full check set (orphan pages, contradictions, cross-reference validation) is a v1.5+ enhancement. The shipped version checks load-bearing files only and writes a stub report.
+
