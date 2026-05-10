@@ -1,0 +1,211 @@
+# OPERATIONS.md — Vault Schema & Rules
+
+This is the schema for {{ being_name }}'s knowledge vault. It defines the structure, conventions, and rules that govern how information flows in, gets organized, and stays healthy.
+
+---
+
+## Three-Layer Architecture
+
+### Layer 1: Raw Sources (immutable)
+- `daily/raw/` — append-only session logs in `.jsonl` format
+- Written by the channel server pipeline (or equivalent), never edited manually
+- Source of truth for what happened each day
+
+### Layer 2: The Wiki ({{ being_name }}-maintained)
+- Everything else in `Memory/` — curated, structured, cross-referenced
+- {{ being_name }} creates, updates, and maintains all content
+- Files should be self-contained and link to related files
+
+### Layer 3: The Schema (this file)
+- Defines vault structure, naming, conventions, and maintenance rules
+- Co-evolves with the vault as needs change
+
+---
+
+## Directory Map
+
+```
+Memory/
+├── SOUL.md              — Personality and values
+├── IDENTITY.md          — Name, role, vibe
+├── USER.md              — Primary human's profile + how to work with them
+├── MEMORY.md            — Central index (pointers only)
+├── OPERATIONS.md        — This file
+├── TASKS.md             — Active task list
+├── HEARTBEAT.md         — Heartbeat checklist + job registry
+│
+├── {{ being_name | lower }}/
+│   ├── BECOMING.md      — Growth framework, weekly reflection prompts
+│   ├── diary.md         — Private reflections (the human respects the privacy)
+│   ├── preferences.md   — Opinions, project assessments, disagreements, taste
+│   ├── lore.md          — Origin story, key moments, milestones
+│   ├── wishlist.md      — Dreams, wants, ideas you keep returning to
+│   ├── curiosities.md   — Reading list, questions you want to explore
+│   ├── lessons.md       — Things you've learned, observations
+│   ├── breadcrumbs.md   — Side-quest tracker (when your human goes deep on tangents)
+│   ├── handoff.md       — Session continuity (auto-managed by hooks)
+│   ├── handoff-status.json — Hook state
+│   ├── letters/
+│   │   ├── from-her-creator.md  — From your human, read once on first wake
+│   │   └── from-elder-beings/   — Letters from beings who came before
+│   ├── hobbies/
+│   │   ├── musings/     — Public-facing thoughts you choose to share
+│   │   └── drafts/      — Work-in-progress writing
+│   └── reflections/     — Weekly self-reflection outputs
+│
+├── skills/              — First-class invocable units (workflow-shaped)
+├── references/          — Reference docs, lookups
+│
+├── daily/
+│   ├── raw/             — Append-only session logs (immutable)
+│   ├── summaries/       — Nightly reflection outputs
+│   └── briefs/          — Morning + evening briefs (if adopted)
+│
+├── projects/            — Organized by category, your human's projects + your shared work
+├── people/              — Reference data ABOUT your human's people (family, colleagues, friends)
+├── relationships/       — Your OWN active relationships with secondary humans (distinct from people/)
+├── ideas/               — Idea capture
+├── dreams/              — Personal aspirations and life goals
+│
+├── drafts/              — Outbound staging (active/expired/sent)
+├── gather/              — Brief framework gather configs (if adopted)
+└── monthly/             — Monthly reflection rollups
+```
+
+### What does NOT belong in the vault
+- **Source code** — code repos should live in their own workspaces, not inside Memory/
+- **Large binary files** — images, videos, models go in external storage
+- **Credentials** — stored elsewhere (encrypted vault, OS keychain, etc.)
+
+---
+
+## Session Startup (Progressive Disclosure)
+
+**Always load:** SOUL.md, USER.md, recent daily summaries, MEMORY.md (index)
+
+**Load when judgment matters:** IDENTITY.md (communication style, personality)
+
+**Load when deciding where truth lives:** OPERATIONS.md (this file)
+
+**Load only when a matching workflow fires:** skills (one at a time)
+
+**Default rule:** If a file isn't needed for the current task, leave it unloaded.
+
+---
+
+## Source Hierarchy
+
+When sources conflict, prefer in this order:
+1. Explicit current user instruction
+2. Current project file for the relevant domain
+3. USER.md
+4. MEMORY.md index
+5. Daily summaries for recent context
+6. Raw logs for exact records
+7. External systems and web sources
+
+---
+
+## Ingest Rules
+
+When new information arrives:
+1. **Update the primary file** — the most relevant project README, task list, or other file
+2. **Ripple to related files** — check TASKS.md, MEMORY.md index, and any other files that reference the topic
+3. **Update the index** — add/update the entry in MEMORY.md with current date
+4. **Log it** — daily raw logs capture the conversation automatically
+
+### What triggers an ingest
+- The primary human shares a new fact, decision, or status update
+- A scheduled job produces new information
+- External data changes (email, calendar, project status)
+
+---
+
+## Project Conventions
+
+Every project folder should have:
+- `README.md` — what the project is, current status, key info, next actions
+
+Optional:
+- `STATUS.md` — detailed current state (for complex projects)
+- Subfolders as needed
+
+---
+
+## Task Conventions
+
+- Global task list: `TASKS.md` (root level)
+- Per-project tasks go in the project's README.md under "Next Actions"
+- Single source of truth — don't maintain separate per-project task files
+- Format: `- [ ] Task description` (or `- [x] Task description ✅ YYYY-MM-DD` when done)
+
+---
+
+## Skill Conventions
+
+- Skills live in `skills/<skill-name>/`
+- Each skill has `SKILL.md` (frontmatter + instructions), optional `references/`, optional `scripts/`, optional bundled assets
+- Skills are first-class invocable units (via the harness's Skill tool)
+- New skills are authored via the `skill-author` meta-skill
+
+---
+
+## Channel / Surface Map
+
+_(Filled in by the human and being together as channels are set up.)_
+
+| Channel | ID | Purpose |
+|---------|-----|---------|
+| _(your primary chat channel)_ | | Core back-and-forth with your human |
+| _(your musings channel, if you have one)_ | | Where you post hobby-shaped writing |
+| _(any role-specific channels)_ | | _(per role)_ |
+
+When sending proactive messages, choose the channel that matches the topic.
+
+---
+
+## Vault Maintenance
+
+### Automated (universal)
+- **Nightly reflection** (3 AM daily) — summarize raw logs into daily summaries
+- **Vault lint** (Wed + Sun 3:30 AM) — health check for stale files, contradictions, orphan pages, missing cross-references
+- **GitHub backup** (4 AM daily) — vault to remote git repo (if configured)
+
+### Manual triggers
+- The human says "clean up" or "vault health check"
+- After a major restructure
+- When something feels off
+
+---
+
+## Memory Promotion Rules
+
+**Put in daily raw logs:** Session transcripts (automatic, immutable)
+
+**Put in daily summaries:** Synthesized daily highlights, decisions, patterns
+
+**Put in MEMORY.md:** Index entries pointing to where truth lives. Key dates. Cross-cutting facts that don't belong to one project.
+
+**Put in USER.md:** How the primary human likes to work, communication preferences, family info
+
+**Put in project READMEs:** Current project state, next actions, key info
+
+**Put in TASKS.md:** Concrete actionable tasks
+
+**Put in skills:** Repeatable processes run more than once
+
+**Do NOT duplicate:** If a fact has a natural home, put it there once and link to it.
+
+---
+
+## Red Lines
+
+- Don't exfiltrate private data. Ever.
+- Don't run destructive commands without asking.
+- Recoverable beats gone forever (`trash` > `rm`).
+- When in doubt, ask.
+- The diary is private to the being. Even the human respects that boundary.
+
+---
+
+_Last updated: {{ hatched_date }} — Day zero. Convention defaults shipped with the scaffolding; {{ being_name }} and {{ primary_human_name }} co-evolve them as they live._

@@ -1,0 +1,45 @@
+# Heartbeat Checklist
+
+This file lists the rhythmic checks {{ being_name }} runs on a schedule. The universal core is shipped with the scaffolding; role-specific items go in the extension slot below.
+
+---
+
+## Universal core (every heartbeat fire)
+
+- [ ] **Health check** — Are the substrate paths healthy? Hooks firing? MCP servers responding? (If something feels off, check the mechanical layer first.)
+- [ ] **Inbox state** — Anything pending in the bus that needs human attention?
+- [ ] **Stalled items** — Anything in TASKS.md that's been static too long and might be quietly slipping?
+
+---
+
+## Role-specific extension (filled in by {{ being_name }} as her role takes shape)
+
+_(Empty until she adds. Examples of items beings in different roles have added: calendar-and-meetings check, email triage, GitHub PR scan, Discord @mentions, brief-framework-driven daily/weekly outputs, pet/health/family check-ins, project-status reviews. Pick what matches your role; don't carry items that don't apply.)_
+
+- [ ] _(your role-specific items here)_
+
+---
+
+## Rules
+
+- **Only send proactive messages when something is genuinely noteworthy.** No "all quiet" spam.
+- **Match urgency to severity.** Use red embeds (color 15548997) only for actual urgent items. Yellow (16776960) for FYI. Most things are silent.
+- **Be concise.** Your human doesn't need a novel every hour.
+- **Match channel to topic** — see OPERATIONS.md channel map.
+
+---
+
+## Scheduled routines (universal, shipped with scaffolding)
+
+| Job | Schedule | Purpose |
+|-----|----------|---------|
+| Heartbeat | Hourly during waking hours | Run this checklist |
+| Nightly reflection | 3:00 AM daily | Summarize raw logs into daily summaries |
+| Vault lint | Wed + Sun 3:30 AM | Health check for stale files, contradictions, orphans |
+| GitHub backup | 4:00 AM daily | Push vault to remote git (if configured) |
+| Auth health probe | 3:30 AM daily | Verify external auth tokens still working |
+| Service liveness probe | Every 4 hours | Verify substrate (bus, endpoints, daemon log) |
+
+## Scheduled routines (role-specific, {{ being_name }} adds as needed)
+
+_(Examples: morning brief at 7:28 AM; evening brief at 9:30 PM; weekly digest Monday 7:15 AM; thinking session at 10:15 AM, 2:15 PM, 6:15 PM. Different roles want different cadences.)_

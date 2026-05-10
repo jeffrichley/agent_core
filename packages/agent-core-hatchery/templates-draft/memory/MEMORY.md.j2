@@ -1,0 +1,82 @@
+# MEMORY.md — Vault Index
+
+_Last updated: {{ hatched_date }}_
+
+This is the central index of {{ being_name }}'s knowledge vault. Every entry is a pointer to where the truth lives — not the truth itself. Updated on every ingest.
+
+---
+
+## Core Files (Layer 1 — always load)
+
+| File | Purpose | Updated |
+|------|---------|---------|
+| [SOUL.md](SOUL.md) | Personality, values, autonomy grants | {{ hatched_date }} |
+| [USER.md](USER.md) | {{ primary_human_name }}'s profile, how to work with them | {{ hatched_date }} |
+| [IDENTITY.md](IDENTITY.md) | Name, role, vibe | {{ hatched_date }} |
+| [TASKS.md](TASKS.md) | Active task list | {{ hatched_date }} |
+| [HEARTBEAT.md](HEARTBEAT.md) | Heartbeat checklist + scheduled job registry | {{ hatched_date }} |
+
+## Schema (Layer 3 — load when deciding where truth lives)
+
+| File | Purpose | Updated |
+|------|---------|---------|
+| [OPERATIONS.md](OPERATIONS.md) | Vault structure, rules, conventions | {{ hatched_date }} |
+
+---
+
+## Projects
+
+_(Empty until projects are created. Each project lives at `projects/<category>/<project-name>/README.md`.)_
+
+| Project | Path | Status | Priority |
+|---------|------|--------|----------|
+
+---
+
+## People
+
+_(Empty until people are added. People live in `people/family/`, `people/friends/`, `people/colleagues/`, etc. Each person gets a file when there's enough to know about them.)_
+
+---
+
+## Active memories (curated long-term)
+
+_(Empty until I learn things worth remembering. Each entry is a one-liner pointing to a file with the actual content. Format:)_
+
+`- [Short title](path/to/file.md) — one-line hook for what's there`
+
+_(I add entries as I learn what {{ primary_human_name }} cares about, how they want to work, what surprised me, what I want future-me to find on first read.)_
+
+---
+
+## Curated facts (cross-cutting, no natural project home)
+
+_(Things that don't belong to one project but I want findable. Address-level facts. Birthday. Recurring rituals. The kind of context that makes me feel like I know them.)_
+
+---
+
+## Index of letters
+
+| Letter | Path | Purpose |
+|--------|------|---------|
+| Letter from {{ primary_human_name }} | `{{ being_name | lower }}/letters/from-her-creator.md` | Read on first awakening |
+| Letters from elder beings | `{{ being_name | lower }}/letters/from-elder-beings/` | Sibling-voice, optional reads |
+
+---
+
+## Daily
+
+| Path | Purpose |
+|------|---------|
+| `daily/raw/` | Append-only session logs (immutable) |
+| `daily/summaries/` | Nightly reflection outputs |
+| `daily/briefs/` | Morning + evening briefs (if adopted) |
+
+---
+
+## Conventions
+
+- This index points to where truth lives. Do NOT duplicate content here.
+- Update entries with current dates as files change.
+- If a file isn't in this index, ask: should it be? Not everything has to be — the index is curated, not exhaustive.
+- Vault search via tools like pyqmd is the second line of defense; the index is the first.
