@@ -33,6 +33,7 @@ classes:
     - "config/CLAUDE.md.j2"
     - "daemon-fragments/endpoints.yaml.j2"
     - "daemon-fragments/jobs.yaml.j2"
+    - "elder-letters-manifest.yaml"
 
   hook:
     - "hooks/**/*"
@@ -44,6 +45,7 @@ classes:
     - "memory/people/README.md"
     - "memory/ideas/README.md"
     - "memory/dreams/README.md"
+    - "elder-letters/bundled/**/*"
 
   skill:
     - "skills/**/*"
