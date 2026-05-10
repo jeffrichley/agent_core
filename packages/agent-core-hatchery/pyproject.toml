@@ -4,10 +4,31 @@ build-backend = "hatchling.build"
 
 [project]
 name = "agent-core-hatchery"
-version = "0.0.0"
-description = "Bootstrap system for hatching new agent-core beings (placeholder; Phase 2 fills in deps + entry points)."
+version = "0.1.0"
+description = "Bootstrap system for hatching new agent-core beings"
 requires-python = ">=3.12"
-dependencies = []
+dependencies = [
+    "jinja2>=3.1",
+    "questionary>=2.0",
+    "typer>=0.12",
+    "rich>=13.0",
+    "pyyaml>=6.0",
+    "pydantic>=2.0",
+    "agent-core",
+]
+
+[project.scripts]
+hatch-being = "agent_core_hatchery.cli:app"
+hatchery-snapshot-elders = "agent_core_hatchery.snapshot_elders:app"
+
+[tool.uv.sources]
+agent-core = { workspace = true }
 
 [tool.hatch.build.targets.wheel]
-bypass-selection = true
+packages = ["src/agent_core_hatchery"]
+
+[dependency-groups]
+dev = [
+    "pytest>=8.0",
+    "pytest-asyncio>=0.23",
+]
