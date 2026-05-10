@@ -1,0 +1,11 @@
+fragment-job:
+  trigger: cron
+  timezone: "America/New_York"
+  schedule:
+    hour: 22
+    minute: 0
+  target: stub
+  envelope_kind: Event
+  payload:
+    type: Heartbeat
+    data: {}

@@ -1,0 +1,9 @@
+shared-name:
+  trigger: cron
+  timezone: "America/New_York"
+  schedule:
+    hour: 2
+    minute: 0
+  target: stub
+  envelope_kind: Event
+  payload: {type: Heartbeat, data: {}}
