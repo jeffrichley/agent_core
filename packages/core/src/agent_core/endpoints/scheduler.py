@@ -51,6 +51,10 @@ if TYPE_CHECKING:
 log = logging.getLogger(__name__)
 
 
+class SchedulerConfigError(Exception):
+    """Raised when seed-jobs YAML or jobs.d fragments are malformed."""
+
+
 def _validate_envelope_shape(
     envelope_kind: str,
     prompt: str | None,
