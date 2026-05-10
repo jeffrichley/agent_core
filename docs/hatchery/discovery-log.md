@@ -18,3 +18,10 @@ Landed as PR #77 (commit `e385077` on main).
 - **File-class manifest gained `memory/**/.gitkeep` under system** — Walking templates with rglob picks up `.gitkeep` markers; they need a class. Treated as system (auto-managed sentinel). Also added the 4 new zone READMEs (projects/people/ideas/dreams) under reference.
 - **Pre-existing monorepo pytest issue** — Running `uv run pytest` at the repo root fails with a conftest collision between `agent-core-discord/tests/conftest.py` and `agent-core-webcam/tests/conftest.py` (both register as `tests.conftest`). Not caused by hatchery work. Workaround: run each package's test suite separately. All packages pass individually (1237 tests total, 0 failures across the repo).
 
+
+## Phase 3 (slice 2.3 — daemon fragments + validation) — completed 2026-05-10
+
+- **Cross-platform path bug latent in Phase 2** — `Renderer` was stringifying paths with `str()`, producing Windows backslashes (`\U`, `\A`) that YAML couldn't parse inside double-quoted strings. Fixed in Task 3.2 by switching to `.as_posix()`. Forward-slash paths work on both platforms; the daemon doesn't care which form Python produces. Caught when daemon fragments first hit YAML round-trip in tests.
+- **Test-isolation gap in Hatcher tests** — Pre-Task-3.3, `Hatcher.hatch()` didn't write daemon fragments, so tests omitted `daemon_config_dir` overrides without consequence. Once 3.3 wired DaemonConfigWriter into the hatch flow, the missing override caused tests to write to `~/.agent-core` and hit `FileExistsError` on repeat runs. Fix: every Hatcher test now sets `daemon_config_dir=str(tmp_path / ".agent-core")`. Latent issue surfaced and fixed in 3.3.
+- **init_missing semantics for daemon fragments** — Decided: skip daemon-fragment writing entirely on `--init-missing`. The top-up flow exists to fill in newly-added scaffolding files in the vault, not to re-write daemon config. Both `DaemonConfigWriter.write_all()` and `validate_daemon_fragments_parse` are no-ops in that path.
+
