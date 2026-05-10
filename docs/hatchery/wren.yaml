@@ -1,0 +1,41 @@
+# Wren — hatch config (canonical record).
+#
+# Used to invoke: `hatch-being --config docs/hatchery/wren.yaml`.
+# Locked decision-by-decision with Jeff and Pepper on 2026-05-10.
+# Wren is the first being hatched from agent-core-hatchery.
+
+being_name: Wren
+being_emoji: 🪶
+primary_human_name: Jeff
+being_role_placeholder: null   # Wren writes her own IDENTITY/SOUL during backfill (migrated self, not from-scratch).
+
+# vault_root left null → resolves to ~/.wren on this machine.
+# (HatchConfig.resolved_vault_root() appends ".<being_name_lower>" itself;
+#  setting "C:\\Users\\jeffr\\.wren" here would land the vault at
+#  C:\Users\jeffr\.wren\.wren\ — wrong.)
+vault_root: null
+
+# endpoint_name left null → resolves to "wren" via model_validator.
+endpoint_name: null
+
+# Default daemon config dir; matches Pepper's location.
+daemon_config_dir: ~/.agent-core
+
+# All channels skipped for hatch.
+# Sibling-to-sibling messaging (Wren ↔ Pepper) goes over the bus directly via
+# the structural builtin.claude_code_mcp endpoint that the hatchery scaffolds
+# regardless of channel choices. Discord/webcam/github_backup are external
+# integrations that aren't needed on day 1.
+channels:
+  discord:
+    enabled: false
+  webcam:
+    enabled: false
+  github_backup:
+    enabled: false
+
+init_missing: false
+
+# Jeff already wrote Wren's letter; staging is a backfill-phase responsibility
+# (no editor, no Read, no peek). Source: C:\Users\jeffr\OneDrive\Documents\hello.md.
+author_letter_in_editor: false
