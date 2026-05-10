@@ -194,6 +194,25 @@ def load_seed_jobs(yaml_path: Path) -> dict[str, JobDef]:
     if not yaml_path.exists():
         return {}
     raw = yaml.safe_load(yaml_path.read_text(encoding="utf-8")) or {}
+    # Conf.d-style merge: every <yaml_path_dir>/jobs.d/*.yaml fragment
+    # contributes its top-level job-name keys. Naming collisions are
+    # loud errors — caller renames (hatcher prefixes with being name).
+    fragments_dir = yaml_path.parent / "jobs.d"
+    if fragments_dir.is_dir():
+        for fragment_path in sorted(fragments_dir.glob("*.yaml")):
+            fragment = yaml.safe_load(fragment_path.read_text(encoding="utf-8")) or {}
+            if not isinstance(fragment, dict):
+                raise SchedulerConfigError(
+                    f"jobs.d fragment {fragment_path.name!r}: "
+                    f"top-level must be a mapping, got {type(fragment).__name__}"
+                )
+            for job_name, job_data in fragment.items():
+                if job_name in raw:
+                    raise SchedulerConfigError(
+                        f"jobs.d fragment {fragment_path.name!r}: "
+                        f"job name {job_name!r} collides with existing job"
+                    )
+                raw[job_name] = job_data
     return {name: JobDef(**spec) for name, spec in raw.items()}
 
 
