@@ -46,6 +46,22 @@ def _validate_http(http_cfg: dict, has_auth_hook: bool) -> None:
 
 async def build_bus_from_config(path: Path) -> tuple[Bus, HTTPHost | None]:
     raw = yaml.safe_load(Path(path).read_text(encoding="utf-8")) or {}
+    # Conf.d-style merge: every <config_dir>/endpoints.d/*.yaml fragment
+    # contributes its `endpoints:` list to the merged set. Sorted glob
+    # ensures deterministic load order. Fragments may not override
+    # bus/http/bus_hooks/mcp_audit. Endpoint name collisions surface
+    # via existing endpoint registration code (loud failure).
+    fragments_dir = Path(path).parent / "endpoints.d"
+    if fragments_dir.is_dir():
+        for fragment_path in sorted(fragments_dir.glob("*.yaml")):
+            fragment = yaml.safe_load(fragment_path.read_text(encoding="utf-8")) or {}
+            fragment_endpoints = fragment.get("endpoints", []) or []
+            if not isinstance(fragment_endpoints, list):
+                raise BusBootError(
+                    f"endpoints.d fragment {fragment_path.name!r}: "
+                    f"'endpoints' must be a list, got {type(fragment_endpoints).__name__}"
+                )
+            raw.setdefault("endpoints", []).extend(fragment_endpoints)
     plugin_manager = create_plugin_manager()
     plugin_manager.hook.validate_config(raw_config=raw)
     endpoint_types = get_endpoint_types(plugin_manager)
@@ -167,7 +183,10 @@ async def build_bus_from_config(path: Path) -> tuple[Bus, HTTPHost | None]:
             endpoint_config=entry,
             services=services,
         )
-        bus.register(EndpointSpec(endpoint=instance, description=entry.get("description", "")))
+        try:
+            bus.register(EndpointSpec(endpoint=instance, description=entry.get("description", "")))
+        except ValueError as exc:
+            raise BusBootError(str(exc)) from exc
 
     # Cross-endpoint wiring (T19 — cutover #09 follow-up). Once every
     # endpoint in the yaml has been constructed and registered on the bus
