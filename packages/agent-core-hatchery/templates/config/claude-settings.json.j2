@@ -8,7 +8,7 @@
       {
         "matcher": "",
         "hooks": [
-          {"type": "command", "command": "uv run agent-core hooks run SessionStart", "timeout": 15}
+          {"type": "command", "command": "uv run agent-core hooks run SessionStart --config {{ vault_root }}/agent_core.yaml", "timeout": 15}
         ]
       }
     ],
@@ -16,7 +16,7 @@
       {
         "matcher": "",
         "hooks": [
-          {"type": "command", "command": "uv run agent-core hooks run UserPromptSubmit", "timeout": 10}
+          {"type": "command", "command": "uv run agent-core hooks run UserPromptSubmit --config {{ vault_root }}/agent_core.yaml", "timeout": 10}
         ]
       }
     ],
@@ -24,7 +24,7 @@
       {
         "matcher": "",
         "hooks": [
-          {"type": "command", "command": "uv run agent-core hooks run PreCompact", "timeout": 60}
+          {"type": "command", "command": "uv run agent-core hooks run PreCompact --config {{ vault_root }}/agent_core.yaml", "timeout": 60}
         ]
       }
     ],
@@ -32,7 +32,7 @@
       {
         "matcher": "",
         "hooks": [
-          {"type": "command", "command": "uv run agent-core hooks run SessionEnd", "timeout": 1800}
+          {"type": "command", "command": "uv run agent-core hooks run SessionEnd --config {{ vault_root }}/agent_core.yaml", "timeout": 1800}
         ]
       }
     ]

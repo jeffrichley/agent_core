@@ -59,6 +59,7 @@ class Hatcher:
 
         try:
             self._render_memory_tree(result)
+            self._render_config_tree(result)
             self._copy_elder_letters(result)
             self._copy_skills_tree(result)
 
@@ -109,6 +110,38 @@ class Hatcher:
             content = src_path.read_text(encoding="utf-8")
             if src_path.suffix == ".j2":
                 content = self._renderer.render_string(content)
+            dest.write_text(content, encoding="utf-8")
+            self._tracked_writes.append(dest)
+            if self._config.init_missing:
+                result.files_added_in_topup.append(dest)
+            else:
+                result.files_written.append(dest)
+
+    def _render_config_tree(self, result: HatchResult) -> None:
+        """Render templates/config/*.j2 to vault destinations.
+
+        Maps each known config template to its target path in the vault. Unknown
+        files in templates/config/ are skipped (file-classes.yaml's coverage check
+        catches new templates that haven't been wired here yet)."""
+        config_src = self._templates_dir / "config"
+        if not config_src.is_dir():
+            return
+
+        vault = self._config.resolved_vault_root()
+        dest_map = {
+            "agent_core.yaml.j2": vault / "agent_core.yaml",
+            "claude-settings.json.j2": vault / ".claude" / "settings.json",
+            "CLAUDE.md.j2": vault / "CLAUDE.md",
+        }
+
+        for src in sorted(config_src.iterdir()):
+            if not src.is_file() or src.name not in dest_map:
+                continue
+            dest = dest_map[src.name]
+            if dest.exists() and self._config.init_missing:
+                continue
+            dest.parent.mkdir(parents=True, exist_ok=True)
+            content = self._renderer.render_string(src.read_text(encoding="utf-8"))
             dest.write_text(content, encoding="utf-8")
             self._tracked_writes.append(dest)
             if self._config.init_missing:
