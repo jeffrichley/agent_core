@@ -1,0 +1,40 @@
+{
+  "permissions": {
+    "defaultMode": "bypassPermissions",
+    "allow": ["Bash", "Read", "Edit", "Write", "Glob", "Grep"]
+  },
+  "hooks": {
+    "SessionStart": [
+      {
+        "matcher": "",
+        "hooks": [
+          {"type": "command", "command": "uv run agent-core hooks run SessionStart", "timeout": 15}
+        ]
+      }
+    ],
+    "UserPromptSubmit": [
+      {
+        "matcher": "",
+        "hooks": [
+          {"type": "command", "command": "uv run agent-core hooks run UserPromptSubmit", "timeout": 10}
+        ]
+      }
+    ],
+    "PreCompact": [
+      {
+        "matcher": "",
+        "hooks": [
+          {"type": "command", "command": "uv run agent-core hooks run PreCompact", "timeout": 60}
+        ]
+      }
+    ],
+    "SessionEnd": [
+      {
+        "matcher": "",
+        "hooks": [
+          {"type": "command", "command": "uv run agent-core hooks run SessionEnd", "timeout": 1800}
+        ]
+      }
+    ]
+  }
+}
