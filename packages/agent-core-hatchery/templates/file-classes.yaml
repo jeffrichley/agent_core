@@ -24,6 +24,8 @@ classes:
   system:
     - "memory/_being_/handoff.md"
     - "memory/_being_/handoff-status.json"
+    - "memory/**/.gitkeep"
+    - "memory/.gitkeep"
 
   config:
     - "config/agent_core.yaml.j2"
@@ -38,6 +40,10 @@ classes:
   reference:
     - "memory/references/**/*"
     - "memory/relationships/README.md"
+    - "memory/projects/README.md"
+    - "memory/people/README.md"
+    - "memory/ideas/README.md"
+    - "memory/dreams/README.md"
 
   skill:
     - "skills/**/*"

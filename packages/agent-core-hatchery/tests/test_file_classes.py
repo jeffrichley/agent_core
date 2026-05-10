@@ -79,7 +79,7 @@ def test_real_manifest_classifies_all_template_files():
     templates_dir = package_root / "templates"
     manifest_path = templates_dir / "file-classes.yaml"
 
-    if not templates_dir.exists() or not any(p for p in templates_dir.iterdir() if p.is_file() and p.name != "file-classes.yaml"):
+    if not templates_dir.exists() or not any(p for p in templates_dir.rglob("*") if p.is_file() and p.name != "file-classes.yaml"):
         pytest.skip("templates/ not yet populated (Task 2.6+)")
 
     manifest = FileClassManifest.load(manifest_path)
