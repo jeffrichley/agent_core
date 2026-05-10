@@ -1,0 +1,4 @@
+endpoints:
+  - type: builtin.stub
+    name: dup-stub
+    description: "Collides with main"
