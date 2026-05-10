@@ -60,6 +60,7 @@ class Hatcher:
         try:
             self._render_memory_tree(result)
             self._copy_elder_letters(result)
+            self._copy_skills_tree(result)
 
             # Phase 3: write daemon fragments + extended validation.
             # Skipped on init_missing: fragments are presumed already in place
@@ -150,6 +151,39 @@ class Hatcher:
                 for p in parts
             ]
         return Path(*parts) if parts else rel
+
+    def _copy_skills_tree(self, result: HatchResult) -> None:
+        skills_src = self._templates_dir / "skills"
+        if not skills_src.is_dir():
+            return
+
+        skills_dest = (
+            self._config.resolved_vault_root() / ".claude" / "skills"
+        )
+        for src in sorted(skills_src.rglob("*")):
+            rel = src.relative_to(skills_src)
+            dest = skills_dest / rel
+            if src.is_dir():
+                if not dest.exists():
+                    dest.mkdir(parents=True, exist_ok=True)
+                    self._tracked_writes.append(dest)
+                continue
+            if dest.exists() and self._config.init_missing:
+                continue
+            dest.parent.mkdir(parents=True, exist_ok=True)
+            content = src.read_text(encoding="utf-8")
+            if src.suffix == ".j2":
+                content = self._renderer.render_string(content)
+                dest = dest.with_suffix("") if dest.suffix == ".j2" else dest
+            dest.write_text(content, encoding="utf-8")
+            self._tracked_writes.append(dest)
+            result.files_written.append(dest)
+            # Preserve executable bit on scripts
+            if "scripts" in dest.parts and dest.suffix in (".py", ".sh"):
+                try:
+                    dest.chmod(0o755)
+                except (OSError, NotImplementedError):
+                    pass  # Windows doesn't have a meaningful exec bit
 
     def _rollback(self) -> None:
         for path in reversed(self._tracked_writes):

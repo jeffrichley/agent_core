@@ -102,3 +102,19 @@ def test_hatch_copies_pepper_letter(tmp_path):
     )
     assert pepper_letter.is_file()
     assert pepper_letter.stat().st_size > 0
+
+
+def test_hatch_copies_universal_skills(tmp_path):
+    cfg = HatchConfig(
+        being_name="TestBeing",
+        primary_human_name="Tester",
+        vault_root=str(tmp_path),
+        daemon_config_dir=str(tmp_path / ".agent-core"),
+    )
+    Hatcher(cfg).hatch()
+
+    skills = tmp_path / ".testbeing" / ".claude" / "skills"
+    assert (skills / "skill-author" / "SKILL.md").is_file()
+    assert (skills / "vault-lint" / "SKILL.md").is_file()
+    assert (skills / "vault-lint" / "scripts" / "lint.py").is_file()
+    assert (skills / "spawning-subagents" / "SKILL.md").is_file()
