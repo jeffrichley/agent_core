@@ -39,3 +39,15 @@ Landed as PR #77 (commit `e385077` on main).
 - **Wizard prompts mocked at the questionary boundary** — Only the pure-function validators (`_validate_being_name`, `_validate_endpoint_name`, `_validate_path_writable`) are unit-tested. The interactive flow itself is exercised in Phase 6 manual e2e.
 - **`daemon_check_status = "skipped"` placeholder** — Phase 5 doesn't probe the live daemon. The HATCHING-REPORT generator handles all 4 statuses (`reachable_and_registered`, `reachable_but_missing`, `unreachable`, `skipped`) but only `skipped` is wired today. Phase 6 e2e is where the live healthcheck happens.
 
+
+## Operational note — daemon outage during Phase 2 work (2026-05-10)
+
+During Phase 2 Task 2.1 (package skeleton + `uv sync` to register the new workspace member), the running agent-core daemon exited at 09:40. No error in `daemon.log.err`. Most likely cause: `uv sync` rebuilt the workspace and the daemon process didn't survive the rebuild on Windows.
+
+Lessons:
+- Future implementation work that touches the workspace should pause/restart the daemon explicitly. `agent-core daemon stop` before sync, `agent-core daemon start` after.
+- Alternatively, run implementation work in a separate clone or with `uv sync --no-managed-python --frozen` to avoid rebuilding.
+- Pepper was offline from 09:40 until manual restart at 10:02.
+
+Separately, an early subagent's smoke test wrote to `~/.agent-core/{endpoints,jobs}.d/testbeing.yaml` (instead of a tmpdir) before the test-isolation fix landed in Phase 3 Task 3.3. The daemon picked up the ghost `testbeing` endpoint on restart. Files moved aside as `testbeing.yaml.cleanup-2026-05-10`; will fully clear on next daemon restart.
+
