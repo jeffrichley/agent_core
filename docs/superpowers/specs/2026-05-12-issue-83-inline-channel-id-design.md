@@ -385,7 +385,7 @@ Mirrors `claude_code_mcp.py`'s test patterns for `_recent_inbounds`:
 ### 5.4 Verb coverage (auto-echo applies uniformly)
 
 Parameterized across every Discord verb that resolves a channel:
-- `test_auto_echo_resolves_channel_for_text_message_envelope`
+- ~~`test_auto_echo_resolves_channel_for_text_message_envelope`~~ — deferred with TextMessage handler unification (see Followups section).
 - `test_auto_echo_resolves_channel_for_send_tool`
 - `test_auto_echo_resolves_channel_for_edit_tool`
 - `test_auto_echo_resolves_channel_for_react_tool`

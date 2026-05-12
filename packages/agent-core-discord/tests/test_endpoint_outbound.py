@@ -1885,3 +1885,50 @@ async def test_reply_tool_inheritance_path_unchanged(monkeypatch):
         assert ch.sent[0]["content"] == "via reply"
     finally:
         await ep.stop()
+
+
+@pytest.mark.parametrize("verb_name,args_extra", [
+    ("send", {"text": "hi"}),
+    ("edit", {"message_id": "m-edit", "text": "new"}),
+    ("react", {"message_id": "m-react", "emoji": "👍"}),
+    ("send_typing", {"duration_seconds": 0.5}),
+    ("send_briefing", {
+        "date_line": "test", "focus": "A", "calendar": "B",
+        "critical_items": [], "warning_items": [],
+    }),
+])
+@pytest.mark.asyncio
+async def test_auto_echo_hard_errors_uniformly_across_verbs(
+    monkeypatch, verb_name, args_extra
+):
+    """When _resolve_channel_id raises _ToolError, every channel-requiring verb
+    produces a yellow Acknowledgment with a unified error message substring.
+
+    Complements test_resolve_error_message_is_unified_across_sub_causes (which
+    locks the resolver itself); this test locks the verb-level Ack shape so no
+    verb can silently swallow or re-format the error.
+    """
+    ep, handle, fake = await _started(monkeypatch)
+    try:
+        # No channel_id in args, no in_reply_to on envelope — _resolve_channel_id must fail.
+        env = _envelope(
+            "e", "agent-test", "discord-test",
+            _toolcall(verb_name, {**args_extra}),
+        )
+        # Deliberately no env.in_reply_to set (remains None).
+        await ep.deliver(env)
+        acks = [e for e in handle.published if e.kind == "Acknowledgment"]
+        assert acks, f"verb={verb_name}: expected at least one Acknowledgment"
+        ack = acks[-1]
+        note = (ack.payload.note or "").lower()
+        assert ack.urgency == "yellow", (
+            f"verb={verb_name}: expected urgency='yellow', got {ack.urgency!r}"
+        )
+        assert note.startswith("error:"), (
+            f"verb={verb_name}: note should start with 'error:', got {note!r}"
+        )
+        assert "cannot determine channel" in note, (
+            f"verb={verb_name}: note should contain 'cannot determine channel', got {note!r}"
+        )
+    finally:
+        await ep.stop()

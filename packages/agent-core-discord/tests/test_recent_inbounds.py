@@ -96,3 +96,16 @@ async def test_recent_inbounds_ttl_sweep_removes_stale(monkeypatch):
     assert evicted == 1
     assert "stale" not in ep._recent_inbounds
     assert "fresh" in ep._recent_inbounds
+
+
+@pytest.mark.asyncio
+async def test_recent_inbounds_defaults_match_claude_code_mcp(monkeypatch):
+    """DiscordEndpoint cache defaults must stay aligned with the parallel cache in
+    packages/core/src/agent_core/endpoints/claude_code_mcp.py (_recent_inbounds,
+    governed by max_tracked_outbounds=5000, outbound_registry_ttl_seconds=3600.0).
+    If either side drifts, update both and update this test.
+    """
+    ep, _fake = await _make_endpoint(monkeypatch)
+    # Hardcoded against claude_code_mcp.py _recent_inbounds defaults (5000 / 3600.0).
+    assert ep._recent_inbounds_max == 5000
+    assert ep._recent_inbounds_ttl_seconds == 3600.0
