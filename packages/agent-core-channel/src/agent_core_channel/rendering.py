@@ -86,6 +86,30 @@ _GENERIC_KINDS: frozenset[str] = frozenset(
 )
 
 
+def _inbox_attrs(env: dict) -> list[str]:
+    """Build the `<inbox>` framework attribute list for an envelope.
+
+    Framework attrs: kind, from, urgency, envelope_id, optional in_reply_to.
+    Mode flags (preview, render='fallback', batch) are appended by callers
+    after this helper returns.
+    """
+    kind = env.get("kind", "Unknown")
+    env_id = env.get("id", "")
+    from_ = env.get("from", "")
+    urgency = env.get("urgency", "green")
+    in_reply_to = env.get("in_reply_to")
+
+    attrs = [
+        f"kind='{kind}'",
+        f"from='{from_}'",
+        f"urgency='{urgency}'",
+        f"envelope_id='{env_id}'",
+    ]
+    if in_reply_to:
+        attrs.append(f"in_reply_to='{in_reply_to}'")
+    return attrs
+
+
 def render_envelope(env: dict) -> str:
     """Render one envelope as an <inbox>...</inbox> block with HTML-escaped body."""
     kind = env.get("kind", "Unknown")

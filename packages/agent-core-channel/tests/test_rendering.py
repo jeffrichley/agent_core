@@ -427,3 +427,43 @@ class TestRedeliveryTracker:
         tracker.note_and_get_marker("e-3")  # evicts e-1
         # e-1 is now first-sighting again.
         assert tracker.note_and_get_marker("e-1") is None
+
+
+from agent_core_channel.rendering import _inbox_attrs
+
+
+def test_inbox_attrs_framework_only_no_metadata():
+    env = {
+        "id": "abc",
+        "kind": "TextMessage",
+        "from": "discord-pepper",
+        "urgency": "green",
+    }
+    attrs = _inbox_attrs(env)
+    assert attrs == [
+        "kind='TextMessage'",
+        "from='discord-pepper'",
+        "urgency='green'",
+        "envelope_id='abc'",
+    ]
+
+
+def test_inbox_attrs_includes_in_reply_to_when_set():
+    env = {
+        "id": "abc",
+        "kind": "TextMessage",
+        "from": "discord-pepper",
+        "urgency": "green",
+        "in_reply_to": "parent-xyz",
+    }
+    attrs = _inbox_attrs(env)
+    assert "in_reply_to='parent-xyz'" in attrs
+
+
+def test_inbox_attrs_omits_in_reply_to_when_none():
+    env = {
+        "id": "abc", "kind": "TextMessage", "from": "x", "urgency": "green",
+        "in_reply_to": None,
+    }
+    attrs = _inbox_attrs(env)
+    assert not any("in_reply_to" in a for a in attrs)
