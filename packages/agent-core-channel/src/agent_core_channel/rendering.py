@@ -16,6 +16,7 @@ from __future__ import annotations
 import html
 import json
 from collections.abc import Callable
+from xml.sax.saxutils import quoteattr
 
 
 def encode_body(text: str) -> str:
@@ -86,13 +87,48 @@ _GENERIC_KINDS: frozenset[str] = frozenset(
 )
 
 
-def render_envelope(env: dict) -> str:
-    """Render one envelope as an <inbox>...</inbox> block with HTML-escaped body."""
+def _inbox_attrs(env: dict) -> list[str]:
+    """Build the `<inbox>` framework attribute list for an envelope.
+
+    Framework attrs: kind, from, urgency, envelope_id, optional in_reply_to.
+    Mode flags (preview, render='fallback', batch) are appended by callers
+    after this helper returns.
+    """
     kind = env.get("kind", "Unknown")
     env_id = env.get("id", "")
     from_ = env.get("from", "")
     urgency = env.get("urgency", "green")
     in_reply_to = env.get("in_reply_to")
+
+    attrs = [
+        f"kind='{kind}'",
+        f"from='{from_}'",
+        f"urgency='{urgency}'",
+        f"envelope_id='{env_id}'",
+    ]
+    if in_reply_to:
+        attrs.append(f"in_reply_to='{in_reply_to}'")
+    # Per-namespace preview surfacing. Add cases as namespaces earn them
+    # via documented agent symptoms (rule-of-three before any registry).
+    metadata = env.get("metadata") or {}
+    if not isinstance(metadata, dict):
+        metadata = {}
+    discord = metadata.get("discord") or {}
+    if not isinstance(discord, dict):
+        discord = {}
+    if discord:
+        cid = discord.get("channel_id")
+        if cid:
+            attrs.append(f"channel_id={quoteattr(str(cid))}")
+            cname = discord.get("channel_name")
+            if cname:
+                attrs.append(f"channel_name={quoteattr(str(cname))}")
+    return attrs
+
+
+def render_envelope(env: dict) -> str:
+    """Render one envelope as an <inbox>...</inbox> block with HTML-escaped body."""
+    kind = env.get("kind", "Unknown")
 
     renderer = _RENDERERS.get(kind)
     is_fallback = False
@@ -112,14 +148,7 @@ def render_envelope(env: dict) -> str:
         body = _render_fallback_body(env)
         is_fallback = True
 
-    attrs = [
-        f"kind='{kind}'",
-        f"from='{from_}'",
-        f"urgency='{urgency}'",
-        f"envelope_id='{env_id}'",
-    ]
-    if in_reply_to:
-        attrs.append(f"in_reply_to='{in_reply_to}'")
+    attrs = _inbox_attrs(env)
     if is_fallback:
         attrs.append("render='fallback'")
 
@@ -237,20 +266,7 @@ def _envelopes_from_item(item: dict) -> list[dict]:
 
 def _render_with_truncation(env: dict, *, body: str, fallback: bool) -> str:
     """Render an envelope's <inbox> tag with a custom body (truncated/preview)."""
-    kind = env.get("kind", "Unknown")
-    env_id = env.get("id", "")
-    from_ = env.get("from", "")
-    urgency = env.get("urgency", "green")
-    in_reply_to = env.get("in_reply_to")
-
-    attrs = [
-        f"kind='{kind}'",
-        f"from='{from_}'",
-        f"urgency='{urgency}'",
-        f"envelope_id='{env_id}'",
-    ]
-    if in_reply_to:
-        attrs.append(f"in_reply_to='{in_reply_to}'")
+    attrs = _inbox_attrs(env)
     if fallback:
         attrs.append("render='fallback'")
 
@@ -260,10 +276,6 @@ def _render_with_truncation(env: dict, *, body: str, fallback: bool) -> str:
 def _render_preview(env: dict, *, preview_chars: int = 200) -> str:
     """Preview mode: <inbox preview='true'> with first N chars + truncation marker."""
     env_id = env.get("id", "")
-    kind = env.get("kind", "Unknown")
-    from_ = env.get("from", "")
-    urgency = env.get("urgency", "green")
-    in_reply_to = env.get("in_reply_to")
 
     # Get the fully-rendered body, then take a preview prefix.
     full_block = render_envelope(env)
@@ -275,15 +287,8 @@ def _render_preview(env: dict, *, preview_chars: int = 200) -> str:
         preview_body += "…"
     body_with_marker = f"{preview_body}\n{truncation_marker(env_id)}"
 
-    attrs = [
-        f"kind='{kind}'",
-        f"from='{from_}'",
-        f"urgency='{urgency}'",
-        f"envelope_id='{env_id}'",
-        "preview='true'",
-    ]
-    if in_reply_to:
-        attrs.append(f"in_reply_to='{in_reply_to}'")
+    attrs = _inbox_attrs(env)
+    attrs.append("preview='true'")
     return f"<inbox {' '.join(attrs)}>\n{body_with_marker}\n</inbox>"
 
 

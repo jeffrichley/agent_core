@@ -20,13 +20,6 @@ from agent_core_discord.briefing import (
     build_briefing_embeds,
 )
 from agent_core_discord.endpoint import DiscordEndpoint, _parse_iso_datetime
-
-from agent_core.bus.envelope import (
-    EndpointInfo,
-    Envelope,
-    TextMessagePayload,
-    ToolInvocationPayload,
-)
 from agent_core_discord.testing.fakes import (
     FakeChannel,
     FakeDiscordClient,
@@ -35,6 +28,13 @@ from agent_core_discord.testing.fakes import (
     FakePoll,
     FakePollAnswer,
     FakeUser,
+)
+
+from agent_core.bus.envelope import (
+    EndpointInfo,
+    Envelope,
+    TextMessagePayload,
+    ToolInvocationPayload,
 )
 
 
@@ -1796,5 +1796,139 @@ async def test_create_poll_dispatch_translates_validation_to_error_ack(monkeypat
         ack = [e for e in handle.published if e.kind == "Acknowledgment"][-1]
         assert ack.payload.note.lower().startswith("error:")
         assert ack.urgency == "yellow"
+    finally:
+        await ep.stop()
+
+
+@pytest.mark.parametrize("verb_name,args_extra", [
+    ("send", {"text": "hi"}),
+    ("edit", {"message_id": "m-edit", "text": "new"}),
+    ("react", {"message_id": "m-react", "emoji": "👍"}),
+    ("send_typing", {"duration_seconds": 0.5}),
+    ("send_briefing", {
+        "date_line": "test", "focus": "A", "calendar": "B",
+        "critical_items": [], "warning_items": [],
+    }),
+])
+@pytest.mark.asyncio
+async def test_auto_echo_resolves_channel_via_in_reply_to_across_verbs(
+    monkeypatch, verb_name, args_extra
+):
+    """Every verb that needs a channel routes via _resolve_channel_id."""
+    ep, handle, fake = await _started(monkeypatch)
+    ch = FakeChannel(id="200")
+    fake.add_channel(ch)
+    # Seed cache with an inbound pointing at channel 200.
+    inbound = Envelope(
+        id="inbound-1", correlation_id="c", from_="discord-test", to="agent-test",
+        kind="TextMessage", payload=TextMessagePayload(text="hi"),
+        metadata={"discord": {"channel_id": "200"}},
+        created_at=datetime.now(UTC),
+    )
+    ep._record_inbound(inbound)
+    # Pre-create message for verbs that need one.
+    if verb_name in ("edit", "react"):
+        ch._messages[args_extra["message_id"]] = FakeMessage(
+            id=args_extra["message_id"], channel_id="200",
+        )
+    try:
+        env = _envelope(
+            "e", "agent-test", "discord-test",
+            _toolcall(verb_name, {**args_extra}),  # NO channel_id
+        )
+        env.in_reply_to = "inbound-1"
+        await ep.deliver(env)
+        # The verb routed to channel 200 via the cache hit (no error ack).
+        ack = [e for e in handle.published if e.kind == "Acknowledgment"][-1]
+        assert not ack.payload.note.lower().startswith("error:"), \
+            f"verb={verb_name} should have resolved channel via in_reply_to"
+    finally:
+        await ep.stop()
+
+
+# --- regression locks for pre-#83 routing behavior ---
+
+
+@pytest.mark.asyncio
+async def test_explicit_channel_id_still_routes_correctly_unchanged(monkeypatch):
+    """The pre-#83 explicit-channel_id path keeps working."""
+    ep, handle, fake = await _started(monkeypatch)
+    ch = FakeChannel(id="999")
+    fake.add_channel(ch)
+    try:
+        env = _envelope(
+            "e", "agent-test", "discord-test",
+            _toolcall("send", {"channel_id": "999", "text": "explicit"}),
+        )
+        await ep.deliver(env)
+        assert len(ch.sent) == 1
+        assert ch.sent[0]["content"] == "explicit"
+    finally:
+        await ep.stop()
+
+
+@pytest.mark.asyncio
+async def test_reply_tool_inheritance_path_unchanged(monkeypatch):
+    """reply()-style outbounds (channel_id pre-set via reply inheritance) work."""
+    ep, handle, fake = await _started(monkeypatch)
+    ch = FakeChannel(id="888")
+    fake.add_channel(ch)
+    try:
+        out = Envelope(
+            id="reply-1", correlation_id="c", from_="agent-test", to="discord-test",
+            kind="TextMessage", payload=TextMessagePayload(text="via reply"),
+            metadata={"discord": {"channel_id": "888"}},  # pre-set by reply()
+            created_at=datetime.now(UTC),
+        )
+        await ep.deliver(out)
+        assert len(ch.sent) == 1
+        assert ch.sent[0]["content"] == "via reply"
+    finally:
+        await ep.stop()
+
+
+@pytest.mark.parametrize("verb_name,args_extra", [
+    ("send", {"text": "hi"}),
+    ("edit", {"message_id": "m-edit", "text": "new"}),
+    ("react", {"message_id": "m-react", "emoji": "👍"}),
+    ("send_typing", {"duration_seconds": 0.5}),
+    ("send_briefing", {
+        "date_line": "test", "focus": "A", "calendar": "B",
+        "critical_items": [], "warning_items": [],
+    }),
+])
+@pytest.mark.asyncio
+async def test_auto_echo_hard_errors_uniformly_across_verbs(
+    monkeypatch, verb_name, args_extra
+):
+    """When _resolve_channel_id raises _ToolError, every channel-requiring verb
+    produces a yellow Acknowledgment with a unified error message substring.
+
+    Complements test_resolve_error_message_is_unified_across_sub_causes (which
+    locks the resolver itself); this test locks the verb-level Ack shape so no
+    verb can silently swallow or re-format the error.
+    """
+    ep, handle, fake = await _started(monkeypatch)
+    try:
+        # No channel_id in args, no in_reply_to on envelope — _resolve_channel_id must fail.
+        env = _envelope(
+            "e", "agent-test", "discord-test",
+            _toolcall(verb_name, {**args_extra}),
+        )
+        # Deliberately no env.in_reply_to set (remains None).
+        await ep.deliver(env)
+        acks = [e for e in handle.published if e.kind == "Acknowledgment"]
+        assert acks, f"verb={verb_name}: expected at least one Acknowledgment"
+        ack = acks[-1]
+        note = (ack.payload.note or "").lower()
+        assert ack.urgency == "yellow", (
+            f"verb={verb_name}: expected urgency='yellow', got {ack.urgency!r}"
+        )
+        assert note.startswith("error:"), (
+            f"verb={verb_name}: note should start with 'error:', got {note!r}"
+        )
+        assert "cannot determine channel" in note, (
+            f"verb={verb_name}: note should contain 'cannot determine channel', got {note!r}"
+        )
     finally:
         await ep.stop()

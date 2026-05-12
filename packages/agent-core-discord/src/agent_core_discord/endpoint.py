@@ -228,6 +228,8 @@ class DiscordEndpoint:
         pending_acks_max: int = 5000,
         pending_acks_ttl_seconds: float = 3600.0,
         pending_acks_sweep_seconds: float = 60.0,
+        recent_inbounds_max: int = 5000,
+        recent_inbounds_ttl_seconds: float = 3600.0,
         _client_factory: Callable[..., Any] | None = None,
     ):
         self.name = name
@@ -267,6 +269,14 @@ class DiscordEndpoint:
         # Inbound bus envelope id → (Discord message id, channel id) for
         # outbound TextMessage replies that set in_reply_to but omit metadata.
         self._inbound_envelope_discord: OrderedDict[str, tuple[str, str]] = OrderedDict()
+        # Cache of recently-published inbounds keyed by envelope_id, for
+        # _resolve_channel_id auto-echo (#83). Mirrors claude_code_mcp.py's
+        # _recent_inbounds pattern at N=2 of this shape; extract to shared
+        # utility when a third endpoint needs it (rule-of-three).
+        self._recent_inbounds: OrderedDict[str, Envelope] = OrderedDict()
+        self._recent_inbounds_max = recent_inbounds_max
+        self._recent_inbounds_ttl_seconds = recent_inbounds_ttl_seconds
+        self._recent_inbounds_timestamps: dict[str, float] = {}
         # Discord message ids we published to the bus and have not "finished"
         # yet (cleared when ack reaction is removed or TTL/LRU evicts).
         self._awaiting_reply_ids: set[str] = set()
@@ -294,6 +304,79 @@ class DiscordEndpoint:
         self._inbound_envelope_discord[envelope_id] = (discord_message_id, channel_id)
         while len(self._inbound_envelope_discord) > self.pending_acks_max:
             self._inbound_envelope_discord.popitem(last=False)
+
+    def _record_inbound(self, envelope: Envelope) -> None:
+        """Cache an inbound envelope for auto-echo lookups (#83).
+
+        Stores the full envelope so _resolve_channel_id can read
+        metadata.discord.channel_id when an outbound's in_reply_to
+        matches the cached id.
+        """
+        self._recent_inbounds[envelope.id] = envelope
+        self._recent_inbounds.move_to_end(envelope.id)
+        self._recent_inbounds_timestamps[envelope.id] = time.monotonic()
+        while len(self._recent_inbounds) > self._recent_inbounds_max:
+            oldest_id, _ = self._recent_inbounds.popitem(last=False)
+            self._recent_inbounds_timestamps.pop(oldest_id, None)
+
+    def _sweep_recent_inbounds_once(self) -> int:
+        """Evict entries older than TTL; return count evicted.
+
+        Walks oldest-first by insertion order; breaks at first non-stale
+        entry (same shape as _sweep_pending_acks_once).
+        """
+        now = time.monotonic()
+        ttl = self._recent_inbounds_ttl_seconds
+        evicted = 0
+        while self._recent_inbounds:
+            oldest_id = next(iter(self._recent_inbounds))
+            if now - self._recent_inbounds_timestamps.get(oldest_id, now) <= ttl:
+                break
+            self._recent_inbounds.popitem(last=False)
+            self._recent_inbounds_timestamps.pop(oldest_id, None)
+            evicted += 1
+        return evicted
+
+    def _resolve_channel_id(self, outbound: Envelope) -> str:
+        """Resolve channel_id with precedence:
+        1. Explicit metadata.discord.channel_id (preserves current behavior).
+        2. Fallback: in_reply_to -> _recent_inbounds lookup (auto-echo).
+        3. Hard error -- refuse to guess.
+
+        Sub-causes for the failure path are logged at WARNING; the
+        agent-facing _ToolError message is unified.
+        """
+        # 1. Explicit always wins.
+        discord_meta = (outbound.metadata or {}).get("discord") or {}
+        if explicit := discord_meta.get("channel_id"):
+            return explicit
+
+        # 2. Auto-echo via in_reply_to cache lookup.
+        if outbound.in_reply_to:
+            inbound = self._recent_inbounds.get(outbound.in_reply_to)
+            if inbound:
+                inbound_discord = (inbound.metadata or {}).get("discord") or {}
+                if cid := inbound_discord.get("channel_id"):
+                    return cid
+                log.warning(
+                    "channel_id resolution failed: cached_inbound_missing_channel_id, "
+                    "in_reply_to=%s", outbound.in_reply_to,
+                )
+            else:
+                log.warning(
+                    "channel_id resolution failed: cache_miss, in_reply_to=%s",
+                    outbound.in_reply_to,
+                )
+        else:
+            log.warning(
+                "channel_id resolution failed: no_explicit_no_in_reply_to, "
+                "outbound_id=%s", outbound.id,
+            )
+
+        raise _ToolError(
+            "cannot determine channel — set metadata.discord.channel_id "
+            "explicitly, or set in_reply_to so auto-echo can resolve."
+        )
 
     async def _typing_while_pending(self, channel: Any, message_id: str) -> None:
         """Hold Discord 'typing…' until this message is cleared from the awaiting set."""
@@ -537,7 +620,7 @@ class DiscordEndpoint:
         args = envelope.payload.args  # type: ignore[union-attr]
 
         try:
-            result = await self._dispatch(tool, args)
+            result = await self._dispatch(tool, args, envelope)
             urg2: Literal["green", "yellow", "red"] = (
                 "yellow"
                 if isinstance(result, dict) and result.get("status") == "partial"
@@ -613,7 +696,7 @@ class DiscordEndpoint:
         )
         return await self._send(args)
 
-    async def _dispatch(self, tool: str, args: dict) -> Any:
+    async def _dispatch(self, tool: str, args: dict, env: Envelope) -> Any:
         tool = _canonical_tool(tool)
 
         def _v(model: Any, raw: dict) -> Any:
@@ -622,12 +705,20 @@ class DiscordEndpoint:
             except ValidationError as exc:
                 raise _ToolError(f"{tool}: {exc}") from exc
 
+        # For tools that require channel_id, inject it via _resolve_channel_id
+        # when the caller omitted it (auto-echo via in_reply_to cache).
+        def _inject_channel_id(raw: dict) -> dict:
+            if "channel_id" not in raw or not raw["channel_id"]:
+                raw = dict(raw)
+                raw["channel_id"] = self._resolve_channel_id(env)
+            return raw
+
         if tool == "send":
-            return await self._send(_v(_SendArgs, args))
+            return await self._send(_v(_SendArgs, _inject_channel_id(args)))
         if tool == "edit":
-            return await self._edit(_v(_EditArgs, args))
+            return await self._edit(_v(_EditArgs, _inject_channel_id(args)))
         if tool == "react":
-            return await self._react(_v(_ReactArgs, args))
+            return await self._react(_v(_ReactArgs, _inject_channel_id(args)))
         if tool == "fetch":
             return await self._fetch(_v(_FetchArgs, args))
         if tool == "download_attachments":
@@ -637,7 +728,7 @@ class DiscordEndpoint:
         if tool == "get_channel_info":
             return await self._get_channel_info(_v(_GetChannelInfoArgs, args))
         if tool == "send_briefing":
-            return await self._send_briefing(_v(_SendBriefingArgs, args))
+            return await self._send_briefing(_v(_SendBriefingArgs, _inject_channel_id(args)))
         if tool == "create_poll":
             return await self._create_poll(_v(_CreatePollArgs, args))
         if tool == "create_scheduled_event":
@@ -649,7 +740,7 @@ class DiscordEndpoint:
         if tool == "create_thread":
             return await self._create_thread(_v(_CreateThreadArgs, args))
         if tool == "send_typing":
-            return await self._send_typing(_v(_SendTypingArgs, args))
+            return await self._send_typing(_v(_SendTypingArgs, _inject_channel_id(args)))
         raise _ToolError(f"unknown tool '{tool}'")
 
     async def _reply(
@@ -811,6 +902,7 @@ class DiscordEndpoint:
                 self._awaiting_reply_ids.discard(mid)
                 self._inbound_envelope_discord.pop(env.id, None)
                 raise
+            self._record_inbound(env)
             asyncio.create_task(
                 self._typing_while_pending(message.channel, mid),
                 name=f"discord-{self.name}-typing-{mid}",
@@ -849,6 +941,7 @@ class DiscordEndpoint:
             )
             assert self._handle is not None
             await self._handle.publish(env)
+            self._record_inbound(env)
 
         return on_reaction_add
 
@@ -935,6 +1028,7 @@ class DiscordEndpoint:
             )
             assert self._handle is not None
             await self._handle.publish(env)
+            self._record_inbound(env)
 
         return on_raw_poll_vote
 
@@ -965,6 +1059,7 @@ class DiscordEndpoint:
             )
             assert self._handle is not None
             await self._handle.publish(env)
+            self._record_inbound(env)
 
         return on_raw_message_lifecycle
 

@@ -1,0 +1,111 @@
+"""Tests for DiscordEndpoint._recent_inbounds cache (auto-echo for #83)."""
+
+from __future__ import annotations
+
+import time
+from datetime import UTC, datetime
+
+import pytest
+from agent_core_discord.endpoint import DiscordEndpoint
+
+from agent_core.bus.envelope import Envelope, TextMessagePayload
+from agent_core_discord.testing.fakes import FakeDiscordClient
+
+
+async def _make_endpoint(monkeypatch, **kwargs):
+    monkeypatch.setenv("X_TOK", "tok")
+    fake = FakeDiscordClient()
+    ep = DiscordEndpoint(
+        name="discord-test",
+        target="agent-test",
+        token_env="X_TOK",
+        _client_factory=lambda **kw: fake,
+        **kwargs,
+    )
+    return ep, fake
+
+
+@pytest.mark.asyncio
+async def test_recent_inbounds_records_inbound_on_publish(monkeypatch):
+    """_record_inbound(env) adds env to the cache keyed by env.id."""
+    ep, _fake = await _make_endpoint(monkeypatch)
+    env = Envelope(
+        id="abc",
+        correlation_id="c1",
+        from_="discord-test",
+        to="agent-test",
+        kind="TextMessage",
+        payload=TextMessagePayload(text="hi"),
+        metadata={"discord": {"channel_id": "1491"}},
+        created_at=datetime.now(UTC),
+    )
+    ep._record_inbound(env)
+    cached = ep._recent_inbounds.get("abc")
+    assert cached is not None
+    assert cached.id == "abc"
+    assert (cached.metadata or {}).get("discord", {}).get("channel_id") == "1491"
+
+
+@pytest.mark.asyncio
+async def test_recent_inbounds_lru_eviction_caps_at_max(monkeypatch):
+    ep, _fake = await _make_endpoint(monkeypatch, recent_inbounds_max=3)
+
+    def _env(eid: str) -> Envelope:
+        return Envelope(
+            id=eid, correlation_id="c", from_="x", to="y", kind="TextMessage",
+            payload=TextMessagePayload(text=""),
+            metadata={"discord": {"channel_id": "1"}},
+            created_at=datetime.now(UTC),
+        )
+
+    for eid in ("a", "b", "c"):
+        ep._record_inbound(_env(eid))
+    assert list(ep._recent_inbounds.keys()) == ["a", "b", "c"]
+    ep._record_inbound(_env("d"))
+    # Oldest (a) evicted.
+    assert list(ep._recent_inbounds.keys()) == ["b", "c", "d"]
+    assert len(ep._recent_inbounds) == 3
+    assert "a" not in ep._recent_inbounds_timestamps
+
+
+@pytest.mark.asyncio
+async def test_recent_inbounds_ttl_sweep_removes_stale(monkeypatch):
+    ep, _fake = await _make_endpoint(monkeypatch, recent_inbounds_ttl_seconds=10.0)
+
+    fresh = Envelope(
+        id="fresh", correlation_id="c", from_="x", to="y", kind="TextMessage",
+        payload=TextMessagePayload(text=""),
+        metadata={"discord": {"channel_id": "1"}},
+        created_at=datetime.now(UTC),
+    )
+    stale = Envelope(
+        id="stale", correlation_id="c", from_="x", to="y", kind="TextMessage",
+        payload=TextMessagePayload(text=""),
+        metadata={"discord": {"channel_id": "1"}},
+        created_at=datetime.now(UTC),
+    )
+    ep._record_inbound(fresh)
+    # Insert stale entry with old timestamp at the front (oldest position) so
+    # the walk-from-front sweep sees it. Direct dict assignment lets us pin an
+    # arbitrary past timestamp; move_to_end(last=False) positions it as oldest.
+    ep._recent_inbounds[stale.id] = stale
+    ep._recent_inbounds.move_to_end(stale.id, last=False)
+    ep._recent_inbounds_timestamps[stale.id] = time.monotonic() - 999.0
+
+    evicted = ep._sweep_recent_inbounds_once()
+    assert evicted == 1
+    assert "stale" not in ep._recent_inbounds
+    assert "fresh" in ep._recent_inbounds
+
+
+@pytest.mark.asyncio
+async def test_recent_inbounds_defaults_match_claude_code_mcp(monkeypatch):
+    """DiscordEndpoint cache defaults must stay aligned with the parallel cache in
+    packages/core/src/agent_core/endpoints/claude_code_mcp.py (_recent_inbounds,
+    governed by max_tracked_outbounds=5000, outbound_registry_ttl_seconds=3600.0).
+    If either side drifts, update both and update this test.
+    """
+    ep, _fake = await _make_endpoint(monkeypatch)
+    # Hardcoded against claude_code_mcp.py _recent_inbounds defaults (5000 / 3600.0).
+    assert ep._recent_inbounds_max == 5000
+    assert ep._recent_inbounds_ttl_seconds == 3600.0

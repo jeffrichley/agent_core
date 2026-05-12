@@ -9,6 +9,9 @@ from agent_core_channel.rendering import (
     FallbackToBare,
     InlineAll,
     RedeliveryTracker,
+    _inbox_attrs,
+    _render_preview,
+    _render_with_truncation,
     apply_circuit_breaker,
     encode_body,
     render_envelope,
@@ -427,3 +430,201 @@ class TestRedeliveryTracker:
         tracker.note_and_get_marker("e-3")  # evicts e-1
         # e-1 is now first-sighting again.
         assert tracker.note_and_get_marker("e-1") is None
+
+
+def test_inbox_attrs_framework_only_no_metadata():
+    env = {
+        "id": "abc",
+        "kind": "TextMessage",
+        "from": "discord-pepper",
+        "urgency": "green",
+    }
+    attrs = _inbox_attrs(env)
+    assert attrs == [
+        "kind='TextMessage'",
+        "from='discord-pepper'",
+        "urgency='green'",
+        "envelope_id='abc'",
+    ]
+
+
+def test_inbox_attrs_includes_in_reply_to_when_set():
+    env = {
+        "id": "abc",
+        "kind": "TextMessage",
+        "from": "discord-pepper",
+        "urgency": "green",
+        "in_reply_to": "parent-xyz",
+    }
+    attrs = _inbox_attrs(env)
+    assert "in_reply_to='parent-xyz'" in attrs
+
+
+def test_inbox_attrs_omits_in_reply_to_when_none():
+    env = {
+        "id": "abc", "kind": "TextMessage", "from": "x", "urgency": "green",
+        "in_reply_to": None,
+    }
+    attrs = _inbox_attrs(env)
+    assert not any("in_reply_to" in a for a in attrs)
+
+
+def test_inbox_attrs_emits_channel_id_and_name_when_both_present():
+    env = {
+        "id": "abc", "kind": "TextMessage", "from": "discord-pepper",
+        "urgency": "green",
+        "metadata": {"discord": {
+            "channel_id": "1491445346570866812",
+            "channel_name": "#pepper-upgrade",
+        }},
+    }
+    attrs = _inbox_attrs(env)
+    assert any('channel_id="1491445346570866812"' in a for a in attrs)
+    assert any('channel_name="#pepper-upgrade"' in a for a in attrs)
+
+
+def test_inbox_attrs_emits_channel_id_alone_when_name_missing():
+    env = {
+        "id": "abc", "kind": "TextMessage", "from": "discord-pepper",
+        "urgency": "green",
+        "metadata": {"discord": {"channel_id": "X"}},
+    }
+    attrs = _inbox_attrs(env)
+    assert any('channel_id="X"' in a for a in attrs)
+    assert not any("channel_name" in a for a in attrs)
+
+
+def test_inbox_attrs_escapes_special_chars_in_channel_name():
+    env = {
+        "id": "abc", "kind": "TextMessage", "from": "discord-pepper",
+        "urgency": "green",
+        "metadata": {"discord": {
+            "channel_id": "1", "channel_name": "pepper's <chat> & co",
+        }},
+    }
+    attrs = _inbox_attrs(env)
+    # quoteattr is parser-safe: <, >, & are entity-escaped; ' and " are
+    # handled by quote-style choice (double-quote framing when the value
+    # contains '). Round-trip through an XML parse is the real contract.
+    name_attr = next(a for a in attrs if a.startswith("channel_name="))
+    assert "&lt;" in name_attr
+    assert "&gt;" in name_attr
+    assert "&amp;" in name_attr
+    parsed = ET.fromstring(f"<inbox {name_attr}/>")
+    assert parsed.attrib["channel_name"] == "pepper's <chat> & co"
+
+
+def test_inbox_attrs_omits_both_when_channel_id_missing_even_if_name_present():
+    env = {
+        "id": "abc", "kind": "TextMessage", "from": "x", "urgency": "green",
+        "metadata": {"discord": {"channel_name": "#x"}},
+    }
+    attrs = _inbox_attrs(env)
+    assert not any("channel" in a for a in attrs)
+
+
+def test_inbox_attrs_omits_both_on_empty_strings():
+    env = {
+        "id": "abc", "kind": "TextMessage", "from": "x", "urgency": "green",
+        "metadata": {"discord": {"channel_id": "", "channel_name": ""}},
+    }
+    attrs = _inbox_attrs(env)
+    assert not any("channel" in a for a in attrs)
+
+
+def test_inbox_attrs_omits_both_on_none_values():
+    env = {
+        "id": "abc", "kind": "TextMessage", "from": "x", "urgency": "green",
+        "metadata": {"discord": {"channel_id": None, "channel_name": None}},
+    }
+    attrs = _inbox_attrs(env)
+    assert not any("channel" in a for a in attrs)
+
+
+def test_inbox_attrs_handles_empty_discord_dict():
+    env = {
+        "id": "abc", "kind": "TextMessage", "from": "x", "urgency": "green",
+        "metadata": {"discord": {}},
+    }
+    attrs = _inbox_attrs(env)
+    assert not any("channel" in a for a in attrs)
+
+
+def test_inbox_attrs_handles_missing_metadata():
+    env = {"id": "abc", "kind": "TextMessage", "from": "x", "urgency": "green"}
+    attrs = _inbox_attrs(env)
+    assert len(attrs) == 4  # framework only
+
+
+def test_inbox_attrs_handles_non_dict_metadata_defensively():
+    env = {
+        "id": "abc", "kind": "TextMessage", "from": "x", "urgency": "green",
+        "metadata": "oops",
+    }
+    # Should not crash; behavior: returns framework attrs only.
+    attrs = _inbox_attrs(env)
+    assert len(attrs) == 4
+
+
+def test_render_envelope_includes_channel_attrs_for_discord_inbound():
+    env = {
+        "id": "abc", "kind": "TextMessage", "from": "discord-pepper",
+        "urgency": "green",
+        "payload": {"text": "hi"},
+        "metadata": {"discord": {
+            "channel_id": "1491", "channel_name": "#pepper-upgrade",
+        }},
+    }
+    block = render_envelope(env)
+    assert 'channel_id="1491"' in block
+    assert 'channel_name="#pepper-upgrade"' in block
+    assert "<inbox " in block
+    assert "</inbox>" in block
+
+
+def test_render_preview_includes_channel_attrs_for_discord_inbound():
+    env = {
+        "id": "abc", "kind": "TextMessage", "from": "discord-pepper",
+        "urgency": "green", "payload": {"text": "hi"},
+        "metadata": {"discord": {"channel_id": "1491", "channel_name": "#x"}},
+    }
+    block = _render_preview(env)
+    assert 'channel_id="1491"' in block
+    assert "preview='true'" in block
+
+
+def test_render_with_truncation_includes_channel_attrs_for_discord_inbound():
+    env = {
+        "id": "abc", "kind": "TextMessage", "from": "discord-pepper",
+        "urgency": "green", "payload": {"text": "hi"},
+        "metadata": {"discord": {"channel_id": "1491"}},
+    }
+    block = _render_with_truncation(env, body=truncation_marker("abc"), fallback=False)
+    assert 'channel_id="1491"' in block
+
+
+def test_render_item_batch_preserves_channel_attrs_alongside_batch_attr():
+    env1 = {
+        "id": "abc", "kind": "TextMessage", "from": "discord-pepper",
+        "urgency": "green", "payload": {"text": "a"},
+        "metadata": {"discord": {"channel_id": "1491"}},
+    }
+    env2 = {**env1, "id": "def", "payload": {"text": "b"}}
+    item = {"type": "batch", "envelopes": [env1, env2]}
+    blocks = render_item(item)
+    assert len(blocks) == 2
+    for block in blocks:
+        assert 'channel_id="1491"' in block
+        assert "batch=" in block
+
+
+def test_render_envelope_fallback_emits_channel_attrs_with_render_fallback():
+    # Build an envelope with a kind that triggers _render_fallback_body.
+    env = {
+        "id": "abc", "kind": "UnknownKind", "from": "discord-pepper",
+        "urgency": "green", "payload": {"x": 1},
+        "metadata": {"discord": {"channel_id": "1491"}},
+    }
+    block = render_envelope(env)
+    assert 'channel_id="1491"' in block
+    assert "render='fallback'" in block
