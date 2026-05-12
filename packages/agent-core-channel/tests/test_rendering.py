@@ -10,6 +10,8 @@ from agent_core_channel.rendering import (
     InlineAll,
     RedeliveryTracker,
     _inbox_attrs,
+    _render_preview,
+    _render_with_truncation,
     apply_circuit_breaker,
     encode_body,
     render_envelope,
@@ -578,3 +580,24 @@ def test_render_envelope_includes_channel_attrs_for_discord_inbound():
     assert 'channel_name="#pepper-upgrade"' in block
     assert "<inbox " in block
     assert "</inbox>" in block
+
+
+def test_render_preview_includes_channel_attrs_for_discord_inbound():
+    env = {
+        "id": "abc", "kind": "TextMessage", "from": "discord-pepper",
+        "urgency": "green", "payload": {"text": "hi"},
+        "metadata": {"discord": {"channel_id": "1491", "channel_name": "#x"}},
+    }
+    block = _render_preview(env)
+    assert 'channel_id="1491"' in block
+    assert "preview='true'" in block
+
+
+def test_render_with_truncation_includes_channel_attrs_for_discord_inbound():
+    env = {
+        "id": "abc", "kind": "TextMessage", "from": "discord-pepper",
+        "urgency": "green", "payload": {"text": "hi"},
+        "metadata": {"discord": {"channel_id": "1491"}},
+    }
+    block = _render_with_truncation(env, body=truncation_marker("abc"), fallback=False)
+    assert 'channel_id="1491"' in block

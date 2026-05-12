@@ -266,20 +266,7 @@ def _envelopes_from_item(item: dict) -> list[dict]:
 
 def _render_with_truncation(env: dict, *, body: str, fallback: bool) -> str:
     """Render an envelope's <inbox> tag with a custom body (truncated/preview)."""
-    kind = env.get("kind", "Unknown")
-    env_id = env.get("id", "")
-    from_ = env.get("from", "")
-    urgency = env.get("urgency", "green")
-    in_reply_to = env.get("in_reply_to")
-
-    attrs = [
-        f"kind='{kind}'",
-        f"from='{from_}'",
-        f"urgency='{urgency}'",
-        f"envelope_id='{env_id}'",
-    ]
-    if in_reply_to:
-        attrs.append(f"in_reply_to='{in_reply_to}'")
+    attrs = _inbox_attrs(env)
     if fallback:
         attrs.append("render='fallback'")
 
@@ -289,10 +276,6 @@ def _render_with_truncation(env: dict, *, body: str, fallback: bool) -> str:
 def _render_preview(env: dict, *, preview_chars: int = 200) -> str:
     """Preview mode: <inbox preview='true'> with first N chars + truncation marker."""
     env_id = env.get("id", "")
-    kind = env.get("kind", "Unknown")
-    from_ = env.get("from", "")
-    urgency = env.get("urgency", "green")
-    in_reply_to = env.get("in_reply_to")
 
     # Get the fully-rendered body, then take a preview prefix.
     full_block = render_envelope(env)
@@ -304,15 +287,8 @@ def _render_preview(env: dict, *, preview_chars: int = 200) -> str:
         preview_body += "…"
     body_with_marker = f"{preview_body}\n{truncation_marker(env_id)}"
 
-    attrs = [
-        f"kind='{kind}'",
-        f"from='{from_}'",
-        f"urgency='{urgency}'",
-        f"envelope_id='{env_id}'",
-        "preview='true'",
-    ]
-    if in_reply_to:
-        attrs.append(f"in_reply_to='{in_reply_to}'")
+    attrs = _inbox_attrs(env)
+    attrs.append("preview='true'")
     return f"<inbox {' '.join(attrs)}>\n{body_with_marker}\n</inbox>"
 
 
