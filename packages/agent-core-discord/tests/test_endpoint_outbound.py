@@ -2204,3 +2204,38 @@ async def test_text_only_message_unchanged_when_attachments_empty(monkeypatch):
         assert msg.attachments == []
     finally:
         await ep.stop()
+
+
+@pytest.mark.asyncio
+async def test_existing_send_verb_files_param_unchanged(monkeypatch, tmp_path):
+    """Verb-side `_SendArgs.files: list[str]` path unaffected by the
+    bus-side `payload.attachments: list[FileAttachment]` schema change.
+    Locks the translation-at-boundary invariant — if a future refactor
+    accidentally widens _SendArgs.files into list[FileAttachment] or
+    couples the two surfaces, this fires.
+    """
+    ep, handle, fake = await _started(monkeypatch)
+    ch = FakeChannel(id="500")
+    fake.add_channel(ch)
+    pdf = tmp_path / "via-tool.pdf"
+    pdf.write_bytes(b"x")
+    try:
+        env = _envelope(
+            "e", "agent-test", "discord-test",
+            _toolcall("send", {
+                "channel_id": "500",
+                "text": "verb-side send",
+                "files": [str(pdf)],
+            }),
+        )
+        await ep.deliver(env)
+        assert len(ch.sent) == 1
+        assert ch.sent[0]["content"] == "verb-side send"
+        assert ch.sent[0]["files"] is not None
+        msg = ch._messages[ch.sent[0]["message_id"]]
+        assert len(msg.attachments) == 1
+        assert msg.attachments[0].filename == "via-tool.pdf"
+        acks = [e for e in handle.published if e.kind == "Acknowledgment"]
+        assert all(not a.payload.note.lower().startswith("error:") for a in acks)
+    finally:
+        await ep.stop()
