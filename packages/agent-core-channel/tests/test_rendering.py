@@ -562,3 +562,19 @@ def test_inbox_attrs_handles_non_dict_metadata_defensively():
     # Should not crash; behavior: returns framework attrs only.
     attrs = _inbox_attrs(env)
     assert len(attrs) == 4
+
+
+def test_render_envelope_includes_channel_attrs_for_discord_inbound():
+    env = {
+        "id": "abc", "kind": "TextMessage", "from": "discord-pepper",
+        "urgency": "green",
+        "payload": {"text": "hi"},
+        "metadata": {"discord": {
+            "channel_id": "1491", "channel_name": "#pepper-upgrade",
+        }},
+    }
+    block = render_envelope(env)
+    assert 'channel_id="1491"' in block
+    assert 'channel_name="#pepper-upgrade"' in block
+    assert "<inbox " in block
+    assert "</inbox>" in block
