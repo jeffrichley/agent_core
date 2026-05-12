@@ -601,3 +601,30 @@ def test_render_with_truncation_includes_channel_attrs_for_discord_inbound():
     }
     block = _render_with_truncation(env, body=truncation_marker("abc"), fallback=False)
     assert 'channel_id="1491"' in block
+
+
+def test_render_item_batch_preserves_channel_attrs_alongside_batch_attr():
+    env1 = {
+        "id": "abc", "kind": "TextMessage", "from": "discord-pepper",
+        "urgency": "green", "payload": {"text": "a"},
+        "metadata": {"discord": {"channel_id": "1491"}},
+    }
+    env2 = {**env1, "id": "def", "payload": {"text": "b"}}
+    item = {"type": "batch", "envelopes": [env1, env2]}
+    blocks = render_item(item)
+    assert len(blocks) == 2
+    for block in blocks:
+        assert 'channel_id="1491"' in block
+        assert "batch=" in block
+
+
+def test_render_envelope_fallback_emits_channel_attrs_with_render_fallback():
+    # Build an envelope with a kind that triggers _render_fallback_body.
+    env = {
+        "id": "abc", "kind": "UnknownKind", "from": "discord-pepper",
+        "urgency": "green", "payload": {"x": 1},
+        "metadata": {"discord": {"channel_id": "1491"}},
+    }
+    block = render_envelope(env)
+    assert 'channel_id="1491"' in block
+    assert "render='fallback'" in block
