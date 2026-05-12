@@ -3,9 +3,10 @@
 from __future__ import annotations
 
 import json
+from collections.abc import Iterable
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Annotated, Any, Iterable
+from typing import Annotated, Any
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 import typer
@@ -33,7 +34,9 @@ def show(
     ] = None,
     log_root: Annotated[
         Path | None,
-        typer.Option("--log-root", help="Daily JSONL directory. Defaults to ~/.agent-core/bus/raw."),
+        typer.Option(
+            "--log-root", help="Daily JSONL directory. Defaults to ~/.agent-core/bus/raw."
+        ),
     ] = None,
     timezone: Annotated[
         str,
@@ -83,10 +86,7 @@ def show(
     if raw:
         items = (env.model_dump(by_alias=True, mode="json") for env in iter_envelopes(path))
         # Filter to the agent's perspective in raw mode too — operator usually wants their slice.
-        items = (
-            obj for obj in items
-            if obj.get("to") == agent or obj.get("from") == agent
-        )
+        items = (obj for obj in items if obj.get("to") == agent or obj.get("from") == agent)
     else:
         items = iter_for_agent(path, agent=agent, projected=True, timezone=timezone)
 
