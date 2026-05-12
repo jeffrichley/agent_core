@@ -2010,3 +2010,39 @@ async def test_text_message_with_multiple_attachments_uploads_all(monkeypatch, t
         ]
     finally:
         await ep.stop()
+
+
+@pytest.mark.asyncio
+async def test_text_message_attachment_uses_basename_as_filename(monkeypatch, tmp_path):
+    """discord.File(path) defaults filename to os.path.basename(path).
+    Lock this default so a future refactor that strips file extension or
+    rewrites the filename is loud, not silent.
+    """
+    import os
+    from datetime import UTC, datetime
+
+    from agent_core.bus.envelope import Envelope, FileAttachment, TextMessagePayload
+
+    ep, handle, fake = await _started(monkeypatch)
+    ch = FakeChannel(id="500")
+    fake.add_channel(ch)
+    deep_path = tmp_path / "deeply" / "nested" / "weird name.pdf"
+    deep_path.parent.mkdir(parents=True)
+    deep_path.write_bytes(b"x")
+    try:
+        env = Envelope(
+            id="msg-basename", correlation_id="c", from_="agent-test", to="discord-test",
+            kind="TextMessage",
+            payload=TextMessagePayload(
+                text="basename check",
+                attachments=[FileAttachment(path=str(deep_path))],
+            ),
+            metadata={"discord": {"channel_id": "500"}},
+            created_at=datetime.now(UTC),
+        )
+        await ep.deliver(env)
+        msg = ch._messages[ch.sent[0]["message_id"]]
+        assert msg.attachments[0].filename == os.path.basename(str(deep_path))
+        assert msg.attachments[0].filename == "weird name.pdf"
+    finally:
+        await ep.stop()
