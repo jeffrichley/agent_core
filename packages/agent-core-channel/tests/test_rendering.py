@@ -490,3 +490,75 @@ def test_inbox_attrs_emits_channel_id_alone_when_name_missing():
     attrs = _inbox_attrs(env)
     assert any('channel_id="X"' in a for a in attrs)
     assert not any("channel_name" in a for a in attrs)
+
+
+def test_inbox_attrs_escapes_special_chars_in_channel_name():
+    env = {
+        "id": "abc", "kind": "TextMessage", "from": "discord-pepper",
+        "urgency": "green",
+        "metadata": {"discord": {
+            "channel_id": "1", "channel_name": "pepper's <chat> & co",
+        }},
+    }
+    attrs = _inbox_attrs(env)
+    # quoteattr is parser-safe: <, >, & are entity-escaped; ' and " are
+    # handled by quote-style choice (double-quote framing when the value
+    # contains '). Round-trip through an XML parse is the real contract.
+    name_attr = next(a for a in attrs if a.startswith("channel_name="))
+    assert "&lt;" in name_attr
+    assert "&gt;" in name_attr
+    assert "&amp;" in name_attr
+    parsed = ET.fromstring(f"<inbox {name_attr}/>")
+    assert parsed.attrib["channel_name"] == "pepper's <chat> & co"
+
+
+def test_inbox_attrs_omits_both_when_channel_id_missing_even_if_name_present():
+    env = {
+        "id": "abc", "kind": "TextMessage", "from": "x", "urgency": "green",
+        "metadata": {"discord": {"channel_name": "#x"}},
+    }
+    attrs = _inbox_attrs(env)
+    assert not any("channel" in a for a in attrs)
+
+
+def test_inbox_attrs_omits_both_on_empty_strings():
+    env = {
+        "id": "abc", "kind": "TextMessage", "from": "x", "urgency": "green",
+        "metadata": {"discord": {"channel_id": "", "channel_name": ""}},
+    }
+    attrs = _inbox_attrs(env)
+    assert not any("channel" in a for a in attrs)
+
+
+def test_inbox_attrs_omits_both_on_none_values():
+    env = {
+        "id": "abc", "kind": "TextMessage", "from": "x", "urgency": "green",
+        "metadata": {"discord": {"channel_id": None, "channel_name": None}},
+    }
+    attrs = _inbox_attrs(env)
+    assert not any("channel" in a for a in attrs)
+
+
+def test_inbox_attrs_handles_empty_discord_dict():
+    env = {
+        "id": "abc", "kind": "TextMessage", "from": "x", "urgency": "green",
+        "metadata": {"discord": {}},
+    }
+    attrs = _inbox_attrs(env)
+    assert not any("channel" in a for a in attrs)
+
+
+def test_inbox_attrs_handles_missing_metadata():
+    env = {"id": "abc", "kind": "TextMessage", "from": "x", "urgency": "green"}
+    attrs = _inbox_attrs(env)
+    assert len(attrs) == 4  # framework only
+
+
+def test_inbox_attrs_handles_non_dict_metadata_defensively():
+    env = {
+        "id": "abc", "kind": "TextMessage", "from": "x", "urgency": "green",
+        "metadata": "oops",
+    }
+    # Should not crash; behavior: returns framework attrs only.
+    attrs = _inbox_attrs(env)
+    assert len(attrs) == 4

@@ -110,7 +110,12 @@ def _inbox_attrs(env: dict) -> list[str]:
         attrs.append(f"in_reply_to='{in_reply_to}'")
     # Per-namespace preview surfacing. Add cases as namespaces earn them
     # via documented agent symptoms (rule-of-three before any registry).
-    discord = (env.get("metadata") or {}).get("discord") or {}
+    metadata = env.get("metadata") or {}
+    if not isinstance(metadata, dict):
+        metadata = {}
+    discord = metadata.get("discord") or {}
+    if not isinstance(discord, dict):
+        discord = {}
     if discord:
         cid = discord.get("channel_id")
         if cid:
