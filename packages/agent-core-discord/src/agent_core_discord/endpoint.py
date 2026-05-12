@@ -337,6 +337,47 @@ class DiscordEndpoint:
             evicted += 1
         return evicted
 
+    def _resolve_channel_id(self, outbound: Envelope) -> str:
+        """Resolve channel_id with precedence:
+        1. Explicit metadata.discord.channel_id (preserves current behavior).
+        2. Fallback: in_reply_to -> _recent_inbounds lookup (auto-echo).
+        3. Hard error -- refuse to guess.
+
+        Sub-causes for the failure path are logged at WARNING; the
+        agent-facing _ToolError message is unified.
+        """
+        # 1. Explicit always wins.
+        discord_meta = (outbound.metadata or {}).get("discord") or {}
+        if explicit := discord_meta.get("channel_id"):
+            return explicit
+
+        # 2. Auto-echo via in_reply_to cache lookup.
+        if outbound.in_reply_to:
+            inbound = self._recent_inbounds.get(outbound.in_reply_to)
+            if inbound:
+                inbound_discord = (inbound.metadata or {}).get("discord") or {}
+                if cid := inbound_discord.get("channel_id"):
+                    return cid
+                log.warning(
+                    "channel_id resolution failed: cached_inbound_missing_channel_id, "
+                    "in_reply_to=%s", outbound.in_reply_to,
+                )
+            else:
+                log.warning(
+                    "channel_id resolution failed: cache_miss, in_reply_to=%s",
+                    outbound.in_reply_to,
+                )
+        else:
+            log.warning(
+                "channel_id resolution failed: no_explicit_no_in_reply_to, "
+                "outbound_id=%s", outbound.id,
+            )
+
+        raise _ToolError(
+            "cannot determine channel — set metadata.discord.channel_id "
+            "explicitly, or set in_reply_to so auto-echo can resolve."
+        )
+
     async def _typing_while_pending(self, channel: Any, message_id: str) -> None:
         """Hold Discord 'typing…' until this message is cleared from the awaiting set."""
         typing_factory = getattr(channel, "typing", None)
