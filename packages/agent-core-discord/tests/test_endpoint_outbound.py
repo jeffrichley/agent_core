@@ -20,13 +20,6 @@ from agent_core_discord.briefing import (
     build_briefing_embeds,
 )
 from agent_core_discord.endpoint import DiscordEndpoint, _parse_iso_datetime
-
-from agent_core.bus.envelope import (
-    EndpointInfo,
-    Envelope,
-    TextMessagePayload,
-    ToolInvocationPayload,
-)
 from agent_core_discord.testing.fakes import (
     FakeChannel,
     FakeDiscordClient,
@@ -35,6 +28,13 @@ from agent_core_discord.testing.fakes import (
     FakePoll,
     FakePollAnswer,
     FakeUser,
+)
+
+from agent_core.bus.envelope import (
+    EndpointInfo,
+    Envelope,
+    TextMessagePayload,
+    ToolInvocationPayload,
 )
 
 
@@ -1796,5 +1796,51 @@ async def test_create_poll_dispatch_translates_validation_to_error_ack(monkeypat
         ack = [e for e in handle.published if e.kind == "Acknowledgment"][-1]
         assert ack.payload.note.lower().startswith("error:")
         assert ack.urgency == "yellow"
+    finally:
+        await ep.stop()
+
+
+@pytest.mark.parametrize("verb_name,args_extra", [
+    ("send", {"text": "hi"}),
+    ("edit", {"message_id": "m-edit", "text": "new"}),
+    ("react", {"message_id": "m-react", "emoji": "👍"}),
+    ("send_typing", {"duration_seconds": 0.5}),
+    ("send_briefing", {
+        "date_line": "test", "focus": "A", "calendar": "B",
+        "critical_items": [], "warning_items": [],
+    }),
+])
+@pytest.mark.asyncio
+async def test_auto_echo_resolves_channel_via_in_reply_to_across_verbs(
+    monkeypatch, verb_name, args_extra
+):
+    """Every verb that needs a channel routes via _resolve_channel_id."""
+    ep, handle, fake = await _started(monkeypatch)
+    ch = FakeChannel(id="200")
+    fake.add_channel(ch)
+    # Seed cache with an inbound pointing at channel 200.
+    inbound = Envelope(
+        id="inbound-1", correlation_id="c", from_="discord-test", to="agent-test",
+        kind="TextMessage", payload=TextMessagePayload(text="hi"),
+        metadata={"discord": {"channel_id": "200"}},
+        created_at=datetime.now(UTC),
+    )
+    ep._record_inbound(inbound)
+    # Pre-create message for verbs that need one.
+    if verb_name in ("edit", "react"):
+        ch._messages[args_extra["message_id"]] = FakeMessage(
+            id=args_extra["message_id"], channel_id="200",
+        )
+    try:
+        env = _envelope(
+            "e", "agent-test", "discord-test",
+            _toolcall(verb_name, {**args_extra}),  # NO channel_id
+        )
+        env.in_reply_to = "inbound-1"
+        await ep.deliver(env)
+        # The verb routed to channel 200 via the cache hit (no error ack).
+        ack = [e for e in handle.published if e.kind == "Acknowledgment"][-1]
+        assert not ack.payload.note.lower().startswith("error:"), \
+            f"verb={verb_name} should have resolved channel via in_reply_to"
     finally:
         await ep.stop()
