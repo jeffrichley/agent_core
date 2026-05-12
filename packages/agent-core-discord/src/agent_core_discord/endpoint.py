@@ -228,6 +228,8 @@ class DiscordEndpoint:
         pending_acks_max: int = 5000,
         pending_acks_ttl_seconds: float = 3600.0,
         pending_acks_sweep_seconds: float = 60.0,
+        recent_inbounds_max: int = 5000,
+        recent_inbounds_ttl_seconds: float = 3600.0,
         _client_factory: Callable[..., Any] | None = None,
     ):
         self.name = name
@@ -267,6 +269,14 @@ class DiscordEndpoint:
         # Inbound bus envelope id → (Discord message id, channel id) for
         # outbound TextMessage replies that set in_reply_to but omit metadata.
         self._inbound_envelope_discord: OrderedDict[str, tuple[str, str]] = OrderedDict()
+        # Cache of recently-published inbounds keyed by envelope_id, for
+        # _resolve_channel_id auto-echo (#83). Mirrors claude_code_mcp.py's
+        # _recent_inbounds pattern at N=2 of this shape; extract to shared
+        # utility when a third endpoint needs it (rule-of-three).
+        self._recent_inbounds: OrderedDict[str, Envelope] = OrderedDict()
+        self._recent_inbounds_max = recent_inbounds_max
+        self._recent_inbounds_ttl_seconds = recent_inbounds_ttl_seconds
+        self._recent_inbounds_timestamps: dict[str, float] = {}
         # Discord message ids we published to the bus and have not "finished"
         # yet (cleared when ack reaction is removed or TTL/LRU evicts).
         self._awaiting_reply_ids: set[str] = set()
@@ -294,6 +304,17 @@ class DiscordEndpoint:
         self._inbound_envelope_discord[envelope_id] = (discord_message_id, channel_id)
         while len(self._inbound_envelope_discord) > self.pending_acks_max:
             self._inbound_envelope_discord.popitem(last=False)
+
+    def _record_inbound(self, envelope: Envelope) -> None:
+        """Cache an inbound envelope for auto-echo lookups (#83).
+
+        Stores the full envelope so _resolve_channel_id can read
+        metadata.discord.channel_id when an outbound's in_reply_to
+        matches the cached id.
+        """
+        self._recent_inbounds[envelope.id] = envelope
+        self._recent_inbounds.move_to_end(envelope.id)
+        self._recent_inbounds_timestamps[envelope.id] = time.monotonic()
 
     async def _typing_while_pending(self, channel: Any, message_id: str) -> None:
         """Hold Discord 'typing…' until this message is cleared from the awaiting set."""
