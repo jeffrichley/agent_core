@@ -6,9 +6,9 @@ import asyncio
 
 import pytest
 from agent_core_discord.endpoint import DiscordEndpoint
+from agent_core_discord.testing.fakes import FakeChannel, FakeDiscordClient, FakeMessage, FakeUser
 
 from agent_core.bus.envelope import EndpointInfo, Envelope, EventPayload, TextMessagePayload
-from agent_core_discord.testing.fakes import FakeChannel, FakeDiscordClient, FakeMessage, FakeUser
 
 
 class _Recording:
@@ -583,5 +583,47 @@ async def test_on_message_records_inbound_in_recent_inbounds_cache(monkeypatch):
         cached = ep._recent_inbounds.get(env.id)
         assert cached is not None
         assert (cached.metadata or {}).get("discord", {}).get("channel_id") == "200"
+    finally:
+        await ep.stop()
+
+
+@pytest.mark.asyncio
+async def test_inbound_to_outbound_routes_correctly_via_in_reply_to_only(monkeypatch):
+    """
+    Issue #83 named-symptom regression lock:
+    1. Inbound arrives in channel A.
+    2. Wake preview surfaces channel_id (A).
+    3. Agent calls send(in_reply_to=<inbound>) without explicit channel_id.
+    4. Outbound posts to channel A via _resolve_channel_id cache lookup (C).
+    """
+    ep, handle, fake = await _start_endpoint(monkeypatch)
+    ch_a = FakeChannel(id="200", name="pepper-upgrade", guild_id="g1")
+    fake.add_channel(ch_a)
+    inbound_msg = _msg(id="m-in", channel_id="200", content="hi from #pepper-upgrade")
+    inbound_msg.channel = fake.get_channel("200")
+    ch_a._messages["m-in"] = inbound_msg
+    try:
+        # 1. Inbound arrives.
+        await fake.fire("on_message", inbound_msg)
+        env = handle.published[0]
+        assert (env.metadata or {}).get("discord", {}).get("channel_id") == "200"
+        # 2. (A) Preview-side surfacing covered by Phase 1 tests.
+        # 3+4. Agent send with in_reply_to only.
+        from datetime import UTC, datetime
+
+        from agent_core.bus.envelope import Envelope, TextMessagePayload
+        out = Envelope(
+            id="agent-reply", correlation_id="c", from_="agent-test", to="discord-test",
+            kind="TextMessage", payload=TextMessagePayload(text="reply"),
+            in_reply_to=env.id, metadata={},
+            created_at=datetime.now(UTC),
+        )
+        await ep.deliver(out)
+        # 4. Verify outbound posted to channel 200.
+        assert len(ch_a.sent) == 1
+        assert ch_a.sent[0]["content"] == "reply"
+        # No error ack.
+        acks = [e for e in handle.published if e.kind == "Acknowledgment"]
+        assert all(not a.payload.note.lower().startswith("error:") for a in acks)
     finally:
         await ep.stop()
