@@ -1974,3 +1974,39 @@ async def test_text_message_with_single_attachment_uploads_to_discord(monkeypatc
         assert all(not a.payload.note.lower().startswith("error:") for a in acks)
     finally:
         await ep.stop()
+
+
+@pytest.mark.asyncio
+async def test_text_message_with_multiple_attachments_uploads_all(monkeypatch, tmp_path):
+    """Multi-file delivery preserves input order on the way to Discord."""
+    import os
+
+    ep, handle, fake = await _started(monkeypatch)
+    ch = FakeChannel(id="500")
+    fake.add_channel(ch)
+    paths = []
+    for name in ("alpha.pdf", "beta.pdf", "gamma.pdf"):
+        p = tmp_path / name
+        p.write_bytes(b"data")
+        paths.append(str(p))
+    from agent_core.bus.envelope import FileAttachment
+    try:
+        env = Envelope(
+            id="msg-multi", correlation_id="c", from_="agent-test", to="discord-test",
+            kind="TextMessage",
+            payload=TextMessagePayload(
+                text="three files",
+                attachments=[FileAttachment(path=p) for p in paths],
+            ),
+            metadata={"discord": {"channel_id": "500"}},
+            created_at=datetime.now(UTC),
+        )
+        await ep.deliver(env)
+        msg = ch._messages[ch.sent[0]["message_id"]]
+        assert len(msg.attachments) == 3
+        # Order preserved end-to-end.
+        assert [a.filename for a in msg.attachments] == [
+            os.path.basename(p) for p in paths
+        ]
+    finally:
+        await ep.stop()
