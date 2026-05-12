@@ -315,6 +315,9 @@ class DiscordEndpoint:
         self._recent_inbounds[envelope.id] = envelope
         self._recent_inbounds.move_to_end(envelope.id)
         self._recent_inbounds_timestamps[envelope.id] = time.monotonic()
+        while len(self._recent_inbounds) > self._recent_inbounds_max:
+            oldest_id, _ = self._recent_inbounds.popitem(last=False)
+            self._recent_inbounds_timestamps.pop(oldest_id, None)
 
     async def _typing_while_pending(self, channel: Any, message_id: str) -> None:
         """Hold Discord 'typing…' until this message is cleared from the awaiting set."""

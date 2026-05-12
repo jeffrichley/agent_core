@@ -43,3 +43,25 @@ async def test_recent_inbounds_records_inbound_on_publish(monkeypatch):
     assert cached is not None
     assert cached.id == "abc"
     assert (cached.metadata or {}).get("discord", {}).get("channel_id") == "1491"
+
+
+@pytest.mark.asyncio
+async def test_recent_inbounds_lru_eviction_caps_at_max(monkeypatch):
+    ep, _fake = await _make_endpoint(monkeypatch, recent_inbounds_max=3)
+
+    def _env(eid: str) -> Envelope:
+        return Envelope(
+            id=eid, correlation_id="c", from_="x", to="y", kind="TextMessage",
+            payload=TextMessagePayload(text=""),
+            metadata={"discord": {"channel_id": "1"}},
+            created_at=datetime.now(UTC),
+        )
+
+    for eid in ("a", "b", "c"):
+        ep._record_inbound(_env(eid))
+    assert list(ep._recent_inbounds.keys()) == ["a", "b", "c"]
+    ep._record_inbound(_env("d"))
+    # Oldest (a) evicted.
+    assert list(ep._recent_inbounds.keys()) == ["b", "c", "d"]
+    assert len(ep._recent_inbounds) == 3
+    assert "a" not in ep._recent_inbounds_timestamps
