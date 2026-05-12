@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Annotated
+from typing import Annotated, Any, Iterable
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 import typer
@@ -79,6 +79,7 @@ def show(
     target_date = date or datetime.now(UTC).astimezone(ZoneInfo(timezone)).date().isoformat()
     path = root / f"{target_date}.jsonl"
 
+    items: Iterable[dict[str, Any]]
     if raw:
         items = (env.model_dump(by_alias=True, mode="json") for env in iter_envelopes(path))
         # Filter to the agent's perspective in raw mode too — operator usually wants their slice.

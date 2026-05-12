@@ -173,9 +173,10 @@ class SessionEndWriter:
         transcript_path = Path(transcript_path_str) if transcript_path_str else Path()
 
         handoff_path = vault / Path(handoff_rel)
+        handoff_status_file = params.get("handoff_status_file")
         status_path = (
-            vault / Path(params.get("handoff_status_file"))
-            if params.get("handoff_status_file")
+            vault / Path(handoff_status_file)
+            if handoff_status_file
             else hs.path_for_handoff(handoff_path)
         )
 
