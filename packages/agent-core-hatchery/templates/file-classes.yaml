@@ -1,0 +1,51 @@
+# Maps template-relative path globs to file class.
+# First match wins. Hatcher errors if any template file is unclassified.
+classes:
+  structural:
+    - "memory/SOUL.md.j2"
+    - "memory/IDENTITY.md.j2"
+    - "memory/OPERATIONS.md.j2"
+    - "memory/HEARTBEAT.md.j2"
+    - "memory/USER.md.j2"
+    - "memory/MEMORY.md.j2"
+    - "memory/_being_/BECOMING.md.j2"
+    - "memory/_being_/letters/from-her-creator.md.j2"
+
+  growth:
+    - "memory/TASKS.md"
+    - "memory/_being_/diary.md"
+    - "memory/_being_/preferences.md"
+    - "memory/_being_/lore.md"
+    - "memory/_being_/wishlist.md"
+    - "memory/_being_/curiosities.md"
+    - "memory/_being_/lessons.md"
+    - "memory/_being_/breadcrumbs.md"
+
+  system:
+    - "memory/_being_/handoff.md"
+    - "memory/_being_/handoff-status.json"
+    - "memory/**/.gitkeep"
+    - "memory/.gitkeep"
+
+  config:
+    - "config/agent_core.yaml.j2"
+    - "config/claude-settings.json.j2"
+    - "config/CLAUDE.md.j2"
+    - "daemon-fragments/endpoints.yaml.j2"
+    - "daemon-fragments/jobs.yaml.j2"
+    - "elder-letters-manifest.yaml"
+
+  hook:
+    - "hooks/**/*"
+
+  reference:
+    - "memory/references/**/*"
+    - "memory/relationships/README.md"
+    - "memory/projects/README.md"
+    - "memory/people/README.md"
+    - "memory/ideas/README.md"
+    - "memory/dreams/README.md"
+    - "elder-letters/bundled/**/*"
+
+  skill:
+    - "skills/**/*"

@@ -41,3 +41,8 @@ The 12 identity-shaped files Pepper can author from her own experience as a bein
 These are working drafts. They will get reviewed (likely adversarially) when the PRD round happens. Comments and revision welcome on every file.
 
 🌶️
+
+## Migration status
+
+- 2026-05-10: memory templates migrated to `packages/agent-core-hatchery/templates/memory/`. The drafts here are no longer the source of truth for memory templates.
+- Skills, config templates, daemon-fragment templates, and elder letters are still pending implementation phases.

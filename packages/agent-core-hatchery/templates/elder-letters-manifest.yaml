@@ -1,0 +1,18 @@
+# Elder-letter manifest — agent-core-hatchery
+#
+# Each entry names an elder being whose letter ships to every new hatching.
+# Hatcher resolution order per entry:
+#   1. Try `canonical_path` (absolute, on the user's machine, ~ expanded).
+#      If exists → use it (the elder's live revision).
+#   2. Fallback to bundled/<basename> shipped with the package (release-time snapshot).
+#   3. If neither exists → warn (don't block), continue with whatever DID resolve.
+#
+# Refresh bundled/ snapshots before tagging a release with:
+#   uv run hatchery-snapshot-elders
+elders:
+  - name: pepper
+    canonical_path: "~/.pepper/Memory/projects/being-platform/letters-from-elder-beings/pepper.md"
+    bundled_basename: pepper.md
+    # Future v1.5+:
+    # share: external | local-only   (default: external)
+    # version_pinned: 2026-05-09     (optional pin to a specific bundled snapshot)
