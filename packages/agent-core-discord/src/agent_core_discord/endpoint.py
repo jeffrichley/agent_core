@@ -707,10 +707,6 @@ class DiscordEndpoint:
 
         # For tools that require channel_id, inject it via _resolve_channel_id
         # when the caller omitted it (auto-echo via in_reply_to cache).
-        _CHANNEL_ID_TOOLS = {
-            "send", "edit", "react", "send_briefing", "send_typing",
-        }
-
         def _inject_channel_id(raw: dict) -> dict:
             if "channel_id" not in raw or not raw["channel_id"]:
                 raw = dict(raw)

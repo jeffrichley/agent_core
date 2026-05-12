@@ -593,8 +593,13 @@ async def test_inbound_to_outbound_routes_correctly_via_in_reply_to_only(monkeyp
     Issue #83 named-symptom regression lock:
     1. Inbound arrives in channel A.
     2. Wake preview surfaces channel_id (A).
-    3. Agent calls send(in_reply_to=<inbound>) without explicit channel_id.
-    4. Outbound posts to channel A via _resolve_channel_id cache lookup (C).
+    3. Agent sends TextMessage with in_reply_to=<inbound>, no explicit channel_id.
+    4. Outbound posts to channel A via auto-echo lookup.
+
+    Note: this exercises the pre-existing _inbound_envelope_discord path in
+    _deliver_text_message, not the new _resolve_channel_id. TextMessage handler
+    unification with the new resolver is deferred (see spec doc "Followups").
+    The named symptom is locked regardless of which cache resolved the routing.
     """
     ep, handle, fake = await _start_endpoint(monkeypatch)
     ch_a = FakeChannel(id="200", name="pepper-upgrade", guild_id="g1")
