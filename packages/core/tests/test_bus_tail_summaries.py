@@ -20,7 +20,10 @@ from agent_core.bus_tail.summaries import SUMMARIZERS, summarize_payload
 
 
 def test_summarize_text_message_returns_shape_only():
-    payload = TextMessagePayload(text="hello world", attachments=[{"a": 1}, {"b": 2}])
+    payload = TextMessagePayload(
+        text="hello world",
+        attachments=[{"path": "/a.pdf"}, {"path": "/b.pdf"}],
+    )
     summary = SUMMARIZERS["TextMessage"](payload)
     assert summary == {"text_length": 11, "attachment_count": 2}
     # No raw text value leaks.
