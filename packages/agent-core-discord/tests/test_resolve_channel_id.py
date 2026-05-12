@@ -109,3 +109,42 @@ async def test_resolve_error_message_is_unified_across_sub_causes(monkeypatch):
     with pytest.raises(_ToolError) as exc_miss:
         ep._resolve_channel_id(_outbound(in_reply_to="ghost"))
     assert str(exc_neither.value) == str(exc_miss.value)
+
+
+@pytest.mark.asyncio
+async def test_resolve_raises_and_logs_on_cache_miss_after_ttl_eviction(monkeypatch, caplog):
+    ep = await _make_endpoint(monkeypatch)
+    ep._recent_inbounds_ttl_seconds = 10.0
+    ep._record_inbound(_inbound(eid="aged", channel_id="X"))
+    import time
+    ep._recent_inbounds_timestamps["aged"] = time.monotonic() - 999.0
+    ep._sweep_recent_inbounds_once()
+    out = _outbound(in_reply_to="aged")
+    with caplog.at_level(logging.WARNING):
+        with pytest.raises(_ToolError):
+            ep._resolve_channel_id(out)
+    assert "cache_miss" in caplog.text
+
+
+@pytest.mark.asyncio
+async def test_resolve_raises_and_logs_on_cache_miss_after_lru_eviction(monkeypatch, caplog):
+    ep = await _make_endpoint(monkeypatch)
+    ep._recent_inbounds_max = 1
+    ep._record_inbound(_inbound(eid="first", channel_id="X"))
+    ep._record_inbound(_inbound(eid="second", channel_id="Y"))  # evicts first
+    out = _outbound(in_reply_to="first")
+    with caplog.at_level(logging.WARNING):
+        with pytest.raises(_ToolError):
+            ep._resolve_channel_id(out)
+    assert "cache_miss" in caplog.text
+
+
+@pytest.mark.asyncio
+async def test_resolve_raises_and_logs_on_cache_miss_after_daemon_restart(monkeypatch, caplog):
+    """Fresh endpoint instance simulates cold start; cache empty."""
+    ep = await _make_endpoint(monkeypatch)
+    out = _outbound(in_reply_to="pre-restart")
+    with caplog.at_level(logging.WARNING):
+        with pytest.raises(_ToolError):
+            ep._resolve_channel_id(out)
+    assert "cache_miss" in caplog.text
