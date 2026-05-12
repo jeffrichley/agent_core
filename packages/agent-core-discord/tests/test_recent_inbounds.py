@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import time
 from datetime import UTC, datetime
 
 import pytest
@@ -65,3 +66,33 @@ async def test_recent_inbounds_lru_eviction_caps_at_max(monkeypatch):
     assert list(ep._recent_inbounds.keys()) == ["b", "c", "d"]
     assert len(ep._recent_inbounds) == 3
     assert "a" not in ep._recent_inbounds_timestamps
+
+
+@pytest.mark.asyncio
+async def test_recent_inbounds_ttl_sweep_removes_stale(monkeypatch):
+    ep, _fake = await _make_endpoint(monkeypatch, recent_inbounds_ttl_seconds=10.0)
+
+    fresh = Envelope(
+        id="fresh", correlation_id="c", from_="x", to="y", kind="TextMessage",
+        payload=TextMessagePayload(text=""),
+        metadata={"discord": {"channel_id": "1"}},
+        created_at=datetime.now(UTC),
+    )
+    stale = Envelope(
+        id="stale", correlation_id="c", from_="x", to="y", kind="TextMessage",
+        payload=TextMessagePayload(text=""),
+        metadata={"discord": {"channel_id": "1"}},
+        created_at=datetime.now(UTC),
+    )
+    ep._record_inbound(fresh)
+    # Insert stale entry with old timestamp at the front (oldest position) so
+    # the walk-from-front sweep sees it. Direct dict assignment lets us pin an
+    # arbitrary past timestamp; move_to_end(last=False) positions it as oldest.
+    ep._recent_inbounds[stale.id] = stale
+    ep._recent_inbounds.move_to_end(stale.id, last=False)
+    ep._recent_inbounds_timestamps[stale.id] = time.monotonic() - 999.0
+
+    evicted = ep._sweep_recent_inbounds_once()
+    assert evicted == 1
+    assert "stale" not in ep._recent_inbounds
+    assert "fresh" in ep._recent_inbounds

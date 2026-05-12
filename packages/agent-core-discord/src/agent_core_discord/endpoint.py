@@ -319,6 +319,24 @@ class DiscordEndpoint:
             oldest_id, _ = self._recent_inbounds.popitem(last=False)
             self._recent_inbounds_timestamps.pop(oldest_id, None)
 
+    def _sweep_recent_inbounds_once(self) -> int:
+        """Evict entries older than TTL; return count evicted.
+
+        Walks oldest-first by insertion order; breaks at first non-stale
+        entry (same shape as _sweep_pending_acks_once).
+        """
+        now = time.monotonic()
+        ttl = self._recent_inbounds_ttl_seconds
+        evicted = 0
+        while self._recent_inbounds:
+            oldest_id = next(iter(self._recent_inbounds))
+            if now - self._recent_inbounds_timestamps.get(oldest_id, now) <= ttl:
+                break
+            self._recent_inbounds.popitem(last=False)
+            self._recent_inbounds_timestamps.pop(oldest_id, None)
+            evicted += 1
+        return evicted
+
     async def _typing_while_pending(self, channel: Any, message_id: str) -> None:
         """Hold Discord 'typing…' until this message is cleared from the awaiting set."""
         typing_factory = getattr(channel, "typing", None)
