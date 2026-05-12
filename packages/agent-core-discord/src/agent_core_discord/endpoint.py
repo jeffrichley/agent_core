@@ -620,7 +620,7 @@ class DiscordEndpoint:
         args = envelope.payload.args  # type: ignore[union-attr]
 
         try:
-            result = await self._dispatch(tool, args)
+            result = await self._dispatch(tool, args, envelope)
             urg2: Literal["green", "yellow", "red"] = (
                 "yellow"
                 if isinstance(result, dict) and result.get("status") == "partial"
@@ -696,7 +696,7 @@ class DiscordEndpoint:
         )
         return await self._send(args)
 
-    async def _dispatch(self, tool: str, args: dict) -> Any:
+    async def _dispatch(self, tool: str, args: dict, env: Envelope) -> Any:
         tool = _canonical_tool(tool)
 
         def _v(model: Any, raw: dict) -> Any:
@@ -705,12 +705,24 @@ class DiscordEndpoint:
             except ValidationError as exc:
                 raise _ToolError(f"{tool}: {exc}") from exc
 
+        # For tools that require channel_id, inject it via _resolve_channel_id
+        # when the caller omitted it (auto-echo via in_reply_to cache).
+        _CHANNEL_ID_TOOLS = {
+            "send", "edit", "react", "send_briefing", "send_typing",
+        }
+
+        def _inject_channel_id(raw: dict) -> dict:
+            if "channel_id" not in raw or not raw["channel_id"]:
+                raw = dict(raw)
+                raw["channel_id"] = self._resolve_channel_id(env)
+            return raw
+
         if tool == "send":
-            return await self._send(_v(_SendArgs, args))
+            return await self._send(_v(_SendArgs, _inject_channel_id(args)))
         if tool == "edit":
-            return await self._edit(_v(_EditArgs, args))
+            return await self._edit(_v(_EditArgs, _inject_channel_id(args)))
         if tool == "react":
-            return await self._react(_v(_ReactArgs, args))
+            return await self._react(_v(_ReactArgs, _inject_channel_id(args)))
         if tool == "fetch":
             return await self._fetch(_v(_FetchArgs, args))
         if tool == "download_attachments":
@@ -720,7 +732,7 @@ class DiscordEndpoint:
         if tool == "get_channel_info":
             return await self._get_channel_info(_v(_GetChannelInfoArgs, args))
         if tool == "send_briefing":
-            return await self._send_briefing(_v(_SendBriefingArgs, args))
+            return await self._send_briefing(_v(_SendBriefingArgs, _inject_channel_id(args)))
         if tool == "create_poll":
             return await self._create_poll(_v(_CreatePollArgs, args))
         if tool == "create_scheduled_event":
@@ -732,7 +744,7 @@ class DiscordEndpoint:
         if tool == "create_thread":
             return await self._create_thread(_v(_CreateThreadArgs, args))
         if tool == "send_typing":
-            return await self._send_typing(_v(_SendTypingArgs, args))
+            return await self._send_typing(_v(_SendTypingArgs, _inject_channel_id(args)))
         raise _ToolError(f"unknown tool '{tool}'")
 
     async def _reply(
