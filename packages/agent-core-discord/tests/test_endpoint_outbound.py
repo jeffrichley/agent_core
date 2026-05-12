@@ -33,6 +33,7 @@ from agent_core_discord.testing.fakes import (
 from agent_core.bus.envelope import (
     EndpointInfo,
     Envelope,
+    FileAttachment,
     TextMessagePayload,
     ToolInvocationPayload,
 )
@@ -2126,5 +2127,48 @@ async def test_text_message_attachment_too_large_yields_yellow_ack_error(monkeyp
         assert len(acks) == 1
         assert acks[0].urgency == "yellow"
         assert acks[0].payload.note.lower().startswith("error:")
+    finally:
+        await ep.stop()
+
+
+@pytest.mark.asyncio
+async def test_send_embed_plus_files_coexist_on_text_message_envelope(monkeypatch, tmp_path):
+    """A TextMessage envelope carrying both metadata.discord.embeds AND
+    payload.attachments composes into one channel.send call with both
+    keyword args populated. Locks the coexistence invariant — a future
+    branch that picks embeds-or-files would silently re-introduce the
+    #64 file-discard symptom for embed-bearing sends.
+    """
+    ep, handle, fake = await _started(monkeypatch)
+    ch = FakeChannel(id="500")
+    fake.add_channel(ch)
+    pdf = tmp_path / "with_embed.pdf"
+    pdf.write_bytes(b"data")
+    try:
+        env = Envelope(
+            id="msg-both", correlation_id="c", from_="agent-test", to="discord-test",
+            kind="TextMessage",
+            payload=TextMessagePayload(
+                text="text + embed + file",
+                attachments=[FileAttachment(path=str(pdf))],
+            ),
+            metadata={
+                "discord": {
+                    "channel_id": "500",
+                    "embeds": [{"title": "embed title", "description": "embed body"}],
+                }
+            },
+            created_at=datetime.now(UTC),
+        )
+        await ep.deliver(env)
+        assert len(ch.sent) == 1
+        sent = ch.sent[0]
+        assert sent["content"] == "text + embed + file"
+        assert sent["embeds"] is not None and len(sent["embeds"]) == 1
+        assert sent["embeds"][0].title == "embed title"
+        assert sent["files"] is not None and len(sent["files"]) == 1
+        # No error ack.
+        acks = [e for e in handle.published if e.kind == "Acknowledgment"]
+        assert all(not a.payload.note.lower().startswith("error:") for a in acks)
     finally:
         await ep.stop()
