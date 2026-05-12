@@ -465,3 +465,28 @@ def test_inbox_attrs_omits_in_reply_to_when_none():
     }
     attrs = _inbox_attrs(env)
     assert not any("in_reply_to" in a for a in attrs)
+
+
+def test_inbox_attrs_emits_channel_id_and_name_when_both_present():
+    env = {
+        "id": "abc", "kind": "TextMessage", "from": "discord-pepper",
+        "urgency": "green",
+        "metadata": {"discord": {
+            "channel_id": "1491445346570866812",
+            "channel_name": "#pepper-upgrade",
+        }},
+    }
+    attrs = _inbox_attrs(env)
+    assert any('channel_id="1491445346570866812"' in a for a in attrs)
+    assert any('channel_name="#pepper-upgrade"' in a for a in attrs)
+
+
+def test_inbox_attrs_emits_channel_id_alone_when_name_missing():
+    env = {
+        "id": "abc", "kind": "TextMessage", "from": "discord-pepper",
+        "urgency": "green",
+        "metadata": {"discord": {"channel_id": "X"}},
+    }
+    attrs = _inbox_attrs(env)
+    assert any('channel_id="X"' in a for a in attrs)
+    assert not any("channel_name" in a for a in attrs)

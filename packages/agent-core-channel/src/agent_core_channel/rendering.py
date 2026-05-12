@@ -16,6 +16,7 @@ from __future__ import annotations
 import html
 import json
 from collections.abc import Callable
+from xml.sax.saxutils import quoteattr
 
 
 def encode_body(text: str) -> str:
@@ -107,6 +108,16 @@ def _inbox_attrs(env: dict) -> list[str]:
     ]
     if in_reply_to:
         attrs.append(f"in_reply_to='{in_reply_to}'")
+    # Per-namespace preview surfacing. Add cases as namespaces earn them
+    # via documented agent symptoms (rule-of-three before any registry).
+    discord = (env.get("metadata") or {}).get("discord") or {}
+    if discord:
+        cid = discord.get("channel_id")
+        if cid:
+            attrs.append(f"channel_id={quoteattr(str(cid))}")
+            cname = discord.get("channel_name")
+            if cname:
+                attrs.append(f"channel_name={quoteattr(str(cname))}")
     return attrs
 
 
