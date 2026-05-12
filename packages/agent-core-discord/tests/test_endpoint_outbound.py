@@ -2172,3 +2172,35 @@ async def test_send_embed_plus_files_coexist_on_text_message_envelope(monkeypatc
         assert all(not a.payload.note.lower().startswith("error:") for a in acks)
     finally:
         await ep.stop()
+
+
+@pytest.mark.asyncio
+async def test_text_only_message_unchanged_when_attachments_empty(monkeypatch):
+    """The most common send path: no attachments field set, no files
+    parameter touched on channel.send. Backward-compat regression lock
+    for the pre-#64 path.
+    """
+    ep, handle, fake = await _started(monkeypatch)
+    ch = FakeChannel(id="500")
+    fake.add_channel(ch)
+    from datetime import UTC, datetime
+
+    from agent_core.bus.envelope import Envelope, TextMessagePayload
+    try:
+        env = Envelope(
+            id="msg-text-only", correlation_id="c", from_="agent-test", to="discord-test",
+            kind="TextMessage",
+            payload=TextMessagePayload(text="plain text"),
+            metadata={"discord": {"channel_id": "500"}},
+            created_at=datetime.now(UTC),
+        )
+        await ep.deliver(env)
+        assert len(ch.sent) == 1
+        sent = ch.sent[0]
+        assert sent["content"] == "plain text"
+        # files arg is None (not []) — preserves the pre-#64 absent-argument shape.
+        assert sent["files"] is None
+        msg = ch._messages[sent["message_id"]]
+        assert msg.attachments == []
+    finally:
+        await ep.stop()
