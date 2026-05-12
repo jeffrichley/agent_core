@@ -853,6 +853,7 @@ class DiscordEndpoint:
                 self._awaiting_reply_ids.discard(mid)
                 self._inbound_envelope_discord.pop(env.id, None)
                 raise
+            self._record_inbound(env)
             asyncio.create_task(
                 self._typing_while_pending(message.channel, mid),
                 name=f"discord-{self.name}-typing-{mid}",
@@ -891,6 +892,7 @@ class DiscordEndpoint:
             )
             assert self._handle is not None
             await self._handle.publish(env)
+            self._record_inbound(env)
 
         return on_reaction_add
 
@@ -977,6 +979,7 @@ class DiscordEndpoint:
             )
             assert self._handle is not None
             await self._handle.publish(env)
+            self._record_inbound(env)
 
         return on_raw_poll_vote
 
@@ -1007,6 +1010,7 @@ class DiscordEndpoint:
             )
             assert self._handle is not None
             await self._handle.publish(env)
+            self._record_inbound(env)
 
         return on_raw_message_lifecycle
 

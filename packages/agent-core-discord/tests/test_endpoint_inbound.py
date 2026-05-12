@@ -567,3 +567,21 @@ async def test_on_raw_message_delete_publishes_event_envelope(monkeypatch):
         assert env.payload.data["guild_id"] == ""
     finally:
         await ep.stop()
+
+
+@pytest.mark.asyncio
+async def test_on_message_records_inbound_in_recent_inbounds_cache(monkeypatch):
+    """After on_message publishes, the envelope is recorded for auto-echo."""
+    ep, handle, fake = await _start_endpoint(monkeypatch)
+    fake.add_channel(FakeChannel(id="200"))
+    msg = _msg(id="m-cache", content="hi")
+    msg.channel = fake.get_channel("200")
+    try:
+        await fake.fire("on_message", msg)
+        env = handle.published[0]
+        # Cache contains the envelope keyed by its id.
+        cached = ep._recent_inbounds.get(env.id)
+        assert cached is not None
+        assert (cached.metadata or {}).get("discord", {}).get("channel_id") == "200"
+    finally:
+        await ep.stop()
