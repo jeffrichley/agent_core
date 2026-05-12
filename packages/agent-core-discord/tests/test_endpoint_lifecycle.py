@@ -10,7 +10,7 @@ import pytest
 from agent_core_discord.endpoint import DiscordEndpoint, _active_endpoints
 
 from agent_core.bus.protocol import Endpoint
-from tests.conftest import _FakeBusHandle
+from agent_core_discord.testing.fakes import FakeBusHandle
 
 
 def test_endpoint_satisfies_endpoint_protocol():
@@ -62,13 +62,13 @@ async def test_start_raises_when_token_env_var_missing(monkeypatch):
         name="discord-test", target="agent-test", token_env="DISCORD_TEST_TOKEN_MISSING"
     )
     with pytest.raises(RuntimeError, match="DISCORD_TEST_TOKEN_MISSING"):
-        await ep.start(_FakeBusHandle())
+        await ep.start(FakeBusHandle())
 
 
 @pytest.mark.asyncio
 async def test_start_loads_env_file_into_environ(tmp_path, monkeypatch):
     """If env_file is set, python-dotenv populates os.environ before token lookup."""
-    from tests.conftest import _FakeDiscordClient
+    from agent_core_discord.testing.fakes import FakeDiscordClient
 
     monkeypatch.delenv("DISCORD_FROM_FILE_TOKEN", raising=False)
     env = tmp_path / ".env"
@@ -79,9 +79,9 @@ async def test_start_loads_env_file_into_environ(tmp_path, monkeypatch):
         target="agent-test",
         token_env="DISCORD_FROM_FILE_TOKEN",
         env_file=str(env),
-        _client_factory=lambda **kw: _FakeDiscordClient(**kw),
+        _client_factory=lambda **kw: FakeDiscordClient(**kw),
     )
-    await ep.start(_FakeBusHandle())
+    await ep.start(FakeBusHandle())
     try:
         assert os.environ["DISCORD_FROM_FILE_TOKEN"] == "tok-from-file"
     finally:
@@ -90,16 +90,16 @@ async def test_start_loads_env_file_into_environ(tmp_path, monkeypatch):
 
 @pytest.mark.asyncio
 async def test_start_registers_in_active_endpoints(monkeypatch):
-    from tests.conftest import _FakeDiscordClient
+    from agent_core_discord.testing.fakes import FakeDiscordClient
 
     monkeypatch.setenv("X_TOK", "tok")
     ep = DiscordEndpoint(
         name="discord-test",
         target="agent-test",
         token_env="X_TOK",
-        _client_factory=lambda **kw: _FakeDiscordClient(**kw),
+        _client_factory=lambda **kw: FakeDiscordClient(**kw),
     )
-    await ep.start(_FakeBusHandle())
+    await ep.start(FakeBusHandle())
     try:
         assert _active_endpoints["discord-test"] is ep
     finally:
@@ -108,16 +108,16 @@ async def test_start_registers_in_active_endpoints(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_stop_deregisters_and_closes_client(monkeypatch):
-    from tests.conftest import _FakeDiscordClient
+    from agent_core_discord.testing.fakes import FakeDiscordClient
 
     monkeypatch.setenv("X_TOK", "tok")
     ep = DiscordEndpoint(
         name="discord-test",
         target="agent-test",
         token_env="X_TOK",
-        _client_factory=lambda **kw: _FakeDiscordClient(**kw),
+        _client_factory=lambda **kw: FakeDiscordClient(**kw),
     )
-    await ep.start(_FakeBusHandle())
+    await ep.start(FakeBusHandle())
     fake = ep._client
     await ep.stop()
     assert "discord-test" not in _active_endpoints
@@ -149,17 +149,17 @@ async def test_deliver_raises_when_not_started():
 async def test_start_returns_while_connect_still_running(monkeypatch):
     """Regression test for the bug where start() awaited the blocking
     gateway loop, deadlocking the bus boot."""
-    from tests.conftest import _FakeDiscordClient
+    from agent_core_discord.testing.fakes import FakeDiscordClient
 
     monkeypatch.setenv("TEST_TOKEN", "fake-token")
-    fake = _FakeDiscordClient()
+    fake = FakeDiscordClient()
     ep = DiscordEndpoint(
         name="d",
         target="agent-x",
         token_env="TEST_TOKEN",
         _client_factory=lambda **kw: fake,
     )
-    handle = _FakeBusHandle()
+    handle = FakeBusHandle()
     # If start() is broken (awaits the blocking gateway loop), this hangs
     # well past the bus boot timeline.
     await asyncio.wait_for(ep.start(handle), timeout=5.0)
@@ -175,11 +175,11 @@ async def test_start_returns_while_connect_still_running(monkeypatch):
 async def test_start_surfaces_connect_failure_quickly(monkeypatch):
     """Regression: if connect() raises before on_ready fires, start() should
     surface the real exception fast — not hang on the 30s ready timeout."""
-    from tests.conftest import _FakeDiscordClient
+    from agent_core_discord.testing.fakes import FakeDiscordClient
 
     monkeypatch.setenv("TEST_TOKEN", "fake-token")
 
-    class _FailingClient(_FakeDiscordClient):
+    class _FailingClient(FakeDiscordClient):
         async def connect(self) -> None:
             raise RuntimeError("simulated gateway 401")
 
@@ -190,7 +190,7 @@ async def test_start_surfaces_connect_failure_quickly(monkeypatch):
         token_env="TEST_TOKEN",
         _client_factory=lambda **kw: fake,
     )
-    handle = _FakeBusHandle()
+    handle = FakeBusHandle()
     start_t0 = asyncio.get_event_loop().time()
     with pytest.raises(RuntimeError) as exc_info:
         await asyncio.wait_for(ep.start(handle), timeout=5.0)
@@ -222,7 +222,7 @@ async def test_start_failure_resets_handle_so_deliver_raises_unavailable(monkeyp
         token_env="DISCORD_ROLLBACK_MISSING",
     )
     with pytest.raises(RuntimeError):
-        await ep.start(_FakeBusHandle())
+        await ep.start(FakeBusHandle())
 
     # Even though start() raised, deliver() must treat the endpoint as not-running.
     env = Envelope(

@@ -8,7 +8,7 @@ import pytest
 from agent_core_discord.endpoint import DiscordEndpoint
 
 from agent_core.bus.envelope import EndpointInfo, Envelope
-from tests.conftest import _FakeChannel, _FakeDiscordClient, _FakeMessage
+from agent_core_discord.testing.fakes import FakeChannel, FakeDiscordClient, FakeMessage
 
 
 class _Recording:
@@ -29,9 +29,9 @@ async def _make_endpoint(
     *,
     pending_acks_max: int = 5000,
     pending_acks_ttl_seconds: float = 3600.0,
-) -> tuple[DiscordEndpoint, _FakeDiscordClient]:
+) -> tuple[DiscordEndpoint, FakeDiscordClient]:
     monkeypatch.setenv("X_TOK", "tok")
-    fake = _FakeDiscordClient()
+    fake = FakeDiscordClient()
     ep = DiscordEndpoint(
         name="discord-test",
         target="agent-test",
@@ -67,9 +67,9 @@ async def test_pending_acks_lru_eviction_caps_at_max(monkeypatch):
 async def test_pending_acks_lru_eviction_removes_remote_reaction(monkeypatch):
     """When LRU eviction fires, the bot's 👀 should be removed from the original message."""
     ep, fake = await _make_endpoint(monkeypatch, pending_acks_max=1)
-    ch = _FakeChannel(id="200")
+    ch = FakeChannel(id="200")
     fake.add_channel(ch)
-    msg = _FakeMessage(id="m-evict", channel_id="200")
+    msg = FakeMessage(id="m-evict", channel_id="200")
     await msg.add_reaction("👀")
     ch._messages["m-evict"] = msg
     try:
@@ -92,10 +92,10 @@ async def test_pending_acks_lru_eviction_removes_remote_reaction(monkeypatch):
 async def test_pending_acks_ttl_sweep_removes_stale(monkeypatch):
     """Entries older than ttl are evicted by _sweep_pending_acks_once()."""
     ep, fake = await _make_endpoint(monkeypatch, pending_acks_ttl_seconds=10.0)
-    ch = _FakeChannel(id="200")
+    ch = FakeChannel(id="200")
     fake.add_channel(ch)
-    fresh = _FakeMessage(id="m-fresh", channel_id="200")
-    stale = _FakeMessage(id="m-stale", channel_id="200")
+    fresh = FakeMessage(id="m-fresh", channel_id="200")
+    stale = FakeMessage(id="m-stale", channel_id="200")
     await fresh.add_reaction("👀")
     await stale.add_reaction("👀")
     ch._messages["m-fresh"] = fresh
@@ -157,9 +157,9 @@ async def test_pending_acks_sweep_ignores_empty(monkeypatch):
 async def test_pending_acks_clear_pending_ack_handles_tuple_format(monkeypatch):
     """_clear_pending_ack pops the tuple and removes the reaction."""
     ep, fake = await _make_endpoint(monkeypatch)
-    ch = _FakeChannel(id="200")
+    ch = FakeChannel(id="200")
     fake.add_channel(ch)
-    msg = _FakeMessage(id="m1", channel_id="200")
+    msg = FakeMessage(id="m1", channel_id="200")
     await msg.add_reaction("👀")
     ch._messages["m1"] = msg
     try:

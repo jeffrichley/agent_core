@@ -10,7 +10,7 @@ import pytest
 from agent_core_discord.endpoint import DiscordEndpoint
 
 from agent_core.bus.envelope import EndpointInfo, Envelope
-from tests.conftest import _FakeChannel, _FakeDiscordClient, _FakeMessage, _FakeUser
+from agent_core_discord.testing.fakes import FakeChannel, FakeDiscordClient, FakeMessage, FakeUser
 
 
 class _Recording:
@@ -28,10 +28,10 @@ class _Recording:
 
 async def _start(
     monkeypatch, access_path=None
-) -> tuple[DiscordEndpoint, _Recording, _FakeDiscordClient]:
+) -> tuple[DiscordEndpoint, _Recording, FakeDiscordClient]:
     monkeypatch.setenv("X_TOK", "tok")
     handle = _Recording()
-    fake = _FakeDiscordClient()
+    fake = FakeDiscordClient()
     ep = DiscordEndpoint(
         name="d",
         target="agent",
@@ -43,11 +43,11 @@ async def _start(
     return ep, handle, fake
 
 
-def _msg(content: str) -> _FakeMessage:
-    msg = _FakeMessage(id="m1", channel_id="200", content=content)
-    msg.author = _FakeUser(id="100", name="user", display_name="User")
+def _msg(content: str) -> FakeMessage:
+    msg = FakeMessage(id="m1", channel_id="200", content=content)
+    msg.author = FakeUser(id="100", name="user", display_name="User")
     msg.guild = type("G", (), {"id": "guild-1"})()
-    msg.channel = _FakeChannel(id="200")
+    msg.channel = FakeChannel(id="200")
     msg.attachments = []
     return msg
 
@@ -55,7 +55,7 @@ def _msg(content: str) -> _FakeMessage:
 @pytest.mark.asyncio
 async def test_inbound_default_urgency_is_green(monkeypatch):
     ep, handle, fake = await _start(monkeypatch)
-    fake.add_channel(_FakeChannel(id="200"))
+    fake.add_channel(FakeChannel(id="200"))
     msg = _msg("hello world")
     msg.channel = fake.get_channel("200")
     try:
@@ -69,7 +69,7 @@ async def test_inbound_default_urgency_is_green(monkeypatch):
 @pytest.mark.asyncio
 async def test_red_sigil_promotes_to_red_and_strips_prefix(monkeypatch):
     ep, handle, fake = await _start(monkeypatch)
-    fake.add_channel(_FakeChannel(id="200"))
+    fake.add_channel(FakeChannel(id="200"))
     msg = _msg("!server is on fire")
     msg.channel = fake.get_channel("200")
     try:
@@ -84,7 +84,7 @@ async def test_red_sigil_promotes_to_red_and_strips_prefix(monkeypatch):
 @pytest.mark.asyncio
 async def test_yellow_sigil_promotes_to_yellow_and_strips_prefix(monkeypatch):
     ep, handle, fake = await _start(monkeypatch)
-    fake.add_channel(_FakeChannel(id="200"))
+    fake.add_channel(FakeChannel(id="200"))
     msg = _msg("?status check")
     msg.channel = fake.get_channel("200")
     try:
@@ -104,7 +104,7 @@ async def test_lancaster_regression_now_in_natural_text_is_not_red(monkeypatch):
     no leading sigil, urgency stays green.
     """
     ep, handle, fake = await _start(monkeypatch)
-    fake.add_channel(_FakeChannel(id="200"))
+    fake.add_channel(FakeChannel(id="200"))
     msg = _msg("ok, more on the ideas for the lancaster trip. right now we are looking at...")
     msg.channel = fake.get_channel("200")
     try:
@@ -120,7 +120,7 @@ async def test_lancaster_regression_now_in_natural_text_is_not_red(monkeypatch):
 async def test_urgent_keyword_in_plain_text_is_not_red(monkeypatch):
     """Plain 'URGENT' without a sigil is now green — no regex on free text."""
     ep, handle, fake = await _start(monkeypatch)
-    fake.add_channel(_FakeChannel(id="200"))
+    fake.add_channel(FakeChannel(id="200"))
     msg = _msg("URGENT please look at this")
     msg.channel = fake.get_channel("200")
     try:
@@ -133,7 +133,7 @@ async def test_urgent_keyword_in_plain_text_is_not_red(monkeypatch):
 @pytest.mark.asyncio
 async def test_red_sigil_with_leading_whitespace(monkeypatch):
     ep, handle, fake = await _start(monkeypatch)
-    fake.add_channel(_FakeChannel(id="200"))
+    fake.add_channel(FakeChannel(id="200"))
     msg = _msg("  !page on-call now")
     msg.channel = fake.get_channel("200")
     try:

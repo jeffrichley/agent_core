@@ -8,7 +8,7 @@ import pytest
 from agent_core_discord.endpoint import DiscordEndpoint
 
 from agent_core.bus.envelope import EndpointInfo, Envelope, EventPayload, TextMessagePayload
-from tests.conftest import _FakeChannel, _FakeDiscordClient, _FakeMessage, _FakeUser
+from agent_core_discord.testing.fakes import FakeChannel, FakeDiscordClient, FakeMessage, FakeUser
 
 
 class _Recording:
@@ -26,10 +26,10 @@ class _Recording:
 
 async def _start_endpoint(
     monkeypatch, *, access_path=None
-) -> tuple[DiscordEndpoint, _Recording, _FakeDiscordClient]:
+) -> tuple[DiscordEndpoint, _Recording, FakeDiscordClient]:
     monkeypatch.setenv("X_TOK", "tok")
     handle = _Recording()
-    fake = _FakeDiscordClient()
+    fake = FakeDiscordClient()
     ep = DiscordEndpoint(
         name="discord-test",
         target="agent-test",
@@ -44,10 +44,10 @@ async def _start_endpoint(
 def _msg(
     *, id="m1", channel_id="200", content="hi", author_id="100", is_bot=False, attachments=None
 ):
-    msg = _FakeMessage(id=id, channel_id=channel_id, content=content)
-    msg.author = _FakeUser(id=author_id, name="user", bot=is_bot, display_name="User")
+    msg = FakeMessage(id=id, channel_id=channel_id, content=content)
+    msg.author = FakeUser(id=author_id, name="user", bot=is_bot, display_name="User")
     msg.guild = type("G", (), {"id": "guild-1"})() if channel_id != "dm" else None
-    msg.channel = _FakeChannel(id=channel_id)
+    msg.channel = FakeChannel(id=channel_id)
     msg.attachments = attachments or []
     return msg
 
@@ -55,7 +55,7 @@ def _msg(
 @pytest.mark.asyncio
 async def test_on_message_publishes_text_envelope(monkeypatch):
     ep, handle, fake = await _start_endpoint(monkeypatch)
-    fake.add_channel(_FakeChannel(id="200"))
+    fake.add_channel(FakeChannel(id="200"))
     msg = _msg(id="m1", content="hello world")
     msg.channel = fake.get_channel("200")  # use registered channel
     try:
@@ -77,7 +77,7 @@ async def test_on_message_publishes_text_envelope(monkeypatch):
 @pytest.mark.asyncio
 async def test_on_message_drops_messages_from_bots(monkeypatch):
     ep, handle, fake = await _start_endpoint(monkeypatch)
-    fake.add_channel(_FakeChannel(id="200"))
+    fake.add_channel(FakeChannel(id="200"))
     msg = _msg(content="hi", is_bot=True)
     msg.channel = fake.get_channel("200")
     try:
@@ -90,7 +90,7 @@ async def test_on_message_drops_messages_from_bots(monkeypatch):
 @pytest.mark.asyncio
 async def test_on_message_drops_messages_from_self(monkeypatch):
     ep, handle, fake = await _start_endpoint(monkeypatch)
-    fake.add_channel(_FakeChannel(id="200"))
+    fake.add_channel(FakeChannel(id="200"))
     msg = _msg(content="hi", author_id=fake.user.id)
     # Author must be the bot itself.
     msg.author = fake.user
@@ -105,7 +105,7 @@ async def test_on_message_drops_messages_from_self(monkeypatch):
 @pytest.mark.asyncio
 async def test_on_message_adds_ack_reaction(monkeypatch):
     ep, handle, fake = await _start_endpoint(monkeypatch)
-    fake.add_channel(_FakeChannel(id="200"))
+    fake.add_channel(FakeChannel(id="200"))
     msg = _msg(id="m-ack")
     msg.channel = fake.get_channel("200")
     try:
@@ -118,7 +118,7 @@ async def test_on_message_adds_ack_reaction(monkeypatch):
 @pytest.mark.asyncio
 async def test_on_message_holds_typing_until_ack_cleared(monkeypatch):
     ep, handle, fake = await _start_endpoint(monkeypatch)
-    ch = _FakeChannel(id="200")
+    ch = FakeChannel(id="200")
     fake.add_channel(ch)
     msg = _msg(id="m-typing")
     msg.channel = ch
@@ -136,7 +136,7 @@ async def test_on_message_holds_typing_until_ack_cleared(monkeypatch):
 @pytest.mark.asyncio
 async def test_on_message_attachments_metadata(monkeypatch):
     ep, handle, fake = await _start_endpoint(monkeypatch)
-    fake.add_channel(_FakeChannel(id="200"))
+    fake.add_channel(FakeChannel(id="200"))
     att = type("A", (), {})()
     att.filename = "file.pdf"
     att.url = "https://example.com/file.pdf"
@@ -166,7 +166,7 @@ async def test_on_message_respects_access_gate_dm_deny(monkeypatch, tmp_path):
     access = tmp_path / "access.json"
     access.write_text(json.dumps({"dmPolicy": "deny"}), encoding="utf-8")
     ep, handle, fake = await _start_endpoint(monkeypatch, access_path=str(access))
-    fake.add_channel(_FakeChannel(id="dm"))
+    fake.add_channel(FakeChannel(id="dm"))
     msg = _msg(id="d1", channel_id="dm", content="hello via DM")
     msg.guild = None
     msg.channel = fake.get_channel("dm")
@@ -184,8 +184,8 @@ async def test_on_message_respects_channel_allowlist(monkeypatch, tmp_path):
     access = tmp_path / "access.json"
     access.write_text(json.dumps({"dmPolicy": "open", "channels": {"200": {}}}), encoding="utf-8")
     ep, handle, fake = await _start_endpoint(monkeypatch, access_path=str(access))
-    fake.add_channel(_FakeChannel(id="200"))
-    fake.add_channel(_FakeChannel(id="999"))
+    fake.add_channel(FakeChannel(id="200"))
+    fake.add_channel(FakeChannel(id="999"))
 
     msg_in = _msg(id="m-in", channel_id="200")
     msg_in.channel = fake.get_channel("200")
@@ -203,7 +203,7 @@ async def test_on_message_respects_channel_allowlist(monkeypatch, tmp_path):
 @pytest.mark.asyncio
 async def test_on_message_dm_inbound_is_marked(monkeypatch):
     ep, handle, fake = await _start_endpoint(monkeypatch)
-    fake.add_channel(_FakeChannel(id="dm"))
+    fake.add_channel(FakeChannel(id="dm"))
     msg = _msg(id="d-1", channel_id="dm")
     msg.guild = None
     msg.channel = fake.get_channel("dm")
@@ -216,8 +216,8 @@ async def test_on_message_dm_inbound_is_marked(monkeypatch):
         await ep.stop()
 
 
-class _FakeReaction:
-    def __init__(self, *, emoji: str, message: _FakeMessage):
+class FakeReaction:
+    def __init__(self, *, emoji: str, message: FakeMessage):
         self.emoji = emoji
         self.message = message
 
@@ -225,15 +225,15 @@ class _FakeReaction:
 @pytest.mark.asyncio
 async def test_on_reaction_add_publishes_event_envelope(monkeypatch):
     ep, handle, fake = await _start_endpoint(monkeypatch)
-    fake.add_channel(_FakeChannel(id="200"))
-    bot_msg = _FakeMessage(id="bot-msg-1", channel_id="200", content="hello from bot")
+    fake.add_channel(FakeChannel(id="200"))
+    bot_msg = FakeMessage(id="bot-msg-1", channel_id="200", content="hello from bot")
     bot_msg.author = fake.user
     bot_msg.guild = type("G", (), {"id": "guild-1"})()
     bot_msg.channel = fake.get_channel("200")
     fake._channels["200"]._messages["bot-msg-1"] = bot_msg
 
-    user = _FakeUser(id="100", name="alice", display_name="Alice")
-    reaction = _FakeReaction(emoji="👍", message=bot_msg)
+    user = FakeUser(id="100", name="alice", display_name="Alice")
+    reaction = FakeReaction(emoji="👍", message=bot_msg)
     try:
         await fake.fire("on_reaction_add", reaction, user)
         assert len(handle.published) == 1
@@ -253,13 +253,13 @@ async def test_on_reaction_add_publishes_event_envelope(monkeypatch):
 @pytest.mark.asyncio
 async def test_on_reaction_add_drops_self_reactions(monkeypatch):
     ep, handle, fake = await _start_endpoint(monkeypatch)
-    fake.add_channel(_FakeChannel(id="200"))
-    bot_msg = _FakeMessage(id="bm", channel_id="200")
+    fake.add_channel(FakeChannel(id="200"))
+    bot_msg = FakeMessage(id="bm", channel_id="200")
     bot_msg.author = fake.user
     bot_msg.guild = type("G", (), {"id": "g"})()
     bot_msg.channel = fake.get_channel("200")
 
-    reaction = _FakeReaction(emoji="👍", message=bot_msg)
+    reaction = FakeReaction(emoji="👍", message=bot_msg)
     # The reaction is from the bot itself.
     try:
         await fake.fire("on_reaction_add", reaction, fake.user)
@@ -271,14 +271,14 @@ async def test_on_reaction_add_drops_self_reactions(monkeypatch):
 @pytest.mark.asyncio
 async def test_on_reaction_add_drops_other_bots(monkeypatch):
     ep, handle, fake = await _start_endpoint(monkeypatch)
-    fake.add_channel(_FakeChannel(id="200"))
-    msg = _FakeMessage(id="m", channel_id="200")
+    fake.add_channel(FakeChannel(id="200"))
+    msg = FakeMessage(id="m", channel_id="200")
     msg.author = fake.user
     msg.guild = type("G", (), {"id": "g"})()
     msg.channel = fake.get_channel("200")
 
-    other_bot = _FakeUser(id="999", name="other-bot", bot=True)
-    reaction = _FakeReaction(emoji="👍", message=msg)
+    other_bot = FakeUser(id="999", name="other-bot", bot=True)
+    reaction = FakeReaction(emoji="👍", message=msg)
     try:
         await fake.fire("on_reaction_add", reaction, other_bot)
         assert handle.published == []
@@ -290,14 +290,14 @@ async def test_on_reaction_add_drops_other_bots(monkeypatch):
 async def test_on_reaction_add_drops_ack_emoji(monkeypatch):
     """The bot's own 👀 ack reaction should never bounce back as an event."""
     ep, handle, fake = await _start_endpoint(monkeypatch)
-    fake.add_channel(_FakeChannel(id="200"))
-    msg = _FakeMessage(id="m", channel_id="200")
+    fake.add_channel(FakeChannel(id="200"))
+    msg = FakeMessage(id="m", channel_id="200")
     msg.author = fake.user
     msg.guild = type("G", (), {"id": "g"})()
     msg.channel = fake.get_channel("200")
 
-    user = _FakeUser(id="100")
-    reaction = _FakeReaction(emoji="👀", message=msg)  # the ack emoji
+    user = FakeUser(id="100")
+    reaction = FakeReaction(emoji="👀", message=msg)  # the ack emoji
     try:
         await fake.fire("on_reaction_add", reaction, user)
         assert handle.published == []
@@ -308,14 +308,14 @@ async def test_on_reaction_add_drops_ack_emoji(monkeypatch):
 @pytest.mark.asyncio
 async def test_on_reaction_add_dm_context(monkeypatch):
     ep, handle, fake = await _start_endpoint(monkeypatch)
-    fake.add_channel(_FakeChannel(id="dm"))
-    msg = _FakeMessage(id="m", channel_id="dm")
+    fake.add_channel(FakeChannel(id="dm"))
+    msg = FakeMessage(id="m", channel_id="dm")
     msg.author = fake.user
     msg.guild = None  # DM
     msg.channel = fake.get_channel("dm")
 
-    user = _FakeUser(id="100", name="alice", display_name="Alice")
-    reaction = _FakeReaction(emoji="🔥", message=msg)
+    user = FakeUser(id="100", name="alice", display_name="Alice")
+    reaction = FakeReaction(emoji="🔥", message=msg)
     try:
         await fake.fire("on_reaction_add", reaction, user)
         env = handle.published[0]
@@ -332,7 +332,7 @@ async def test_on_reaction_add_dm_context(monkeypatch):
 # Caught on testbot 2026-05-05 Phase 6 verification: a vote on a
 # bot-posted poll never reached the agent because no listener was wired.
 
-class _FakeRawPollVote:
+class FakeRawPollVote:
     """Mirrors ``discord.RawPollVoteActionEvent`` shape (raw_models.py:528).
 
     Attributes match real discord.py exactly — only IDs, no resolved
@@ -355,7 +355,7 @@ class _FakeRawPollVote:
         self.answer_id = answer_id
 
 
-class _FakeRawMessageDelete:
+class FakeRawMessageDelete:
     """Mirrors ``discord.RawMessageDeleteEvent`` shape (raw_models.py:85)."""
 
     def __init__(
@@ -366,7 +366,7 @@ class _FakeRawMessageDelete:
         self.guild_id = guild_id
 
 
-class _FakeRawMessageUpdate:
+class FakeRawMessageUpdate:
     """Mirrors ``discord.RawMessageUpdateEvent`` shape (raw_models.py:140).
 
     Real discord.py also exposes ``data`` (raw gateway dict) and
@@ -384,8 +384,8 @@ class _FakeRawMessageUpdate:
 @pytest.mark.asyncio
 async def test_on_raw_poll_vote_add_publishes_event_envelope(monkeypatch):
     ep, handle, fake = await _start_endpoint(monkeypatch)
-    fake.add_user(_FakeUser(id="100", name="alice", display_name="Alice"))
-    raw = _FakeRawPollVote(
+    fake.add_user(FakeUser(id="100", name="alice", display_name="Alice"))
+    raw = FakeRawPollVote(
         message_id=1501308103499452467,
         channel_id=1499028901257805874,
         user_id=100,
@@ -425,8 +425,8 @@ async def test_on_raw_poll_vote_add_falls_back_to_fetch_user_on_cache_miss(
     case caught on testbot 2026-05-05 round-3 verification)."""
     ep, handle, fake = await _start_endpoint(monkeypatch)
     # User is reachable ONLY via fetch_user (HTTP). Not in get_user cache.
-    fake.add_remote_user(_FakeUser(id="100", name="alice", display_name="Alice"))
-    raw = _FakeRawPollVote(
+    fake.add_remote_user(FakeUser(id="100", name="alice", display_name="Alice"))
+    raw = FakeRawPollVote(
         message_id=1, channel_id=2, user_id=100, guild_id=3, answer_id=1
     )
     try:
@@ -448,8 +448,8 @@ async def test_on_raw_poll_vote_add_uses_local_cache_to_avoid_repeated_fetch_use
     \"a cache where it only needs to see the user once and it saves it\".
     A user firing 100 votes should hit the HTTP path exactly once."""
     ep, handle, fake = await _start_endpoint(monkeypatch)
-    fake.add_remote_user(_FakeUser(id="100", name="alice", display_name="Alice"))
-    raw = _FakeRawPollVote(
+    fake.add_remote_user(FakeUser(id="100", name="alice", display_name="Alice"))
+    raw = FakeRawPollVote(
         message_id=1, channel_id=2, user_id=100, guild_id=3, answer_id=1
     )
     try:
@@ -481,7 +481,7 @@ async def test_on_raw_poll_vote_add_returns_empty_when_fetch_user_raises(
     error doesn't lock the user at empty forever."""
     ep, handle, fake = await _start_endpoint(monkeypatch)
     # Deliberately seed nowhere — both get_user AND fetch_user will miss.
-    raw = _FakeRawPollVote(
+    raw = FakeRawPollVote(
         message_id=1, channel_id=2, user_id=999, guild_id=3, answer_id=1
     )
     try:
@@ -493,7 +493,7 @@ async def test_on_raw_poll_vote_add_returns_empty_when_fetch_user_raises(
 
         # Recovery: a later fix (user re-seeded) should resolve cleanly,
         # NOT be locked at empty by the failure cache.
-        fake.add_remote_user(_FakeUser(id="999", name="late", display_name="LateBoot"))
+        fake.add_remote_user(FakeUser(id="999", name="late", display_name="LateBoot"))
         await fake.fire("on_raw_poll_vote_add", raw)
         assert handle.published[1].payload.data["user_display_name"] == "LateBoot"
         assert fake.fetch_user_call_count == 2
@@ -507,7 +507,7 @@ async def test_on_raw_poll_vote_add_dm_context(monkeypatch):
     the envelope normalizes that to ``""`` for consistency with the
     rest of the adapter's surface."""
     ep, handle, fake = await _start_endpoint(monkeypatch)
-    raw = _FakeRawPollVote(
+    raw = FakeRawPollVote(
         message_id=1, channel_id=2, user_id=3, guild_id=None, answer_id=1
     )
     try:
@@ -521,8 +521,8 @@ async def test_on_raw_poll_vote_add_dm_context(monkeypatch):
 @pytest.mark.asyncio
 async def test_on_raw_poll_vote_remove_publishes_event_envelope(monkeypatch):
     ep, handle, fake = await _start_endpoint(monkeypatch)
-    fake.add_user(_FakeUser(id="30", name="bob", display_name="Bob"))
-    raw = _FakeRawPollVote(
+    fake.add_user(FakeUser(id="30", name="bob", display_name="Bob"))
+    raw = FakeRawPollVote(
         message_id=10, channel_id=20, user_id=30, guild_id=40, answer_id=2
     )
     try:
@@ -541,7 +541,7 @@ async def test_on_raw_poll_vote_remove_publishes_event_envelope(monkeypatch):
 @pytest.mark.asyncio
 async def test_on_raw_message_edit_publishes_event_envelope(monkeypatch):
     ep, handle, fake = await _start_endpoint(monkeypatch)
-    raw = _FakeRawMessageUpdate(message_id=100, channel_id=200, guild_id=300)
+    raw = FakeRawMessageUpdate(message_id=100, channel_id=200, guild_id=300)
     try:
         await fake.fire("on_raw_message_edit", raw)
         assert len(handle.published) == 1
@@ -558,7 +558,7 @@ async def test_on_raw_message_edit_publishes_event_envelope(monkeypatch):
 @pytest.mark.asyncio
 async def test_on_raw_message_delete_publishes_event_envelope(monkeypatch):
     ep, handle, fake = await _start_endpoint(monkeypatch)
-    raw = _FakeRawMessageDelete(message_id=100, channel_id=200, guild_id=None)
+    raw = FakeRawMessageDelete(message_id=100, channel_id=200, guild_id=None)
     try:
         await fake.fire("on_raw_message_delete", raw)
         env = handle.published[0]

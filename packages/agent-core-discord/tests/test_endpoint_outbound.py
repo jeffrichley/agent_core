@@ -27,14 +27,14 @@ from agent_core.bus.envelope import (
     TextMessagePayload,
     ToolInvocationPayload,
 )
-from tests.conftest import (
-    _FakeChannel,
-    _FakeDiscordClient,
-    _FakeGuild,
-    _FakeMessage,
-    _FakePoll,
-    _FakePollAnswer,
-    _FakeUser,
+from agent_core_discord.testing.fakes import (
+    FakeChannel,
+    FakeDiscordClient,
+    FakeGuild,
+    FakeMessage,
+    FakePoll,
+    FakePollAnswer,
+    FakeUser,
 )
 
 
@@ -60,7 +60,7 @@ class _HTTP429Like(Exception):
         self.retry_after = retry_after
 
 
-class _Permanent429FromSecondSend(_FakeChannel):
+class _Permanent429FromSecondSend(FakeChannel):
     """First ``send`` succeeds; every later ``send`` (including retries) raises 429."""
 
     def __init__(
@@ -82,7 +82,7 @@ class _Permanent429FromSecondSend(_FakeChannel):
         reference: object | None = None,
         files: list | None = None,
         poll: object | None = None,
-    ) -> _FakeMessage:
+    ) -> FakeMessage:
         self._send_calls += 1
         if self._send_calls >= 2:
             raise _HTTP429Like(retry_after=0.0)
@@ -91,7 +91,7 @@ class _Permanent429FromSecondSend(_FakeChannel):
         )
 
 
-class _SecondSendFailsOnceChannel(_FakeChannel):
+class _SecondSendFailsOnceChannel(FakeChannel):
     """The second ``send`` invocation fails once with 429; retries succeed."""
 
     def __init__(
@@ -113,7 +113,7 @@ class _SecondSendFailsOnceChannel(_FakeChannel):
         reference: object | None = None,
         files: list | None = None,
         poll: object | None = None,
-    ) -> _FakeMessage:
+    ) -> FakeMessage:
         self._send_calls += 1
         if self._send_calls == 2:
             raise _HTTP429Like(retry_after=0.0)
@@ -126,10 +126,10 @@ async def _no_sleep(_: float) -> None:
     return None
 
 
-async def _started(monkeypatch) -> tuple[DiscordEndpoint, _Recording, _FakeDiscordClient]:
+async def _started(monkeypatch) -> tuple[DiscordEndpoint, _Recording, FakeDiscordClient]:
     monkeypatch.setenv("X_TOK", "tok")
     handle = _Recording()
-    fake = _FakeDiscordClient()
+    fake = FakeDiscordClient()
     ep = DiscordEndpoint(
         name="discord-test",
         target="agent-test",
@@ -162,7 +162,7 @@ def _envelope(env_id: str, frm: str, to: str, payload) -> Envelope:
 @pytest.mark.asyncio
 async def test_send_publishes_text_to_channel(monkeypatch):
     ep, handle, fake = await _started(monkeypatch)
-    ch = _FakeChannel(id="200")
+    ch = FakeChannel(id="200")
     fake.add_channel(ch)
     try:
         env = _envelope(
@@ -187,8 +187,8 @@ async def test_send_publishes_text_to_channel(monkeypatch):
 @pytest.mark.asyncio
 async def test_send_with_reply_to_attaches_reference(monkeypatch):
     ep, handle, fake = await _started(monkeypatch)
-    ch = _FakeChannel(id="200")
-    original = _FakeMessage(id="m-orig", channel_id="200", content="please reply")
+    ch = FakeChannel(id="200")
+    original = FakeMessage(id="m-orig", channel_id="200", content="please reply")
     ch._messages["m-orig"] = original
     fake.add_channel(ch)
     try:
@@ -211,8 +211,8 @@ async def test_send_with_reply_to_attaches_reference(monkeypatch):
 async def test_send_with_reply_to_clears_pending_ack(monkeypatch):
     """If the inbound message had a 👀 ack, send with reply_to removes it."""
     ep, handle, fake = await _started(monkeypatch)
-    ch = _FakeChannel(id="200")
-    original = _FakeMessage(id="m-orig", channel_id="200")
+    ch = FakeChannel(id="200")
+    original = FakeMessage(id="m-orig", channel_id="200")
     ch._messages["m-orig"] = original
     fake.add_channel(ch)
     # Simulate prior on_message having added the ack.
@@ -235,7 +235,7 @@ async def test_send_with_reply_to_clears_pending_ack(monkeypatch):
 @pytest.mark.asyncio
 async def test_send_with_embeds_passes_list(monkeypatch):
     ep, handle, fake = await _started(monkeypatch)
-    ch = _FakeChannel(id="200")
+    ch = FakeChannel(id="200")
     fake.add_channel(ch)
     try:
         env = _envelope(
@@ -281,8 +281,8 @@ async def test_send_validation_error_returns_error_ack(monkeypatch):
 @pytest.mark.asyncio
 async def test_edit_replaces_content(monkeypatch):
     ep, handle, fake = await _started(monkeypatch)
-    ch = _FakeChannel(id="200")
-    msg = _FakeMessage(id="m-x", channel_id="200", content="old")
+    ch = FakeChannel(id="200")
+    msg = FakeMessage(id="m-x", channel_id="200", content="old")
     ch._messages["m-x"] = msg
     fake.add_channel(ch)
     try:
@@ -314,8 +314,8 @@ async def test_edit_replaces_content(monkeypatch):
 @pytest.mark.asyncio
 async def test_react_adds_emoji(monkeypatch):
     ep, handle, fake = await _started(monkeypatch)
-    ch = _FakeChannel(id="200")
-    msg = _FakeMessage(id="m-r", channel_id="200")
+    ch = FakeChannel(id="200")
+    msg = FakeMessage(id="m-r", channel_id="200")
     ch._messages["m-r"] = msg
     fake.add_channel(ch)
     try:
@@ -340,8 +340,8 @@ async def test_react_adds_emoji(monkeypatch):
 @pytest.mark.asyncio
 async def test_react_clears_pending_ack(monkeypatch):
     ep, handle, fake = await _started(monkeypatch)
-    ch = _FakeChannel(id="200")
-    msg = _FakeMessage(id="m-r", channel_id="200")
+    ch = FakeChannel(id="200")
+    msg = FakeMessage(id="m-r", channel_id="200")
     ch._messages["m-r"] = msg
     fake.add_channel(ch)
     await msg.add_reaction("👀")
@@ -387,7 +387,7 @@ async def test_unknown_tool_returns_error(monkeypatch):
 @pytest.mark.asyncio
 async def test_send_splits_long_text_into_multiple_messages(monkeypatch):
     ep, handle, fake = await _started(monkeypatch)
-    ch = _FakeChannel(id="200")
+    ch = FakeChannel(id="200")
     fake.add_channel(ch)
     long_text = "x" * 2500
     try:
@@ -472,7 +472,7 @@ async def test_send_partial_with_reply_to_does_not_clear_pending_ack(monkeypatch
     monkeypatch.setattr(send_retry_mod, "DISCORD_SEND_MAX_ATTEMPTS", 2)
     ep, handle, fake = await _started(monkeypatch)
     ch = _Permanent429FromSecondSend(id="200")
-    original = _FakeMessage(id="m-orig", channel_id="200")
+    original = FakeMessage(id="m-orig", channel_id="200")
     ch._messages["m-orig"] = original
     await original.add_reaction("👀")
     ep._track_pending_ack("m-orig", "👀", "200")
@@ -501,7 +501,7 @@ async def test_send_partial_with_reply_to_does_not_clear_pending_ack(monkeypatch
 @pytest.mark.asyncio
 async def test_textmessage_long_payload_splits(monkeypatch):
     ep, handle, fake = await _started(monkeypatch)
-    ch = _FakeChannel(id="200")
+    ch = FakeChannel(id="200")
     fake.add_channel(ch)
     try:
         env = Envelope(
@@ -533,7 +533,7 @@ async def test_textmessage_with_metadata_embeds_calls_channel_send_with_embeds(m
     test checks the round-trip — title, color, fields, footer all land.
     """
     ep, handle, fake = await _started(monkeypatch)
-    ch = _FakeChannel(id="200")
+    ch = FakeChannel(id="200")
     fake.add_channel(ch)
     try:
         embeds_meta = [
@@ -593,7 +593,7 @@ async def test_textmessage_with_metadata_embeds_calls_channel_send_with_embeds(m
 async def test_textmessage_with_embeds_and_text_sends_both(monkeypatch):
     """When payload.text is non-empty, embeds ride alongside on the same send."""
     ep, handle, fake = await _started(monkeypatch)
-    ch = _FakeChannel(id="200")
+    ch = FakeChannel(id="200")
     fake.add_channel(ch)
     try:
         env = Envelope(
@@ -633,7 +633,7 @@ async def test_textmessage_with_long_text_and_embeds_attaches_to_last_chunk(monk
     via ``metadata.discord.embeds`` rather than via the ``send`` tool.
     """
     ep, handle, fake = await _started(monkeypatch)
-    ch = _FakeChannel(id="200")
+    ch = FakeChannel(id="200")
     fake.add_channel(ch)
     long_text = "x" * 4500  # forces multiple chunks at the 1900 chunk-target
     try:
@@ -675,8 +675,8 @@ async def test_textmessage_with_long_text_and_embeds_attaches_to_last_chunk(monk
 @pytest.mark.asyncio
 async def test_textmessage_uses_discord_metadata_channel_and_replies(monkeypatch):
     ep, handle, fake = await _started(monkeypatch)
-    ch = _FakeChannel(id="200")
-    incoming = _FakeMessage(id="m-in", channel_id="200", content="hello")
+    ch = FakeChannel(id="200")
+    incoming = FakeMessage(id="m-in", channel_id="200", content="hello")
     ch._messages["m-in"] = incoming
     fake.add_channel(ch)
     try:
@@ -706,8 +706,8 @@ async def test_textmessage_uses_discord_metadata_channel_and_replies(monkeypatch
 async def test_textmessage_uses_default_outbound_channel(monkeypatch):
     monkeypatch.setenv("X_TOK", "tok")
     handle = _Recording()
-    fake = _FakeDiscordClient()
-    ch = _FakeChannel(id="200")
+    fake = FakeDiscordClient()
+    ch = FakeChannel(id="200")
     fake.add_channel(ch)
     ep = DiscordEndpoint(
         name="discord-test",
@@ -765,8 +765,8 @@ async def test_textmessage_in_reply_to_clears_ack_without_discord_message_id(mon
     """Bus replies often only set in_reply_to; map inbound envelope id → Discord message."""
     monkeypatch.setenv("X_TOK", "tok")
     handle = _Recording()
-    fake = _FakeDiscordClient()
-    ch = _FakeChannel(id="200")
+    fake = FakeDiscordClient()
+    ch = FakeChannel(id="200")
     fake.add_channel(ch)
     ep = DiscordEndpoint(
         name="discord-test",
@@ -776,8 +776,8 @@ async def test_textmessage_in_reply_to_clears_ack_without_discord_message_id(mon
         _client_factory=lambda **kw: fake,
     )
     await ep.start(handle)
-    user_msg = _FakeMessage(id="m-user", channel_id="200", content="ping")
-    user_msg.author = _FakeUser(id="u1", name="alice", bot=False)
+    user_msg = FakeMessage(id="m-user", channel_id="200", content="ping")
+    user_msg.author = FakeUser(id="u1", name="alice", bot=False)
     user_msg.guild = type("G", (), {"id": "g1"})()
     user_msg.channel = ch
     ch._messages[str(user_msg.id)] = user_msg
@@ -811,9 +811,9 @@ async def test_textmessage_in_reply_to_clears_ack_without_discord_message_id(mon
 @pytest.mark.asyncio
 async def test_fetch_returns_recent_messages(monkeypatch):
     ep, handle, fake = await _started(monkeypatch)
-    ch = _FakeChannel(id="200")
+    ch = FakeChannel(id="200")
     for i in range(3):
-        m = _FakeMessage(id=f"m{i}", channel_id="200", content=f"msg {i}")
+        m = FakeMessage(id=f"m{i}", channel_id="200", content=f"msg {i}")
         m.author = type(
             "A", (), {"id": "100", "name": "alice", "bot": False, "display_name": "Alice"}
         )()
@@ -850,19 +850,19 @@ async def test_fetch_surfaces_poll_content(monkeypatch):
     2026-05-05 Phase 6 verb-parity smoke).
     """
     ep, handle, fake = await _started(monkeypatch)
-    ch = _FakeChannel(id="200", guild_id="g1")
-    poll = _FakePoll(
+    ch = FakeChannel(id="200", guild_id="g1")
+    poll = FakePoll(
         question_text="Lunch?",
         answers=[
-            _FakePollAnswer(id=1, text="Tacos", emoji="🌮", vote_count=3),
-            _FakePollAnswer(id=2, text="Pizza", emoji="🍕", vote_count=5),
+            FakePollAnswer(id=1, text="Tacos", emoji="🌮", vote_count=3),
+            FakePollAnswer(id=2, text="Pizza", emoji="🍕", vote_count=5),
         ],
         multiselect=False,
         duration_seconds=3600,
         is_finalised=False,
         total_votes=8,
     )
-    m = _FakeMessage(id="m-poll", channel_id="200", content="", poll=poll)
+    m = FakeMessage(id="m-poll", channel_id="200", content="", poll=poll)
     m.author = type(
         "A", (), {"id": "100", "name": "alice", "bot": False, "display_name": "Alice"}
     )()
@@ -873,7 +873,7 @@ async def test_fetch_surfaces_poll_content(monkeypatch):
 
     # And a sibling non-poll message so we lock in that ``poll: None`` is
     # the right value for messages without polls.
-    plain = _FakeMessage(id="m-plain", channel_id="200", content="hi")
+    plain = FakeMessage(id="m-plain", channel_id="200", content="hi")
     plain.author = m.author
     plain.created_at = datetime.now(UTC)
     plain.embeds = []
@@ -940,7 +940,7 @@ async def test_fetch_unknown_channel_returns_error(monkeypatch):
 async def test_download_attachments_saves_files(monkeypatch, tmp_path):
     monkeypatch.setenv("X_TOK", "tok")
     handle = _Recording()
-    fake = _FakeDiscordClient()
+    fake = FakeDiscordClient()
     ep = DiscordEndpoint(
         name="discord-test",
         target="agent-test",
@@ -997,7 +997,7 @@ async def test_download_attachments_records_content_type_from_response(
     """
     monkeypatch.setenv("X_TOK", "tok")
     handle = _Recording()
-    fake = _FakeDiscordClient()
+    fake = FakeDiscordClient()
     ep = DiscordEndpoint(
         name="discord-test",
         target="agent-test",
@@ -1051,7 +1051,7 @@ async def test_download_attachments_rejects_path_traversal(monkeypatch, tmp_path
     """A URL crafted to escape the target dir gets sanitized — never writes outside."""
     monkeypatch.setenv("X_TOK", "tok")
     handle = _Recording()
-    fake = _FakeDiscordClient()
+    fake = FakeDiscordClient()
     ep = DiscordEndpoint(
         name="discord-test",
         target="agent-test",
@@ -1105,7 +1105,7 @@ async def test_download_attachments_caps_long_filenames(monkeypatch, tmp_path):
     """A 5000-char URL tail produces a filename ≤ 128 chars."""
     monkeypatch.setenv("X_TOK", "tok")
     handle = _Recording()
-    fake = _FakeDiscordClient()
+    fake = FakeDiscordClient()
     ep = DiscordEndpoint(
         name="discord-test",
         target="agent-test",
@@ -1150,7 +1150,7 @@ async def test_download_attachments_dedups_same_filename(monkeypatch, tmp_path):
     """Two URLs ending in the same trailing filename produce two distinct files."""
     monkeypatch.setenv("X_TOK", "tok")
     handle = _Recording()
-    fake = _FakeDiscordClient()
+    fake = FakeDiscordClient()
     ep = DiscordEndpoint(
         name="discord-test",
         target="agent-test",
@@ -1198,7 +1198,7 @@ async def test_download_attachments_empty_url_uses_uuid_fallback(monkeypatch, tm
     """A URL ending in / produces an attach-<hex> fallback name."""
     monkeypatch.setenv("X_TOK", "tok")
     handle = _Recording()
-    fake = _FakeDiscordClient()
+    fake = FakeDiscordClient()
     ep = DiscordEndpoint(
         name="discord-test",
         target="agent-test",
@@ -1240,7 +1240,7 @@ async def test_download_attachments_empty_url_uses_uuid_fallback(monkeypatch, tm
 async def test_download_attachments_empty_urls_returns_empty(monkeypatch, tmp_path):
     monkeypatch.setenv("X_TOK", "tok")
     handle = _Recording()
-    fake = _FakeDiscordClient()
+    fake = FakeDiscordClient()
     ep = DiscordEndpoint(
         name="discord-test",
         target="agent-test",
@@ -1277,9 +1277,9 @@ async def test_download_attachments_empty_urls_returns_empty(monkeypatch, tmp_pa
 @pytest.mark.asyncio
 async def test_list_channels_returns_all_when_no_guild_filter(monkeypatch):
     ep, handle, fake = await _started(monkeypatch)
-    ch1 = _FakeChannel(id="200", name="general", channel_type="text", guild_id="g1")
-    ch2 = _FakeChannel(id="201", name="random", channel_type="text", guild_id="g1")
-    g = _FakeGuild(id="g1", channels=[ch1, ch2])
+    ch1 = FakeChannel(id="200", name="general", channel_type="text", guild_id="g1")
+    ch2 = FakeChannel(id="201", name="random", channel_type="text", guild_id="g1")
+    g = FakeGuild(id="g1", channels=[ch1, ch2])
     fake.add_guild(g)
     try:
         env = _envelope(
@@ -1301,10 +1301,10 @@ async def test_list_channels_returns_all_when_no_guild_filter(monkeypatch):
 @pytest.mark.asyncio
 async def test_list_channels_filters_by_guild_id(monkeypatch):
     ep, handle, fake = await _started(monkeypatch)
-    ch1 = _FakeChannel(id="200", name="general", guild_id="g1")
-    ch2 = _FakeChannel(id="300", name="other", guild_id="g2")
-    g1 = _FakeGuild(id="g1", channels=[ch1])
-    g2 = _FakeGuild(id="g2", channels=[ch2])
+    ch1 = FakeChannel(id="200", name="general", guild_id="g1")
+    ch2 = FakeChannel(id="300", name="other", guild_id="g2")
+    g1 = FakeGuild(id="g1", channels=[ch1])
+    g2 = FakeGuild(id="g2", channels=[ch2])
     fake.add_guild(g1)
     fake.add_guild(g2)
     try:
@@ -1329,7 +1329,7 @@ async def test_list_channels_filters_by_guild_id(monkeypatch):
 @pytest.mark.asyncio
 async def test_get_channel_info_returns_metadata(monkeypatch):
     ep, handle, fake = await _started(monkeypatch)
-    ch = _FakeChannel(id="200", name="general", guild_id="g1")
+    ch = FakeChannel(id="200", name="general", guild_id="g1")
     ch.topic = "the main channel"
     fake.add_channel(ch)
     try:
@@ -1359,7 +1359,7 @@ async def test_get_channel_info_dm_channel_returns_empty_guild_id(monkeypatch):
     guild_id (not crash, not return some sentinel). Locks the
     ``if guild is not None`` branch in the production fix."""
     ep, handle, fake = await _started(monkeypatch)
-    ch = _FakeChannel(id="dm", name="", guild_id=None)
+    ch = FakeChannel(id="dm", name="", guild_id=None)
     fake.add_channel(ch)
     try:
         env = _envelope(
@@ -1400,7 +1400,7 @@ async def test_get_channel_info_unknown_returns_error(monkeypatch):
 @pytest.mark.asyncio
 async def test_send_discord_message_alias(monkeypatch):
     ep, handle, fake = await _started(monkeypatch)
-    ch = _FakeChannel(id="200")
+    ch = FakeChannel(id="200")
     fake.add_channel(ch)
     try:
         env = _envelope(
@@ -1433,7 +1433,7 @@ def test_build_briefing_embeds_order_and_colors():
 @pytest.mark.asyncio
 async def test_send_briefing_sends_embeds(monkeypatch):
     ep, handle, fake = await _started(monkeypatch)
-    ch = _FakeChannel(id="200")
+    ch = FakeChannel(id="200")
     fake.add_channel(ch)
     try:
         env = _envelope(
@@ -1463,7 +1463,7 @@ async def test_send_briefing_sends_embeds(monkeypatch):
 @pytest.mark.asyncio
 async def test_create_poll_passes_poll_to_send(monkeypatch):
     ep, handle, fake = await _started(monkeypatch)
-    ch = _FakeChannel(id="200")
+    ch = FakeChannel(id="200")
     fake.add_channel(ch)
     try:
         env = _envelope(
@@ -1489,9 +1489,9 @@ async def test_create_poll_passes_poll_to_send(monkeypatch):
 @pytest.mark.asyncio
 async def test_create_thread_invokes_channel(monkeypatch):
     ep, handle, fake = await _started(monkeypatch)
-    ch = _FakeChannel(id="200", guild_id="g1")
+    ch = FakeChannel(id="200", guild_id="g1")
     fake.add_channel(ch)
-    m = _FakeMessage(id="m1", channel_id="200", content="root")
+    m = FakeMessage(id="m1", channel_id="200", content="root")
     ch._messages["m1"] = m
     try:
         env = _envelope(
@@ -1514,7 +1514,7 @@ async def test_create_thread_invokes_channel(monkeypatch):
 @pytest.mark.asyncio
 async def test_send_typing_ack(monkeypatch):
     ep, handle, fake = await _started(monkeypatch)
-    ch = _FakeChannel(id="200")
+    ch = FakeChannel(id="200")
     fake.add_channel(ch)
     try:
         env = _envelope(
@@ -1535,8 +1535,8 @@ async def test_send_typing_ack(monkeypatch):
 @pytest.mark.asyncio
 async def test_scheduled_event_create_list_cancel(monkeypatch):
     ep, handle, fake = await _started(monkeypatch)
-    ch = _FakeChannel(id="200", guild_id="g1")
-    g = _FakeGuild(id="g1", channels=[ch])
+    ch = FakeChannel(id="200", guild_id="g1")
+    g = FakeGuild(id="g1", channels=[ch])
     fake.add_guild(g)
     try:
         start = "2026-06-01T15:00:00+00:00"
@@ -1634,8 +1634,8 @@ async def test_create_scheduled_event_stage_requires_stage_channel(monkeypatch):
     from agent_core_discord.endpoint import _ToolError
 
     ep, handle, fake = await _started(monkeypatch)
-    text_ch = _FakeChannel(id="200", channel_type="text", guild_id="g1")
-    g = _FakeGuild(id="g1", channels=[text_ch])
+    text_ch = FakeChannel(id="200", channel_type="text", guild_id="g1")
+    g = FakeGuild(id="g1", channels=[text_ch])
     fake.add_guild(g)
     try:
         with pytest.raises(_ToolError) as exc:
@@ -1662,8 +1662,8 @@ async def test_create_scheduled_event_voice_requires_voice_channel(monkeypatch):
     from agent_core_discord.endpoint import _ToolError
 
     ep, handle, fake = await _started(monkeypatch)
-    text_ch = _FakeChannel(id="201", channel_type="text", guild_id="g1")
-    g = _FakeGuild(id="g1", channels=[text_ch])
+    text_ch = FakeChannel(id="201", channel_type="text", guild_id="g1")
+    g = FakeGuild(id="g1", channels=[text_ch])
     fake.add_guild(g)
     try:
         with pytest.raises(_ToolError) as exc:
@@ -1687,8 +1687,8 @@ async def test_create_scheduled_event_voice_requires_voice_channel(monkeypatch):
 async def test_create_scheduled_event_stage_accepts_stage_voice_channel(monkeypatch):
     """entity_type='stage' against a stage_voice channel goes through."""
     ep, handle, fake = await _started(monkeypatch)
-    stage_ch = _FakeChannel(id="300", channel_type="stage_voice", guild_id="g2")
-    g = _FakeGuild(id="g2", channels=[stage_ch])
+    stage_ch = FakeChannel(id="300", channel_type="stage_voice", guild_id="g2")
+    g = FakeGuild(id="g2", channels=[stage_ch])
     fake.add_guild(g)
     try:
         result = await ep._create_scheduled_event(
@@ -1776,7 +1776,7 @@ def test_send_typing_rejects_duration_over_ten_seconds():
 async def test_create_poll_dispatch_translates_validation_to_error_ack(monkeypatch):
     """Dispatch via _dispatch on bad args → error: ack (the _v translation path)."""
     ep, handle, fake = await _started(monkeypatch)
-    ch = _FakeChannel(id="200")
+    ch = FakeChannel(id="200")
     fake.add_channel(ch)
     try:
         env = _envelope(

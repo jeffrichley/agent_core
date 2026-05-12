@@ -13,7 +13,7 @@ from agent_core_discord.endpoint import DiscordEndpoint, _check_embeds_within_ca
 from pydantic import ValidationError
 
 from agent_core.bus.envelope import EndpointInfo, Envelope, ToolInvocationPayload
-from tests.conftest import _FakeChannel, _FakeDiscordClient
+from agent_core_discord.testing.fakes import FakeChannel, FakeDiscordClient
 
 
 class _Recording:
@@ -53,7 +53,7 @@ async def test_send_rejects_http_url_in_files(monkeypatch):
     """`files` must be local paths; URLs return a clear error, not a confusing FileNotFoundError."""
     monkeypatch.setenv("X_TOK", "tok")
     handle = _Recording()
-    fake = _FakeDiscordClient()
+    fake = FakeDiscordClient()
     ep = DiscordEndpoint(
         name="discord-test",
         target="agent-test",
@@ -61,7 +61,7 @@ async def test_send_rejects_http_url_in_files(monkeypatch):
         _client_factory=lambda **kw: fake,
     )
     await ep.start(handle)
-    fake.add_channel(_FakeChannel(id="200"))
+    fake.add_channel(FakeChannel(id="200"))
     try:
         env = _envelope(
             "e",
@@ -88,7 +88,7 @@ async def test_send_rejects_http_url_in_files(monkeypatch):
 async def test_send_rejects_https_url_in_files(monkeypatch):
     monkeypatch.setenv("X_TOK", "tok")
     handle = _Recording()
-    fake = _FakeDiscordClient()
+    fake = FakeDiscordClient()
     ep = DiscordEndpoint(
         name="discord-test",
         target="agent-test",
@@ -96,7 +96,7 @@ async def test_send_rejects_https_url_in_files(monkeypatch):
         _client_factory=lambda **kw: fake,
     )
     await ep.start(handle)
-    fake.add_channel(_FakeChannel(id="200"))
+    fake.add_channel(FakeChannel(id="200"))
     try:
         env = _envelope(
             "e",
@@ -125,7 +125,7 @@ async def test_send_rejects_https_url_in_files(monkeypatch):
 async def test_active_endpoints_collision_guard(monkeypatch):
     """Two live instances with the same name must not silently shadow each other."""
     monkeypatch.setenv("X_TOK", "tok")
-    fake_a = _FakeDiscordClient()
+    fake_a = FakeDiscordClient()
     ep_a = DiscordEndpoint(
         name="dup",
         target="agent-a",
@@ -134,7 +134,7 @@ async def test_active_endpoints_collision_guard(monkeypatch):
     )
     await ep_a.start(_Recording())
     try:
-        fake_b = _FakeDiscordClient()
+        fake_b = FakeDiscordClient()
         ep_b = DiscordEndpoint(
             name="dup",
             target="agent-b",
@@ -156,7 +156,7 @@ async def test_active_endpoints_collision_guard(monkeypatch):
 async def test_handlers_registered_via_add_listener(monkeypatch):
     """Verify listeners flow through the fake's add_listener, not just event()."""
     monkeypatch.setenv("X_TOK", "tok")
-    fake = _FakeDiscordClient()
+    fake = FakeDiscordClient()
     ep = DiscordEndpoint(
         name="discord-test",
         target="agent-test",
@@ -258,7 +258,7 @@ async def test_send_rejects_oversized_embeds(monkeypatch):
     """End-to-end: send with > 6000-char embeds returns an error ack."""
     monkeypatch.setenv("X_TOK", "tok")
     handle = _Recording()
-    fake = _FakeDiscordClient()
+    fake = FakeDiscordClient()
     ep = DiscordEndpoint(
         name="discord-test",
         target="agent-test",
@@ -266,7 +266,7 @@ async def test_send_rejects_oversized_embeds(monkeypatch):
         _client_factory=lambda **kw: fake,
     )
     await ep.start(handle)
-    fake.add_channel(_FakeChannel(id="200"))
+    fake.add_channel(FakeChannel(id="200"))
     huge = "A" * 4000
     try:
         env = _envelope(
@@ -317,7 +317,7 @@ async def test_start_skips_env_file_when_dotenv_missing(monkeypatch, tmp_path):
 
     sys.meta_path.insert(0, _Blocker())
     try:
-        fake = _FakeDiscordClient()
+        fake = FakeDiscordClient()
         ep = DiscordEndpoint(
             name="discord-test",
             target="agent-test",
