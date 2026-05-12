@@ -1844,3 +1844,44 @@ async def test_auto_echo_resolves_channel_via_in_reply_to_across_verbs(
             f"verb={verb_name} should have resolved channel via in_reply_to"
     finally:
         await ep.stop()
+
+
+# --- regression locks for pre-#83 routing behavior ---
+
+
+@pytest.mark.asyncio
+async def test_explicit_channel_id_still_routes_correctly_unchanged(monkeypatch):
+    """The pre-#83 explicit-channel_id path keeps working."""
+    ep, handle, fake = await _started(monkeypatch)
+    ch = FakeChannel(id="999")
+    fake.add_channel(ch)
+    try:
+        env = _envelope(
+            "e", "agent-test", "discord-test",
+            _toolcall("send", {"channel_id": "999", "text": "explicit"}),
+        )
+        await ep.deliver(env)
+        assert len(ch.sent) == 1
+        assert ch.sent[0]["content"] == "explicit"
+    finally:
+        await ep.stop()
+
+
+@pytest.mark.asyncio
+async def test_reply_tool_inheritance_path_unchanged(monkeypatch):
+    """reply()-style outbounds (channel_id pre-set via reply inheritance) work."""
+    ep, handle, fake = await _started(monkeypatch)
+    ch = FakeChannel(id="888")
+    fake.add_channel(ch)
+    try:
+        out = Envelope(
+            id="reply-1", correlation_id="c", from_="agent-test", to="discord-test",
+            kind="TextMessage", payload=TextMessagePayload(text="via reply"),
+            metadata={"discord": {"channel_id": "888"}},  # pre-set by reply()
+            created_at=datetime.now(UTC),
+        )
+        await ep.deliver(out)
+        assert len(ch.sent) == 1
+        assert ch.sent[0]["content"] == "via reply"
+    finally:
+        await ep.stop()
