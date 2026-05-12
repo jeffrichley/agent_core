@@ -121,7 +121,8 @@ All failure modes route through existing paths. No new code, no new ack shape, n
 | Failure | Where it surfaces | Severity |
 |---|---|---|
 | Malformed dict (typo like `{paht: ...}`, missing `path`) | Sync `ValidationError` at agent's `send()` call. Stack trace at agent. | Synchronous to agent |
-| Empty/whitespace path | Same — `Field(min_length=1)` rejects at validation time | Synchronous to agent |
+| Empty path string | Same — `Field(min_length=1)` rejects at validation time | Synchronous to agent |
+| Whitespace-only path | Passes `min_length=1`; falls through to disk-resolution; `discord.File` raises `FileNotFoundError` → yellow Ack via existing exception path. Not caught at validation (whitespace-strip not specified as named-symptom-bound). | Yellow Ack |
 | Path doesn't exist on disk | `discord.File(path)` raises `FileNotFoundError` → existing `_send` exception path → `_ToolError` → yellow Ack with `note="error: ..."` | Yellow Ack |
 | File too large (Discord 25 MB) | `discord.HTTPException` via discord.py → same exception path | Yellow Ack |
 | Rate-limit / Discord 5xx | discord.py raises → same exception path | Yellow Ack |
