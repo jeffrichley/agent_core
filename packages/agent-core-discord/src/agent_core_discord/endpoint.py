@@ -688,11 +688,17 @@ class DiscordEndpoint:
         if embeds_data and not text_for_send:
             text_for_send = None
 
+        # Translate bus-side FileAttachment list to verb-side files list.
+        # Tight FileAttachment validation already ran at envelope publish
+        # time, so payload.attachments is a list of validated models.
+        files = [a.path for a in envelope.payload.attachments] or None
+
         args = _SendArgs(
             channel_id=str(channel_id),
             text=text_for_send,
             embeds=embeds_data,
             reply_to=reply_to,
+            files=files,
         )
         return await self._send(args)
 

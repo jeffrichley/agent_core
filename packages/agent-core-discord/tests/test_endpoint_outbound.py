@@ -1932,3 +1932,45 @@ async def test_auto_echo_hard_errors_uniformly_across_verbs(
         )
     finally:
         await ep.stop()
+
+
+@pytest.mark.asyncio
+async def test_text_message_with_single_attachment_uploads_to_discord(monkeypatch, tmp_path):
+    """Issue #64 named-symptom regression lock: payload.attachments=[{path: ...}]
+    reaches Discord via channel.send(files=[discord.File(...)]).
+    """
+    ep, handle, fake = await _started(monkeypatch)
+    ch = FakeChannel(id="500")
+    fake.add_channel(ch)
+    pdf = tmp_path / "briefing.pdf"
+    pdf.write_bytes(b"%PDF-1.4 fake content")
+    from datetime import UTC, datetime
+
+    from agent_core.bus.envelope import Envelope, FileAttachment, TextMessagePayload
+    try:
+        env = Envelope(
+            id="msg-attach", correlation_id="c", from_="agent-test", to="discord-test",
+            kind="TextMessage",
+            payload=TextMessagePayload(
+                text="briefing attached",
+                attachments=[FileAttachment(path=str(pdf))],
+            ),
+            metadata={"discord": {"channel_id": "500"}},
+            created_at=datetime.now(UTC),
+        )
+        await ep.deliver(env)
+        # Outbound landed.
+        assert len(ch.sent) == 1
+        assert ch.sent[0]["content"] == "briefing attached"
+        # files arg was populated on the channel.send call.
+        sent_files = ch.sent[0]["files"]
+        assert sent_files is not None and len(sent_files) == 1
+        # FakeMessage exposes the attachment with basename filename.
+        msg = ch._messages[ch.sent[0]["message_id"]]
+        assert len(msg.attachments) == 1
+        assert msg.attachments[0].filename == "briefing.pdf"
+        # No error ack published.
+        acks = [e for e in handle.published if e.kind == "Acknowledgment"]
+        assert all(not a.payload.note.lower().startswith("error:") for a in acks)
+    finally:
+        await ep.stop()
