@@ -35,7 +35,7 @@ class FileAttachment(BaseModel):
 class TextMessagePayload(BaseModel):
     kind: Literal["TextMessage"] = "TextMessage"
     text: str
-    attachments: list[dict[str, Any]] = Field(default_factory=list)
+    attachments: list[FileAttachment] = Field(default_factory=list)
 
 
 class EventPayload(BaseModel):

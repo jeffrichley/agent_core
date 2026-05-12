@@ -5,7 +5,7 @@ from __future__ import annotations
 import pytest
 from pydantic import ValidationError
 
-from agent_core.bus.envelope import FileAttachment
+from agent_core.bus.envelope import FileAttachment, TextMessagePayload
 
 
 def test_file_attachment_requires_path():
@@ -27,3 +27,21 @@ def test_file_attachment_allows_extra_fields():
     # filename available via model_extra (Pydantic v2 extra-allow mechanism)
     assert attachment.model_extra is not None
     assert attachment.model_extra.get("filename") == "renamed.pdf"
+
+
+def test_text_message_payload_defaults_attachments_empty():
+    """Backward compat: existing publishes without `attachments` still validate."""
+    payload = TextMessagePayload(text="hi")
+    assert payload.attachments == []
+
+
+def test_text_message_payload_typo_in_attachment_key_raises_at_publish():
+    """Named-symptom regression lock: a typo in the attachment dict key
+    surfaces at envelope-construction time, synchronously to the agent's
+    publish call, not as a later yellow Ack.
+    """
+    with pytest.raises(ValidationError):
+        TextMessagePayload(
+            text="hi",
+            attachments=[{"paht": "/abs/file.pdf"}],  # typo: missing 'path'
+        )
