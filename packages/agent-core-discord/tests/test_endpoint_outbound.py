@@ -2081,3 +2081,50 @@ async def test_text_message_attachment_file_not_found_yields_yellow_ack_error(mo
         assert acks[0].payload.note.lower().startswith("error:")
     finally:
         await ep.stop()
+
+
+@pytest.mark.asyncio
+async def test_text_message_attachment_too_large_yields_yellow_ack_error(monkeypatch, tmp_path):
+    """Discord's 25 MB cap surfaces as discord.HTTPException from
+    channel.send. Existing exception path routes to yellow Ack.
+    Locks the routing for a documented mode (Section 2 error table row).
+    """
+    import discord
+
+    ep, handle, fake = await _started(monkeypatch)
+    ch = FakeChannel(id="500")
+    fake.add_channel(ch)
+
+    # Patch ch.send to raise HTTPException as if Discord rejected the upload.
+    async def _raise_too_large(*args, **kwargs):
+        # discord.HTTPException requires a response-like object; minimal stub.
+        class _Resp:
+            status = 413
+            reason = "Request Entity Too Large"
+        raise discord.HTTPException(_Resp(), "Payload Too Large")
+
+    monkeypatch.setattr(ch, "send", _raise_too_large)
+
+    big = tmp_path / "huge.pdf"
+    big.write_bytes(b"x" * 16)
+    from datetime import UTC, datetime
+
+    from agent_core.bus.envelope import Envelope, FileAttachment, TextMessagePayload
+    try:
+        env = Envelope(
+            id="msg-big", correlation_id="c", from_="agent-test", to="discord-test",
+            kind="TextMessage",
+            payload=TextMessagePayload(
+                text="oversized",
+                attachments=[FileAttachment(path=str(big))],
+            ),
+            metadata={"discord": {"channel_id": "500"}},
+            created_at=datetime.now(UTC),
+        )
+        await ep.deliver(env)
+        acks = [e for e in handle.published if e.kind == "Acknowledgment"]
+        assert len(acks) == 1
+        assert acks[0].urgency == "yellow"
+        assert acks[0].payload.note.lower().startswith("error:")
+    finally:
+        await ep.stop()
