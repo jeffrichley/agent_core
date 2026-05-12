@@ -2046,3 +2046,38 @@ async def test_text_message_attachment_uses_basename_as_filename(monkeypatch, tm
         assert msg.attachments[0].filename == "weird name.pdf"
     finally:
         await ep.stop()
+
+
+@pytest.mark.asyncio
+async def test_text_message_attachment_file_not_found_yields_yellow_ack_error(monkeypatch):
+    """Nonexistent path → discord.File raises FileNotFoundError →
+    existing _send exception path catches → yellow Ack with note prefix
+    'error:'. No Discord message published.
+    """
+    ep, handle, fake = await _started(monkeypatch)
+    ch = FakeChannel(id="500")
+    fake.add_channel(ch)
+    from datetime import UTC, datetime
+
+    from agent_core.bus.envelope import Envelope, FileAttachment, TextMessagePayload
+    try:
+        env = Envelope(
+            id="msg-missing", correlation_id="c", from_="agent-test", to="discord-test",
+            kind="TextMessage",
+            payload=TextMessagePayload(
+                text="missing file",
+                attachments=[FileAttachment(path="/this/path/does/not/exist.pdf")],
+            ),
+            metadata={"discord": {"channel_id": "500"}},
+            created_at=datetime.now(UTC),
+        )
+        await ep.deliver(env)
+        # No Discord message published (the send never happened).
+        assert len(ch.sent) == 0
+        # Yellow Ack with error prefix.
+        acks = [e for e in handle.published if e.kind == "Acknowledgment"]
+        assert len(acks) == 1
+        assert acks[0].urgency == "yellow"
+        assert acks[0].payload.note.lower().startswith("error:")
+    finally:
+        await ep.stop()
