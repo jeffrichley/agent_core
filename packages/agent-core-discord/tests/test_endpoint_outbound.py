@@ -2239,3 +2239,213 @@ async def test_existing_send_verb_files_param_unchanged(monkeypatch, tmp_path):
         assert all(not a.payload.note.lower().startswith("error:") for a in acks)
     finally:
         await ep.stop()
+
+
+@pytest.mark.asyncio
+async def test_text_message_envelope_with_in_reply_to_clears_typing(monkeypatch):
+    """Issue #84 named-symptom regression lock: outbound TextMessage envelope
+    with bus-level in_reply_to clears typing via the inbound's Discord
+    message_id. If this test ever flakes or fails, the bug has returned.
+    """
+    import time
+
+    ep, handle, fake = await _started(monkeypatch)
+    ch = FakeChannel(id="500")
+    fake.add_channel(ch)
+    ep._awaiting_reply_ids.add("inbound-discord-mid")
+    ep._awaiting_reply_ids_timestamps["inbound-discord-mid"] = time.monotonic()
+    from datetime import UTC, datetime
+
+    from agent_core.bus.envelope import Envelope, TextMessagePayload
+    inbound_env = Envelope(
+        id="inbound-env-id", correlation_id="c", from_="discord-test", to="agent-test",
+        kind="TextMessage", payload=TextMessagePayload(text="hi"),
+        metadata={"discord": {"channel_id": "500", "message_id": "inbound-discord-mid"}},
+        created_at=datetime.now(UTC),
+    )
+    ep._record_inbound(inbound_env)
+    try:
+        outbound = Envelope(
+            id="agent-reply", correlation_id="c", from_="agent-test", to="discord-test",
+            kind="TextMessage",
+            payload=TextMessagePayload(text="replying"),
+            in_reply_to="inbound-env-id",
+            metadata={"discord": {"channel_id": "500"}},
+            created_at=datetime.now(UTC),
+        )
+        await ep.deliver(outbound)
+        assert "inbound-discord-mid" not in ep._awaiting_reply_ids
+        assert "inbound-discord-mid" not in ep._awaiting_reply_ids_timestamps
+    finally:
+        await ep.stop()
+
+
+@pytest.mark.asyncio
+async def test_text_message_envelope_without_in_reply_to_does_not_clear_typing(monkeypatch):
+    """No bus-level linkage → no cleanup. _awaiting_reply_ids retains the
+    inbound's mid (TTL safety net is what eventually clears it)."""
+    import time
+
+    ep, handle, fake = await _started(monkeypatch)
+    ch = FakeChannel(id="500")
+    fake.add_channel(ch)
+    ep._awaiting_reply_ids.add("inbound-discord-mid")
+    ep._awaiting_reply_ids_timestamps["inbound-discord-mid"] = time.monotonic()
+    from datetime import UTC, datetime
+
+    from agent_core.bus.envelope import Envelope, TextMessagePayload
+
+    try:
+        outbound = Envelope(
+            id="agent-broadcast", correlation_id="c", from_="agent-test", to="discord-test",
+            kind="TextMessage",
+            payload=TextMessagePayload(text="proactive"),
+            metadata={"discord": {"channel_id": "500"}},
+            created_at=datetime.now(UTC),
+        )
+        await ep.deliver(outbound)
+        assert "inbound-discord-mid" in ep._awaiting_reply_ids
+        assert "inbound-discord-mid" in ep._awaiting_reply_ids_timestamps
+    finally:
+        await ep.stop()
+
+
+@pytest.mark.asyncio
+async def test_text_message_envelope_with_cache_miss_does_not_clear_typing(monkeypatch):
+    """Cache miss (inbound not in _recent_inbounds): cleanup no-ops cleanly."""
+    import time
+
+    ep, handle, fake = await _started(monkeypatch)
+    ch = FakeChannel(id="500")
+    fake.add_channel(ch)
+    ep._awaiting_reply_ids.add("inbound-discord-mid")
+    ep._awaiting_reply_ids_timestamps["inbound-discord-mid"] = time.monotonic()
+    # Deliberately do NOT call _record_inbound; _recent_inbounds is empty.
+    from datetime import UTC, datetime
+
+    from agent_core.bus.envelope import Envelope, TextMessagePayload
+
+    try:
+        outbound = Envelope(
+            id="agent-reply", correlation_id="c", from_="agent-test", to="discord-test",
+            kind="TextMessage",
+            payload=TextMessagePayload(text="orphan reply"),
+            in_reply_to="never-recorded-env-id",
+            metadata={"discord": {"channel_id": "500"}},
+            created_at=datetime.now(UTC),
+        )
+        await ep.deliver(outbound)
+        assert "inbound-discord-mid" in ep._awaiting_reply_ids
+    finally:
+        await ep.stop()
+
+
+@pytest.mark.asyncio
+async def test_tool_invocation_send_with_in_reply_to_clears_typing(monkeypatch):
+    """ToolInvocation `send` verb with bus-level in_reply_to clears typing
+    via _inject_channel_id's translation. Parallel path to the TextMessage envelope path."""
+    import time
+
+    ep, handle, fake = await _started(monkeypatch)
+    ch = FakeChannel(id="500")
+    fake.add_channel(ch)
+    ep._awaiting_reply_ids.add("inbound-discord-mid")
+    ep._awaiting_reply_ids_timestamps["inbound-discord-mid"] = time.monotonic()
+    inbound_env = Envelope(
+        id="inbound-env-id", correlation_id="c", from_="discord-test", to="agent-test",
+        kind="TextMessage", payload=TextMessagePayload(text="hi"),
+        metadata={"discord": {"channel_id": "500", "message_id": "inbound-discord-mid"}},
+        created_at=datetime.now(UTC),
+    )
+    ep._record_inbound(inbound_env)
+    try:
+        env = _envelope(
+            "e", "agent-test", "discord-test",
+            _toolcall("send", {"channel_id": "500", "text": "verb reply"}),
+        )
+        env.in_reply_to = "inbound-env-id"
+        await ep.deliver(env)
+        assert "inbound-discord-mid" not in ep._awaiting_reply_ids
+        assert "inbound-discord-mid" not in ep._awaiting_reply_ids_timestamps
+    finally:
+        await ep.stop()
+
+
+@pytest.mark.parametrize("verb_name,args_extra", [
+    ("edit", {"message_id": "m-edit", "text": "new text"}),
+    ("react", {"message_id": "m-react", "emoji": "👍"}),
+    ("send_briefing", {
+        "date_line": "test", "focus": "f", "calendar": "c",
+        "critical_items": [], "warning_items": [],
+    }),
+])
+@pytest.mark.asyncio
+async def test_tool_invocation_verbs_clear_typing_via_in_reply_to(
+    monkeypatch, verb_name, args_extra
+):
+    """Parameterized: every ToolInvocation verb that hits _inject_channel_id
+    benefits from the typing-cleanup translation."""
+    import time
+
+    ep, handle, fake = await _started(monkeypatch)
+    ch = FakeChannel(id="500")
+    fake.add_channel(ch)
+    ep._awaiting_reply_ids.add("inbound-discord-mid")
+    ep._awaiting_reply_ids_timestamps["inbound-discord-mid"] = time.monotonic()
+    inbound_env = Envelope(
+        id="inbound-env-id", correlation_id="c", from_="discord-test", to="agent-test",
+        kind="TextMessage", payload=TextMessagePayload(text="hi"),
+        metadata={"discord": {"channel_id": "500", "message_id": "inbound-discord-mid"}},
+        created_at=datetime.now(UTC),
+    )
+    ep._record_inbound(inbound_env)
+    if verb_name in ("edit", "react"):
+        ch._messages[args_extra["message_id"]] = FakeMessage(
+            id=args_extra["message_id"], channel_id="500",
+        )
+    try:
+        env = _envelope(
+            "e", "agent-test", "discord-test",
+            _toolcall(verb_name, {**args_extra}),
+        )
+        env.in_reply_to = "inbound-env-id"
+        await ep.deliver(env)
+        assert "inbound-discord-mid" not in ep._awaiting_reply_ids, (
+            f"verb={verb_name} did not clear typing via in_reply_to"
+        )
+    finally:
+        await ep.stop()
+
+
+@pytest.mark.asyncio
+async def test_existing_clear_pending_ack_via_args_reply_to_path_unchanged(monkeypatch):
+    """Pre-existing `if args.reply_to: _clear_pending_ack(args.reply_to)` path
+    still works when `cleanup_inbound_message_id` is None. Locks backward-compat
+    for Discord-UI threaded-reply outbounds that don't carry bus-level in_reply_to.
+    Canary test: should pass green-first if Task 4 is implemented correctly.
+    """
+    import time
+
+    ep, handle, fake = await _started(monkeypatch)
+    ch = FakeChannel(id="500")
+    fake.add_channel(ch)
+    # Pre-seed the message-to-reply-to in the fake channel.
+    ch._messages["target-mid"] = FakeMessage(id="target-mid", channel_id="500")
+    ep._awaiting_reply_ids.add("target-mid")
+    ep._awaiting_reply_ids_timestamps["target-mid"] = time.monotonic()
+    try:
+        env = _envelope(
+            "e", "agent-test", "discord-test",
+            _toolcall("send", {
+                "channel_id": "500",
+                "text": "discord-ui threaded reply",
+                "reply_to": "target-mid",  # Discord UI feature, NOT bus in_reply_to
+            }),
+        )
+        # Note: env.in_reply_to NOT set; only args.reply_to is.
+        await ep.deliver(env)
+        # The pre-existing args.reply_to cleanup path cleared typing.
+        assert "target-mid" not in ep._awaiting_reply_ids
+        assert "target-mid" not in ep._awaiting_reply_ids_timestamps
+    finally:
+        await ep.stop()
