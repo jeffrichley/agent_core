@@ -280,6 +280,12 @@ class DiscordEndpoint:
         # Discord message ids we published to the bus and have not "finished"
         # yet (cleared when ack reaction is removed or TTL/LRU evicts).
         self._awaiting_reply_ids: set[str] = set()
+        # Sibling timestamps map — same insertion/deletion pairs as
+        # `_awaiting_reply_ids`. Per-task lazy TTL safety net inside
+        # `_typing_while_pending` evicts orphan entries after
+        # `_TYPING_TTL_SECONDS`. See spec doc for the pair-management
+        # discipline (#84).
+        self._awaiting_reply_ids_timestamps: dict[str, float] = {}
         self._typing_tasks: set[asyncio.Task] = set()
 
     def _add_listener(self, handler: Callable[..., Any], event_name: str) -> None:
@@ -780,6 +786,7 @@ class DiscordEndpoint:
         self._typing_tasks.clear()
         # Drop typing / threading state so background typing tasks exit promptly.
         self._awaiting_reply_ids.clear()
+        self._awaiting_reply_ids_timestamps.clear()
         self._inbound_envelope_discord.clear()
         if self._sweep_task is not None:
             self._sweep_task.cancel()
@@ -902,10 +909,12 @@ class DiscordEndpoint:
             self._remember_inbound_mapping(env.id, str(message.id), str(message.channel.id))
             mid = str(message.id)
             self._awaiting_reply_ids.add(mid)
+            self._awaiting_reply_ids_timestamps[mid] = time.monotonic()
             try:
                 await self._handle.publish(env)
             except BaseException:
                 self._awaiting_reply_ids.discard(mid)
+                self._awaiting_reply_ids_timestamps.pop(mid, None)
                 self._inbound_envelope_discord.pop(env.id, None)
                 raise
             self._record_inbound(env)
@@ -1093,6 +1102,7 @@ class DiscordEndpoint:
         while len(self._pending_acks) > self.pending_acks_max:
             old_id, (old_emoji, old_ch, _ts) = self._pending_acks.popitem(last=False)
             self._awaiting_reply_ids.discard(old_id)
+            self._awaiting_reply_ids_timestamps.pop(old_id, None)
             asyncio.create_task(
                 self._remote_remove_ack(old_id, old_emoji, old_ch),
                 name=f"discord-endpoint-{self.name}-evict-ack",
@@ -1135,6 +1145,7 @@ class DiscordEndpoint:
                 break
             self._pending_acks.pop(head_id)
             self._awaiting_reply_ids.discard(head_id)
+            self._awaiting_reply_ids_timestamps.pop(head_id, None)
             asyncio.create_task(
                 self._remote_remove_ack(head_id, emoji, channel_id),
                 name=f"discord-endpoint-{self.name}-ttl-ack",
@@ -1157,6 +1168,7 @@ class DiscordEndpoint:
     async def _clear_pending_ack(self, channel, message_id: str) -> None:
         mid = str(message_id)
         self._awaiting_reply_ids.discard(mid)
+        self._awaiting_reply_ids_timestamps.pop(mid, None)
         entry = self._pending_acks.pop(mid, None)
         if entry is None:
             return
