@@ -18,6 +18,7 @@ class _SendArgs(BaseModel):
     embeds: list[dict[str, Any]] | None = None
     reply_to: str | None = None
     files: list[str] | None = None
+    cleanup_inbound_message_id: str | None = None
 
 
 class _EditArgs(BaseModel):
