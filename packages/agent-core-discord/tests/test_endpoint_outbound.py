@@ -2239,3 +2239,102 @@ async def test_existing_send_verb_files_param_unchanged(monkeypatch, tmp_path):
         assert all(not a.payload.note.lower().startswith("error:") for a in acks)
     finally:
         await ep.stop()
+
+
+@pytest.mark.asyncio
+async def test_text_message_envelope_with_in_reply_to_clears_typing(monkeypatch):
+    """Issue #84 named-symptom regression lock: outbound TextMessage envelope
+    with bus-level in_reply_to clears typing via the inbound's Discord
+    message_id. If this test ever flakes or fails, the bug has returned.
+    """
+    import time
+
+    ep, handle, fake = await _started(monkeypatch)
+    ch = FakeChannel(id="500")
+    fake.add_channel(ch)
+    ep._awaiting_reply_ids.add("inbound-discord-mid")
+    ep._awaiting_reply_ids_timestamps["inbound-discord-mid"] = time.monotonic()
+    from datetime import UTC, datetime
+
+    from agent_core.bus.envelope import Envelope, TextMessagePayload
+    inbound_env = Envelope(
+        id="inbound-env-id", correlation_id="c", from_="discord-test", to="agent-test",
+        kind="TextMessage", payload=TextMessagePayload(text="hi"),
+        metadata={"discord": {"channel_id": "500", "message_id": "inbound-discord-mid"}},
+        created_at=datetime.now(UTC),
+    )
+    ep._record_inbound(inbound_env)
+    try:
+        outbound = Envelope(
+            id="agent-reply", correlation_id="c", from_="agent-test", to="discord-test",
+            kind="TextMessage",
+            payload=TextMessagePayload(text="replying"),
+            in_reply_to="inbound-env-id",
+            metadata={"discord": {"channel_id": "500"}},
+            created_at=datetime.now(UTC),
+        )
+        await ep.deliver(outbound)
+        assert "inbound-discord-mid" not in ep._awaiting_reply_ids
+        assert "inbound-discord-mid" not in ep._awaiting_reply_ids_timestamps
+    finally:
+        await ep.stop()
+
+
+@pytest.mark.asyncio
+async def test_text_message_envelope_without_in_reply_to_does_not_clear_typing(monkeypatch):
+    """No bus-level linkage → no cleanup. _awaiting_reply_ids retains the
+    inbound's mid (TTL safety net is what eventually clears it)."""
+    import time
+
+    ep, handle, fake = await _started(monkeypatch)
+    ch = FakeChannel(id="500")
+    fake.add_channel(ch)
+    ep._awaiting_reply_ids.add("inbound-discord-mid")
+    ep._awaiting_reply_ids_timestamps["inbound-discord-mid"] = time.monotonic()
+    from datetime import UTC, datetime
+
+    from agent_core.bus.envelope import Envelope, TextMessagePayload
+
+    try:
+        outbound = Envelope(
+            id="agent-broadcast", correlation_id="c", from_="agent-test", to="discord-test",
+            kind="TextMessage",
+            payload=TextMessagePayload(text="proactive"),
+            metadata={"discord": {"channel_id": "500"}},
+            created_at=datetime.now(UTC),
+        )
+        await ep.deliver(outbound)
+        assert "inbound-discord-mid" in ep._awaiting_reply_ids
+        assert "inbound-discord-mid" in ep._awaiting_reply_ids_timestamps
+    finally:
+        await ep.stop()
+
+
+@pytest.mark.asyncio
+async def test_text_message_envelope_with_cache_miss_does_not_clear_typing(monkeypatch):
+    """Cache miss (inbound not in _recent_inbounds): cleanup no-ops cleanly."""
+    import time
+
+    ep, handle, fake = await _started(monkeypatch)
+    ch = FakeChannel(id="500")
+    fake.add_channel(ch)
+    ep._awaiting_reply_ids.add("inbound-discord-mid")
+    ep._awaiting_reply_ids_timestamps["inbound-discord-mid"] = time.monotonic()
+    # Deliberately do NOT call _record_inbound; _recent_inbounds is empty.
+    from datetime import UTC, datetime
+
+    from agent_core.bus.envelope import Envelope, TextMessagePayload
+
+    try:
+        outbound = Envelope(
+            id="agent-reply", correlation_id="c", from_="agent-test", to="discord-test",
+            kind="TextMessage",
+            payload=TextMessagePayload(text="orphan reply"),
+            in_reply_to="never-recorded-env-id",
+            metadata={"discord": {"channel_id": "500"}},
+            created_at=datetime.now(UTC),
+        )
+        await ep.deliver(outbound)
+        assert "inbound-discord-mid" in ep._awaiting_reply_ids
+    finally:
+        await ep.stop()

@@ -717,12 +717,23 @@ class DiscordEndpoint:
         # time, so payload.attachments is a list of validated models.
         files = [a.path for a in envelope.payload.attachments] or None
 
+        # Translate bus-level in_reply_to to inbound's Discord message_id for
+        # typing cleanup (#84). Cache miss / missing metadata / no in_reply_to
+        # all degrade to None → cleanup no-ops → TTL safety net.
+        cleanup_inbound_message_id: str | None = None
+        if envelope.in_reply_to:
+            inbound = self._recent_inbounds.get(envelope.in_reply_to)
+            if inbound:
+                discord_meta = (inbound.metadata or {}).get("discord") or {}
+                cleanup_inbound_message_id = discord_meta.get("message_id")
+
         args = _SendArgs(
             channel_id=str(channel_id),
             text=text_for_send,
             embeds=embeds_data,
             reply_to=reply_to,
             files=files,
+            cleanup_inbound_message_id=cleanup_inbound_message_id,
         )
         return await self._send(args)
 
@@ -1271,6 +1282,8 @@ class DiscordEndpoint:
             new_msg = await channel_send_with_retries(ch, args.text, **send_kwargs)
             if args.reply_to:
                 await self._clear_pending_ack(ch, args.reply_to)
+            if args.cleanup_inbound_message_id:
+                await self._clear_pending_ack(ch, args.cleanup_inbound_message_id)
             mid = str(new_msg.id)
             return {"status": "sent", "message_id": mid, "message_ids": [mid]}
 
@@ -1312,6 +1325,8 @@ class DiscordEndpoint:
 
         if args.reply_to:
             await self._clear_pending_ack(ch, args.reply_to)
+        if args.cleanup_inbound_message_id:
+            await self._clear_pending_ack(ch, args.cleanup_inbound_message_id)
 
         out: dict[str, Any] = {"status": "sent", "message_ids": message_ids}
         if message_ids:
