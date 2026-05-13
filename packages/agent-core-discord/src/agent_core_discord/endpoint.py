@@ -215,6 +215,15 @@ def _safe_filename(url: str) -> str:
 class DiscordEndpoint:
     """Bus endpoint that bridges one Discord bot to one named agent (1:1)."""
 
+    # Per-task lazy TTL for `_awaiting_reply_ids`. Evicted inside
+    # `_typing_while_pending` to prevent stale typing indicators when
+    # explicit cleanup doesn't fire (cache miss, no in_reply_to,
+    # dismissed-without-reply, etc.). 90s is the upper bound on observed
+    # realistic compose windows with ~25% headroom. Class-attribute placement
+    # is intentional: tests can construct an endpoint with a shorter TTL
+    # without monkeypatching the module.
+    _TYPING_TTL_SECONDS: float = 90.0
+
     def __init__(
         self,
         *,
@@ -392,6 +401,15 @@ class DiscordEndpoint:
         try:
             async with typing_factory():
                 while message_id in self._awaiting_reply_ids:
+                    # TTL safety net (#84): orphan entries (no explicit cleanup
+                    # fired, agent dismissed without reply, cache miss) evict
+                    # after _TYPING_TTL_SECONDS. Missing-timestamp self-heals
+                    # via `get(mid, 0)` → huge delta → immediate eviction.
+                    ts = self._awaiting_reply_ids_timestamps.get(message_id, 0)
+                    if time.monotonic() - ts > self._TYPING_TTL_SECONDS:
+                        self._awaiting_reply_ids.discard(message_id)
+                        self._awaiting_reply_ids_timestamps.pop(message_id, None)
+                        break
                     # Short poll so ack clear / stop() drops the id promptly; the
                     # typing context manager (discord.py) keeps the indicator fresh.
                     await asyncio.sleep(0.2)
