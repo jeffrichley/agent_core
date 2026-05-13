@@ -2338,3 +2338,80 @@ async def test_text_message_envelope_with_cache_miss_does_not_clear_typing(monke
         assert "inbound-discord-mid" in ep._awaiting_reply_ids
     finally:
         await ep.stop()
+
+
+@pytest.mark.asyncio
+async def test_tool_invocation_send_with_in_reply_to_clears_typing(monkeypatch):
+    """ToolInvocation `send` verb with bus-level in_reply_to clears typing
+    via _inject_channel_id's translation. Parallel path to the TextMessage envelope path."""
+    import time
+
+    ep, handle, fake = await _started(monkeypatch)
+    ch = FakeChannel(id="500")
+    fake.add_channel(ch)
+    ep._awaiting_reply_ids.add("inbound-discord-mid")
+    ep._awaiting_reply_ids_timestamps["inbound-discord-mid"] = time.monotonic()
+    inbound_env = Envelope(
+        id="inbound-env-id", correlation_id="c", from_="discord-test", to="agent-test",
+        kind="TextMessage", payload=TextMessagePayload(text="hi"),
+        metadata={"discord": {"channel_id": "500", "message_id": "inbound-discord-mid"}},
+        created_at=datetime.now(UTC),
+    )
+    ep._record_inbound(inbound_env)
+    try:
+        env = _envelope(
+            "e", "agent-test", "discord-test",
+            _toolcall("send", {"channel_id": "500", "text": "verb reply"}),
+        )
+        env.in_reply_to = "inbound-env-id"
+        await ep.deliver(env)
+        assert "inbound-discord-mid" not in ep._awaiting_reply_ids
+        assert "inbound-discord-mid" not in ep._awaiting_reply_ids_timestamps
+    finally:
+        await ep.stop()
+
+
+@pytest.mark.parametrize("verb_name,args_extra", [
+    ("edit", {"message_id": "m-edit", "text": "new text"}),
+    ("react", {"message_id": "m-react", "emoji": "👍"}),
+    ("send_briefing", {
+        "date_line": "test", "focus": "f", "calendar": "c",
+        "critical_items": [], "warning_items": [],
+    }),
+])
+@pytest.mark.asyncio
+async def test_tool_invocation_verbs_clear_typing_via_in_reply_to(
+    monkeypatch, verb_name, args_extra
+):
+    """Parameterized: every ToolInvocation verb that hits _inject_channel_id
+    benefits from the typing-cleanup translation."""
+    import time
+
+    ep, handle, fake = await _started(monkeypatch)
+    ch = FakeChannel(id="500")
+    fake.add_channel(ch)
+    ep._awaiting_reply_ids.add("inbound-discord-mid")
+    ep._awaiting_reply_ids_timestamps["inbound-discord-mid"] = time.monotonic()
+    inbound_env = Envelope(
+        id="inbound-env-id", correlation_id="c", from_="discord-test", to="agent-test",
+        kind="TextMessage", payload=TextMessagePayload(text="hi"),
+        metadata={"discord": {"channel_id": "500", "message_id": "inbound-discord-mid"}},
+        created_at=datetime.now(UTC),
+    )
+    ep._record_inbound(inbound_env)
+    if verb_name in ("edit", "react"):
+        ch._messages[args_extra["message_id"]] = FakeMessage(
+            id=args_extra["message_id"], channel_id="500",
+        )
+    try:
+        env = _envelope(
+            "e", "agent-test", "discord-test",
+            _toolcall(verb_name, {**args_extra}),
+        )
+        env.in_reply_to = "inbound-env-id"
+        await ep.deliver(env)
+        assert "inbound-discord-mid" not in ep._awaiting_reply_ids, (
+            f"verb={verb_name} did not clear typing via in_reply_to"
+        )
+    finally:
+        await ep.stop()

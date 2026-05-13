@@ -752,6 +752,17 @@ class DiscordEndpoint:
             if "channel_id" not in raw or not raw["channel_id"]:
                 raw = dict(raw)
                 raw["channel_id"] = self._resolve_channel_id(env)
+            # Typing-cleanup translation (#84): bus-level in_reply_to →
+            # inbound's Discord message_id via _recent_inbounds. Cache miss
+            # / missing metadata degrade to None → cleanup no-ops → TTL net.
+            if env.in_reply_to and "cleanup_inbound_message_id" not in raw:
+                inbound = self._recent_inbounds.get(env.in_reply_to)
+                if inbound:
+                    discord_meta = (inbound.metadata or {}).get("discord") or {}
+                    cid = discord_meta.get("message_id")
+                    if cid:
+                        raw = dict(raw)  # copy-on-write if not already copied
+                        raw["cleanup_inbound_message_id"] = cid
             return raw
 
         if tool == "send":
@@ -1365,6 +1376,8 @@ class DiscordEndpoint:
         if embeds is not None:
             edit_kwargs["embeds"] = embeds
         await msg.edit(**edit_kwargs)
+        if args.cleanup_inbound_message_id:
+            await self._clear_pending_ack(ch, args.cleanup_inbound_message_id)
         return {"status": "edited", "message_id": args.message_id}
 
     async def _react(self, args: _ReactArgs) -> dict:
@@ -1378,6 +1391,8 @@ class DiscordEndpoint:
         await msg.add_reaction(args.emoji)
         # Clear the eyes if this reaction is on a tracked inbound message.
         await self._clear_pending_ack(ch, args.message_id)
+        if args.cleanup_inbound_message_id:
+            await self._clear_pending_ack(ch, args.cleanup_inbound_message_id)
         return {"status": "reacted", "emoji": args.emoji}
 
     # _list_channels, _get_channel_info land in Task 8.
@@ -1564,7 +1579,14 @@ class DiscordEndpoint:
             critical_items=list(args.critical_items),
             warning_items=list(args.warning_items),
         )
-        return await self._send(_SendArgs(channel_id=args.channel_id, text=None, embeds=embeds))
+        return await self._send(
+            _SendArgs(
+                channel_id=args.channel_id,
+                text=None,
+                embeds=embeds,
+                cleanup_inbound_message_id=args.cleanup_inbound_message_id,
+            )
+        )
 
     async def _create_poll(self, args: _CreatePollArgs) -> dict:
         try:

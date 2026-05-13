@@ -26,12 +26,14 @@ class _EditArgs(BaseModel):
     message_id: str = Field(min_length=1)
     text: str | None = None
     embeds: list[dict[str, Any]] | None = None
+    cleanup_inbound_message_id: str | None = None
 
 
 class _ReactArgs(BaseModel):
     channel_id: str = Field(min_length=1)
     message_id: str = Field(min_length=1)
     emoji: str = Field(min_length=1)
+    cleanup_inbound_message_id: str | None = None
 
 
 class _FetchArgs(BaseModel):
@@ -64,6 +66,7 @@ class _SendBriefingArgs(BaseModel):
     calendar: str = ""
     critical_items: list[str] = Field(default_factory=list)
     warning_items: list[str] = Field(default_factory=list)
+    cleanup_inbound_message_id: str | None = None
 
 
 class _CreatePollArgs(BaseModel):
