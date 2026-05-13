@@ -33,6 +33,7 @@ from agent_core_discord.testing.fakes import (
 from agent_core.bus.envelope import (
     EndpointInfo,
     Envelope,
+    FileAttachment,
     TextMessagePayload,
     ToolInvocationPayload,
 )
@@ -1930,5 +1931,311 @@ async def test_auto_echo_hard_errors_uniformly_across_verbs(
         assert "cannot determine channel" in note, (
             f"verb={verb_name}: note should contain 'cannot determine channel', got {note!r}"
         )
+    finally:
+        await ep.stop()
+
+
+@pytest.mark.asyncio
+async def test_text_message_with_single_attachment_uploads_to_discord(monkeypatch, tmp_path):
+    """Issue #64 named-symptom regression lock: payload.attachments=[{path: ...}]
+    reaches Discord via channel.send(files=[discord.File(...)]).
+    """
+    ep, handle, fake = await _started(monkeypatch)
+    ch = FakeChannel(id="500")
+    fake.add_channel(ch)
+    pdf = tmp_path / "briefing.pdf"
+    pdf.write_bytes(b"%PDF-1.4 fake content")
+    from datetime import UTC, datetime
+
+    from agent_core.bus.envelope import Envelope, FileAttachment, TextMessagePayload
+    try:
+        env = Envelope(
+            id="msg-attach", correlation_id="c", from_="agent-test", to="discord-test",
+            kind="TextMessage",
+            payload=TextMessagePayload(
+                text="briefing attached",
+                attachments=[FileAttachment(path=str(pdf))],
+            ),
+            metadata={"discord": {"channel_id": "500"}},
+            created_at=datetime.now(UTC),
+        )
+        await ep.deliver(env)
+        # Outbound landed.
+        assert len(ch.sent) == 1
+        assert ch.sent[0]["content"] == "briefing attached"
+        # files arg was populated on the channel.send call.
+        sent_files = ch.sent[0]["files"]
+        assert sent_files is not None and len(sent_files) == 1
+        # FakeMessage exposes the attachment with basename filename.
+        msg = ch._messages[ch.sent[0]["message_id"]]
+        assert len(msg.attachments) == 1
+        assert msg.attachments[0].filename == "briefing.pdf"
+        # No error ack published.
+        acks = [e for e in handle.published if e.kind == "Acknowledgment"]
+        assert all(not a.payload.note.lower().startswith("error:") for a in acks)
+    finally:
+        await ep.stop()
+
+
+@pytest.mark.asyncio
+async def test_text_message_with_multiple_attachments_uploads_all(monkeypatch, tmp_path):
+    """Multi-file delivery preserves input order on the way to Discord."""
+    import os
+
+    ep, handle, fake = await _started(monkeypatch)
+    ch = FakeChannel(id="500")
+    fake.add_channel(ch)
+    paths = []
+    for name in ("alpha.pdf", "beta.pdf", "gamma.pdf"):
+        p = tmp_path / name
+        p.write_bytes(b"data")
+        paths.append(str(p))
+    from agent_core.bus.envelope import FileAttachment
+    try:
+        env = Envelope(
+            id="msg-multi", correlation_id="c", from_="agent-test", to="discord-test",
+            kind="TextMessage",
+            payload=TextMessagePayload(
+                text="three files",
+                attachments=[FileAttachment(path=p) for p in paths],
+            ),
+            metadata={"discord": {"channel_id": "500"}},
+            created_at=datetime.now(UTC),
+        )
+        await ep.deliver(env)
+        msg = ch._messages[ch.sent[0]["message_id"]]
+        assert len(msg.attachments) == 3
+        # Order preserved end-to-end.
+        assert [a.filename for a in msg.attachments] == [
+            os.path.basename(p) for p in paths
+        ]
+    finally:
+        await ep.stop()
+
+
+@pytest.mark.asyncio
+async def test_text_message_attachment_uses_basename_as_filename(monkeypatch, tmp_path):
+    """discord.File(path) defaults filename to os.path.basename(path).
+    Lock this default so a future refactor that strips file extension or
+    rewrites the filename is loud, not silent.
+    """
+    import os
+    from datetime import UTC, datetime
+
+    from agent_core.bus.envelope import Envelope, FileAttachment, TextMessagePayload
+
+    ep, handle, fake = await _started(monkeypatch)
+    ch = FakeChannel(id="500")
+    fake.add_channel(ch)
+    deep_path = tmp_path / "deeply" / "nested" / "weird name.pdf"
+    deep_path.parent.mkdir(parents=True)
+    deep_path.write_bytes(b"x")
+    try:
+        env = Envelope(
+            id="msg-basename", correlation_id="c", from_="agent-test", to="discord-test",
+            kind="TextMessage",
+            payload=TextMessagePayload(
+                text="basename check",
+                attachments=[FileAttachment(path=str(deep_path))],
+            ),
+            metadata={"discord": {"channel_id": "500"}},
+            created_at=datetime.now(UTC),
+        )
+        await ep.deliver(env)
+        msg = ch._messages[ch.sent[0]["message_id"]]
+        assert msg.attachments[0].filename == os.path.basename(str(deep_path))
+        assert msg.attachments[0].filename == "weird name.pdf"
+    finally:
+        await ep.stop()
+
+
+@pytest.mark.asyncio
+async def test_text_message_attachment_file_not_found_yields_yellow_ack_error(monkeypatch):
+    """Nonexistent path → discord.File raises FileNotFoundError →
+    existing _send exception path catches → yellow Ack with note prefix
+    'error:'. No Discord message published.
+    """
+    ep, handle, fake = await _started(monkeypatch)
+    ch = FakeChannel(id="500")
+    fake.add_channel(ch)
+    from datetime import UTC, datetime
+
+    from agent_core.bus.envelope import Envelope, FileAttachment, TextMessagePayload
+    try:
+        env = Envelope(
+            id="msg-missing", correlation_id="c", from_="agent-test", to="discord-test",
+            kind="TextMessage",
+            payload=TextMessagePayload(
+                text="missing file",
+                attachments=[FileAttachment(path="/this/path/does/not/exist.pdf")],
+            ),
+            metadata={"discord": {"channel_id": "500"}},
+            created_at=datetime.now(UTC),
+        )
+        await ep.deliver(env)
+        # No Discord message published (the send never happened).
+        assert len(ch.sent) == 0
+        # Yellow Ack with error prefix.
+        acks = [e for e in handle.published if e.kind == "Acknowledgment"]
+        assert len(acks) == 1
+        assert acks[0].urgency == "yellow"
+        assert acks[0].payload.note.lower().startswith("error:")
+    finally:
+        await ep.stop()
+
+
+@pytest.mark.asyncio
+async def test_text_message_attachment_too_large_yields_yellow_ack_error(monkeypatch, tmp_path):
+    """Discord's 25 MB cap surfaces as discord.HTTPException from
+    channel.send. Existing exception path routes to yellow Ack.
+    Locks the routing for a documented mode (Section 2 error table row).
+    """
+    import discord
+
+    ep, handle, fake = await _started(monkeypatch)
+    ch = FakeChannel(id="500")
+    fake.add_channel(ch)
+
+    # Patch ch.send to raise HTTPException as if Discord rejected the upload.
+    async def _raise_too_large(*args, **kwargs):
+        # discord.HTTPException requires a response-like object; minimal stub.
+        class _Resp:
+            status = 413
+            reason = "Request Entity Too Large"
+        raise discord.HTTPException(_Resp(), "Payload Too Large")
+
+    monkeypatch.setattr(ch, "send", _raise_too_large)
+
+    big = tmp_path / "huge.pdf"
+    big.write_bytes(b"x" * 16)
+    from datetime import UTC, datetime
+
+    from agent_core.bus.envelope import Envelope, FileAttachment, TextMessagePayload
+    try:
+        env = Envelope(
+            id="msg-big", correlation_id="c", from_="agent-test", to="discord-test",
+            kind="TextMessage",
+            payload=TextMessagePayload(
+                text="oversized",
+                attachments=[FileAttachment(path=str(big))],
+            ),
+            metadata={"discord": {"channel_id": "500"}},
+            created_at=datetime.now(UTC),
+        )
+        await ep.deliver(env)
+        acks = [e for e in handle.published if e.kind == "Acknowledgment"]
+        assert len(acks) == 1
+        assert acks[0].urgency == "yellow"
+        assert acks[0].payload.note.lower().startswith("error:")
+    finally:
+        await ep.stop()
+
+
+@pytest.mark.asyncio
+async def test_send_embed_plus_files_coexist_on_text_message_envelope(monkeypatch, tmp_path):
+    """A TextMessage envelope carrying both metadata.discord.embeds AND
+    payload.attachments composes into one channel.send call with both
+    keyword args populated. Locks the coexistence invariant — a future
+    branch that picks embeds-or-files would silently re-introduce the
+    #64 file-discard symptom for embed-bearing sends.
+    """
+    ep, handle, fake = await _started(monkeypatch)
+    ch = FakeChannel(id="500")
+    fake.add_channel(ch)
+    pdf = tmp_path / "with_embed.pdf"
+    pdf.write_bytes(b"data")
+    try:
+        env = Envelope(
+            id="msg-both", correlation_id="c", from_="agent-test", to="discord-test",
+            kind="TextMessage",
+            payload=TextMessagePayload(
+                text="text + embed + file",
+                attachments=[FileAttachment(path=str(pdf))],
+            ),
+            metadata={
+                "discord": {
+                    "channel_id": "500",
+                    "embeds": [{"title": "embed title", "description": "embed body"}],
+                }
+            },
+            created_at=datetime.now(UTC),
+        )
+        await ep.deliver(env)
+        assert len(ch.sent) == 1
+        sent = ch.sent[0]
+        assert sent["content"] == "text + embed + file"
+        assert sent["embeds"] is not None and len(sent["embeds"]) == 1
+        assert sent["embeds"][0].title == "embed title"
+        assert sent["files"] is not None and len(sent["files"]) == 1
+        # No error ack.
+        acks = [e for e in handle.published if e.kind == "Acknowledgment"]
+        assert all(not a.payload.note.lower().startswith("error:") for a in acks)
+    finally:
+        await ep.stop()
+
+
+@pytest.mark.asyncio
+async def test_text_only_message_unchanged_when_attachments_empty(monkeypatch):
+    """The most common send path: no attachments field set, no files
+    parameter touched on channel.send. Backward-compat regression lock
+    for the pre-#64 path.
+    """
+    ep, handle, fake = await _started(monkeypatch)
+    ch = FakeChannel(id="500")
+    fake.add_channel(ch)
+    from datetime import UTC, datetime
+
+    from agent_core.bus.envelope import Envelope, TextMessagePayload
+    try:
+        env = Envelope(
+            id="msg-text-only", correlation_id="c", from_="agent-test", to="discord-test",
+            kind="TextMessage",
+            payload=TextMessagePayload(text="plain text"),
+            metadata={"discord": {"channel_id": "500"}},
+            created_at=datetime.now(UTC),
+        )
+        await ep.deliver(env)
+        assert len(ch.sent) == 1
+        sent = ch.sent[0]
+        assert sent["content"] == "plain text"
+        # files arg is None (not []) — preserves the pre-#64 absent-argument shape.
+        assert sent["files"] is None
+        msg = ch._messages[sent["message_id"]]
+        assert msg.attachments == []
+    finally:
+        await ep.stop()
+
+
+@pytest.mark.asyncio
+async def test_existing_send_verb_files_param_unchanged(monkeypatch, tmp_path):
+    """Verb-side `_SendArgs.files: list[str]` path unaffected by the
+    bus-side `payload.attachments: list[FileAttachment]` schema change.
+    Locks the translation-at-boundary invariant — if a future refactor
+    accidentally widens _SendArgs.files into list[FileAttachment] or
+    couples the two surfaces, this fires.
+    """
+    ep, handle, fake = await _started(monkeypatch)
+    ch = FakeChannel(id="500")
+    fake.add_channel(ch)
+    pdf = tmp_path / "via-tool.pdf"
+    pdf.write_bytes(b"x")
+    try:
+        env = _envelope(
+            "e", "agent-test", "discord-test",
+            _toolcall("send", {
+                "channel_id": "500",
+                "text": "verb-side send",
+                "files": [str(pdf)],
+            }),
+        )
+        await ep.deliver(env)
+        assert len(ch.sent) == 1
+        assert ch.sent[0]["content"] == "verb-side send"
+        assert ch.sent[0]["files"] is not None
+        msg = ch._messages[ch.sent[0]["message_id"]]
+        assert len(msg.attachments) == 1
+        assert msg.attachments[0].filename == "via-tool.pdf"
+        acks = [e for e in handle.published if e.kind == "Acknowledgment"]
+        assert all(not a.payload.note.lower().startswith("error:") for a in acks)
     finally:
         await ep.stop()

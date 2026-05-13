@@ -14,10 +14,28 @@ from typing import Annotated, Any, Literal
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 
+class FileAttachment(BaseModel):
+    """File attachment on a TextMessage envelope.
+
+    `path` is the local filesystem path discord-pepper reads via
+    `discord.File(path)`. Validation runs at envelope publish time so
+    typos / missing keys surface synchronously at the publishing
+    agent's send() call, not as a later yellow Ack from the adapter.
+
+    `extra='allow'` permits aspirational fields (filename override,
+    description, spoiler) to pass validation; the adapter currently
+    only consumes `path`. New fields wire to the adapter incrementally,
+    named-symptom-bound.
+    """
+
+    path: str = Field(min_length=1)
+    model_config = ConfigDict(extra="allow")
+
+
 class TextMessagePayload(BaseModel):
     kind: Literal["TextMessage"] = "TextMessage"
     text: str
-    attachments: list[dict[str, Any]] = Field(default_factory=list)
+    attachments: list[FileAttachment] = Field(default_factory=list)
 
 
 class EventPayload(BaseModel):

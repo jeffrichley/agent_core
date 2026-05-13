@@ -90,6 +90,18 @@ class FakePoll:
         return self._is_finalised
 
 
+class FakeAttachment:
+    """Minimal stand-in for discord.Attachment on a fake message.
+
+    Models only the fields tests assert on (`filename`, `url`); expand
+    named per the test-fakes-mirror-real-strictly discipline.
+    """
+
+    def __init__(self, *, filename: str, url: str = ""):
+        self.filename = filename
+        self.url = url
+
+
 class FakeMessage:
     def __init__(
         self,
@@ -99,12 +111,14 @@ class FakeMessage:
         content: str = "",
         author=None,
         poll: FakePoll | None = None,
+        attachments: list[FakeAttachment] | None = None,
     ):
         self.id = id
         self.channel_id = channel_id
         self.content = content
         self.author = author
         self.poll = poll
+        self.attachments = attachments or []
         self.reactions: list[str] = []
         self.edits: list[dict[str, Any]] = []
 
@@ -178,7 +192,18 @@ class FakeChannel:
         poll: Any = None,
     ) -> FakeMessage:
         new_id = f"new-{len(self.sent) + 1}"
-        msg = FakeMessage(id=new_id, channel_id=self.id, content=content or "")
+        attachments: list[FakeAttachment] = []
+        for f in files or []:
+            # discord.File.filename is the resolved upload filename
+            # (basename of the path when not overridden).
+            fn = getattr(f, "filename", "")
+            attachments.append(FakeAttachment(filename=fn))
+        msg = FakeMessage(
+            id=new_id,
+            channel_id=self.id,
+            content=content or "",
+            attachments=attachments,
+        )
         self._messages[new_id] = msg
         self.sent.append(
             {
