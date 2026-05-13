@@ -2415,3 +2415,37 @@ async def test_tool_invocation_verbs_clear_typing_via_in_reply_to(
         )
     finally:
         await ep.stop()
+
+
+@pytest.mark.asyncio
+async def test_existing_clear_pending_ack_via_args_reply_to_path_unchanged(monkeypatch):
+    """Pre-existing `if args.reply_to: _clear_pending_ack(args.reply_to)` path
+    still works when `cleanup_inbound_message_id` is None. Locks backward-compat
+    for Discord-UI threaded-reply outbounds that don't carry bus-level in_reply_to.
+    Canary test: should pass green-first if Task 4 is implemented correctly.
+    """
+    import time
+
+    ep, handle, fake = await _started(monkeypatch)
+    ch = FakeChannel(id="500")
+    fake.add_channel(ch)
+    # Pre-seed the message-to-reply-to in the fake channel.
+    ch._messages["target-mid"] = FakeMessage(id="target-mid", channel_id="500")
+    ep._awaiting_reply_ids.add("target-mid")
+    ep._awaiting_reply_ids_timestamps["target-mid"] = time.monotonic()
+    try:
+        env = _envelope(
+            "e", "agent-test", "discord-test",
+            _toolcall("send", {
+                "channel_id": "500",
+                "text": "discord-ui threaded reply",
+                "reply_to": "target-mid",  # Discord UI feature, NOT bus in_reply_to
+            }),
+        )
+        # Note: env.in_reply_to NOT set; only args.reply_to is.
+        await ep.deliver(env)
+        # The pre-existing args.reply_to cleanup path cleared typing.
+        assert "target-mid" not in ep._awaiting_reply_ids
+        assert "target-mid" not in ep._awaiting_reply_ids_timestamps
+    finally:
+        await ep.stop()
