@@ -15,12 +15,18 @@ Construction wiring:
 
 from __future__ import annotations
 
+import asyncio
+import hashlib
+import io
 import logging
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from agent_core_voice.audit import AuditLog
+import soundfile as sf
+
+from agent_core_voice.audit import AuditEvent, AuditLog
 from agent_core_voice.protocol import TTSBackend, VoiceInfo
 
 if TYPE_CHECKING:
@@ -109,6 +115,60 @@ class VoiceEndpoint:
             "sample_rate": 24000,
             "mode": "1.7B Base + ICL voice clone",
         }
+
+    async def synthesize_safe(
+        self,
+        *,
+        agent_name: str,
+        voice_id: str,
+        text: str,
+        seed: int,
+    ) -> SynthesisSuccess | SynthesisError:
+        """Synthesize text in ``voice_id``, write the wav, append audit, return envelope.
+
+        Never raises. All failures land as ``SynthesisError(message=...)``.
+        (Error mapping is added in Task 7; this method body currently assumes the
+        happy path.)
+        """
+        wav_bytes, generation_s = await asyncio.to_thread(
+            self._backend.synthesize, voice_id, text, seed
+        )
+        duration_s, _ = self._wav_duration(wav_bytes)
+        path = self._next_output_path(agent_name, seed, text)
+        await asyncio.to_thread(path.write_bytes, wav_bytes)
+
+        await self._audit.write(
+            AuditEvent(
+                timestamp=datetime.now(UTC),
+                agent=agent_name,
+                voice_id=voice_id,
+                text_len=len(text),
+                seed=seed,
+                duration_s=duration_s,
+                generation_s=generation_s,
+                wav_path=str(path),
+                error=None,
+            )
+        )
+        return SynthesisSuccess(
+            path=str(path),
+            duration_s=duration_s,
+            generation_s=generation_s,
+        )
+
+    def _next_output_path(self, agent_name: str, seed: int, text: str) -> Path:
+        now = datetime.now(UTC)
+        day = now.strftime("%Y-%m-%d")
+        ts = now.strftime("%Y%m%dT%H%M%S")
+        text_hash = hashlib.sha256(text.encode("utf-8")).hexdigest()[:8]
+        dir_ = self._output_dir / agent_name / day
+        dir_.mkdir(parents=True, exist_ok=True)
+        return dir_ / f"{ts}-{seed}-{text_hash}.wav"
+
+    @staticmethod
+    def _wav_duration(wav_bytes: bytes) -> tuple[float, int]:
+        with sf.SoundFile(io.BytesIO(wav_bytes)) as f:
+            return f.frames / float(f.samplerate), int(f.samplerate)
 
     # Endpoint protocol stubs (voice is tool-only — no envelope traffic).
     async def start(self, bus: BusHandle) -> None:
