@@ -314,3 +314,107 @@ def test_refresh_reuses_stamped_extra_when_no_flag(
     result = runner.invoke(daemon_app, ["refresh"])
     assert result.exit_code == 0
     assert captured["extra"] == "cu130"
+
+
+def test_status_shows_fallback_warning_when_no_daemon_venv(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """When _daemon_python falls back to sys.executable, status warns."""
+    monkeypatch.setenv("AGENT_CORE_HOME", str(tmp_path))
+    # Daemon is "running" — write a PID for the current process so is_alive=True
+    (tmp_path / "daemon.pid").write_text(str(os.getpid()))
+
+    result = runner.invoke(daemon_app, ["status"])
+    assert result.exit_code == 0
+    assert "fallback" in result.stdout.lower()
+    assert "vulnerable to uv sync" in result.stdout.lower()
+
+
+def test_status_no_warning_when_daemon_venv_present(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("AGENT_CORE_HOME", str(tmp_path))
+    (tmp_path / "daemon.pid").write_text(str(os.getpid()))
+
+    if sys.platform == "win32":
+        venv_python = tmp_path / ".venv" / "Scripts" / "python.exe"
+    else:
+        venv_python = tmp_path / ".venv" / "bin" / "python"
+    venv_python.parent.mkdir(parents=True)
+    venv_python.write_text("# placeholder")
+
+    result = runner.invoke(daemon_app, ["status"])
+    assert result.exit_code == 0
+    assert "fallback" not in result.stdout.lower()
+
+
+def test_status_shows_stamp_metadata(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from agent_core.daemon.install import InstallStamp, write_stamp
+
+    monkeypatch.setenv("AGENT_CORE_HOME", str(tmp_path))
+    (tmp_path / "daemon.pid").write_text(str(os.getpid()))
+    write_stamp(
+        tmp_path,
+        InstallStamp(
+            installed_at="2026-05-15T19:31:04Z",
+            installed_sha="abc1234",
+            python_version="3.12",
+            extra="cu130",
+            uv_lock_hash="sha256:deadbeef",
+        ),
+    )
+
+    result = runner.invoke(daemon_app, ["status"])
+    assert "abc1234" in result.stdout
+    assert "2026-05-15" in result.stdout
+
+
+def test_status_flags_lock_drift(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from agent_core.daemon.install import InstallStamp, write_stamp
+
+    monkeypatch.setenv("AGENT_CORE_HOME", str(tmp_path))
+    (tmp_path / "daemon.pid").write_text(str(os.getpid()))
+    # Stamp says the lock was hash "stale-hash"; workspace lock has different content.
+    write_stamp(
+        tmp_path,
+        InstallStamp(
+            installed_at="2026-05-15T19:31:04Z",
+            installed_sha="abc1234",
+            python_version="3.12",
+            extra=None,
+            uv_lock_hash="sha256:STALE",
+        ),
+    )
+
+    # Fake workspace with a uv.lock whose hash is different.
+    fake_ws = tmp_path / "fake-workspace"
+    fake_ws.mkdir()
+    (fake_ws / "uv.lock").write_text("# new content\n", encoding="utf-8")
+    monkeypatch.setattr(
+        "agent_core.daemon.cli.find_workspace_root", lambda _start: fake_ws
+    )
+
+    result = runner.invoke(daemon_app, ["status"])
+    assert "stale" in result.stdout.lower() or "refresh" in result.stdout.lower()
+
+
+def test_status_handles_missing_workspace_gracefully(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """status must not crash if workspace discovery fails — drift check is optional."""
+    monkeypatch.setenv("AGENT_CORE_HOME", str(tmp_path))
+    (tmp_path / "daemon.pid").write_text(str(os.getpid()))
+
+    def raise_not_found(_start):
+        from agent_core.daemon.install import WorkspaceNotFoundError
+
+        raise WorkspaceNotFoundError("no workspace")
+
+    monkeypatch.setattr("agent_core.daemon.cli.find_workspace_root", raise_not_found)
+
+    result = runner.invoke(daemon_app, ["status"])
+    assert result.exit_code == 0  # still succeeds

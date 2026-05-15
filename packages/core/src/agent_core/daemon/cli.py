@@ -22,6 +22,7 @@ from rich.console import Console
 from agent_core.daemon.install import (
     UvNotFoundError,
     WorkspaceNotFoundError,
+    compute_lock_hash,
     find_workspace_root,
     read_stamp,
     run_install,
@@ -137,6 +138,35 @@ def status() -> None:
         return
 
     console.print(f"[green]daemon is running (PID: {pid})[/green]")
+
+    # Diagnostic: which interpreter the supervisor would use today.
+    daemon_py = _daemon_python()
+    suffix = ""
+    if daemon_py == sys.executable:
+        suffix = (
+            " [dim red](fallback — vulnerable to uv sync; "
+            "run `agent-core daemon install`)[/dim red]"
+        )
+    console.print(f"running from: {daemon_py}{suffix}")
+
+    # Diagnostic: stamp metadata, if present.
+    stamp = read_stamp(_home())
+    if stamp is not None:
+        console.print(f"installed at: {stamp.installed_at}")
+        console.print(f"installed sha: {stamp.installed_sha}")
+
+        # Lock-drift check (best-effort; skipped silently if workspace not findable).
+        try:
+            workspace = find_workspace_root(Path.cwd())
+            current_hash = compute_lock_hash(workspace)
+            if current_hash != stamp.uv_lock_hash:
+                console.print(
+                    "[yellow]daemon venv may be stale — "
+                    "run `agent-core daemon refresh`[/yellow]"
+                )
+        except (WorkspaceNotFoundError, FileNotFoundError):
+            pass  # Lock-drift is a nice-to-have; don't fail status on workspace issues.
+
     if log_file.exists():
         console.print("\n[dim]--- last 20 lines of daemon.log ---[/dim]")
         lines = log_file.read_text(encoding="utf-8", errors="replace").splitlines()
