@@ -170,3 +170,13 @@ async def test_audit_line_written_on_error(tmp_path: Path, ref_wav: Path) -> Non
     assert payload["error"] is not None
     assert payload["wav_path"] is None
     assert payload["duration_s"] is None
+
+
+def test_init_requires_backend_or_model_path(tmp_path: Path) -> None:
+    """Construction with neither backend= nor model_path= raises a clear ValueError."""
+    with pytest.raises(ValueError, match="backend=.*model_path="):
+        VoiceEndpoint(
+            name="x",
+            output_dir=tmp_path / "out",
+            audit_path=tmp_path / "audit.jsonl",
+        )

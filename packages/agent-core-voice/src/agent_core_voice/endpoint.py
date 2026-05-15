@@ -67,22 +67,51 @@ class VoiceEndpoint:
         self,
         *,
         name: str,
-        backend: TTSBackend,
-        voices: dict[str, VoiceInfo],
+        backend: TTSBackend | None = None,
+        voices: dict[str, VoiceInfo] | dict[str, dict] | None = None,
         output_dir: Path | str,
         audit_path: Path | str,
+        # Real-backend params, only used when backend is None:
+        model_path: str | None = None,
+        device: str = "cuda:0",
+        attn_implementation: str = "sdpa",
     ) -> None:
         self._name = name
-        self._backend = backend
-        self._voices: dict[str, VoiceInfo] = dict(voices)
-        self._output_dir = Path(output_dir)
-        self._audit = AuditLog(Path(audit_path))
         self._handle: BusHandle | None = None
 
+        if backend is None:
+            if model_path is None:
+                raise ValueError(
+                    "VoiceEndpoint requires either backend=... (tests) or "
+                    "model_path=... (production with QwenTTSBackend)"
+                )
+            from agent_core_voice.qwen_backend import QwenTTSBackend  # noqa: PLC0415
+
+            backend = QwenTTSBackend(
+                model_path=model_path,
+                device=device,
+                attn_implementation=attn_implementation,
+            )
+        self._backend = backend
+
+        # Normalize voices: yaml gives dict[str, dict]; tests give dict[str, VoiceInfo].
+        normalized: dict[str, VoiceInfo] = {}
+        for vid, raw in (voices or {}).items():
+            if isinstance(raw, VoiceInfo):
+                normalized[vid] = raw
+            else:
+                normalized[vid] = VoiceInfo(
+                    voice_id=vid,
+                    ref_wav=Path(raw["ref_wav"]),
+                    ref_text=raw["ref_text"],
+                    blend=raw.get("blend"),
+                )
+        self._voices = normalized
+
+        self._output_dir = Path(output_dir)
+        self._audit = AuditLog(Path(audit_path))
         self._output_dir.mkdir(parents=True, exist_ok=True)
 
-        # Pre-build ICL prompts for every configured voice. After this returns,
-        # every agent is warm from call 1.
         for voice_id, info in self._voices.items():
             self._backend.prepare_voice(voice_id, Path(info.ref_wav), info.ref_text)
             log.info("voice %r prepared (ref_wav=%s)", voice_id, info.ref_wav)
