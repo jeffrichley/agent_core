@@ -41,9 +41,70 @@ def encode_body(text: str) -> str:
 # ---------------------------------------------------------------------
 
 
+def _humanize_bytes(n: int) -> str:
+    """Powers of 1024, two significant figures, suffix B/KB/MB/GB."""
+    try:
+        n = int(n)
+    except (TypeError, ValueError):
+        return "0 B"
+    if n < 1024:
+        return f"{n} B"
+    units = ["KB", "MB", "GB"]
+    size = float(n)
+    for unit in units:
+        size /= 1024.0
+        if size < 1024.0 or unit == "GB":
+            if size >= 100:
+                return f"{int(round(size))} {unit}"
+            return f"{size:.1f}".rstrip("0").rstrip(".") + f" {unit}"
+    return f"{int(round(size))} GB"
+
+
+def _render_attachments_block(env: dict) -> str:
+    """Return an escaped attachment block for an envelope, or '' if none.
+
+    Never raises: a malformed metadata['attachments'] degrades to '' (or
+    skips bad entries) rather than routing the whole envelope to fallback
+    rendering and losing the text body.
+    """
+    try:
+        metadata = env.get("metadata") or {}
+        if not isinstance(metadata, dict):
+            return ""
+        atts = metadata.get("attachments")
+        if not isinstance(atts, list) or not atts:
+            return ""
+        lines: list[str] = []
+        for a in atts:
+            if not isinstance(a, dict):
+                continue
+            filename = str(a.get("filename", "?"))
+            ctype = str(a.get("content_type", "unknown"))
+            size = _humanize_bytes(a.get("size_bytes", 0))
+            local_path = a.get("local_path")
+            if local_path:
+                lines.append(
+                    f"[attachment: {filename} ({ctype}, {size}) "
+                    f"→ {local_path}]"
+                )
+            else:
+                err = str(a.get("download_error", "unknown error"))
+                url = str(a.get("url", ""))
+                lines.append(
+                    f"[attachment: {filename} ({ctype}, {size}) "
+                    f"— download failed ({err}); "
+                    f"CDN url may be expired: {url}]"
+                )
+        if not lines:
+            return ""
+        return "\n\n" + encode_body("\n".join(lines))
+    except Exception:
+        return ""
+
+
 def _render_text_message_body(env: dict) -> str:
     text = env.get("payload", {}).get("text", "")
-    return encode_body(str(text))
+    return encode_body(str(text)) + _render_attachments_block(env)
 
 
 def _render_acknowledgment_body(env: dict) -> str:

@@ -9,6 +9,7 @@ from agent_core_channel.rendering import (
     FallbackToBare,
     InlineAll,
     RedeliveryTracker,
+    _humanize_bytes,
     _inbox_attrs,
     _render_preview,
     _render_with_truncation,
@@ -628,3 +629,99 @@ def test_render_envelope_fallback_emits_channel_attrs_with_render_fallback():
     block = render_envelope(env)
     assert 'channel_id="1491"' in block
     assert "render='fallback'" in block
+
+
+def test_humanize_bytes_units():
+    assert _humanize_bytes(0) == "0 B"
+    assert _humanize_bytes(512) == "512 B"
+    assert _humanize_bytes(835 * 1024) == "835 KB"
+    assert _humanize_bytes(22 * 1024 * 1024) == "22 MB"
+
+
+def _text_env(attachments):
+    return {
+        "id": "env1",
+        "kind": "TextMessage",
+        "from": "discord-pepper",
+        "urgency": "green",
+        "payload": {"kind": "TextMessage", "text": "did you see it?"},
+        "metadata": {"attachments": attachments},
+    }
+
+
+def test_render_attachment_success_line():
+    env = _text_env(
+        [
+            {
+                "filename": "IMG.png",
+                "url": "https://cdn/x",
+                "content_type": "image/png",
+                "size_bytes": 835 * 1024,
+                "local_path": r"C:\Users\jeffr\.agent-core\attachments\discord-pepper\env1\IMG.png",
+            }
+        ]
+    )
+    out = render_envelope(env)
+    assert "did you see it?" in out
+    assert "[attachment: IMG.png (image/png, 835 KB) " in out
+    assert r"env1\IMG.png" in out
+    assert "download failed" not in out
+
+
+def test_render_attachment_failure_line():
+    env = _text_env(
+        [
+            {
+                "filename": "clip.mov",
+                "url": "https://cdn/clip.mov",
+                "content_type": "video/quicktime",
+                "size_bytes": 22 * 1024 * 1024,
+                "local_path": None,
+                "download_error": "RuntimeError: timeout",
+            }
+        ]
+    )
+    out = render_envelope(env)
+    assert "clip.mov" in out
+    assert "download failed" in out
+    assert "https://cdn/clip.mov" in out
+
+
+def test_render_multi_attachment_order():
+    env = _text_env(
+        [
+            {"filename": "a.png", "url": "u1", "content_type": "image/png",
+             "size_bytes": 10, "local_path": "/p/a.png"},
+            {"filename": "b.png", "url": "u2", "content_type": "image/png",
+             "size_bytes": 20, "local_path": "/p/b.png"},
+        ]
+    )
+    out = render_envelope(env)
+    assert out.index("a.png") < out.index("b.png")
+
+
+def test_render_malformed_attachments_degrades_not_raises():
+    env = {
+        "id": "env2",
+        "kind": "TextMessage",
+        "from": "discord-pepper",
+        "urgency": "green",
+        "payload": {"kind": "TextMessage", "text": "hello"},
+        "metadata": {"attachments": "not-a-list"},
+    }
+    out = render_envelope(env)  # must not raise
+    assert "hello" in out
+    assert "render='fallback'" not in out  # text body preserved, not fallback
+
+
+def test_render_no_attachments_body_unchanged():
+    env = {
+        "id": "env3",
+        "kind": "TextMessage",
+        "from": "discord-pepper",
+        "urgency": "green",
+        "payload": {"kind": "TextMessage", "text": "plain"},
+        "metadata": {},
+    }
+    out = render_envelope(env)
+    assert out == "<inbox kind='TextMessage' from='discord-pepper' urgency='green' envelope_id='env3'>\nplain\n</inbox>"
