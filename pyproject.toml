@@ -44,6 +44,7 @@ extend-exclude = [
     ".venv",
     ".uv-cache-local",
     ".tmp",
+    "packages/agent-core-voice/vendor",
 ]
 
 [tool.ruff.lint]

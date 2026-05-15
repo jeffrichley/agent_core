@@ -8,7 +8,6 @@ from pathlib import Path
 
 import pytest
 import soundfile as sf
-
 from agent_core_voice.endpoint import SynthesisError, SynthesisSuccess, VoiceEndpoint
 from agent_core_voice.fake import FakeTTSBackend
 from agent_core_voice.protocol import VoiceInfo
@@ -19,7 +18,7 @@ def test_init_prepares_every_voice(tmp_path: Path, ref_wav: Path) -> None:
     backend = FakeTTSBackend()
     voices = {
         "alice": VoiceInfo(voice_id="alice", ref_wav=ref_wav, ref_text="hi alice"),
-        "bob":   VoiceInfo(voice_id="bob",   ref_wav=ref_wav, ref_text="hi bob"),
+        "bob": VoiceInfo(voice_id="bob", ref_wav=ref_wav, ref_text="hi bob"),
     }
     ep = VoiceEndpoint.for_test(
         backend=backend,
@@ -148,9 +147,7 @@ async def test_synthesize_safe_unprepared_voice(tmp_path: Path, ref_wav: Path) -
         output_dir=tmp_path / "out",
         audit_path=tmp_path / "audit.jsonl",
     )
-    result = await ep.synthesize_safe(
-        agent_name="v", voice_id="other", text="hello", seed=42
-    )
+    result = await ep.synthesize_safe(agent_name="v", voice_id="other", text="hello", seed=42)
     assert isinstance(result, SynthesisError)
     assert "not prepared" in result.message.lower()
 

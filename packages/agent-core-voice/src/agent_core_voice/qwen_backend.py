@@ -40,8 +40,8 @@ class QwenTTSBackend:
         attn_implementation: str = "sdpa",
     ) -> None:
         # Lazy imports — torch and qwen_tts only required for production.
-        import torch  # noqa: PLC0415
-        from qwen_tts import Qwen3TTSModel  # noqa: PLC0415
+        import torch
+        from qwen_tts import Qwen3TTSModel
 
         self._torch = torch
         self._device = device

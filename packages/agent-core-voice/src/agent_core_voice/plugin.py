@@ -48,9 +48,9 @@ def _resolve_claude_code_mcp_cls() -> type[Any]:
 
 @hookimpl
 def wire_endpoints_after_registration(
-    endpoints: "dict[str, Endpoint]",
+    endpoints: dict[str, Endpoint],
     raw_endpoint_configs: dict[str, dict[str, Any]],
-    services: "RunnerServices",
+    services: RunnerServices,
 ) -> None:
     """Mount voice tools on every MCP endpoint that names a voice + voice_id."""
     del services  # unused — kept for hookspec parity

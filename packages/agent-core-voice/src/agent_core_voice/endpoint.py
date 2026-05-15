@@ -85,7 +85,7 @@ class VoiceEndpoint:
                     "VoiceEndpoint requires either backend=... (tests) or "
                     "model_path=... (production with QwenTTSBackend)"
                 )
-            from agent_core_voice.qwen_backend import QwenTTSBackend  # noqa: PLC0415
+            from agent_core_voice.qwen_backend import QwenTTSBackend
 
             backend = QwenTTSBackend(
                 model_path=model_path,
@@ -125,7 +125,7 @@ class VoiceEndpoint:
         output_dir: Path | str,
         audit_path: Path | str,
         name: str = "voice_test",
-    ) -> "VoiceEndpoint":
+    ) -> VoiceEndpoint:
         """Test seam — same constructor, explicit name default."""
         return cls(
             name=name,
@@ -262,9 +262,7 @@ class VoiceEndpoint:
     async def deliver(self, envelope: Envelope) -> None:
         # Voice is tool-only; envelopes addressed to us are unexpected.
         # Log at debug, then ack so the bus doesn't redeliver or dead-letter.
-        log.debug(
-            "VoiceEndpoint(name=%s) ignoring delivered envelope %s", self._name, envelope.id
-        )
+        log.debug("VoiceEndpoint(name=%s) ignoring delivered envelope %s", self._name, envelope.id)
         if self._handle is not None:
             await self._handle.ack(envelope.id)
 

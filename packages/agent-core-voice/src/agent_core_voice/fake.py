@@ -45,15 +45,13 @@ class FakeTTSBackend:
         if not text or not text.strip():
             raise EmptyTextError("text is empty")
         if len(text) > self._max_text_len:
-            raise TextTooLongError(
-                f"text length {len(text)} exceeds budget {self._max_text_len}"
-            )
+            raise TextTooLongError(f"text length {len(text)} exceeds budget {self._max_text_len}")
 
         # Hash (voice_id, text, seed) -> sine-wave frequency in 200-800 Hz so
         # distinct inputs produce distinct audio. The '|' separator prevents
         # boundary-collision aliasing (e.g. ("v1", "23", 4) vs ("v1", "2", "34")).
         # Duration is proportional to text length so callers can assert on it.
-        key = f"{voice_id}|{text}|{seed}".encode("utf-8")
+        key = f"{voice_id}|{text}|{seed}".encode()
         digest = hashlib.sha256(key).digest()
         freq_hz = 200 + (int.from_bytes(digest[:4], "big") % 600)
         duration_s = max(0.25, min(5.0, 0.05 * len(text)))

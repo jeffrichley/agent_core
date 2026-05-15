@@ -7,7 +7,6 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 import pytest
-
 from agent_core_voice.audit import AuditEvent, AuditLog
 
 

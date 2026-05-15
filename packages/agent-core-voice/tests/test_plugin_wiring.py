@@ -7,12 +7,11 @@ from pathlib import Path
 from unittest.mock import MagicMock
 
 import pytest
-from fastmcp import FastMCP
-
 from agent_core_voice import plugin as voice_plugin
 from agent_core_voice.endpoint import VoiceEndpoint
 from agent_core_voice.fake import FakeTTSBackend
 from agent_core_voice.protocol import VoiceInfo
+from fastmcp import FastMCP
 
 
 def test_register_endpoint_types() -> None:
@@ -39,7 +38,7 @@ def two_agents(tmp_path: Path, ref_wav: Path):
         backend=FakeTTSBackend(),
         voices={
             "alice": VoiceInfo(voice_id="alice", ref_wav=ref_wav, ref_text="ra"),
-            "bob":   VoiceInfo(voice_id="bob",   ref_wav=ref_wav, ref_text="rb"),
+            "bob": VoiceInfo(voice_id="bob", ref_wav=ref_wav, ref_text="rb"),
         },
         output_dir=tmp_path / "out",
         audit_path=tmp_path / "audit.jsonl",
@@ -69,8 +68,11 @@ def test_wire_happy_path_appends_mounter(two_agents, monkeypatch: pytest.MonkeyP
     endpoints = {"voice": voice, "alice": alice_mcp, "bob": bob_mcp}
     raw = {
         "voice": {"type": "builtin.voice", "params": {}},
-        "alice": {"type": "builtin.claude_code_mcp", "params": {"voice": "voice", "voice_id": "alice"}},
-        "bob":   {"type": "builtin.claude_code_mcp", "params": {"voice": "voice", "voice_id": "bob"}},
+        "alice": {
+            "type": "builtin.claude_code_mcp",
+            "params": {"voice": "voice", "voice_id": "alice"},
+        },
+        "bob": {"type": "builtin.claude_code_mcp", "params": {"voice": "voice", "voice_id": "bob"}},
     }
     voice_plugin.wire_endpoints_after_registration(endpoints, raw, services=MagicMock())
 
@@ -85,7 +87,10 @@ def test_wire_unknown_voice_raises(two_agents, monkeypatch: pytest.MonkeyPatch) 
     endpoints = {"voice": voice, "alice": alice_mcp}
     raw = {
         "voice": {"type": "builtin.voice", "params": {}},
-        "alice": {"type": "builtin.claude_code_mcp", "params": {"voice": "voice", "voice_id": "nope"}},
+        "alice": {
+            "type": "builtin.claude_code_mcp",
+            "params": {"voice": "voice", "voice_id": "nope"},
+        },
     }
     with pytest.raises(ValueError) as exc:
         voice_plugin.wire_endpoints_after_registration(endpoints, raw, services=MagicMock())
@@ -98,7 +103,10 @@ def test_wire_missing_voice_endpoint_raises(two_agents, monkeypatch: pytest.Monk
 
     endpoints = {"alice": alice_mcp}
     raw = {
-        "alice": {"type": "builtin.claude_code_mcp", "params": {"voice": "voice", "voice_id": "alice"}},
+        "alice": {
+            "type": "builtin.claude_code_mcp",
+            "params": {"voice": "voice", "voice_id": "alice"},
+        },
     }
     with pytest.raises(ValueError) as exc:
         voice_plugin.wire_endpoints_after_registration(endpoints, raw, services=MagicMock())
@@ -119,9 +127,7 @@ def test_wire_omitted_voice_param_skips_mount(two_agents, monkeypatch: pytest.Mo
 
 
 @pytest.mark.asyncio
-async def test_mounter_closure_binds_per_agent(
-    two_agents, monkeypatch: pytest.MonkeyPatch
-) -> None:
+async def test_mounter_closure_binds_per_agent(two_agents, monkeypatch: pytest.MonkeyPatch) -> None:
     """After the mounter runs, alice's MCP exposes ONLY alice's voice via voice_info."""
     voice, alice_mcp, bob_mcp = two_agents
     _patch_isinstance_check(monkeypatch)
@@ -129,8 +135,11 @@ async def test_mounter_closure_binds_per_agent(
     endpoints = {"voice": voice, "alice": alice_mcp, "bob": bob_mcp}
     raw = {
         "voice": {"type": "builtin.voice", "params": {}},
-        "alice": {"type": "builtin.claude_code_mcp", "params": {"voice": "voice", "voice_id": "alice"}},
-        "bob":   {"type": "builtin.claude_code_mcp", "params": {"voice": "voice", "voice_id": "bob"}},
+        "alice": {
+            "type": "builtin.claude_code_mcp",
+            "params": {"voice": "voice", "voice_id": "alice"},
+        },
+        "bob": {"type": "builtin.claude_code_mcp", "params": {"voice": "voice", "voice_id": "bob"}},
     }
     voice_plugin.wire_endpoints_after_registration(endpoints, raw, services=MagicMock())
 

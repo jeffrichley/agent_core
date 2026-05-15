@@ -6,7 +6,6 @@ import dataclasses
 from pathlib import Path
 
 import pytest
-
 from agent_core_voice.protocol import (
     EmptyTextError,
     GPUOOMError,
