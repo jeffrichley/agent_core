@@ -110,6 +110,7 @@ class VoiceEndpoint:
         self._backend = backend
 
         # Normalize voices: yaml gives dict[str, dict]; tests give dict[str, VoiceInfo].
+        # Expand ~ in all paths so yaml configs can use "~/.agent-core/..." cleanly.
         normalized: dict[str, VoiceInfo] = {}
         for vid, raw in (voices or {}).items():
             if isinstance(raw, VoiceInfo):
@@ -117,14 +118,14 @@ class VoiceEndpoint:
             else:
                 normalized[vid] = VoiceInfo(
                     voice_id=vid,
-                    ref_wav=Path(raw["ref_wav"]),
+                    ref_wav=Path(raw["ref_wav"]).expanduser(),
                     ref_text=raw["ref_text"],
                     blend=raw.get("blend"),
                 )
         self._voices = normalized
 
-        self._output_dir = Path(output_dir)
-        self._audit = AuditLog(Path(audit_path))
+        self._output_dir = Path(output_dir).expanduser()
+        self._audit = AuditLog(Path(audit_path).expanduser())
         self._output_dir.mkdir(parents=True, exist_ok=True)
 
         for voice_id, info in self._voices.items():

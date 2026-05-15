@@ -169,6 +169,32 @@ async def test_audit_line_written_on_error(tmp_path: Path, ref_wav: Path) -> Non
     assert payload["duration_s"] is None
 
 
+def test_init_expands_tilde_in_paths(
+    tmp_path: Path, ref_wav: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """~ in output_dir / audit_path / voices[*].ref_wav expands to $HOME at construction."""
+    home = tmp_path / "fake-home"
+    home.mkdir()
+    # Move the ref_wav under fake home so we can reference it via ~.
+    new_ref = home / "ref.wav"
+    new_ref.write_bytes(ref_wav.read_bytes())
+    monkeypatch.setenv("HOME", str(home))
+    monkeypatch.setenv("USERPROFILE", str(home))
+
+    ep = VoiceEndpoint.for_test(
+        backend=FakeTTSBackend(),
+        voices={"v": {"ref_wav": "~/ref.wav", "ref_text": "r"}},
+        output_dir="~/voice-out",
+        audit_path="~/voice-out/audit.jsonl",
+    )
+
+    # output_dir landed under the expanded home — not at a literal ~ dir.
+    assert (home / "voice-out").is_dir()
+    # Voice info shows the EXPANDED ref_clip (not the original ~ string).
+    info = ep.voice_info("v")
+    assert info["ref_clip"] == str(new_ref)
+
+
 def test_init_requires_backend_or_model_path(tmp_path: Path) -> None:
     """Construction with neither backend= nor model_path= raises a clear ValueError."""
     with pytest.raises(ValueError, match="backend=.*model_path="):
