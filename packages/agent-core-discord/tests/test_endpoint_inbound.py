@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+from pathlib import Path
 
 import pytest
 from agent_core_discord.endpoint import DiscordEndpoint
@@ -632,3 +633,80 @@ async def test_inbound_to_outbound_routes_correctly_via_in_reply_to_only(monkeyp
         assert all(not a.payload.note.lower().startswith("error:") for a in acks)
     finally:
         await ep.stop()
+
+
+# --- _persist_attachment ---
+
+
+@pytest.mark.asyncio
+async def test_persist_attachment_writes_file_and_returns_path(monkeypatch, tmp_path):
+    from agent_core_discord.endpoint import DiscordEndpoint
+
+    ep = DiscordEndpoint(
+        name="discord-test",
+        target="agent-x",
+        token_env="X_TOKEN",
+        attachments_dir=tmp_path,
+    )
+
+    async def fake_download(url):
+        return b"PNGDATA", "image/png"
+
+    monkeypatch.setattr(ep, "_download_url", fake_download)
+
+    path = await ep._persist_attachment(
+        url="https://cdn.discordapp.com/a/pic.png", subdir="env-abc"
+    )
+    assert isinstance(path, Path)
+    assert path.read_bytes() == b"PNGDATA"
+    assert path.parent == (tmp_path / "env-abc").resolve()
+    assert path.name == "pic.png"
+
+
+@pytest.mark.asyncio
+async def test_persist_attachment_dedups_collision(monkeypatch, tmp_path):
+    from agent_core_discord.endpoint import DiscordEndpoint
+
+    ep = DiscordEndpoint(
+        name="discord-test",
+        target="agent-x",
+        token_env="X_TOKEN",
+        attachments_dir=tmp_path,
+    )
+
+    async def fake_download(url):
+        return b"DATA", "application/octet-stream"
+
+    monkeypatch.setattr(ep, "_download_url", fake_download)
+
+    p1 = await ep._persist_attachment(
+        url="https://cdn.discordapp.com/a/f.bin", subdir="env-1"
+    )
+    p2 = await ep._persist_attachment(
+        url="https://cdn.discordapp.com/b/f.bin", subdir="env-1"
+    )
+    assert p1 != p2
+    assert p1.read_bytes() == b"DATA"
+    assert p2.read_bytes() == b"DATA"
+
+
+@pytest.mark.asyncio
+async def test_persist_attachment_raises_on_download_failure(monkeypatch, tmp_path):
+    from agent_core_discord.endpoint import DiscordEndpoint
+
+    ep = DiscordEndpoint(
+        name="discord-test",
+        target="agent-x",
+        token_env="X_TOKEN",
+        attachments_dir=tmp_path,
+    )
+
+    async def boom(url):
+        raise RuntimeError("network down")
+
+    monkeypatch.setattr(ep, "_download_url", boom)
+
+    with pytest.raises(Exception):
+        await ep._persist_attachment(
+            url="https://cdn.discordapp.com/a/x.png", subdir="env-2"
+        )

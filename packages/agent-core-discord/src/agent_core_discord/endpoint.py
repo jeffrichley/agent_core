@@ -1466,44 +1466,58 @@ class DiscordEndpoint:
             resp.raise_for_status()
             return resp.content, resp.headers.get("content-type", "")
 
-    async def _download_attachments(self, args: _DownloadAttachmentsArgs) -> dict:
-        if not args.attachment_urls:
-            return {"saved": []}
-        target_dir = self.attachments_dir / args.message_id
+    async def _persist_attachment(self, *, url: str, subdir: str) -> Path:
+        """Download one URL into <attachments_dir>/<subdir>/ and return the
+        resolved path. Raises on download failure or unsafe path.
+
+        Shared by the download_attachments MCP tool (subdir=message_id) and
+        the inbound auto-download path (subdir=envelope_id).
+        """
+        target_dir = self.attachments_dir / subdir
         target_dir.mkdir(parents=True, exist_ok=True)
         target_resolved = target_dir.resolve()
-        saved: list[dict] = []
-        for url in args.attachment_urls:
-            filename = _safe_filename(url)
-            path = (target_dir / filename).resolve()
+        filename = _safe_filename(url)
+        path = (target_dir / filename).resolve()
+        try:
+            path.relative_to(target_resolved)
+        except ValueError as exc:
+            raise _ToolError(f"refused unsafe path for {url!r}") from exc
+        # De-dup so two URLs ending in the same name don't silently overwrite.
+        if path.exists():
+            stem, suffix = path.stem, path.suffix
+            path = (target_dir / f"{stem}-{uuid.uuid4().hex[:8]}{suffix}").resolve()
             try:
                 path.relative_to(target_resolved)
             except ValueError as exc:
-                raise _ToolError(f"download_attachments: refused unsafe path for {url!r}") from exc
-            # De-dup so two URLs ending in the same name don't silently overwrite.
-            if path.exists():
-                stem, suffix = path.stem, path.suffix
-                path = (target_dir / f"{stem}-{uuid.uuid4().hex[:8]}{suffix}").resolve()
-                try:
-                    path.relative_to(target_resolved)
-                except ValueError as exc:
-                    raise _ToolError(
-                        f"download_attachments: refused unsafe dedup path for {url!r}"
-                    ) from exc
+                raise _ToolError(f"refused unsafe dedup path for {url!r}") from exc
+        data, _content_type = await self._download_url(url)
+        path.write_bytes(data)
+        return path
+
+    async def _download_attachments(self, args: _DownloadAttachmentsArgs) -> dict:
+        if not args.attachment_urls:
+            return {"saved": []}
+        saved: list[dict] = []
+        for url in args.attachment_urls:
             try:
-                data, content_type = await self._download_url(url)
+                path = await self._persist_attachment(
+                    url=url, subdir=args.message_id
+                )
+            except _ToolError:
+                raise
             except Exception as exc:
                 raise _ToolError(f"download failed for {url}: {exc}") from exc
-            path.write_bytes(data)
+            data = path.read_bytes()
             saved.append(
                 {
                     "filename": path.name,
                     "path": str(path),
-                    # Content-Type from the HTTP response header — populated
-                    # so callers don't need a second ``fetch_messages`` round
-                    # trip just to learn what they downloaded. Empty string
-                    # if the server didn't send the header.
-                    "content_type": content_type,
+                    # content_type is now "" — _persist_attachment returns the
+                    # path only to stay a clean primitive. Agents that need the
+                    # declared type should use metadata["attachments"][].content_type
+                    # from the inbound envelope (Discord's value, more reliable
+                    # than the CDN response header). See #76 Task 2.
+                    "content_type": "",
                     "size_bytes": len(data),
                 }
             )
