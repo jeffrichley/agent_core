@@ -2,17 +2,22 @@
 
 from __future__ import annotations
 
+import hashlib
+import subprocess
 from pathlib import Path
+from unittest.mock import MagicMock
 
 import pytest
 
 from agent_core.daemon.install import (
     STAMP_FILENAME,
     InstallStamp,
+    UvNotFoundError,
     WorkspaceNotFoundError,
     build_uv_sync_command,
     find_workspace_root,
     read_stamp,
+    run_install,
     write_stamp,
 )
 
@@ -111,3 +116,123 @@ def test_build_uv_sync_command_with_extra(tmp_path: Path) -> None:
         "cu130",
     ]
     assert env_overrides == {"UV_PROJECT_ENVIRONMENT": str(venv)}
+
+
+# ---------------------------------------------------------------------------
+# Task 5: run_install() tests
+# ---------------------------------------------------------------------------
+
+
+def _make_workspace(tmp_path: Path) -> Path:
+    workspace = tmp_path / "repo"
+    workspace.mkdir()
+    (workspace / "pyproject.toml").write_text(
+        "[tool.uv.workspace]\nmembers = [\"packages/*\"]\n", encoding="utf-8"
+    )
+    (workspace / "uv.lock").write_text("# fake lock\n", encoding="utf-8")
+    return workspace
+
+
+def test_run_install_invokes_uv_venv_then_uv_sync(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    workspace = _make_workspace(tmp_path)
+    home = tmp_path / "home"
+    home.mkdir()
+
+    calls: list[list[str]] = []
+
+    def fake_run(cmd, **kwargs):
+        calls.append(list(cmd))
+        result = MagicMock()
+        result.returncode = 0
+        return result
+
+    monkeypatch.setattr("agent_core.daemon.install.subprocess.run", fake_run)
+    monkeypatch.setattr(
+        "agent_core.daemon.install._git_head_sha", lambda _ws: "abc1234"
+    )
+
+    run_install(home=home, workspace=workspace, extra="cu130", python_version="3.12")
+
+    # First call: uv venv ... --python 3.12
+    assert calls[0][:2] == ["uv", "venv"]
+    assert "--python" in calls[0]
+    assert "3.12" in calls[0]
+    # Second call: uv sync --frozen --no-editable --no-dev --extra cu130
+    assert calls[1] == [
+        "uv",
+        "sync",
+        "--frozen",
+        "--no-editable",
+        "--no-dev",
+        "--extra",
+        "cu130",
+    ]
+
+
+def test_run_install_writes_stamp_with_lock_hash(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    workspace = _make_workspace(tmp_path)
+    home = tmp_path / "home"
+    home.mkdir()
+
+    monkeypatch.setattr(
+        "agent_core.daemon.install.subprocess.run",
+        lambda cmd, **kwargs: MagicMock(returncode=0),
+    )
+    monkeypatch.setattr(
+        "agent_core.daemon.install._git_head_sha", lambda _ws: "abc1234"
+    )
+
+    run_install(home=home, workspace=workspace, extra=None, python_version="3.12")
+
+    stamp = read_stamp(home)
+    assert stamp is not None
+    assert stamp.installed_sha == "abc1234"
+    assert stamp.extra is None
+    # uv_lock_hash matches sha256 of the lock file content
+    expected_hash = (
+        "sha256:"
+        + hashlib.sha256((workspace / "uv.lock").read_bytes()).hexdigest()
+    )
+    assert stamp.uv_lock_hash == expected_hash
+
+
+def test_run_install_raises_uv_not_found_on_oserror(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    workspace = _make_workspace(tmp_path)
+    home = tmp_path / "home"
+    home.mkdir()
+
+    def fake_run(cmd, **kwargs):
+        raise FileNotFoundError(2, "No such file or directory", "uv")
+
+    monkeypatch.setattr("agent_core.daemon.install.subprocess.run", fake_run)
+
+    with pytest.raises(UvNotFoundError, match="uv not found on PATH"):
+        run_install(home=home, workspace=workspace, extra=None, python_version="3.12")
+
+
+def test_run_install_raises_on_uv_sync_failure(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    workspace = _make_workspace(tmp_path)
+    home = tmp_path / "home"
+    home.mkdir()
+
+    def fake_run(cmd, **kwargs):
+        # `uv venv` succeeds, `uv sync` fails.
+        if cmd[:2] == ["uv", "sync"]:
+            return MagicMock(returncode=1, stderr="resolution error")
+        return MagicMock(returncode=0)
+
+    monkeypatch.setattr("agent_core.daemon.install.subprocess.run", fake_run)
+    monkeypatch.setattr(
+        "agent_core.daemon.install._git_head_sha", lambda _ws: "abc1234"
+    )
+
+    with pytest.raises(subprocess.CalledProcessError):
+        run_install(home=home, workspace=workspace, extra=None, python_version="3.12")

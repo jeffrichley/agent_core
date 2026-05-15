@@ -7,9 +7,13 @@ out of the CLI module makes it directly unit-testable.
 
 from __future__ import annotations
 
+import hashlib
 import json
+import os
+import subprocess
 import tomllib
 from dataclasses import asdict, dataclass
+from datetime import datetime, timezone
 from pathlib import Path
 
 
@@ -107,3 +111,83 @@ def build_uv_sync_command(
         cmd += ["--extra", extra]
     env_overrides = {"UV_PROJECT_ENVIRONMENT": str(venv)}
     return cmd, env_overrides
+
+
+class UvNotFoundError(Exception):
+    """Raised when `uv` is not on PATH."""
+
+
+def _git_head_sha(workspace: Path) -> str:
+    """Return the short HEAD sha of the workspace repo, or 'unknown'."""
+    try:
+        result = subprocess.run(
+            ["git", "rev-parse", "--short", "HEAD"],
+            cwd=workspace,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+    except (OSError, FileNotFoundError):
+        return "unknown"
+    if result.returncode != 0:
+        return "unknown"
+    return result.stdout.strip() or "unknown"
+
+
+def compute_lock_hash(workspace: Path) -> str:
+    """SHA-256 of the workspace's uv.lock, prefixed with `sha256:`. Public:
+    `cli.py`'s `daemon status` reuses this for the lock-drift check.
+    """
+    lock = workspace / "uv.lock"
+    digest = hashlib.sha256(lock.read_bytes()).hexdigest()
+    return f"sha256:{digest}"
+
+
+def run_install(
+    *,
+    home: Path,
+    workspace: Path,
+    extra: str | None,
+    python_version: str,
+) -> InstallStamp:
+    """Populate `<home>/.venv/` and write the install stamp. Idempotent."""
+    venv = home / ".venv"
+
+    # Step 1: create / refresh the venv with the pinned Python.
+    venv_cmd = ["uv", "venv", str(venv), "--python", python_version]
+    try:
+        result = subprocess.run(venv_cmd, capture_output=True, text=True, check=False)
+    except FileNotFoundError as exc:
+        raise UvNotFoundError(
+            "uv not found on PATH — install uv first: "
+            "https://docs.astral.sh/uv/getting-started/installation/"
+        ) from exc
+    if result.returncode != 0:
+        raise subprocess.CalledProcessError(
+            result.returncode, venv_cmd, output=result.stdout, stderr=result.stderr
+        )
+
+    # Step 2: uv sync into that venv.
+    sync_cmd, env_overrides = build_uv_sync_command(venv=venv, extra=extra)
+    env = {**os.environ, **env_overrides}
+    sync_result = subprocess.run(
+        sync_cmd, cwd=workspace, env=env, capture_output=True, text=True, check=False
+    )
+    if sync_result.returncode != 0:
+        raise subprocess.CalledProcessError(
+            sync_result.returncode,
+            sync_cmd,
+            output=sync_result.stdout,
+            stderr=sync_result.stderr,
+        )
+
+    # Step 3: stamp it.
+    stamp = InstallStamp(
+        installed_at=datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+        installed_sha=_git_head_sha(workspace),
+        python_version=python_version,
+        extra=extra,
+        uv_lock_hash=compute_lock_hash(workspace),
+    )
+    write_stamp(home, stamp)
+    return stamp
