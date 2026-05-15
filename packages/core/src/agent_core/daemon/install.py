@@ -11,7 +11,7 @@ import tomllib
 from pathlib import Path
 
 
-class WorkspaceNotFoundError(RuntimeError):
+class WorkspaceNotFoundError(Exception):
     """Raised when find_workspace_root cannot locate a workspace pyproject.toml."""
 
 

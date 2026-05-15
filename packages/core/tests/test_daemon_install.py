@@ -40,3 +40,14 @@ def test_find_workspace_root_ignores_non_workspace_pyproject(tmp_path: Path) -> 
 def test_find_workspace_root_raises_when_absent(tmp_path: Path) -> None:
     with pytest.raises(WorkspaceNotFoundError, match="workspace"):
         find_workspace_root(tmp_path)
+
+
+def test_find_workspace_root_skips_malformed_toml(tmp_path: Path) -> None:
+    """A pyproject.toml with invalid TOML syntax is skipped, not an error."""
+    inner = tmp_path / "inner"
+    inner.mkdir()
+    (inner / "pyproject.toml").write_text("not = [ valid toml ???", encoding="utf-8")
+    (tmp_path / "pyproject.toml").write_text(
+        "[tool.uv.workspace]\nmembers = [\"inner\"]\n", encoding="utf-8"
+    )
+    assert find_workspace_root(inner) == tmp_path
