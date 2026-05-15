@@ -827,3 +827,36 @@ async def test_inbound_multi_attachment_distinct_paths(monkeypatch, tmp_path):
         assert Path(paths[2]).read_bytes() == b"THREE"
     finally:
         await ep.stop()
+
+
+@pytest.mark.asyncio
+async def test_inbound_download_error_redacts_signed_cdn_url(monkeypatch, tmp_path):
+    from agent_core_discord.testing.fakes import FakeChannel, FakeAttachment
+
+    ep, handle, fake = await _start_endpoint(monkeypatch)
+    ep.attachments_dir = tmp_path
+    fake.add_channel(FakeChannel(id="200"))
+
+    signed = "https://cdn.discordapp.com/a/x.png?ex=6641abcd&is=6640&hm=secretsig"
+
+    async def boom(url):
+        # Mirror httpx.raise_for_status() shape: signed URL inside the message.
+        raise RuntimeError(f"Client error '403 Forbidden' for url '{signed}'")
+
+    monkeypatch.setattr(ep, "_download_url", boom)
+
+    att = FakeAttachment(filename="x.png", url=signed, content_type="image/png", size=1)
+    msg = _msg(id="m-redact", attachments=[att])
+    msg.channel = fake.get_channel("200")
+    try:
+        await fake.fire("on_message", msg)
+        a0 = handle.published[0].metadata["attachments"][0]
+        err = a0["download_error"]
+        assert "hm=secretsig" not in err
+        assert "ex=6641abcd" not in err
+        assert "<redacted>" in err
+        assert "403 Forbidden" in err  # non-secret context preserved
+        # The signed url is still preserved verbatim in the url field (by design).
+        assert a0["url"] == signed
+    finally:
+        await ep.stop()

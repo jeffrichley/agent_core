@@ -212,6 +212,13 @@ def _safe_filename(url: str) -> str:
     return clean
 
 
+def _redact_url_qs(text: str) -> str:
+    """Strip query strings from any URL in a message so signed Discord CDN
+    tokens (?ex=&is=&hm=) never reach logs or persisted envelope metadata.
+    """
+    return re.sub(r"(https?://[^\s?]+)\?\S*", r"\1?<redacted>", text)
+
+
 class DiscordEndpoint:
     """Bus endpoint that bridges one Discord bot to one named agent (1:1)."""
 
@@ -938,12 +945,13 @@ class DiscordEndpoint:
                     entry["local_path"] = str(local)
                 except Exception as exc:  # noqa: BLE001 — best-effort by design
                     entry["local_path"] = None
-                    entry["download_error"] = f"{type(exc).__name__}: {exc}"
+                    safe_reason = _redact_url_qs(f"{type(exc).__name__}: {exc}")
+                    entry["download_error"] = safe_reason
                     log.warning(
                         "discord(%s): attachment download failed for %s — %s",
                         self.name,
                         entry.get("filename"),
-                        exc,
+                        safe_reason,
                     )
 
             metadata: dict[str, Any] = {
