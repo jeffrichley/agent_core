@@ -63,6 +63,7 @@ class VoiceEndpoint:
         self._voices: dict[str, VoiceInfo] = dict(voices)
         self._output_dir = Path(output_dir)
         self._audit = AuditLog(Path(audit_path))
+        self._handle: BusHandle | None = None
 
         self._output_dir.mkdir(parents=True, exist_ok=True)
 
@@ -110,14 +111,22 @@ class VoiceEndpoint:
         }
 
     # Endpoint protocol stubs (voice is tool-only — no envelope traffic).
-    async def deliver(self, envelope: "Envelope", bus: "BusHandle") -> None:
-        del envelope, bus  # voice publishes nothing
+    async def start(self, bus: BusHandle) -> None:
+        self._handle = bus
+        log.info("VoiceEndpoint(name=%s) started; output_dir=%s", self._name, self._output_dir)
 
-    async def start(self, bus: "BusHandle") -> None:
-        del bus
+    async def deliver(self, envelope: Envelope) -> None:
+        # Voice is tool-only; envelopes addressed to us are unexpected.
+        # Log at debug, then ack so the bus doesn't redeliver or dead-letter.
+        log.debug(
+            "VoiceEndpoint(name=%s) ignoring delivered envelope %s", self._name, envelope.id
+        )
+        if self._handle is not None:
+            await self._handle.ack(envelope.id)
 
     async def stop(self) -> None:
-        return None
+        self._handle = None
+        log.info("VoiceEndpoint(name=%s) stopped", self._name)
 
 
 __all__ = [
