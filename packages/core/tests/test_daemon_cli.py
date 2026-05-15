@@ -2,13 +2,17 @@
 
 from __future__ import annotations
 
+import sys
 import time
 from pathlib import Path
 
 import pytest
 from typer.testing import CliRunner
 
-from agent_core.daemon.cli import app as daemon_app
+from agent_core.daemon.cli import (
+    _daemon_python,
+    app as daemon_app,
+)
 from agent_core.daemon.supervisor import is_alive, read_pid
 
 runner = CliRunner()
@@ -91,16 +95,11 @@ endpoints:
     assert not pid_file.exists()
 
 
-from agent_core.daemon.cli import _daemon_python
-
-
 def test_daemon_python_returns_sys_executable_when_venv_missing(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     monkeypatch.setenv("AGENT_CORE_HOME", str(tmp_path))
     # No ~/.agent-core/.venv/ exists in tmp_path.
-    import sys
-
     assert _daemon_python() == sys.executable
 
 
@@ -108,8 +107,6 @@ def test_daemon_python_returns_daemon_venv_python_when_present(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     monkeypatch.setenv("AGENT_CORE_HOME", str(tmp_path))
-    import sys
-
     if sys.platform == "win32":
         venv_python = tmp_path / ".venv" / "Scripts" / "python.exe"
     else:
