@@ -216,6 +216,25 @@ def test_run_install_raises_uv_not_found_on_oserror(
         run_install(home=home, workspace=workspace, extra=None, python_version="3.12")
 
 
+def test_run_install_raises_on_uv_venv_failure(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """uv venv non-zero exit (e.g., requested Python version unavailable) raises."""
+    workspace = _make_workspace(tmp_path)
+    home = tmp_path / "home"
+    home.mkdir()
+
+    def fake_run(cmd, **kwargs):
+        if cmd[:2] == ["uv", "venv"]:
+            return MagicMock(returncode=1, stderr="python 99.99 not found")
+        return MagicMock(returncode=0)
+
+    monkeypatch.setattr("agent_core.daemon.install.subprocess.run", fake_run)
+
+    with pytest.raises(subprocess.CalledProcessError):
+        run_install(home=home, workspace=workspace, extra=None, python_version="99.99")
+
+
 def test_run_install_raises_on_uv_sync_failure(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

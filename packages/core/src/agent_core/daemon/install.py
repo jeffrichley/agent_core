@@ -13,7 +13,7 @@ import os
 import subprocess
 import tomllib
 from dataclasses import asdict, dataclass
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 
 
@@ -183,7 +183,7 @@ def run_install(
 
     # Step 3: stamp it.
     stamp = InstallStamp(
-        installed_at=datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+        installed_at=datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ"),
         installed_sha=_git_head_sha(workspace),
         python_version=python_version,
         extra=extra,
