@@ -15,7 +15,6 @@ import pytest
 
 from agent_core.daemon.install import read_stamp, run_install
 
-
 pytestmark = pytest.mark.slow
 
 

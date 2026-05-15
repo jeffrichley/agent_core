@@ -58,6 +58,8 @@ If `daemon install` fails (uv error, missing workspace, etc.), the daemon
 stays stopped and the error surfaces. Fix the underlying issue and re-run
 `daemon refresh`.
 
+> **Note:** `daemon refresh` assumes a prior `daemon install` has already been run and recorded your `--extra` choice in the stamp file. If this is your first time setting up the daemon, run `daemon install --extra <x>` (e.g., `--extra cu130`) first — otherwise `refresh` will install with no extras (CPU-only torch).
+
 ## Why this exists
 
 Before this change, the daemon ran from `<workspace>/.venv/Scripts/python.exe`

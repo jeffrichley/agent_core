@@ -14,6 +14,8 @@ from typer.testing import CliRunner
 
 from agent_core.daemon.cli import (
     _daemon_python,
+)
+from agent_core.daemon.cli import (
     app as daemon_app,
 )
 from agent_core.daemon.supervisor import is_alive, read_pid

@@ -79,7 +79,7 @@ The combination is the heart of the isolation:
 
 **Install scope:** full workspace + GPU extras. The daemon imports every endpoint type configured in `~/.agent-core/agent_core.yaml` (voice, webcam, discord, briefs, scheduler, handoff-jobs, stub, claude-code-mcp), so the daemon venv must contain all of them. With voice in the workspace this means cu130 torch + transformers + qwen-tts ≈ 6–7 GB on disk. This is one-time cost; refresh is a delta operation.
 
-**Workspace root discovery:** the install command ascends from `agent_core.__file__` until it finds a `pyproject.toml` containing `[tool.uv.workspace]`. If absent (e.g., `daemon install` invoked from outside the repo), it errors with a clear "couldn't find workspace root — run from within the agent-core repo."
+**Workspace root discovery:** the install command ascends from `Path.cwd()` until it finds a `pyproject.toml` containing `[tool.uv.workspace]`. The user must invoke `daemon install` from within the agent-core repo. If the workspace root cannot be found (e.g., invoked from an unrelated directory), it errors with a clear "couldn't find workspace root — run from within the agent-core repo."
 
 **Python version:** `--python` defaults to `3.12` (matching the workspace's `requires-python`). Pinning prevents Python version drift between dev and daemon, which would otherwise be a hidden bug surface.
 
@@ -166,7 +166,7 @@ The daemon supervises both Pepper and testbot in a single process, so the migrat
 
 1. `_daemon_python()` returns the daemon-venv interpreter when the file exists at the expected path; returns `sys.executable` otherwise. Cross-platform branch covered via `sys.platform` monkeypatch.
 2. `daemon install` refuses when a daemon is running. Mock `is_alive=True`, assert `typer.Exit(code=1)` and the error message names both `stop` and `refresh` as remediation.
-3. `daemon install` workspace-root discovery — given a tmp tree containing a `pyproject.toml` with `[tool.uv.workspace]`, ascends correctly from a deep `agent_core.__file__` mock. Errors clearly when no workspace is found.
+3. `daemon install` workspace-root discovery — given a tmp tree containing a `pyproject.toml` with `[tool.uv.workspace]`, ascends correctly from a deep `Path.cwd()` mock. Errors clearly when no workspace is found.
 4. `daemon install` issues the expected `uv venv` and `uv sync` commands (mocked subprocess). Assert `--frozen`, `--no-editable`, `UV_PROJECT_ENVIRONMENT`, and the right `--extra` propagation.
 5. `daemon install` writes the stamp file with all five fields populated. Subsequent installs update the stamp in place.
 6. `daemon refresh` calls `stop` → `install` → `start` in order. If `install` raises, `start` is never called and the exception propagates.
