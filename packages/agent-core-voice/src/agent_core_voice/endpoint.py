@@ -27,7 +27,15 @@ from typing import TYPE_CHECKING, Any
 import soundfile as sf
 
 from agent_core_voice.audit import AuditEvent, AuditLog
-from agent_core_voice.protocol import TTSBackend, VoiceInfo
+from agent_core_voice.protocol import (
+    EmptyTextError,
+    GPUOOMError,
+    TextTooLongError,
+    TTSBackend,
+    VoiceError,
+    VoiceInfo,
+    VoiceNotPreparedError,
+)
 
 if TYPE_CHECKING:
     from agent_core.bus.envelope import Envelope
@@ -127,16 +135,24 @@ class VoiceEndpoint:
         """Synthesize text in ``voice_id``, write the wav, append audit, return envelope.
 
         Never raises. All failures land as ``SynthesisError(message=...)``.
-        (Error mapping is added in Task 7; this method body currently assumes the
-        happy path.)
         """
         now = datetime.now(UTC)
-        wav_bytes, generation_s = await asyncio.to_thread(
-            self._backend.synthesize, voice_id, text, seed
-        )
-        duration_s, _ = self._wav_duration(wav_bytes)
-        path = self._next_output_path(agent_name, seed, text, now)
-        await asyncio.to_thread(path.write_bytes, wav_bytes)
+        try:
+            wav_bytes, generation_s = await asyncio.to_thread(
+                self._backend.synthesize, voice_id, text, seed
+            )
+        except VoiceError as exc:
+            return await self._record_error(now, agent_name, voice_id, text, seed, exc)
+        except Exception as exc:  # defensive — unknown backend failure
+            log.exception("voice backend raised unexpected exception")
+            return await self._record_error(now, agent_name, voice_id, text, seed, exc)
+
+        try:
+            duration_s, _ = self._wav_duration(wav_bytes)
+            path = self._next_output_path(agent_name, seed, text, now)
+            await asyncio.to_thread(path.write_bytes, wav_bytes)
+        except OSError as exc:
+            return await self._record_error(now, agent_name, voice_id, text, seed, exc)
 
         await self._audit.write(
             AuditEvent(
@@ -156,6 +172,45 @@ class VoiceEndpoint:
             duration_s=duration_s,
             generation_s=generation_s,
         )
+
+    async def _record_error(
+        self,
+        now: datetime,
+        agent_name: str,
+        voice_id: str,
+        text: str,
+        seed: int,
+        exc: BaseException,
+    ) -> SynthesisError:
+        message = self._error_message(exc)
+        await self._audit.write(
+            AuditEvent(
+                timestamp=now,
+                agent=agent_name,
+                voice_id=voice_id,
+                text_len=len(text),
+                seed=seed,
+                duration_s=None,
+                generation_s=None,
+                wav_path=None,
+                error=message,
+            )
+        )
+        return SynthesisError(message=message)
+
+    @staticmethod
+    def _error_message(exc: BaseException) -> str:
+        if isinstance(exc, EmptyTextError):
+            return "text is empty"
+        if isinstance(exc, TextTooLongError):
+            return f"text exceeds model budget ({exc})"
+        if isinstance(exc, GPUOOMError):
+            return "GPU is out of memory; try again in a moment"
+        if isinstance(exc, VoiceNotPreparedError):
+            return str(exc)
+        if isinstance(exc, OSError):
+            return f"output directory is not writable: {exc}"
+        return f"synthesis failed: {exc}"
 
     def _next_output_path(self, agent_name: str, seed: int, text: str, now: datetime) -> Path:
         day = now.strftime("%Y-%m-%d")

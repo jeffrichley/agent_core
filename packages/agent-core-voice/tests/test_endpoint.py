@@ -2,13 +2,14 @@
 
 from __future__ import annotations
 
+import json
 import re
 from pathlib import Path
 
 import pytest
 import soundfile as sf
 
-from agent_core_voice.endpoint import SynthesisSuccess, VoiceEndpoint
+from agent_core_voice.endpoint import SynthesisError, SynthesisSuccess, VoiceEndpoint
 from agent_core_voice.fake import FakeTTSBackend
 from agent_core_voice.protocol import VoiceInfo
 
@@ -109,3 +110,63 @@ async def test_synthesize_output_path_layout(tmp_path: Path, ref_wav: Path) -> N
     assert parts[0] == "alice"
     assert re.fullmatch(r"\d{4}-\d{2}-\d{2}", parts[1])
     assert re.fullmatch(r"\d{8}T\d{6}_\d{6}-42-[0-9a-f]{8}\.wav", parts[2])
+
+
+@pytest.mark.asyncio
+async def test_synthesize_safe_empty_text_returns_error(tmp_path: Path, ref_wav: Path) -> None:
+    ep = VoiceEndpoint.for_test(
+        backend=FakeTTSBackend(),
+        voices={"v": VoiceInfo(voice_id="v", ref_wav=ref_wav, ref_text="r")},
+        output_dir=tmp_path / "out",
+        audit_path=tmp_path / "audit.jsonl",
+    )
+    result = await ep.synthesize_safe(agent_name="v", voice_id="v", text="", seed=42)
+    assert isinstance(result, SynthesisError)
+    assert "empty" in result.message.lower()
+
+
+@pytest.mark.asyncio
+async def test_synthesize_safe_text_too_long(tmp_path: Path, ref_wav: Path) -> None:
+    ep = VoiceEndpoint.for_test(
+        backend=FakeTTSBackend(max_text_len=5),
+        voices={"v": VoiceInfo(voice_id="v", ref_wav=ref_wav, ref_text="r")},
+        output_dir=tmp_path / "out",
+        audit_path=tmp_path / "audit.jsonl",
+    )
+    result = await ep.synthesize_safe(
+        agent_name="v", voice_id="v", text="this is too long", seed=42
+    )
+    assert isinstance(result, SynthesisError)
+    assert "exceeds" in result.message.lower() or "too long" in result.message.lower()
+
+
+@pytest.mark.asyncio
+async def test_synthesize_safe_unprepared_voice(tmp_path: Path, ref_wav: Path) -> None:
+    ep = VoiceEndpoint.for_test(
+        backend=FakeTTSBackend(),
+        voices={"v": VoiceInfo(voice_id="v", ref_wav=ref_wav, ref_text="r")},
+        output_dir=tmp_path / "out",
+        audit_path=tmp_path / "audit.jsonl",
+    )
+    result = await ep.synthesize_safe(
+        agent_name="v", voice_id="other", text="hello", seed=42
+    )
+    assert isinstance(result, SynthesisError)
+    assert "not prepared" in result.message.lower()
+
+
+@pytest.mark.asyncio
+async def test_audit_line_written_on_error(tmp_path: Path, ref_wav: Path) -> None:
+    audit_path = tmp_path / "audit.jsonl"
+    ep = VoiceEndpoint.for_test(
+        backend=FakeTTSBackend(),
+        voices={"v": VoiceInfo(voice_id="v", ref_wav=ref_wav, ref_text="r")},
+        output_dir=tmp_path / "out",
+        audit_path=audit_path,
+    )
+    await ep.synthesize_safe(agent_name="v", voice_id="v", text="", seed=42)
+
+    payload = json.loads(audit_path.read_text("utf-8").strip())
+    assert payload["error"] is not None
+    assert payload["wav_path"] is None
+    assert payload["duration_s"] is None
