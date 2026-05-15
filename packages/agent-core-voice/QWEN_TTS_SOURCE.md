@@ -8,7 +8,8 @@ vendor a known-good snapshot. The local working copy at
 `022e286b98fbec7e1e916cb940cdf532cd9f488e` ("fix finetuning bug") of
 `QwenLM/Qwen3-TTS`, and was copied verbatim into `vendor/Qwen3-TTS/` (full
 project root including `LICENSE`, `pyproject.toml`, and the `qwen_tts/`
-package; `.git/` and `qwen_tts.egg-info/` were stripped). The package is wired
+package; `.git/`, `qwen_tts.egg-info/`, and stray `.DS_Store` files were
+stripped). The package is wired
 in via `qwen-tts = { path = "vendor/Qwen3-TTS", editable = false }` in this
 package's `pyproject.toml`. To refresh: re-copy from the upstream working tree
 and update the commit SHA above.

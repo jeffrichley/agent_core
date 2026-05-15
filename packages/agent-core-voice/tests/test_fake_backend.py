@@ -5,6 +5,7 @@ from __future__ import annotations
 import io
 from pathlib import Path
 
+import numpy as np
 import pytest
 import soundfile as sf
 
@@ -87,3 +88,4 @@ def test_synthesize_returns_valid_wav(ref_wav: Path) -> None:
     assert data.ndim == 1
     assert len(data) > 0
     assert generation_s >= 0.0
+    assert np.any(data != 0), "fake should produce non-silent audio"

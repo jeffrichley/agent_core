@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import dataclasses
 from pathlib import Path
 
 import pytest
@@ -32,7 +33,7 @@ def test_voice_info_is_frozen_dataclass() -> None:
         ref_text="hi",
         blend="test",
     )
-    with pytest.raises(Exception):  # FrozenInstanceError
+    with pytest.raises(dataclasses.FrozenInstanceError):
         info.voice_id = "y"  # type: ignore[misc]
 
 

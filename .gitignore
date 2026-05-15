@@ -230,5 +230,8 @@ marimo/_lsp/
 __marimo__/
 .gstack/
 
+# macOS Finder metadata (occasionally sneaks in via vendored sources)
+.DS_Store
+
 # Operational docs that must not live in source control
 pepper-vault-plan.txt
