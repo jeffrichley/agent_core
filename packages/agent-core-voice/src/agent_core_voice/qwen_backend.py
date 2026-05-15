@@ -45,6 +45,11 @@ class QwenTTSBackend:
 
         self._torch = torch
         self._device = device
+        if device.startswith("cuda") and not torch.cuda.is_available():
+            raise RuntimeError(
+                f"VoiceEndpoint configured device={device!r} but CUDA is not available "
+                "on this host. Set device='cpu' (slow but works) or fix the CUDA install."
+            )
         log.info(
             "loading Qwen3-TTS: model_path=%s device=%s attn=%s",
             model_path,
