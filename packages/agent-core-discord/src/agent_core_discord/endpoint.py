@@ -905,7 +905,7 @@ class DiscordEndpoint:
                 if added:
                     self._track_pending_ack(str(message.id), ack_emoji, str(message.channel.id))
 
-            # 5. Collect attachment metadata (no auto-download).
+            # 5. Collect attachment metadata.
             attachments: list[dict[str, Any]] = []
             for att in getattr(message, "attachments", []) or []:
                 attachments.append(
@@ -922,6 +922,30 @@ class DiscordEndpoint:
             #    The sigil is stripped from the published payload text. See issue #38.
             urgency, text = parse_sigil(message.content or "")
 
+            # Mint the envelope id up front so attachment files can be grouped
+            # under <attachments_dir>/<envelope_id>/ and enrichment happens
+            # before Envelope(...) construction (avoids pydantic copy aliasing).
+            env_id = uuid.uuid4().hex
+
+            # 5b. Auto-download each attachment (best-effort, per-attachment).
+            #     Failure never blocks or loses the text message: the dict
+            #     keeps its CDN url and gains a download_error marker.
+            for entry in attachments:
+                try:
+                    local, _nbytes = await self._persist_attachment(
+                        url=entry["url"], subdir=env_id
+                    )
+                    entry["local_path"] = str(local)
+                except Exception as exc:  # noqa: BLE001 — best-effort by design
+                    entry["local_path"] = None
+                    entry["download_error"] = f"{type(exc).__name__}: {exc}"
+                    log.warning(
+                        "discord(%s): attachment download failed for %s — %s",
+                        self.name,
+                        entry.get("filename"),
+                        exc,
+                    )
+
             metadata: dict[str, Any] = {
                 "discord": {
                     "channel_id": str(message.channel.id),
@@ -936,7 +960,7 @@ class DiscordEndpoint:
                 metadata["attachments"] = attachments
 
             env = Envelope(
-                id=uuid.uuid4().hex,
+                id=env_id,
                 correlation_id=uuid.uuid4().hex,
                 to=self.target,
                 kind="TextMessage",
@@ -1512,11 +1536,12 @@ class DiscordEndpoint:
                 {
                     "filename": path.name,
                     "path": str(path),
-                    # content_type is now "" — _persist_attachment returns the
-                    # path only to stay a clean primitive. Agents that need the
-                    # declared type should use metadata["attachments"][].content_type
-                    # from the inbound envelope (Discord's value, more reliable
-                    # than the CDN response header). See #76 Task 2.
+                    # content_type is now "" — _persist_attachment returns
+                    # (path, nbytes) and does not surface the CDN response
+                    # content-type. Agents that need the declared type should
+                    # use metadata["attachments"][].content_type from the
+                    # inbound envelope (Discord's value, more reliable than
+                    # the CDN response header). See #76 Task 2.
                     "content_type": "",
                     "size_bytes": nbytes,
                 }

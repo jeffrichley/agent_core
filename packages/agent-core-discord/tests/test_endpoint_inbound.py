@@ -135,27 +135,36 @@ async def test_on_message_holds_typing_until_ack_cleared(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_on_message_attachments_metadata(monkeypatch):
+async def test_on_message_attachments_metadata(monkeypatch, tmp_path):
+    from agent_core_discord.testing.fakes import FakeAttachment
+
     ep, handle, fake = await _start_endpoint(monkeypatch)
+    ep.attachments_dir = tmp_path
     fake.add_channel(FakeChannel(id="200"))
-    att = type("A", (), {})()
-    att.filename = "file.pdf"
-    att.url = "https://example.com/file.pdf"
-    att.content_type = "application/pdf"
-    att.size = 1024
+
+    async def fake_download(url):
+        return b"PDFDATA", "application/pdf"
+
+    monkeypatch.setattr(ep, "_download_url", fake_download)
+
+    att = FakeAttachment(
+        filename="file.pdf",
+        url="https://example.com/file.pdf",
+        content_type="application/pdf",
+        size=1024,
+    )
     msg = _msg(id="m-att", attachments=[att])
     msg.channel = fake.get_channel("200")
     try:
         await fake.fire("on_message", msg)
         env = handle.published[0]
-        assert env.metadata["attachments"] == [
-            {
-                "filename": "file.pdf",
-                "url": "https://example.com/file.pdf",
-                "content_type": "application/pdf",
-                "size_bytes": 1024,
-            }
-        ]
+        a0 = env.metadata["attachments"][0]
+        assert a0["filename"] == "file.pdf"
+        assert a0["url"] == "https://example.com/file.pdf"
+        assert a0["content_type"] == "application/pdf"
+        assert a0["size_bytes"] == 1024
+        assert a0["local_path"] is not None
+        assert Path(a0["local_path"]).read_bytes() == b"PDFDATA"
     finally:
         await ep.stop()
 
@@ -711,3 +720,110 @@ async def test_persist_attachment_raises_on_download_failure(monkeypatch, tmp_pa
         await ep._persist_attachment(
             url="https://cdn.discordapp.com/a/x.png", subdir="env-2"
         )
+
+
+@pytest.mark.asyncio
+async def test_inbound_autodownloads_and_enriches_metadata(monkeypatch, tmp_path):
+    from agent_core_discord.testing.fakes import FakeChannel, FakeAttachment
+
+    ep, handle, fake = await _start_endpoint(monkeypatch)
+    ep.attachments_dir = tmp_path
+    fake.add_channel(FakeChannel(id="200"))
+
+    async def fake_download(url):
+        return b"IMGBYTES", "image/png"
+
+    monkeypatch.setattr(ep, "_download_url", fake_download)
+
+    att = FakeAttachment(
+        filename="pic.png",
+        url="https://cdn.discordapp.com/a/pic.png?ex=deadbeef",
+        content_type="image/png",
+        size=8,
+    )
+    msg = _msg(id="m-att", attachments=[att])
+    msg.channel = fake.get_channel("200")
+    try:
+        await fake.fire("on_message", msg)
+        env = handle.published[0]
+        a0 = env.metadata["attachments"][0]
+        assert a0["filename"] == "pic.png"
+        assert a0["url"] == "https://cdn.discordapp.com/a/pic.png?ex=deadbeef"
+        assert a0["content_type"] == "image/png"
+        assert a0["size_bytes"] == 8
+        assert a0["local_path"] is not None
+        assert "download_error" not in a0
+        assert Path(a0["local_path"]).read_bytes() == b"IMGBYTES"
+        assert env.id in a0["local_path"]
+    finally:
+        await ep.stop()
+
+
+@pytest.mark.asyncio
+async def test_inbound_download_failure_degrades_url_only(monkeypatch, tmp_path):
+    from agent_core_discord.testing.fakes import FakeChannel, FakeAttachment
+
+    ep, handle, fake = await _start_endpoint(monkeypatch)
+    ep.attachments_dir = tmp_path
+    fake.add_channel(FakeChannel(id="200"))
+
+    async def boom(url):
+        raise RuntimeError("timeout")
+
+    monkeypatch.setattr(ep, "_download_url", boom)
+
+    att = FakeAttachment(
+        filename="clip.mov",
+        url="https://cdn.discordapp.com/a/clip.mov",
+        content_type="video/quicktime",
+        size=999,
+    )
+    msg = _msg(id="m-fail", content="did you see it?", attachments=[att])
+    msg.channel = fake.get_channel("200")
+    try:
+        await fake.fire("on_message", msg)
+        env = handle.published[0]
+        assert env.payload.text == "did you see it?"
+        a0 = env.metadata["attachments"][0]
+        assert a0["local_path"] is None
+        assert "timeout" in a0["download_error"]
+        assert a0["url"] == "https://cdn.discordapp.com/a/clip.mov"
+    finally:
+        await ep.stop()
+
+
+@pytest.mark.asyncio
+async def test_inbound_multi_attachment_distinct_paths(monkeypatch, tmp_path):
+    from agent_core_discord.testing.fakes import FakeChannel, FakeAttachment
+
+    ep, handle, fake = await _start_endpoint(monkeypatch)
+    ep.attachments_dir = tmp_path
+    fake.add_channel(FakeChannel(id="200"))
+
+    payloads = {
+        "https://cdn.discordapp.com/a/one.png": b"ONE",
+        "https://cdn.discordapp.com/a/two.png": b"TWO",
+        "https://cdn.discordapp.com/a/three.png": b"THREE",
+    }
+
+    async def fake_download(url):
+        return payloads[url], "image/png"
+
+    monkeypatch.setattr(ep, "_download_url", fake_download)
+
+    atts = [
+        FakeAttachment(filename=f"{n}.png", url=u, content_type="image/png", size=len(b))
+        for (u, b), n in zip(payloads.items(), ["one", "two", "three"])
+    ]
+    msg = _msg(id="m-multi", attachments=atts)
+    msg.channel = fake.get_channel("200")
+    try:
+        await fake.fire("on_message", msg)
+        env = handle.published[0]
+        paths = [a["local_path"] for a in env.metadata["attachments"]]
+        assert len(paths) == 3
+        assert len(set(paths)) == 3
+        assert Path(paths[0]).read_bytes() == b"ONE"
+        assert Path(paths[2]).read_bytes() == b"THREE"
+    finally:
+        await ep.stop()
