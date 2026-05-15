@@ -17,6 +17,9 @@ memory-compiler/scripts/flush-context-*.md
 # Agent-core runtime state (handoffs, bus.sqlite, transcripts, etc.)
 .agent-core/
 
+# Local scratch / smoke-test artifacts
+.tmp/
+
 # Claude Code per-machine local overrides
 .claude/settings.local.json
 .claude/*.lock
