@@ -7,7 +7,6 @@ dependencies = [
     "agent-core",
     "fastmcp>=2.0",
     "pluggy>=1.6",
-    "pydantic>=2.7",
     "soundfile>=0.13",
     "qwen-tts",
 ]
