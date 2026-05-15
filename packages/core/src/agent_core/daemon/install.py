@@ -7,7 +7,9 @@ out of the CLI module makes it directly unit-testable.
 
 from __future__ import annotations
 
+import json
 import tomllib
+from dataclasses import asdict, dataclass
 from pathlib import Path
 
 
@@ -39,3 +41,47 @@ def find_workspace_root(start: Path) -> Path:
                 "Run `agent-core daemon install` from within the agent-core repo."
             )
         candidate = parent
+
+
+STAMP_FILENAME = ".daemon-install-stamp.json"
+
+
+@dataclass(frozen=True)
+class InstallStamp:
+    """Captures what was installed into the daemon venv, when, and from where."""
+
+    installed_at: str  # ISO 8601 UTC
+    installed_sha: str  # git rev-parse HEAD at install time
+    python_version: str  # e.g., "3.12.5"
+    extra: str | None  # uv extra name, or None
+    uv_lock_hash: str  # sha256 of uv.lock at install time
+
+
+def write_stamp(home: Path, stamp: InstallStamp) -> None:
+    """Write the install stamp to <home>/.daemon-install-stamp.json."""
+    home.mkdir(parents=True, exist_ok=True)
+    (home / STAMP_FILENAME).write_text(
+        json.dumps(asdict(stamp), indent=2) + "\n",
+        encoding="utf-8",
+    )
+
+
+def read_stamp(home: Path) -> InstallStamp | None:
+    """Read the install stamp. None on missing, corrupt, or schema-incomplete."""
+    path = home / STAMP_FILENAME
+    if not path.exists():
+        return None
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, OSError):
+        return None
+    try:
+        return InstallStamp(
+            installed_at=data["installed_at"],
+            installed_sha=data["installed_sha"],
+            python_version=data["python_version"],
+            extra=data.get("extra"),
+            uv_lock_hash=data["uv_lock_hash"],
+        )
+    except (KeyError, TypeError):
+        return None

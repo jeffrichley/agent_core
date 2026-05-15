@@ -6,7 +6,14 @@ from pathlib import Path
 
 import pytest
 
-from agent_core.daemon.install import WorkspaceNotFoundError, find_workspace_root
+from agent_core.daemon.install import (
+    STAMP_FILENAME,
+    InstallStamp,
+    WorkspaceNotFoundError,
+    find_workspace_root,
+    read_stamp,
+    write_stamp,
+)
 
 
 def test_find_workspace_root_walks_up_to_pyproject(tmp_path: Path) -> None:
@@ -51,3 +58,33 @@ def test_find_workspace_root_skips_malformed_toml(tmp_path: Path) -> None:
         "[tool.uv.workspace]\nmembers = [\"inner\"]\n", encoding="utf-8"
     )
     assert find_workspace_root(inner) == tmp_path
+
+
+def test_write_then_read_stamp_round_trips(tmp_path: Path) -> None:
+    stamp = InstallStamp(
+        installed_at="2026-05-15T19:31:04Z",
+        installed_sha="42713d7",
+        python_version="3.12.5",
+        extra="cu130",
+        uv_lock_hash="sha256:abc",
+    )
+    write_stamp(tmp_path, stamp)
+
+    assert (tmp_path / STAMP_FILENAME).exists()
+    assert read_stamp(tmp_path) == stamp
+
+
+def test_read_stamp_returns_none_when_missing(tmp_path: Path) -> None:
+    assert read_stamp(tmp_path) is None
+
+
+def test_read_stamp_returns_none_when_corrupt(tmp_path: Path) -> None:
+    (tmp_path / STAMP_FILENAME).write_text("not json", encoding="utf-8")
+    assert read_stamp(tmp_path) is None
+
+
+def test_read_stamp_returns_none_when_missing_fields(tmp_path: Path) -> None:
+    (tmp_path / STAMP_FILENAME).write_text(
+        '{"installed_at": "2026-05-15T19:31:04Z"}', encoding="utf-8"
+    )
+    assert read_stamp(tmp_path) is None
