@@ -1,8 +1,8 @@
-"""Append-only JSONL audit log for webcam tool invocations.
+"""Append-only JSONL audit log for voice synthesis calls.
 
-Each ``capture_webcam_frame`` and ``list_cameras`` call writes one line.
-Schema is documented in the design spec. Failures are swallowed so an
-audit failure never breaks a capture.
+One line per ``synthesize_speech`` call (success or failure). Schema is
+documented in the design spec. Audit-write failures are swallowed so an
+audit problem never breaks a synthesis call.
 """
 
 from __future__ import annotations
@@ -14,42 +14,41 @@ import sys
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
-from typing import Any
 
 log = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
 class AuditEvent:
-    """One line in the webcam audit log."""
+    """One line in the voice audit log."""
 
     timestamp: datetime
-    tool: str
-    result: str  # "ok" | "error"
-    data: dict[str, Any]
+    agent: str
+    voice_id: str
+    text_len: int
+    seed: int
+    duration_s: float | None
+    generation_s: float | None
+    wav_path: str | None
+    error: str | None
 
 
 class AuditLog:
     """Append-only JSONL audit log."""
 
-    def __init__(self, path: Path):
+    def __init__(self, path: Path) -> None:
         self._path = Path(path)
 
     @property
     def path(self) -> Path:
         return self._path
 
-    @staticmethod
-    def default_path(endpoint_name: str) -> Path:
-        """Returns ``~/.agent-core/webcam/<endpoint_name>/audit.jsonl``."""
-        return Path.home() / ".agent-core" / "webcam" / endpoint_name / "audit.jsonl"
-
     async def write(self, event: AuditEvent) -> None:
         try:
             line = self._serialize(event)
             await asyncio.to_thread(self._append_line, self._path, line)
         except Exception as exc:
-            msg = f"agent_core_webcam.audit: write failed for {self._path}: {exc}"
+            msg = f"agent_core_voice.audit: write failed for {self._path}: {exc}"
             log.warning(msg)
             print(msg, file=sys.stderr)
 
@@ -64,12 +63,17 @@ class AuditLog:
     @staticmethod
     def _serialize(event: AuditEvent) -> str:
         payload = {
-            "timestamp": event.timestamp.isoformat(),
-            "tool": event.tool,
-            "result": event.result,
-            "data": event.data,
+            "ts": event.timestamp.isoformat(),
+            "agent": event.agent,
+            "voice_id": event.voice_id,
+            "text_len": event.text_len,
+            "seed": event.seed,
+            "duration_s": event.duration_s,
+            "generation_s": event.generation_s,
+            "wav_path": event.wav_path,
+            "error": event.error,
         }
-        return json.dumps(payload, default=str, ensure_ascii=False)
+        return json.dumps(payload, ensure_ascii=False)
 
 
 __all__ = ["AuditEvent", "AuditLog"]

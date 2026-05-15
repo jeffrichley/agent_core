@@ -17,6 +17,9 @@ memory-compiler/scripts/flush-context-*.md
 # Agent-core runtime state (handoffs, bus.sqlite, transcripts, etc.)
 .agent-core/
 
+# Local scratch / smoke-test artifacts
+.tmp/
+
 # Claude Code per-machine local overrides
 .claude/settings.local.json
 .claude/*.lock
@@ -229,6 +232,9 @@ marimo/_static/
 marimo/_lsp/
 __marimo__/
 .gstack/
+
+# macOS Finder metadata (occasionally sneaks in via vendored sources)
+.DS_Store
 
 # Operational docs that must not live in source control
 pepper-vault-plan.txt
