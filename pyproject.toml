@@ -86,7 +86,8 @@ testpaths = [
     "packages/agent-core-voice/tests",
 ]
 asyncio_mode = "auto"
-addopts = "--import-mode=importlib"
+addopts = "--import-mode=importlib -m 'not slow'"
 markers = [
     "looptime: virtual asyncio clock compaction (looptime plugin; see test docs)",
+    "slow: tests that hit network or take >5s; skipped by default in CI",
 ]
