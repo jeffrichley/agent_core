@@ -366,6 +366,15 @@ def test_status_shows_stamp_metadata(
         ),
     )
 
+    def _skip_workspace(_start):
+        from agent_core.daemon.install import WorkspaceNotFoundError
+
+        raise WorkspaceNotFoundError("hermetic test: skip drift check")
+
+    monkeypatch.setattr(
+        "agent_core.daemon.cli.find_workspace_root", _skip_workspace
+    )
+
     result = runner.invoke(daemon_app, ["status"])
     assert "abc1234" in result.stdout
     assert "2026-05-15" in result.stdout
