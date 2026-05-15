@@ -177,3 +177,28 @@ def test_init_requires_backend_or_model_path(tmp_path: Path) -> None:
             output_dir=tmp_path / "out",
             audit_path=tmp_path / "audit.jsonl",
         )
+
+
+class _BadBytesBackend:
+    """Backend whose synthesize returns invalid wav bytes."""
+
+    def prepare_voice(self, voice_id, ref_wav, ref_text):  # type: ignore[no-untyped-def]
+        return None
+
+    def synthesize(self, voice_id, text, seed):  # type: ignore[no-untyped-def]
+        return b"not a wav file", 0.5
+
+
+@pytest.mark.asyncio
+async def test_synthesize_safe_swallows_wav_decode_error(
+    tmp_path: Path, ref_wav: Path
+) -> None:
+    ep = VoiceEndpoint.for_test(
+        backend=_BadBytesBackend(),  # type: ignore[arg-type]
+        voices={"v": VoiceInfo(voice_id="v", ref_wav=ref_wav, ref_text="r")},
+        output_dir=tmp_path / "out",
+        audit_path=tmp_path / "audit.jsonl",
+    )
+    result = await ep.synthesize_safe(agent_name="v", voice_id="v", text="hi", seed=42)
+    assert isinstance(result, SynthesisError)
+    assert "wav" in result.message.lower() or "decode" in result.message.lower()

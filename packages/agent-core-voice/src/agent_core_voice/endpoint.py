@@ -180,7 +180,7 @@ class VoiceEndpoint:
             duration_s, _ = self._wav_duration(wav_bytes)
             path = self._next_output_path(agent_name, seed, text, now)
             await asyncio.to_thread(path.write_bytes, wav_bytes)
-        except OSError as exc:
+        except (OSError, RuntimeError) as exc:
             return await self._record_error(now, agent_name, voice_id, text, seed, exc)
 
         await self._audit.write(
@@ -239,6 +239,8 @@ class VoiceEndpoint:
             return str(exc)
         if isinstance(exc, OSError):
             return f"output directory is not writable: {exc}"
+        if isinstance(exc, RuntimeError):
+            return f"wav decode/write failed: {exc}"
         return f"{type(exc).__name__}: {exc}"
 
     def _next_output_path(self, agent_name: str, seed: int, text: str, now: datetime) -> Path:
