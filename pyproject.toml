@@ -14,6 +14,7 @@ agent-core-channel = { workspace = true }
 agent-core-briefs = { workspace = true }
 agent-core-webcam = { workspace = true }
 agent-core-hatchery = { workspace = true }
+agent-core-voice = { workspace = true }
 
 [dependency-groups]
 # Dev tools only; real package deps live in member pyprojects.
@@ -81,6 +82,7 @@ testpaths = [
     "packages/agent-core-discord/tests",
     "packages/agent-core-channel/tests",
     "packages/agent-core-webcam/tests",
+    "packages/agent-core-voice/tests",
 ]
 asyncio_mode = "auto"
 addopts = "--import-mode=importlib"
