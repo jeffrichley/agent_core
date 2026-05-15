@@ -130,16 +130,17 @@ class VoiceEndpoint:
         (Error mapping is added in Task 7; this method body currently assumes the
         happy path.)
         """
+        now = datetime.now(UTC)
         wav_bytes, generation_s = await asyncio.to_thread(
             self._backend.synthesize, voice_id, text, seed
         )
         duration_s, _ = self._wav_duration(wav_bytes)
-        path = self._next_output_path(agent_name, seed, text)
+        path = self._next_output_path(agent_name, seed, text, now)
         await asyncio.to_thread(path.write_bytes, wav_bytes)
 
         await self._audit.write(
             AuditEvent(
-                timestamp=datetime.now(UTC),
+                timestamp=now,
                 agent=agent_name,
                 voice_id=voice_id,
                 text_len=len(text),
@@ -156,10 +157,9 @@ class VoiceEndpoint:
             generation_s=generation_s,
         )
 
-    def _next_output_path(self, agent_name: str, seed: int, text: str) -> Path:
-        now = datetime.now(UTC)
+    def _next_output_path(self, agent_name: str, seed: int, text: str, now: datetime) -> Path:
         day = now.strftime("%Y-%m-%d")
-        ts = now.strftime("%Y%m%dT%H%M%S")
+        ts = now.strftime("%Y%m%dT%H%M%S_%f")
         text_hash = hashlib.sha256(text.encode("utf-8")).hexdigest()[:8]
         dir_ = self._output_dir / agent_name / day
         dir_.mkdir(parents=True, exist_ok=True)

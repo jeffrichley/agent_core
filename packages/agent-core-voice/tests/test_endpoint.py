@@ -108,4 +108,4 @@ async def test_synthesize_output_path_layout(tmp_path: Path, ref_wav: Path) -> N
     parts = rel.parts
     assert parts[0] == "alice"
     assert re.fullmatch(r"\d{4}-\d{2}-\d{2}", parts[1])
-    assert re.fullmatch(r"\d{8}T\d{6}-42-[0-9a-f]{8}\.wav", parts[2])
+    assert re.fullmatch(r"\d{8}T\d{6}_\d{6}-42-[0-9a-f]{8}\.wav", parts[2])
