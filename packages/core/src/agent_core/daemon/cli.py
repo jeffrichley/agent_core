@@ -23,11 +23,12 @@ from agent_core.daemon.install import (
     UvNotFoundError,
     WorkspaceNotFoundError,
     find_workspace_root,
+    read_stamp,
     run_install,
 )
 from agent_core.daemon.supervisor import is_alive, kill_tree, read_pid, remove_pid, write_pid
 
-app = typer.Typer(help="Daemon process supervision: start, stop, status.")
+app = typer.Typer(help="Daemon process supervision: start, stop, status, install, refresh.")
 console = Console()
 
 
@@ -194,3 +195,25 @@ def install(
         + (f", extra {stamp.extra}" if stamp.extra else "")
         + f", at {stamp.installed_at})"
     )
+
+
+@app.command()
+def refresh(
+    extra: str | None = typer.Option(
+        None,
+        "--extra",
+        help="uv extra to install. Defaults to the stamped extra from the last install.",
+    ),
+    python_version: str = typer.Option(
+        "3.12", "--python", help="Python version to pin the daemon venv to."
+    ),
+) -> None:
+    """Stop daemon → reinstall daemon venv → start daemon. Bundled lifecycle."""
+    if extra is None:
+        stamp = read_stamp(_home())
+        if stamp is not None:
+            extra = stamp.extra
+
+    stop()
+    install(extra=extra, python_version=python_version)
+    start()

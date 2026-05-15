@@ -9,6 +9,7 @@ from pathlib import Path
 from unittest.mock import MagicMock
 
 import pytest
+import typer
 from typer.testing import CliRunner
 
 from agent_core.daemon.cli import (
@@ -230,3 +231,86 @@ def test_install_reports_uv_exit_code(
     assert result.exit_code == 1
     assert "uv exited with code 1" in result.stdout
     assert "failed to resolve" in result.stdout
+
+
+def test_refresh_calls_stop_install_start_in_order(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("AGENT_CORE_HOME", str(tmp_path))
+    order: list[str] = []
+
+    def fake_stop() -> None:
+        order.append("stop")
+
+    def fake_install(extra: str | None = None, python_version: str = "3.12") -> None:
+        order.append(f"install:extra={extra}")
+
+    def fake_start() -> None:
+        order.append("start")
+
+    monkeypatch.setattr("agent_core.daemon.cli.stop", fake_stop)
+    monkeypatch.setattr("agent_core.daemon.cli.install", fake_install)
+    monkeypatch.setattr("agent_core.daemon.cli.start", fake_start)
+
+    result = runner.invoke(daemon_app, ["refresh", "--extra", "cu130"])
+    assert result.exit_code == 0, result.stdout
+    assert order == ["stop", "install:extra=cu130", "start"]
+
+
+def test_refresh_aborts_start_when_install_fails(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("AGENT_CORE_HOME", str(tmp_path))
+    order: list[str] = []
+
+    def fake_stop() -> None:
+        order.append("stop")
+
+    def fake_install(extra: str | None = None, python_version: str = "3.12") -> None:
+        order.append("install")
+        raise typer.Exit(code=1)
+
+    def fake_start() -> None:
+        order.append("start")  # must not be called
+
+    monkeypatch.setattr("agent_core.daemon.cli.stop", fake_stop)
+    monkeypatch.setattr("agent_core.daemon.cli.install", fake_install)
+    monkeypatch.setattr("agent_core.daemon.cli.start", fake_start)
+
+    result = runner.invoke(daemon_app, ["refresh"])
+    assert result.exit_code != 0
+    assert "start" not in order
+    assert order == ["stop", "install"]
+
+
+def test_refresh_reuses_stamped_extra_when_no_flag(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """When --extra is omitted, refresh passes the stamped extra to install."""
+    monkeypatch.setenv("AGENT_CORE_HOME", str(tmp_path))
+    # Write a stamp with extra='cu130'
+    from agent_core.daemon.install import InstallStamp, write_stamp
+
+    write_stamp(
+        tmp_path,
+        InstallStamp(
+            installed_at="2026-05-15T19:31:04Z",
+            installed_sha="abc1234",
+            python_version="3.12",
+            extra="cu130",
+            uv_lock_hash="sha256:abc",
+        ),
+    )
+
+    captured: dict = {}
+
+    def fake_install(extra: str | None = None, python_version: str = "3.12") -> None:
+        captured["extra"] = extra
+
+    monkeypatch.setattr("agent_core.daemon.cli.stop", lambda: None)
+    monkeypatch.setattr("agent_core.daemon.cli.install", fake_install)
+    monkeypatch.setattr("agent_core.daemon.cli.start", lambda: None)
+
+    result = runner.invoke(daemon_app, ["refresh"])
+    assert result.exit_code == 0
+    assert captured["extra"] == "cu130"
