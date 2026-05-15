@@ -89,3 +89,32 @@ endpoints:
         time.sleep(0.1)
     assert is_alive(pid) is False
     assert not pid_file.exists()
+
+
+from agent_core.daemon.cli import _daemon_python
+
+
+def test_daemon_python_returns_sys_executable_when_venv_missing(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("AGENT_CORE_HOME", str(tmp_path))
+    # No ~/.agent-core/.venv/ exists in tmp_path.
+    import sys
+
+    assert _daemon_python() == sys.executable
+
+
+def test_daemon_python_returns_daemon_venv_python_when_present(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("AGENT_CORE_HOME", str(tmp_path))
+    import sys
+
+    if sys.platform == "win32":
+        venv_python = tmp_path / ".venv" / "Scripts" / "python.exe"
+    else:
+        venv_python = tmp_path / ".venv" / "bin" / "python"
+    venv_python.parent.mkdir(parents=True)
+    venv_python.write_text("# placeholder")
+
+    assert _daemon_python() == str(venv_python)

@@ -45,6 +45,22 @@ def _log_path() -> Path:
     return _home() / "daemon.log"
 
 
+def _daemon_python() -> str:
+    """Return the daemon's preferred interpreter, with fallback.
+
+    Prefers `~/.agent-core/.venv/Scripts/python.exe` (Windows) or
+    `~/.agent-core/.venv/bin/python` (POSIX) when present; falls back
+    to `sys.executable` (today's behavior) when the daemon venv is
+    missing. This keeps the supervisor working unchanged on machines
+    that haven't run `agent-core daemon install` yet.
+    """
+    if sys.platform == "win32":
+        candidate = _home() / ".venv" / "Scripts" / "python.exe"
+    else:
+        candidate = _home() / ".venv" / "bin" / "python"
+    return str(candidate) if candidate.exists() else sys.executable
+
+
 @app.command()
 def start() -> None:
     """Spawn `agent-core bus run` detached, write the PID file."""
@@ -71,7 +87,7 @@ def start() -> None:
     log_handle = open(log_file, "ab", buffering=0)
 
     proc = subprocess.Popen(
-        [sys.executable, "-m", "agent_core.cli", "bus", "run", "--config", str(cfg)],
+        [_daemon_python(), "-m", "agent_core.cli", "bus", "run", "--config", str(cfg)],
         stdout=log_handle,
         stderr=subprocess.STDOUT,
         stdin=subprocess.DEVNULL,
