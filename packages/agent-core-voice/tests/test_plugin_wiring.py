@@ -152,3 +152,5 @@ async def test_mounter_closure_binds_per_agent(
     b_info = _json.loads(b_text)
     assert a_info["voice_id"] == "alice"
     assert b_info["voice_id"] == "bob"
+    assert a_info["ref_text"] == "ra"
+    assert b_info["ref_text"] == "rb"
