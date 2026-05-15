@@ -19,6 +19,12 @@ from pathlib import Path
 import typer
 from rich.console import Console
 
+from agent_core.daemon.install import (
+    UvNotFoundError,
+    WorkspaceNotFoundError,
+    find_workspace_root,
+    run_install,
+)
 from agent_core.daemon.supervisor import is_alive, kill_tree, read_pid, remove_pid, write_pid
 
 app = typer.Typer(help="Daemon process supervision: start, stop, status.")
@@ -135,3 +141,51 @@ def status() -> None:
         lines = log_file.read_text(encoding="utf-8", errors="replace").splitlines()
         for line in lines[-20:]:
             console.print(line)
+
+
+@app.command()
+def install(
+    extra: str | None = typer.Option(
+        None, "--extra", help="uv extra to install (e.g., cu130, cpu)."
+    ),
+    python_version: str = typer.Option(
+        "3.12", "--python", help="Python version to pin the daemon venv to."
+    ),
+) -> None:
+    """Populate ~/.agent-core/.venv/ from the workspace (non-editable, frozen)."""
+    pid_file = _pid_path()
+    existing = read_pid(pid_file)
+    if existing is not None and is_alive(existing):
+        console.print(
+            f"[red]daemon is currently running (PID {existing}).[/red]\n"
+            "   • Run [bold]agent-core daemon stop[/bold] and re-run install, or\n"
+            "   • Run [bold]agent-core daemon refresh[/bold] to stop/install/start in one step."
+        )
+        raise typer.Exit(code=1)
+
+    try:
+        workspace = find_workspace_root(Path(__file__).parent)
+    except WorkspaceNotFoundError as exc:
+        console.print(f"[red]{exc}[/red]")
+        raise typer.Exit(code=1) from exc
+
+    home = _home()
+    home.mkdir(parents=True, exist_ok=True)
+
+    try:
+        stamp = run_install(
+            home=home,
+            workspace=workspace,
+            extra=extra,
+            python_version=python_version,
+        )
+    except UvNotFoundError as exc:
+        console.print(f"[red]{exc}[/red]")
+        raise typer.Exit(code=1) from exc
+
+    console.print(
+        f"[green]daemon venv installed[/green] "
+        f"(sha {stamp.installed_sha}, python {stamp.python_version}"
+        + (f", extra {stamp.extra}" if stamp.extra else "")
+        + f", at {stamp.installed_at})"
+    )

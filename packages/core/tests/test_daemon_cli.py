@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
+import os
 import sys
 import time
 from pathlib import Path
+from unittest.mock import MagicMock
 
 import pytest
 from typer.testing import CliRunner
@@ -115,3 +117,88 @@ def test_daemon_python_returns_daemon_venv_python_when_present(
     venv_python.write_text("# placeholder")
 
     assert _daemon_python() == str(venv_python)
+
+
+def test_install_refuses_when_daemon_running(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("AGENT_CORE_HOME", str(tmp_path))
+    pid_file = tmp_path / "daemon.pid"
+    pid_file.write_text(str(os.getpid()))  # current process is alive
+    result = runner.invoke(daemon_app, ["install"])
+    assert result.exit_code == 1
+    assert "currently running" in result.stdout.lower()
+    assert "refresh" in result.stdout.lower()
+
+
+def test_install_invokes_run_install_with_args(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("AGENT_CORE_HOME", str(tmp_path))
+    captured: dict = {}
+
+    fake_stamp = MagicMock(
+        installed_sha="abc1234",
+        extra="cu130",
+        python_version="3.12",
+        installed_at="2026-05-15T19:31:04Z",
+    )
+
+    def fake_run_install(*, home, workspace, extra, python_version):
+        captured["home"] = home
+        captured["workspace"] = workspace
+        captured["extra"] = extra
+        captured["python_version"] = python_version
+        return fake_stamp
+
+    monkeypatch.setattr("agent_core.daemon.cli.run_install", fake_run_install)
+    monkeypatch.setattr(
+        "agent_core.daemon.cli.find_workspace_root",
+        lambda _start: tmp_path / "fake-workspace",
+    )
+
+    result = runner.invoke(daemon_app, ["install", "--extra", "cu130"])
+    assert result.exit_code == 0, result.stdout
+    assert captured["home"] == tmp_path
+    assert captured["workspace"] == tmp_path / "fake-workspace"
+    assert captured["extra"] == "cu130"
+    assert captured["python_version"] == "3.12"
+    assert "abc1234" in result.stdout  # stamp sha echoed
+
+
+def test_install_reports_workspace_not_found(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("AGENT_CORE_HOME", str(tmp_path))
+
+    def raise_not_found(_start):
+        from agent_core.daemon.install import WorkspaceNotFoundError
+
+        raise WorkspaceNotFoundError("can't find workspace")
+
+    monkeypatch.setattr("agent_core.daemon.cli.find_workspace_root", raise_not_found)
+
+    result = runner.invoke(daemon_app, ["install"])
+    assert result.exit_code == 1
+    assert "workspace" in result.stdout.lower()
+
+
+def test_install_reports_uv_not_found(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("AGENT_CORE_HOME", str(tmp_path))
+
+    def fake_run_install(*, home, workspace, extra, python_version):
+        from agent_core.daemon.install import UvNotFoundError
+
+        raise UvNotFoundError("uv not found on PATH")
+
+    monkeypatch.setattr("agent_core.daemon.cli.run_install", fake_run_install)
+    monkeypatch.setattr(
+        "agent_core.daemon.cli.find_workspace_root",
+        lambda _start: tmp_path / "fake-workspace",
+    )
+
+    result = runner.invoke(daemon_app, ["install"])
+    assert result.exit_code == 1
+    assert "uv not found" in result.stdout.lower()
