@@ -987,7 +987,7 @@ async def test_download_attachments_saves_files(monkeypatch, tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_download_attachments_records_content_type_from_response(
+async def test_download_attachments_content_type_is_empty_string(
     monkeypatch, tmp_path
 ):
     """content_type in saved[] is now always "" per #76 Task 2.
