@@ -62,7 +62,7 @@ def register_voice_tools(
             "sample_rate": 24000,
             "generation_s": result.generation_s,
         }
-        return [TextContent(type="text", text=json.dumps(payload))]
+        return [TextContent(type="text", text=json.dumps(payload, ensure_ascii=False))]
 
     @mcp.tool(
         name="voice_info",
@@ -72,7 +72,7 @@ def register_voice_tools(
     )
     async def _voice_info() -> list[Any]:
         info = endpoint.voice_info(voice_id)
-        return [TextContent(type="text", text=json.dumps(info))]
+        return [TextContent(type="text", text=json.dumps(info, ensure_ascii=False))]
 
 
 __all__ = ["register_voice_tools"]

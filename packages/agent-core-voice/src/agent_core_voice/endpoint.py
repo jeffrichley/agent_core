@@ -210,7 +210,7 @@ class VoiceEndpoint:
             return str(exc)
         if isinstance(exc, OSError):
             return f"output directory is not writable: {exc}"
-        return f"synthesis failed: {exc}"
+        return f"{type(exc).__name__}: {exc}"
 
     def _next_output_path(self, agent_name: str, seed: int, text: str, now: datetime) -> Path:
         day = now.strftime("%Y-%m-%d")

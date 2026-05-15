@@ -85,6 +85,40 @@ async def test_synthesize_speech_failure(endpoint: VoiceEndpoint) -> None:
     assert "empty" in text.lower()
 
 
+class _BoomBackend:
+    """Backend whose synthesize raises a non-VoiceError exception."""
+
+    def prepare_voice(self, voice_id, ref_wav, ref_text):  # type: ignore[no-untyped-def]
+        return None
+
+    def synthesize(self, voice_id, text, seed):  # type: ignore[no-untyped-def]
+        raise RuntimeError("boom")
+
+
+@pytest.mark.asyncio
+async def test_synthesize_speech_unmapped_exception_no_double_prefix(
+    tmp_path: Path, ref_wav: Path
+) -> None:
+    """An unmapped exception should produce 'synthesis failed: RuntimeError: boom' — NOT
+    'synthesis failed: synthesis failed: ...'."""
+    ep = VoiceEndpoint.for_test(
+        backend=_BoomBackend(),  # type: ignore[arg-type]
+        voices={"alice": VoiceInfo(voice_id="alice", ref_wav=ref_wav, ref_text="r")},
+        output_dir=tmp_path / "out",
+        audit_path=tmp_path / "audit.jsonl",
+    )
+    mcp = FastMCP(name="test")
+    register_voice_tools(mcp=mcp, endpoint=ep, voice_id="alice", agent_name="alice")
+    tools = await _tools_by_name(mcp)
+
+    result = await tools["synthesize_speech"].run({"text": "hello", "seed": 42})
+    text = _text_from(result)
+    # Exactly ONE "synthesis failed:" prefix.
+    assert text.count("synthesis failed:") == 1, f"got: {text!r}"
+    assert "RuntimeError" in text
+    assert "boom" in text
+
+
 @pytest.mark.asyncio
 async def test_voice_info_returns_bound_voice_only(endpoint: VoiceEndpoint) -> None:
     """voice_info exposes only the agent's bound voice, not the registry."""
