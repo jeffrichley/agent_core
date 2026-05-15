@@ -1,0 +1,70 @@
+# voice-agent-core.yaml — example wiring for the agent-core-voice service.
+#
+# How it works:
+#   1. `builtin.voice` declares ONE shared endpoint that holds the warm
+#      Qwen3-TTS model (6-10 GB VRAM) and the registry of every voice the
+#      daemon serves. ICL prompts are pre-built at bus.start() for every
+#      voice in the registry, so every agent is warm from call 1.
+#   2. Each `builtin.claude_code_mcp` endpoint that wants voice adds two
+#      params: `voice: <voice-endpoint-name>` and `voice_id: <id-in-registry>`.
+#      The plugin closes voice_id into the mounted `synthesize_speech` tool
+#      at bus.start() time. The agent's tool schema has NO voice_id
+#      parameter — an agent literally cannot request another agent's voice.
+#
+# Install on the host that runs the bus daemon:
+#   - GPU host (Windows/Linux + CUDA 13): `uv sync --extra cu130`
+#   - CPU-only host (Mac, dev box, CI): `uv sync --extra cpu` (real synthesis,
+#     just slower; minutes per utterance instead of seconds)
+#
+# See packages/agent-core-voice/SMOKE_TEST.md for the GPU smoke acceptance
+# checklist (startup, latency, output integrity, voice fidelity, audit).
+
+bus:
+  storage_path: "~/.agent-core/bus.sqlite"
+
+http:
+  bind_host: "127.0.0.1"
+  bind_port: 8789
+
+endpoints:
+  # The warm-model endpoint. ONE per daemon (sharing one GPU). The voices
+  # block is the registry; each entry is a voice_id -> {ref_wav, ref_text,
+  # blend?}. blend is metadata for voice_info(); the agent sees it.
+  - type: builtin.voice
+    name: voice
+    description: "Shared Qwen3-TTS endpoint. Holds 6-10 GB VRAM; warm from bus.start()."
+    params:
+      model_path: "C:\\workspaces\\ai\\Qwen3-TTS-EasyFinetuning\\models\\Qwen\\Qwen3-TTS-12Hz-1.7B-Base"
+      device: "cuda:0"           # Use "cpu" on dev hosts without a GPU.
+      attn_implementation: "sdpa"  # Switch to "flash_attention_2" if flash-attn is installed (~4-5x faster).
+      output_dir: "~/.agent-core/voice"
+      audit_path: "~/.agent-core/voice/audit.jsonl"
+      max_text_len: 2000         # Caller-side guard before the model gets the text. Default 2000.
+      voices:
+        agent-a:
+          ref_wav: "C:\\path\\to\\agent-a-ref.wav"
+          ref_text: "The canonical text spoken in agent-a-ref.wav (must match exactly for ICL to work)."
+          blend: "Optional human-readable label shown in voice_info()."
+        agent-b:
+          ref_wav: "C:\\path\\to\\agent-b-ref.wav"
+          ref_text: "..."
+          blend: "..."
+
+  # Each agent's MCP endpoint adds `voice:` and `voice_id:` to get the
+  # synthesize_speech + voice_info tools mounted with voice_id closed in.
+  # Omitting both params means no voice tools mount for that agent.
+  - type: builtin.claude_code_mcp
+    name: agent-a
+    description: "Example agent — has voice."
+    params:
+      mount: /mcp/agent-a
+      voice: voice               # name of the builtin.voice endpoint above
+      voice_id: agent-a          # must exist in `voice.params.voices`
+
+  - type: builtin.claude_code_mcp
+    name: agent-b
+    description: "Example agent — different voice, same shared model."
+    params:
+      mount: /mcp/agent-b
+      voice: voice
+      voice_id: agent-b

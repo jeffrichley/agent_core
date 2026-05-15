@@ -33,6 +33,27 @@ endpoints:
     description: "Dev/test stub endpoint."
     params: {}
 
+  # Optional: voice synthesis. Uncomment + edit paths on a GPU host.
+  # See docs/examples/voice-agent-core.yaml for the full pattern + per-agent wiring.
+  #
+  # - type: builtin.voice
+  #   name: voice
+  #   description: "Shared Qwen3-TTS endpoint."
+  #   params:
+  #     model_path: "/abs/path/to/Qwen3-TTS-12Hz-1.7B-Base"
+  #     device: "cuda:0"           # or "cpu" for dev hosts without a GPU
+  #     attn_implementation: "sdpa"
+  #     output_dir: "~/.agent-core/voice"
+  #     audit_path: "~/.agent-core/voice/audit.jsonl"
+  #     voices:
+  #       my-agent:
+  #         ref_wav: "/abs/path/to/ref.wav"
+  #         ref_text: "Canonical text spoken in ref.wav."
+  #
+  # And on each agent's claude_code_mcp endpoint, add:
+  #   voice: voice
+  #   voice_id: my-agent
+
 bus_hooks:
   pre_publish: []
   pre_deliver: []
