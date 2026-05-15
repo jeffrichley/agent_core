@@ -71,6 +71,7 @@ class VoiceEndpoint:
         voices: dict[str, VoiceInfo] | dict[str, dict] | None = None,
         output_dir: Path | str,
         audit_path: Path | str,
+        max_text_len: int = 2000,
         # Real-backend params, only used when backend is None:
         model_path: str | None = None,
         device: str = "cuda:0",
@@ -78,6 +79,7 @@ class VoiceEndpoint:
     ) -> None:
         self._name = name
         self._handle: BusHandle | None = None
+        self._max_text_len = max_text_len
 
         if backend is None:
             if model_path is None:
@@ -125,6 +127,7 @@ class VoiceEndpoint:
         output_dir: Path | str,
         audit_path: Path | str,
         name: str = "voice_test",
+        max_text_len: int = 2000,
     ) -> VoiceEndpoint:
         """Test seam — same constructor, explicit name default."""
         return cls(
@@ -133,6 +136,7 @@ class VoiceEndpoint:
             voices=voices,
             output_dir=output_dir,
             audit_path=audit_path,
+            max_text_len=max_text_len,
         )
 
     @property
@@ -166,6 +170,17 @@ class VoiceEndpoint:
         Never raises. All failures land as ``SynthesisError(message=...)``.
         """
         now = datetime.now(UTC)
+        if len(text) > self._max_text_len:
+            return await self._record_error(
+                now,
+                agent_name,
+                voice_id,
+                text,
+                seed,
+                TextTooLongError(
+                    f"text length {len(text)} exceeds endpoint budget {self._max_text_len}"
+                ),
+            )
         try:
             wav_bytes, generation_s = await asyncio.to_thread(
                 self._backend.synthesize, voice_id, text, seed

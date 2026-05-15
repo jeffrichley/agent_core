@@ -190,6 +190,23 @@ class _BadBytesBackend:
 
 
 @pytest.mark.asyncio
+async def test_synthesize_safe_endpoint_text_budget(tmp_path: Path, ref_wav: Path) -> None:
+    """Endpoint enforces its own max_text_len regardless of backend."""
+    ep = VoiceEndpoint.for_test(
+        backend=FakeTTSBackend(max_text_len=10_000),  # backend wouldn't reject
+        voices={"v": VoiceInfo(voice_id="v", ref_wav=ref_wav, ref_text="r")},
+        output_dir=tmp_path / "out",
+        audit_path=tmp_path / "audit.jsonl",
+        max_text_len=5,
+    )
+    result = await ep.synthesize_safe(
+        agent_name="v", voice_id="v", text="hello world", seed=42
+    )
+    assert isinstance(result, SynthesisError)
+    assert "exceeds" in result.message.lower()
+
+
+@pytest.mark.asyncio
 async def test_synthesize_safe_swallows_wav_decode_error(
     tmp_path: Path, ref_wav: Path
 ) -> None:
