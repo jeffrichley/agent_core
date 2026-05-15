@@ -164,7 +164,7 @@ def install(
         raise typer.Exit(code=1)
 
     try:
-        workspace = find_workspace_root(Path(__file__).parent)
+        workspace = find_workspace_root(Path.cwd())
     except WorkspaceNotFoundError as exc:
         console.print(f"[red]{exc}[/red]")
         raise typer.Exit(code=1) from exc
@@ -181,6 +181,11 @@ def install(
         )
     except UvNotFoundError as exc:
         console.print(f"[red]{exc}[/red]")
+        raise typer.Exit(code=1) from exc
+    except subprocess.CalledProcessError as exc:
+        console.print(f"[red]uv exited with code {exc.returncode}.[/red]")
+        if exc.stderr:
+            console.print(exc.stderr.rstrip())
         raise typer.Exit(code=1) from exc
 
     console.print(

@@ -202,3 +202,31 @@ def test_install_reports_uv_not_found(
     result = runner.invoke(daemon_app, ["install"])
     assert result.exit_code == 1
     assert "uv not found" in result.stdout.lower()
+
+
+def test_install_reports_uv_exit_code(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """uv subprocess failure surfaces returncode + stderr cleanly."""
+    monkeypatch.setenv("AGENT_CORE_HOME", str(tmp_path))
+
+    def fake_run_install(*, home, workspace, extra, python_version):
+        import subprocess
+
+        raise subprocess.CalledProcessError(
+            returncode=1,
+            cmd=["uv", "sync", "--frozen"],
+            output="",
+            stderr="error: failed to resolve packages",
+        )
+
+    monkeypatch.setattr("agent_core.daemon.cli.run_install", fake_run_install)
+    monkeypatch.setattr(
+        "agent_core.daemon.cli.find_workspace_root",
+        lambda _start: tmp_path / "fake-workspace",
+    )
+
+    result = runner.invoke(daemon_app, ["install"])
+    assert result.exit_code == 1
+    assert "uv exited with code 1" in result.stdout
+    assert "failed to resolve" in result.stdout
