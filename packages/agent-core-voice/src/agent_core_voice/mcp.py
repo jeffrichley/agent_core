@@ -59,7 +59,7 @@ def register_voice_tools(
         payload = {
             "path": result.path,
             "duration_s": result.duration_s,
-            "sample_rate": 24000,
+            "sample_rate": result.sample_rate,
             "generation_s": result.generation_s,
         }
         return [TextContent(type="text", text=json.dumps(payload, ensure_ascii=False))]

@@ -51,6 +51,7 @@ class SynthesisSuccess:
     path: str
     duration_s: float
     generation_s: float
+    sample_rate: int
 
 
 @dataclass(frozen=True)
@@ -58,6 +59,18 @@ class SynthesisError:
     """Failed synthesis — message is the agent-readable string."""
 
     message: str
+
+
+class _WavPhaseError(Exception):
+    """Internal marker for failures in the wav decode/write phase.
+
+    Wraps the underlying OSError/RuntimeError so ``_error_message`` can
+    distinguish wav-phase failures from arbitrary backend RuntimeErrors.
+    """
+
+    def __init__(self, wrapped: BaseException) -> None:
+        super().__init__(str(wrapped))
+        self.wrapped = wrapped
 
 
 class VoiceEndpoint:
@@ -192,11 +205,13 @@ class VoiceEndpoint:
             return await self._record_error(now, agent_name, voice_id, text, seed, exc)
 
         try:
-            duration_s, _ = self._wav_duration(wav_bytes)
+            duration_s, sample_rate = self._wav_duration(wav_bytes)
             path = self._next_output_path(agent_name, seed, text, now)
             await asyncio.to_thread(path.write_bytes, wav_bytes)
         except (OSError, RuntimeError) as exc:
-            return await self._record_error(now, agent_name, voice_id, text, seed, exc)
+            return await self._record_error(
+                now, agent_name, voice_id, text, seed, _WavPhaseError(exc)
+            )
 
         await self._audit.write(
             AuditEvent(
@@ -215,6 +230,7 @@ class VoiceEndpoint:
             path=str(path),
             duration_s=duration_s,
             generation_s=generation_s,
+            sample_rate=sample_rate,
         )
 
     async def _record_error(
@@ -252,10 +268,13 @@ class VoiceEndpoint:
             return "GPU is out of memory; try again in a moment"
         if isinstance(exc, VoiceNotPreparedError):
             return str(exc)
+        if isinstance(exc, _WavPhaseError):
+            wrapped = exc.wrapped
+            if isinstance(wrapped, OSError):
+                return f"output directory is not writable: {wrapped}"
+            return f"wav decode/write failed: {wrapped}"
         if isinstance(exc, OSError):
             return f"output directory is not writable: {exc}"
-        if isinstance(exc, RuntimeError):
-            return f"wav decode/write failed: {exc}"
         return f"{type(exc).__name__}: {exc}"
 
     def _next_output_path(self, agent_name: str, seed: int, text: str, now: datetime) -> Path:
