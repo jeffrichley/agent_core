@@ -57,8 +57,9 @@ class AuditLog:
     def _append_line(path: Path, line: str) -> None:
         path.parent.mkdir(parents=True, exist_ok=True)
         with path.open("a", encoding="utf-8") as handle:
-            handle.write(line)
-            handle.write("\n")
+            # Single write() call so POSIX O_APPEND atomicity guarantees
+            # concurrent appends interleave only at line boundaries.
+            handle.write(line + "\n")
 
     @staticmethod
     def _serialize(event: AuditEvent) -> str:

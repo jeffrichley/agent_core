@@ -93,3 +93,33 @@ async def test_appends_multiple_lines(tmp_path: Path) -> None:
 
     lines = path.read_text("utf-8").splitlines()
     assert len(lines) == 3
+
+
+@pytest.mark.asyncio
+async def test_write_swallows_disk_failure(tmp_path: Path) -> None:
+    """A path that cannot be written must not raise — audit is observability,
+    not the critical path of synthesis."""
+    # Point at a directory we can't write to: place a regular file where the
+    # parent dir should be, so mkdir() raises.
+    blocking_file = tmp_path / "blocker"
+    blocking_file.write_text("blocks the parent dir", encoding="utf-8")
+    impossible = blocking_file / "audit.jsonl"
+    log = AuditLog(impossible)
+
+    result = await log.write(
+        AuditEvent(
+            timestamp=datetime(2026, 5, 15, 14, 23, 1, tzinfo=UTC),
+            agent="alice",
+            voice_id="alice",
+            text_len=5,
+            seed=42,
+            duration_s=1.0,
+            generation_s=1.0,
+            wav_path="/tmp/x.wav",
+            error=None,
+        )
+    )
+
+    # Must not raise, must return None, and must not have created the file.
+    assert result is None
+    assert not impossible.exists()
