@@ -1466,9 +1466,10 @@ class DiscordEndpoint:
             resp.raise_for_status()
             return resp.content, resp.headers.get("content-type", "")
 
-    async def _persist_attachment(self, *, url: str, subdir: str) -> Path:
+    async def _persist_attachment(self, *, url: str, subdir: str) -> tuple[Path, int]:
         """Download one URL into <attachments_dir>/<subdir>/ and return the
-        resolved path. Raises on download failure or unsafe path.
+        resolved path plus byte count. Raises on download failure
+        (propagated raw from _download_url) or unsafe path (_PersistError).
 
         Shared by the download_attachments MCP tool (subdir=message_id) and
         the inbound auto-download path (subdir=envelope_id).
@@ -1481,7 +1482,7 @@ class DiscordEndpoint:
         try:
             path.relative_to(target_resolved)
         except ValueError as exc:
-            raise _ToolError(f"refused unsafe path for {url!r}") from exc
+            raise _PersistError(f"refused unsafe path for {url!r}") from exc
         # De-dup so two URLs ending in the same name don't silently overwrite.
         if path.exists():
             stem, suffix = path.stem, path.suffix
@@ -1489,10 +1490,10 @@ class DiscordEndpoint:
             try:
                 path.relative_to(target_resolved)
             except ValueError as exc:
-                raise _ToolError(f"refused unsafe dedup path for {url!r}") from exc
+                raise _PersistError(f"refused unsafe dedup path for {url!r}") from exc
         data, _content_type = await self._download_url(url)
         path.write_bytes(data)
-        return path
+        return path, len(data)
 
     async def _download_attachments(self, args: _DownloadAttachmentsArgs) -> dict:
         if not args.attachment_urls:
@@ -1500,14 +1501,13 @@ class DiscordEndpoint:
         saved: list[dict] = []
         for url in args.attachment_urls:
             try:
-                path = await self._persist_attachment(
+                path, nbytes = await self._persist_attachment(
                     url=url, subdir=args.message_id
                 )
-            except _ToolError:
-                raise
+            except _PersistError as exc:
+                raise _ToolError(str(exc)) from exc
             except Exception as exc:
                 raise _ToolError(f"download failed for {url}: {exc}") from exc
-            data = path.read_bytes()
             saved.append(
                 {
                     "filename": path.name,
@@ -1518,7 +1518,7 @@ class DiscordEndpoint:
                     # from the inbound envelope (Discord's value, more reliable
                     # than the CDN response header). See #76 Task 2.
                     "content_type": "",
-                    "size_bytes": len(data),
+                    "size_bytes": nbytes,
                 }
             )
         return {"saved": saved}
@@ -1774,3 +1774,9 @@ class DiscordEndpoint:
 
 class _ToolError(Exception):
     """User-error during tool dispatch — produces an Acknowledgment with note."""
+
+
+class _PersistError(Exception):
+    """Attachment could not be persisted (unsafe path, etc.). Neutral —
+    shared by the MCP tool and the inbound path; the tool layer
+    translates it to _ToolError."""

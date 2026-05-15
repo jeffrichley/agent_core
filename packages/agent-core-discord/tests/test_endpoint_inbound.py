@@ -654,11 +654,12 @@ async def test_persist_attachment_writes_file_and_returns_path(monkeypatch, tmp_
 
     monkeypatch.setattr(ep, "_download_url", fake_download)
 
-    path = await ep._persist_attachment(
+    path, nbytes = await ep._persist_attachment(
         url="https://cdn.discordapp.com/a/pic.png", subdir="env-abc"
     )
     assert isinstance(path, Path)
     assert path.read_bytes() == b"PNGDATA"
+    assert nbytes == len(b"PNGDATA")
     assert path.parent == (tmp_path / "env-abc").resolve()
     assert path.name == "pic.png"
 
@@ -679,10 +680,10 @@ async def test_persist_attachment_dedups_collision(monkeypatch, tmp_path):
 
     monkeypatch.setattr(ep, "_download_url", fake_download)
 
-    p1 = await ep._persist_attachment(
+    p1, _ = await ep._persist_attachment(
         url="https://cdn.discordapp.com/a/f.bin", subdir="env-1"
     )
-    p2 = await ep._persist_attachment(
+    p2, _ = await ep._persist_attachment(
         url="https://cdn.discordapp.com/b/f.bin", subdir="env-1"
     )
     assert p1 != p2
@@ -706,7 +707,7 @@ async def test_persist_attachment_raises_on_download_failure(monkeypatch, tmp_pa
 
     monkeypatch.setattr(ep, "_download_url", boom)
 
-    with pytest.raises(Exception):
+    with pytest.raises(RuntimeError):
         await ep._persist_attachment(
             url="https://cdn.discordapp.com/a/x.png", subdir="env-2"
         )
