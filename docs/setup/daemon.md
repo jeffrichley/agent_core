@@ -60,6 +60,17 @@ stays stopped and the error surfaces. Fix the underlying issue and re-run
 
 > **Note:** `daemon refresh` assumes a prior `daemon install` has already been run and recorded your `--extra` choice in the stamp file. If this is your first time setting up the daemon, run `daemon install --extra <x>` (e.g., `--extra cu130`) first — otherwise `refresh` will install with no extras (CPU-only torch).
 
+> **Live agent sessions must be restarted after a bounce.** `daemon refresh`
+> (and `install`/`start`/`stop`, and any crash) restarts the daemon process.
+> A new daemon process has no memory of prior MCP session IDs, so any
+> **already-running** Claude Code agent session (Pepper, testbot) is orphaned:
+> its tool calls fail with `Session not found`, and neither retrying nor
+> `/mcp reconnect` recovers it — only a full restart of that agent's Claude
+> Code session re-initializes the MCP connection. Agent work product is on
+> disk (vault/memory), independent of the bus, so nothing is lost — but plan
+> to restart any live agent session after a `daemon refresh`. Tracked in
+> [#91](https://github.com/jeffrichley/agent_core/issues/91).
+
 ## Why this exists
 
 Before this change, the daemon ran from `<workspace>/.venv/Scripts/python.exe`
@@ -95,6 +106,7 @@ fresh.
 ## Related
 
 - [#79](https://github.com/jeffrichley/agent_core/issues/79) — the issue that motivated this.
+- [#91](https://github.com/jeffrichley/agent_core/issues/91) — daemon bounce orphans live agent MCP sessions (restart agents after `refresh`).
 - `docs/superpowers/specs/2026-05-15-daemon-venv-isolation-design.md` — the design.
 - `agent_core.daemon.cli` — supervisor code.
 - `agent_core.daemon.install` — install orchestration.
