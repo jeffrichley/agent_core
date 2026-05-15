@@ -85,3 +85,25 @@ def read_stamp(home: Path) -> InstallStamp | None:
         )
     except (KeyError, TypeError):
         return None
+
+
+def build_uv_sync_command(
+    *, venv: Path, extra: str | None
+) -> tuple[list[str], dict[str, str]]:
+    """Build the `uv sync` command list and env overrides for daemon install.
+
+    --frozen        → install against the workspace's uv.lock verbatim.
+    --no-editable   → workspace members go in as wheels; no .pth shims.
+                      This is what makes the daemon venv immune to
+                      `uv sync` in the workspace tree.
+    --no-dev        → skip the workspace's dev dependency group.
+    --extra <x>     → optional uv extra (e.g., cu130, cpu).
+
+    UV_PROJECT_ENVIRONMENT redirects uv's install target to the daemon venv
+    instead of the workspace's `.venv/`.
+    """
+    cmd: list[str] = ["uv", "sync", "--frozen", "--no-editable", "--no-dev"]
+    if extra is not None:
+        cmd += ["--extra", extra]
+    env_overrides = {"UV_PROJECT_ENVIRONMENT": str(venv)}
+    return cmd, env_overrides

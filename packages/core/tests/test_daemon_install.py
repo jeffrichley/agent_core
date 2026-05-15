@@ -10,6 +10,7 @@ from agent_core.daemon.install import (
     STAMP_FILENAME,
     InstallStamp,
     WorkspaceNotFoundError,
+    build_uv_sync_command,
     find_workspace_root,
     read_stamp,
     write_stamp,
@@ -88,3 +89,25 @@ def test_read_stamp_returns_none_when_missing_fields(tmp_path: Path) -> None:
         '{"installed_at": "2026-05-15T19:31:04Z"}', encoding="utf-8"
     )
     assert read_stamp(tmp_path) is None
+
+
+def test_build_uv_sync_command_basic(tmp_path: Path) -> None:
+    venv = tmp_path / ".venv"
+    cmd, env_overrides = build_uv_sync_command(venv=venv, extra=None)
+    assert cmd == ["uv", "sync", "--frozen", "--no-editable", "--no-dev"]
+    assert env_overrides == {"UV_PROJECT_ENVIRONMENT": str(venv)}
+
+
+def test_build_uv_sync_command_with_extra(tmp_path: Path) -> None:
+    venv = tmp_path / ".venv"
+    cmd, env_overrides = build_uv_sync_command(venv=venv, extra="cu130")
+    assert cmd == [
+        "uv",
+        "sync",
+        "--frozen",
+        "--no-editable",
+        "--no-dev",
+        "--extra",
+        "cu130",
+    ]
+    assert env_overrides == {"UV_PROJECT_ENVIRONMENT": str(venv)}
