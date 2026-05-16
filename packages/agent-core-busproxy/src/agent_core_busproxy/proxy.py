@@ -27,6 +27,8 @@ from typing import Any
 from fastmcp import FastMCP
 from fastmcp.server.providers.proxy import ProxyClient, ProxyProvider
 
+from agent_core_busproxy.transient import TransientErrorMiddleware
+
 # Fail-fast: a down daemon must not hang a tool call. Small connect/init
 # budget; the agent owns the retry decision (spec: fail-fast retryable).
 _BACKEND_INIT_TIMEOUT_SECONDS = 5.0
@@ -65,6 +67,8 @@ def build_busproxy(
             timeout=_BACKEND_REQUEST_TIMEOUT_SECONDS,
         )
 
+    # -> Any: ProxyClient.new() returns an httpx-backed client (URL path)
+    # or an in-process FastMCP client (_backend path) — undifferentiated.
     def client_factory() -> Any:
         # Fresh session per request — the #91 fix.
         return base_client.new()
@@ -73,4 +77,7 @@ def build_busproxy(
     proxy.add_provider(
         ProxyProvider(client_factory, cache_ttl=_TOOL_CACHE_TTL_SECONDS)
     )
+    # daemon_url is the middleware's liveness-probe target. None on the
+    # in-process test path => probing disabled (ambiguous => genuine).
+    proxy.add_middleware(TransientErrorMiddleware(daemon_url=daemon_url))
     return proxy

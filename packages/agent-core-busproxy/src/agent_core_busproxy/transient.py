@@ -5,12 +5,18 @@ agent never retry-loops on a real failure.
 Two backend-down shapes (spec Amendment 2026-05-16):
   1. Transport error — warm tool cache, per-request connect to the dead
      daemon fails. Unambiguously transient.
-  2. ToolError("Unknown tool: ...") — the tool-list fetch failed and
+  2. NotFoundError("Unknown tool: ...") — the tool-list fetch failed and
      FastMCP's ProxyProvider/AggregateProvider swallowed it into an empty
      registry. AMBIGUOUS: identical shape to a genuine unknown-tool / tool
      exception from a HEALTHY daemon. Disambiguated with a fast TCP
      liveness probe to the daemon: unreachable => transient; reachable =>
      genuine, re-raised unchanged.
+
+     NOTE: fastmcp 3.2.4 raises fastmcp.exceptions.NotFoundError (not
+     ToolError) from server.call_tool() when the resolved tool list is
+     empty (source: fastmcp/server/server.py line 1157). ToolError is
+     also classified AMBIGUOUS for forward-compatibility with versions
+     that may change this behaviour.
 
 Unknown exception types are treated as genuine — a real bug is never
 masked as retryable.
@@ -26,7 +32,7 @@ from typing import Any
 from urllib.parse import urlparse
 
 import httpx
-from fastmcp.exceptions import ToolError
+from fastmcp.exceptions import NotFoundError, ToolError
 from fastmcp.server.middleware import Middleware
 from fastmcp.tools.base import ToolResult
 from mcp.shared.exceptions import McpError
@@ -56,7 +62,7 @@ class Disposition(Enum):
 
 
 # Transport-class: could not reach / handshake the daemon. Definitely
-# transient. (ToolError is NOT in here — it is ambiguous, handled below.)
+# transient. (NotFoundError/ToolError are NOT in here — ambiguous, handled below.)
 _TRANSIENT_TYPES: tuple[type[BaseException], ...] = (
     httpx.HTTPError,
     ConnectionError,
@@ -70,7 +76,11 @@ def classify_backend_error(exc: BaseException) -> Disposition:
     """Triage a backend exception (see module docstring)."""
     if isinstance(exc, _TRANSIENT_TYPES):
         return Disposition.TRANSIENT
-    if isinstance(exc, ToolError):
+    # NotFoundError: fastmcp 3.2.4 raises this (not ToolError) when the
+    # resolved tool list is empty due to a dead backend swallowing the
+    # tool-list fetch (source: fastmcp/server/server.py line 1157).
+    # ToolError: kept for forward-compatibility.
+    if isinstance(exc, (NotFoundError, ToolError)):
         return Disposition.AMBIGUOUS
     return Disposition.GENUINE
 
