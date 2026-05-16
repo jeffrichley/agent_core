@@ -589,8 +589,17 @@ class DiscordEndpoint:
             # have raced in.
             if _active_endpoints.get(self.name) is self:
                 _active_endpoints.pop(self.name, None)
+            # Cancel ALL background sweep tasks before awaiting any of them.
+            # Awaiting one task gives the event loop a chance to start the
+            # others; if asyncio.sleep is monkeypatched to a non-yielding stub,
+            # any not-yet-cancelled task that starts running will spin forever.
+            # Cancelling both first ensures each one receives CancelledError on
+            # its very first step, regardless of scheduling order.
             if self._sweep_task is not None:
                 self._sweep_task.cancel()
+            if self._attachment_sweep_task is not None:
+                self._attachment_sweep_task.cancel()
+            if self._sweep_task is not None:
                 try:
                     await self._sweep_task
                 except asyncio.CancelledError:
@@ -602,7 +611,6 @@ class DiscordEndpoint:
                     )
                 self._sweep_task = None
             if self._attachment_sweep_task is not None:
-                self._attachment_sweep_task.cancel()
                 try:
                     await self._attachment_sweep_task
                 except asyncio.CancelledError:
