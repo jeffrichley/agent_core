@@ -987,14 +987,18 @@ async def test_download_attachments_saves_files(monkeypatch, tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_download_attachments_records_content_type_from_response(
+async def test_download_attachments_content_type_is_empty_string(
     monkeypatch, tmp_path
 ):
-    """The Content-Type header from the download response must land on the
-    saved record. Caught on testbot 2026-05-05 Phase 6 verb-parity smoke —
-    old code hard-coded ``content_type: ""`` even though the header was
-    available, forcing callers into a redundant ``fetch_messages`` round
-    trip just to learn what they downloaded.
+    """content_type in saved[] is now always "" per #76 Task 2.
+
+    _persist_attachment returns a Path only (clean primitive); the HTTP
+    response Content-Type is intentionally discarded. Agents that need the
+    declared type should use metadata["attachments"][].content_type from the
+    inbound envelope (Discord's value, more reliable than the CDN header).
+
+    Previously this test asserted the per-URL CDN Content-Type was plumbed
+    through; that behaviour was removed in #76 Task 2.
     """
     monkeypatch.setenv("X_TOK", "tok")
     handle = _Recording()
@@ -1041,8 +1045,9 @@ async def test_download_attachments_records_content_type_from_response(
         ack = [e for e in handle.published if e.kind == "Acknowledgment"][0]
         result = json.loads(ack.payload.note)
         saved = {item["filename"]: item for item in result["saved"]}
-        assert saved["a.pdf"]["content_type"] == "application/pdf"
-        assert saved["b.png"]["content_type"] == "image/png"
+        # content_type is now "" — see #76 Task 2 intentional delta
+        assert saved["a.pdf"]["content_type"] == ""
+        assert saved["b.png"]["content_type"] == ""
     finally:
         await ep.stop()
 

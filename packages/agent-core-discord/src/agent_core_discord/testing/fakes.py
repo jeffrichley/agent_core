@@ -93,13 +93,24 @@ class FakePoll:
 class FakeAttachment:
     """Minimal stand-in for discord.Attachment on a fake message.
 
-    Models only the fields tests assert on (`filename`, `url`); expand
-    named per the test-fakes-mirror-real-strictly discipline.
+    Mirrors the real fields the endpoint reads: filename, url,
+    content_type, size. Per the test-fakes-mirror-real-strictly
+    discipline — the inbound path does getattr(att, "content_type") and
+    getattr(att, "size"), so the fake must carry them.
     """
 
-    def __init__(self, *, filename: str, url: str = ""):
+    def __init__(
+        self,
+        *,
+        filename: str,
+        url: str = "",
+        content_type: str | None = None,
+        size: int = 0,
+    ):
         self.filename = filename
         self.url = url
+        self.content_type = content_type
+        self.size = size
 
 
 class FakeMessage:

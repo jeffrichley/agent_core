@@ -212,6 +212,13 @@ def _safe_filename(url: str) -> str:
     return clean
 
 
+def _redact_url_qs(text: str) -> str:
+    """Strip query strings from any URL in a message so signed Discord CDN
+    tokens (?ex=&is=&hm=) never reach logs or persisted envelope metadata.
+    """
+    return re.sub(r"(https?://[^\s?]+)\?\S*", r"\1?<redacted>", text)
+
+
 class DiscordEndpoint:
     """Bus endpoint that bridges one Discord bot to one named agent (1:1)."""
 
@@ -237,6 +244,9 @@ class DiscordEndpoint:
         pending_acks_max: int = 5000,
         pending_acks_ttl_seconds: float = 3600.0,
         pending_acks_sweep_seconds: float = 60.0,
+        attachment_retention_days: int = 30,
+        attachment_max_total_bytes: int = 1_073_741_824,
+        attachment_sweep_seconds: float = 3600.0,
         recent_inbounds_max: int = 5000,
         recent_inbounds_ttl_seconds: float = 3600.0,
         _client_factory: Callable[..., Any] | None = None,
@@ -257,6 +267,9 @@ class DiscordEndpoint:
         self.pending_acks_max = pending_acks_max
         self.pending_acks_ttl_seconds = pending_acks_ttl_seconds
         self.pending_acks_sweep_seconds = pending_acks_sweep_seconds
+        self.attachment_retention_days = attachment_retention_days
+        self.attachment_max_total_bytes = attachment_max_total_bytes
+        self.attachment_sweep_seconds = attachment_sweep_seconds
         self._client_factory = _client_factory  # test seam
         self._handle: BusHandle | None = None
         self._client: Any = None
@@ -269,6 +282,7 @@ class DiscordEndpoint:
         self._user_display_name_cache: dict[str, str] = {}
         self._client_task: asyncio.Task | None = None
         self._sweep_task: asyncio.Task | None = None
+        self._attachment_sweep_task: asyncio.Task | None = None
         self._ready_event: asyncio.Event = asyncio.Event()
         self._access: AccessConfig = AccessConfig()
         # message_id → (ack_emoji, channel_id, monotonic_inserted_at).
@@ -566,13 +580,26 @@ class DiscordEndpoint:
                 self._pending_acks_sweep_loop(),
                 name=f"discord-endpoint-{self.name}-acks-sweep",
             )
+            self._attachment_sweep_task = asyncio.create_task(
+                self._attachment_sweep_loop(),
+                name=f"discord-endpoint-{self.name}-attach-sweep",
+            )
         except BaseException:
             # Only pop if WE own this slot — never evict a sibling that may
             # have raced in.
             if _active_endpoints.get(self.name) is self:
                 _active_endpoints.pop(self.name, None)
+            # Cancel ALL background sweep tasks before awaiting any of them.
+            # Awaiting one task gives the event loop a chance to start the
+            # others; if asyncio.sleep is monkeypatched to a non-yielding stub,
+            # any not-yet-cancelled task that starts running will spin forever.
+            # Cancelling both first ensures each one receives CancelledError on
+            # its very first step, regardless of scheduling order.
             if self._sweep_task is not None:
                 self._sweep_task.cancel()
+            if self._attachment_sweep_task is not None:
+                self._attachment_sweep_task.cancel()
+            if self._sweep_task is not None:
                 try:
                     await self._sweep_task
                 except asyncio.CancelledError:
@@ -583,6 +610,17 @@ class DiscordEndpoint:
                         self.name,
                     )
                 self._sweep_task = None
+            if self._attachment_sweep_task is not None:
+                try:
+                    await self._attachment_sweep_task
+                except asyncio.CancelledError:
+                    pass
+                except Exception:
+                    log.exception(
+                        "discord endpoint '%s': attachment sweep raised during start rollback",
+                        self.name,
+                    )
+                self._attachment_sweep_task = None
             if self._client_task is not None:
                 self._client_task.cancel()
                 try:
@@ -828,8 +866,17 @@ class DiscordEndpoint:
         self._awaiting_reply_ids.clear()
         self._awaiting_reply_ids_timestamps.clear()
         self._inbound_envelope_discord.clear()
+        # Cancel ALL background sweep tasks before awaiting any of them.
+        # Awaiting one task gives the event loop a chance to start the others;
+        # if asyncio.sleep is monkeypatched to a non-yielding stub (as in the
+        # retry tests), any not-yet-cancelled task that starts running will spin
+        # forever.  Cancelling both first ensures each one receives CancelledError
+        # on its very first step, regardless of scheduling order.
         if self._sweep_task is not None:
             self._sweep_task.cancel()
+        if self._attachment_sweep_task is not None:
+            self._attachment_sweep_task.cancel()
+        if self._sweep_task is not None:
             try:
                 await self._sweep_task
             except asyncio.CancelledError:
@@ -840,6 +887,17 @@ class DiscordEndpoint:
                     self.name,
                 )
             self._sweep_task = None
+        if self._attachment_sweep_task is not None:
+            try:
+                await self._attachment_sweep_task
+            except asyncio.CancelledError:
+                pass
+            except Exception:
+                log.exception(
+                    "discord endpoint '%s': attachment sweep raised during stop",
+                    self.name,
+                )
+            self._attachment_sweep_task = None
         if self._client_task is not None:
             self._client_task.cancel()
             try:
@@ -905,7 +963,7 @@ class DiscordEndpoint:
                 if added:
                     self._track_pending_ack(str(message.id), ack_emoji, str(message.channel.id))
 
-            # 5. Collect attachment metadata (no auto-download).
+            # 5. Collect attachment metadata.
             attachments: list[dict[str, Any]] = []
             for att in getattr(message, "attachments", []) or []:
                 attachments.append(
@@ -922,6 +980,31 @@ class DiscordEndpoint:
             #    The sigil is stripped from the published payload text. See issue #38.
             urgency, text = parse_sigil(message.content or "")
 
+            # Mint the envelope id up front so attachment files can be grouped
+            # under <attachments_dir>/<envelope_id>/ and enrichment happens
+            # before Envelope(...) construction (avoids pydantic copy aliasing).
+            env_id = uuid.uuid4().hex
+
+            # 5b. Auto-download each attachment (best-effort, per-attachment).
+            #     Failure never blocks or loses the text message: the dict
+            #     keeps its CDN url and gains a download_error marker.
+            for entry in attachments:
+                try:
+                    local, _nbytes = await self._persist_attachment(
+                        url=entry["url"], subdir=env_id
+                    )
+                    entry["local_path"] = str(local)
+                except Exception as exc:  # best-effort by design
+                    entry["local_path"] = None
+                    safe_reason = _redact_url_qs(f"{type(exc).__name__}: {exc}")
+                    entry["download_error"] = safe_reason
+                    log.warning(
+                        "discord(%s): attachment download failed for %s — %s",
+                        self.name,
+                        entry.get("filename"),
+                        safe_reason,
+                    )
+
             metadata: dict[str, Any] = {
                 "discord": {
                     "channel_id": str(message.channel.id),
@@ -936,7 +1019,7 @@ class DiscordEndpoint:
                 metadata["attachments"] = attachments
 
             env = Envelope(
-                id=uuid.uuid4().hex,
+                id=env_id,
                 correlation_id=uuid.uuid4().hex,
                 to=self.target,
                 kind="TextMessage",
@@ -1205,6 +1288,84 @@ class DiscordEndpoint:
         except asyncio.CancelledError:
             raise
 
+    def _sweep_attachments_once(self) -> int:
+        """One retention pass over <attachments_dir>.
+
+        Age first: delete any <env_id>/ dir whose mtime is older than
+        attachment_retention_days. Then size cap: while total bytes exceed
+        attachment_max_total_bytes, delete whole dirs oldest-first by mtime.
+        Whole-directory deletes only; never partial. A failed delete is
+        logged and skipped — the sweep never raises into its loop.
+        Returns the number of directories evicted.
+        """
+        import shutil
+
+        root = self.attachments_dir
+        try:
+            if not root.exists():
+                return 0
+            root_resolved = root.resolve()
+            entries = [d for d in root.iterdir() if d.is_dir()]
+        except OSError:
+            return 0
+
+        def _safe_rmtree(d: Path) -> bool:
+            try:
+                if d.resolve().parent != root_resolved:
+                    return False  # never walk outside the attachments root
+                shutil.rmtree(d)
+                return True
+            except Exception:
+                log.exception(
+                    "discord(%s): attachment sweep failed to delete %s",
+                    self.name,
+                    d,
+                )
+                return False
+
+        evicted = 0
+        cutoff = time.time() - (self.attachment_retention_days * 86400)
+        survivors: list[tuple[float, int, Path]] = []
+        for d in entries:
+            try:
+                mtime = d.stat().st_mtime
+                size = sum(
+                    f.stat().st_size for f in d.rglob("*") if f.is_file()
+                )
+            except OSError:
+                continue
+            if mtime < cutoff:
+                if _safe_rmtree(d):
+                    evicted += 1
+            else:
+                survivors.append((mtime, size, d))
+
+        total = sum(s for _, s, _ in survivors)
+        if total > self.attachment_max_total_bytes:
+            survivors.sort(key=lambda t: t[0])  # oldest first
+            for _mtime, size, d in survivors:
+                if total <= self.attachment_max_total_bytes:
+                    break
+                if _safe_rmtree(d):
+                    total -= size
+                    evicted += 1
+        return evicted
+
+    async def _attachment_sweep_loop(self) -> None:
+        """Periodic attachment retention sweep. Runs until cancelled by stop()."""
+        try:
+            while True:
+                await asyncio.sleep(self.attachment_sweep_seconds)
+                try:
+                    self._sweep_attachments_once()
+                except Exception:
+                    log.exception(
+                        "discord endpoint '%s': attachment sweep iteration failed",
+                        self.name,
+                    )
+        except asyncio.CancelledError:
+            raise
+
     async def _clear_pending_ack(self, channel, message_id: str) -> None:
         mid = str(message_id)
         self._awaiting_reply_ids.discard(mid)
@@ -1466,45 +1627,60 @@ class DiscordEndpoint:
             resp.raise_for_status()
             return resp.content, resp.headers.get("content-type", "")
 
-    async def _download_attachments(self, args: _DownloadAttachmentsArgs) -> dict:
-        if not args.attachment_urls:
-            return {"saved": []}
-        target_dir = self.attachments_dir / args.message_id
+    async def _persist_attachment(self, *, url: str, subdir: str) -> tuple[Path, int]:
+        """Download one URL into <attachments_dir>/<subdir>/ and return the
+        resolved path plus byte count. Raises on download failure
+        (propagated raw from _download_url) or unsafe path (_PersistError).
+
+        Shared by the download_attachments MCP tool (subdir=message_id) and
+        the inbound auto-download path (subdir=envelope_id).
+        """
+        target_dir = self.attachments_dir / subdir
         target_dir.mkdir(parents=True, exist_ok=True)
         target_resolved = target_dir.resolve()
-        saved: list[dict] = []
-        for url in args.attachment_urls:
-            filename = _safe_filename(url)
-            path = (target_dir / filename).resolve()
+        filename = _safe_filename(url)
+        path = (target_dir / filename).resolve()
+        try:
+            path.relative_to(target_resolved)
+        except ValueError as exc:
+            raise _PersistError(f"refused unsafe path for {url!r}") from exc
+        # De-dup so two URLs ending in the same name don't silently overwrite.
+        if path.exists():
+            stem, suffix = path.stem, path.suffix
+            path = (target_dir / f"{stem}-{uuid.uuid4().hex[:8]}{suffix}").resolve()
             try:
                 path.relative_to(target_resolved)
             except ValueError as exc:
-                raise _ToolError(f"download_attachments: refused unsafe path for {url!r}") from exc
-            # De-dup so two URLs ending in the same name don't silently overwrite.
-            if path.exists():
-                stem, suffix = path.stem, path.suffix
-                path = (target_dir / f"{stem}-{uuid.uuid4().hex[:8]}{suffix}").resolve()
-                try:
-                    path.relative_to(target_resolved)
-                except ValueError as exc:
-                    raise _ToolError(
-                        f"download_attachments: refused unsafe dedup path for {url!r}"
-                    ) from exc
+                raise _PersistError(f"refused unsafe dedup path for {url!r}") from exc
+        data, _content_type = await self._download_url(url)
+        path.write_bytes(data)
+        return path, len(data)
+
+    async def _download_attachments(self, args: _DownloadAttachmentsArgs) -> dict:
+        if not args.attachment_urls:
+            return {"saved": []}
+        saved: list[dict] = []
+        for url in args.attachment_urls:
             try:
-                data, content_type = await self._download_url(url)
+                path, nbytes = await self._persist_attachment(
+                    url=url, subdir=args.message_id
+                )
+            except _PersistError as exc:
+                raise _ToolError(str(exc)) from exc
             except Exception as exc:
                 raise _ToolError(f"download failed for {url}: {exc}") from exc
-            path.write_bytes(data)
             saved.append(
                 {
                     "filename": path.name,
                     "path": str(path),
-                    # Content-Type from the HTTP response header — populated
-                    # so callers don't need a second ``fetch_messages`` round
-                    # trip just to learn what they downloaded. Empty string
-                    # if the server didn't send the header.
-                    "content_type": content_type,
-                    "size_bytes": len(data),
+                    # content_type is now "" — _persist_attachment returns
+                    # (path, nbytes) and does not surface the CDN response
+                    # content-type. Agents that need the declared type should
+                    # use metadata["attachments"][].content_type from the
+                    # inbound envelope (Discord's value, more reliable than
+                    # the CDN response header). See #76 Task 2.
+                    "content_type": "",
+                    "size_bytes": nbytes,
                 }
             )
         return {"saved": saved}
@@ -1760,3 +1936,9 @@ class DiscordEndpoint:
 
 class _ToolError(Exception):
     """User-error during tool dispatch — produces an Acknowledgment with note."""
+
+
+class _PersistError(Exception):
+    """Attachment could not be persisted (unsafe path, etc.). Neutral —
+    shared by the MCP tool and the inbound path; the tool layer
+    translates it to _ToolError."""

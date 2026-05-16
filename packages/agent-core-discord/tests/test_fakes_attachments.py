@@ -29,3 +29,27 @@ async def test_fake_message_records_attachments_from_send_call(tmp_path):
     finally:
         for df in discord_files:
             df.close()
+
+
+from agent_core_discord.testing.fakes import FakeAttachment
+
+
+def test_fake_attachment_carries_content_type_and_size():
+    a = FakeAttachment(
+        filename="pic.png",
+        url="https://cdn.discordapp.com/x/pic.png",
+        content_type="image/png",
+        size=2048,
+    )
+    assert a.filename == "pic.png"
+    assert a.url == "https://cdn.discordapp.com/x/pic.png"
+    assert a.content_type == "image/png"
+    assert a.size == 2048
+
+
+def test_fake_attachment_defaults_match_real_optionality():
+    # content_type can be absent on real attachments; size defaults to 0.
+    a = FakeAttachment(filename="f.bin")
+    assert a.url == ""
+    assert a.content_type is None
+    assert a.size == 0
