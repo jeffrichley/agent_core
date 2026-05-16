@@ -52,7 +52,7 @@ def test_sweep_enforces_size_cap_oldest_first(tmp_path):
     assert new.exists()
 
 
-def test_sweep_skips_unsafe_and_does_not_crash(tmp_path, monkeypatch):
+def test_sweep_skips_failed_delete_and_does_not_crash(tmp_path, monkeypatch):
     ep = _ep(tmp_path, attachment_retention_days=1)
     _mkenv(tmp_path, "stale", nbytes=10, age_seconds=2 * 86400)
 
