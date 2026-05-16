@@ -10,6 +10,17 @@
 
 **Reference spec:** `docs/superpowers/specs/2026-05-16-daemon-mcp-session-recovery-design.md`
 
+> **Amendment 2026-05-16 (Task 2 spike finding — Tasks 3–5 revised below):**
+> Installed FastMCP 3.2.2 caches the backend tool list and *swallows* a
+> backend-down `list_*` into an empty registry → a tool call then raises
+> `ToolError("Unknown tool: …")`, **not** a transport error. `FastMCPProxy`
+> does not expose `cache_ttl`. Resolution (chosen): build the proxy as
+> `FastMCP` + `add_provider(ProxyProvider(client_factory, cache_ttl=<long>))`
+> (cache hardening), and make the middleware disambiguate a `ToolError` via a
+> fast daemon **liveness probe** (down → transient; up → genuine passthrough).
+> See the spec's "Amendment 2026-05-16" section. Tasks 3, 4, 5 below are the
+> revised versions; Tasks 1, 2, 6–9 are unchanged.
+
 ---
 
 ## File Structure
@@ -333,6 +344,16 @@ call mints a FRESH backend session (ProxyClient.new()), so a restarted
 daemon is never presented a stale mcp-session-id — issue #91 is removed
 by construction, not by recovery logic.
 
+Cache hardening (spec Amendment 2026-05-16): FastMCP's ProxyProvider
+caches the backend tool list and swallows a backend-down list into an
+EMPTY registry. We build the proxy via the documented lower-level
+pattern — FastMCP + add_provider(ProxyProvider(client_factory,
+cache_ttl=<long>)) — with a 24h cache_ttl so the tool palette survives
+any realistic daemon bounce. (FastMCPProxy hardcodes ProxyProvider with
+no cache_ttl passthrough, so it cannot be used here.) No active
+keepalive: a keepalive cannot help the cold-start-while-down edge, and a
+long TTL covers expiry (YAGNI).
+
 `init_timeout` keeps a down/bouncing daemon from hanging the call: the
 backend connect fails fast and the TransientErrorMiddleware (attached in
 Task 5) turns that into a structured retryable tool result.
@@ -342,7 +363,8 @@ from __future__ import annotations
 
 from typing import Any
 
-from fastmcp.server.providers.proxy import FastMCPProxy, ProxyClient
+from fastmcp import FastMCP
+from fastmcp.server.providers.proxy import ProxyClient, ProxyProvider
 
 # Fail-fast: a down daemon must not hang a tool call. Small connect/init
 # budget; the agent owns the retry decision (spec: fail-fast retryable).
@@ -350,6 +372,9 @@ _BACKEND_INIT_TIMEOUT_SECONDS = 5.0
 # Per-call request budget once connected (a healthy daemon answers in ms;
 # this only bounds a half-open connection).
 _BACKEND_REQUEST_TIMEOUT_SECONDS = 60.0
+# Tool-list cache lifetime. Long enough that the palette survives any
+# realistic daemon bounce/refresh within a session (spec Amendment).
+_TOOL_CACHE_TTL_SECONDS = 86400.0
 
 
 def build_busproxy(
@@ -357,8 +382,8 @@ def build_busproxy(
     agent: str,
     daemon_url: str | None,
     _backend: Any | None = None,
-) -> FastMCPProxy:
-    """Return a FastMCPProxy over the daemon's per-agent endpoint.
+) -> FastMCP:
+    """Return a FastMCP proxy over the daemon's per-agent endpoint.
 
     Args:
         agent: bus agent name (URL path segment).
@@ -383,7 +408,11 @@ def build_busproxy(
         # Fresh session per request — the #91 fix.
         return base_client.new()
 
-    return FastMCPProxy(client_factory=client_factory, name=f"agent-core[{agent}]")
+    proxy = FastMCP(name=f"agent-core[{agent}]")
+    proxy.add_provider(
+        ProxyProvider(client_factory, cache_ttl=_TOOL_CACHE_TTL_SECONDS)
+    )
+    return proxy
 ```
 
 - [ ] **Step 4: Run it to verify it passes**
@@ -412,9 +441,18 @@ Create `packages/agent-core-busproxy/tests/test_transient.py`:
 
 ```python
 """TransientErrorMiddleware: backend-down -> structured retryable result;
-genuine tool errors pass through verbatim."""
+genuine tool errors pass through verbatim.
+
+Per spec Amendment 2026-05-16: a backend-down failure can surface either
+as a transport error (warm cache, per-request connect fails) OR as a
+ToolError("Unknown tool: ...") (empty registry because the list fetch
+was swallowed). The latter is AMBIGUOUS with a genuine unknown-tool /
+tool exception, so it is disambiguated with a fast daemon liveness probe.
+"""
 
 from __future__ import annotations
+
+import socket
 
 import httpx
 import pytest
@@ -422,8 +460,10 @@ from fastmcp.exceptions import ToolError
 
 from agent_core_busproxy.transient import (
     TRANSIENT_ERROR_CODE,
+    Disposition,
     TransientErrorMiddleware,
     classify_backend_error,
+    daemon_reachable,
     redact,
 )
 
@@ -435,20 +475,39 @@ def test_redact_strips_query_string() -> None:
     )
 
 
-def test_classify_connection_error_is_transient() -> None:
-    assert classify_backend_error(httpx.ConnectError("refused")) is True
-    assert classify_backend_error(ConnectionError("refused")) is True
-    assert classify_backend_error(TimeoutError()) is True
+def test_classify_transport_error_is_transient() -> None:
+    assert classify_backend_error(httpx.ConnectError("refused")) is Disposition.TRANSIENT
+    assert classify_backend_error(ConnectionError("refused")) is Disposition.TRANSIENT
+    assert classify_backend_error(TimeoutError()) is Disposition.TRANSIENT
 
 
-def test_classify_tool_error_is_not_transient() -> None:
-    assert classify_backend_error(ToolError("bad argument")) is False
-    assert classify_backend_error(ValueError("nope")) is False
+def test_classify_tool_error_is_ambiguous() -> None:
+    # Could be 'down -> empty registry' OR a real unknown-tool error.
+    assert classify_backend_error(ToolError("Unknown tool: x")) is Disposition.AMBIGUOUS
+
+
+def test_classify_unknown_is_genuine() -> None:
+    # Never mask an unrecognized error as retryable.
+    assert classify_backend_error(ValueError("nope")) is Disposition.GENUINE
 
 
 @pytest.mark.asyncio
-async def test_middleware_wraps_backend_down_as_structured_result() -> None:
-    mw = TransientErrorMiddleware()
+async def test_daemon_reachable_true_and_false() -> None:
+    srv = socket.socket()
+    srv.bind(("127.0.0.1", 0))
+    srv.listen(1)
+    host, port = srv.getsockname()
+    try:
+        assert await daemon_reachable(f"http://{host}:{port}") is True
+    finally:
+        srv.close()
+    # Nothing listening on 65535 => not reachable.
+    assert await daemon_reachable("http://127.0.0.1:65535") is False
+
+
+@pytest.mark.asyncio
+async def test_transport_error_becomes_transient_result() -> None:
+    mw = TransientErrorMiddleware(daemon_url="http://127.0.0.1:65535")
 
     async def call_next(_ctx):
         raise httpx.ConnectError("Connection refused to http://h/x?token=ABC")
@@ -463,8 +522,40 @@ async def test_middleware_wraps_backend_down_as_structured_result() -> None:
 
 
 @pytest.mark.asyncio
-async def test_middleware_passes_genuine_tool_error_through() -> None:
-    mw = TransientErrorMiddleware()
+async def test_toolerror_with_daemon_down_becomes_transient() -> None:
+    # 65535 unbound => probe says down => AMBIGUOUS resolves to transient.
+    mw = TransientErrorMiddleware(daemon_url="http://127.0.0.1:65535")
+
+    async def call_next(_ctx):
+        raise ToolError("Unknown tool: 'consume'")
+
+    result = await mw.on_call_tool(object(), call_next)
+    assert result.structured_content["transient"] is True
+
+
+@pytest.mark.asyncio
+async def test_toolerror_with_daemon_up_passes_through() -> None:
+    # A real listening socket => probe says reachable => genuine passthrough.
+    srv = socket.socket()
+    srv.bind(("127.0.0.1", 0))
+    srv.listen(1)
+    host, port = srv.getsockname()
+    try:
+        mw = TransientErrorMiddleware(daemon_url=f"http://{host}:{port}")
+
+        async def call_next(_ctx):
+            raise ToolError("envelope_id not found")
+
+        with pytest.raises(ToolError, match="envelope_id not found"):
+            await mw.on_call_tool(object(), call_next)
+    finally:
+        srv.close()
+
+
+@pytest.mark.asyncio
+async def test_no_daemon_url_treats_ambiguous_as_genuine() -> None:
+    # In-process/test path (no URL): cannot probe => do not mask as transient.
+    mw = TransientErrorMiddleware(daemon_url=None)
 
     async def call_next(_ctx):
         raise ToolError("envelope_id not found")
@@ -487,18 +578,28 @@ Create `packages/agent-core-busproxy/src/agent_core_busproxy/transient.py`:
 tool result. Genuine backend tool errors pass through verbatim so the
 agent never retry-loops on a real failure.
 
-Discriminator: a failure to *reach/handshake* the daemon (connect
-refused, connect/init timeout, transport drop, MCP protocol error from a
-missing session) is transient. An error the daemon itself raised while
-running the tool (ToolError / value errors surfaced as tool errors) is
-genuine and re-raised unchanged.
+Two backend-down shapes (spec Amendment 2026-05-16):
+  1. Transport error — warm tool cache, per-request connect to the dead
+     daemon fails. Unambiguously transient.
+  2. ToolError("Unknown tool: ...") — the tool-list fetch failed and
+     FastMCP's ProxyProvider/AggregateProvider swallowed it into an empty
+     registry. AMBIGUOUS: identical shape to a genuine unknown-tool / tool
+     exception from a HEALTHY daemon. Disambiguated with a fast TCP
+     liveness probe to the daemon: unreachable => transient; reachable =>
+     genuine, re-raised unchanged.
+
+Unknown exception types are treated as genuine — a real bug is never
+masked as retryable.
 """
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import re
+from enum import Enum
 from typing import Any
+from urllib.parse import urlparse
 
 import httpx
 from fastmcp.exceptions import ToolError
@@ -510,6 +611,7 @@ log = logging.getLogger(__name__)
 
 TRANSIENT_ERROR_CODE = "bus_unavailable"
 _RETRY_AFTER_SECONDS = 5
+_PROBE_TIMEOUT_SECONDS = 2.0
 
 # Reuse the #76 redaction shape: drop the entire query string (signed CDN
 # tokens / session ids live there).
@@ -521,10 +623,16 @@ def redact(text: str) -> str:
     return _URL_QS_RE.sub(r"\1?<redacted>", text)
 
 
-# Genuine tool errors: the daemon connected and ran the tool, it failed.
-_GENUINE_TYPES: tuple[type[BaseException], ...] = (ToolError,)
+class Disposition(Enum):
+    """How a backend exception should be handled."""
 
-# Transient: could not reach / handshake the daemon.
+    TRANSIENT = "transient"  # definitely daemon unreachable
+    GENUINE = "genuine"  # definitely a real error — re-raise
+    AMBIGUOUS = "ambiguous"  # could be either — probe the daemon to decide
+
+
+# Transport-class: could not reach / handshake the daemon. Definitely
+# transient. (ToolError is NOT in here — it is ambiguous, handled below.)
 _TRANSIENT_TYPES: tuple[type[BaseException], ...] = (
     httpx.HTTPError,
     ConnectionError,
@@ -534,14 +642,38 @@ _TRANSIENT_TYPES: tuple[type[BaseException], ...] = (
 )
 
 
-def classify_backend_error(exc: BaseException) -> bool:
-    """True => transient (daemon unreachable). False => genuine tool error."""
-    if isinstance(exc, _GENUINE_TYPES):
-        return False
+def classify_backend_error(exc: BaseException) -> Disposition:
+    """Triage a backend exception (see module docstring)."""
     if isinstance(exc, _TRANSIENT_TYPES):
-        return True
-    # Unknown: treat as genuine so real bugs are never masked as retryable.
-    return False
+        return Disposition.TRANSIENT
+    if isinstance(exc, ToolError):
+        return Disposition.AMBIGUOUS
+    return Disposition.GENUINE
+
+
+async def daemon_reachable(daemon_url: str) -> bool:
+    """Fast TCP liveness probe — can we open a socket to the daemon?
+
+    A bounced/down daemon has nothing listening on its port, so a refused
+    or timed-out connect means 'down'. Bounded by _PROBE_TIMEOUT_SECONDS
+    so it cannot itself hang a tool call.
+    """
+    parsed = urlparse(daemon_url)
+    host = parsed.hostname or "127.0.0.1"
+    port = parsed.port or 80
+    try:
+        fut = asyncio.open_connection(host, port)
+        _reader, writer = await asyncio.wait_for(
+            fut, timeout=_PROBE_TIMEOUT_SECONDS
+        )
+    except (OSError, asyncio.TimeoutError):
+        return False
+    writer.close()
+    try:
+        await writer.wait_closed()
+    except Exception:  # noqa: BLE001 - close best-effort
+        pass
+    return True
 
 
 def _transient_result(exc: BaseException) -> ToolResult:
@@ -558,13 +690,27 @@ def _transient_result(exc: BaseException) -> ToolResult:
 
 
 class TransientErrorMiddleware(Middleware):
-    """Intercept tool calls; map daemon-unreachable to a retryable result."""
+    """Map daemon-unreachable to a retryable result; pass real errors through.
+
+    ``daemon_url`` is the liveness-probe target. ``None`` (the in-process
+    test path) disables probing — an AMBIGUOUS error is then treated as
+    genuine so a real error is never masked when we cannot verify.
+    """
+
+    def __init__(self, daemon_url: str | None = None) -> None:
+        self._daemon_url = daemon_url
 
     async def on_call_tool(self, context: Any, call_next: Any) -> ToolResult:
         try:
             return await call_next(context)
-        except BaseException as exc:  # noqa: BLE001 - classify then re-raise
-            if classify_backend_error(exc):
+        except BaseException as exc:  # noqa: BLE001 - triage then re-raise
+            disposition = classify_backend_error(exc)
+            if disposition is Disposition.TRANSIENT:
+                return _transient_result(exc)
+            if disposition is Disposition.AMBIGUOUS and (
+                self._daemon_url is not None
+                and not await daemon_reachable(self._daemon_url)
+            ):
                 return _transient_result(exc)
             raise
 ```
@@ -572,7 +718,7 @@ class TransientErrorMiddleware(Middleware):
 - [ ] **Step 4: Run it to verify it passes**
 
 Run: `uv run --package agent-core-busproxy pytest packages/agent-core-busproxy/tests/test_transient.py -q`
-Expected: PASS (5 passed). If `test_classify_connection_error_is_transient` fails, the exception chain pinned in Task 2 Step 2 names the real type — add it to `_TRANSIENT_TYPES`.
+Expected: PASS (9 passed). If a transport-class assertion fails, the exception chain pinned in Task 2 names the real type — add it to `_TRANSIENT_TYPES`. The probe tests bind an ephemeral localhost socket; if a sandbox forbids `listen()`, note it and fall back to asserting only the `65535`-unreachable direction.
 
 - [ ] **Step 5: Commit**
 
@@ -626,7 +772,7 @@ async def test_dead_backend_returns_transient_result_fast() -> None:
 - [ ] **Step 2: Run it to verify it fails**
 
 Run: `uv run --package agent-core-busproxy pytest packages/agent-core-busproxy/tests/test_down_window.py -q`
-Expected: FAIL — without the middleware the dead backend raises instead of returning the structured result (the assertion on `structured_content` fails, or the call raises).
+Expected: FAIL — without the middleware the dead backend surfaces as a raised `ToolError("Unknown tool: …")` (empty registry — spec Amendment), so the call raises instead of returning the structured transient result.
 
 - [ ] **Step 3: Attach the middleware in `build_busproxy`**
 
@@ -636,17 +782,26 @@ In `packages/agent-core-busproxy/src/agent_core_busproxy/proxy.py`, add the impo
 from agent_core_busproxy.transient import TransientErrorMiddleware
 ```
 
-Then change the final `return` of `build_busproxy` from:
+Then change the final three lines of `build_busproxy` from:
 
 ```python
-    return FastMCPProxy(client_factory=client_factory, name=f"agent-core[{agent}]")
+    proxy = FastMCP(name=f"agent-core[{agent}]")
+    proxy.add_provider(
+        ProxyProvider(client_factory, cache_ttl=_TOOL_CACHE_TTL_SECONDS)
+    )
+    return proxy
 ```
 
 to:
 
 ```python
-    proxy = FastMCPProxy(client_factory=client_factory, name=f"agent-core[{agent}]")
-    proxy.add_middleware(TransientErrorMiddleware())
+    proxy = FastMCP(name=f"agent-core[{agent}]")
+    proxy.add_provider(
+        ProxyProvider(client_factory, cache_ttl=_TOOL_CACHE_TTL_SECONDS)
+    )
+    # daemon_url is the middleware's liveness-probe target. None on the
+    # in-process test path => probing disabled (ambiguous => genuine).
+    proxy.add_middleware(TransientErrorMiddleware(daemon_url=daemon_url))
     return proxy
 ```
 
@@ -771,6 +926,16 @@ git commit -m "feat(busproxy): stdio Typer CLI entrypoint (#91)"
 ## Task 7: #91 regression — survive a real daemon bounce
 
 This is the load-bearing proof. Stand up a real `ClaudeCodeMCPEndpoint` FastMCP server on an ephemeral TCP port (HTTP, exactly like the daemon), connect one long-lived busproxy `Client` to it, call a tool, **stop and restart** the backend server, then call again — it must succeed with no client-side re-handshake. Deterministic; no real sleeps (poll readiness with a short bounded loop).
+
+> **Expected internal path (post-Amendment):** `r1` (backend up) populates
+> the 24h tool-list cache. The `mid` call (backend down) resolves the tool
+> from the warm cache, opens a fresh per-request session, the connect
+> fails → a **transport-class** error → middleware's TRANSIENT branch (no
+> probe needed) → `{transient:true}`. `r2` (backend back) opens a fresh
+> session and succeeds. If `mid` instead surfaces as a `ToolError`, the
+> middleware's liveness probe still resolves it to transient — either way
+> the assertion holds. Do not "fix" the test if the internal path differs;
+> only the observable assertions matter.
 
 **Files:**
 - Create: `packages/agent-core-busproxy/tests/test_regression_daemon_bounce.py`

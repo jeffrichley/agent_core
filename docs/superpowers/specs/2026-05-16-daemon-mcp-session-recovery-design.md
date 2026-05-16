@@ -249,6 +249,48 @@ and respawn behaviour explicitly verified in the plan.
   the substrate any auto-relaunched agent depends on.
 - **#76** — reuses the URL/token redaction discipline for `detail`.
 
+## Amendment 2026-05-16 (discovered during implementation, Task 2 spike)
+
+The Task 2 characterization test against installed FastMCP 3.2.2 invalidated
+one premise in *Library facts* / *Error handling*: a down daemon does **not**
+reliably surface as a connection error.
+
+- `FastMCPProxy` wraps a `ProxyProvider` that **caches the backend component
+  list** (default TTL 300s) and, via `AggregateProvider`, **swallows** a
+  failed backend `list_*` (logs, returns empty) instead of raising. A tool
+  call against an empty registry raises `ToolError("Unknown tool: …")`, not a
+  transport error. `FastMCPProxy.__init__` hardcodes `ProxyProvider(
+  client_factory)` with no `cache_ttl` passthrough.
+- **Severity:** the routine #91 case (tool list discovered while healthy →
+  `daemon refresh` bounce → call) is unaffected — the tool resolves from the
+  warm cache and the per-request session hits the daemon directly, yielding a
+  real transport error in the down window (classified transient) and success
+  once back. The gap is the edges: cold start while the daemon is down, an
+  outage longer than the cache TTL, or `tools/list` landing in the down
+  window — these degrade to `ToolError("Unknown tool")`.
+
+**Resolution (chosen 2026-05-16 — "smarter classifier + cache hardening"):**
+
+1. **Cache hardening.** Build the proxy with the documented lower-level
+   pattern — `FastMCP(name=…)` + `add_provider(ProxyProvider(client_factory,
+   cache_ttl=<long>))` — instead of `FastMCPProxy(...)`, with a long
+   `cache_ttl` (24h) so the tool palette survives any realistic bounce. No
+   active keepalive (YAGNI: a keepalive cannot help cold-start-while-down,
+   and a long TTL covers expiry).
+2. **Smarter classifier.** `TransientErrorMiddleware` keeps the
+   transport-error → transient rule, and additionally disambiguates a
+   `ToolError` / empty-registry failure with a fast daemon **liveness probe**
+   (async TCP connect to the daemon host:port, ~2s budget): unreachable →
+   structured `{transient:true}`; reachable → genuine, re-raise unchanged
+   (a real unknown-tool / tool exception is never masked as retryable).
+
+This stays within the approved architecture (still a FastMCP proxy, per-
+request sessions, fail-fast retryable, wake path untouched). Residual: the
+cold-start-while-daemon-down edge still returns transient and recovers once
+the daemon is back and a tool list succeeds — this is the same surface as the
+spec's already-acknowledged residual SPOF (Task 9 respawn/relist
+verification).
+
 ## Provenance
 
 #91 surfaced 2026-05-15 by Pepper from inside the affected session during the
