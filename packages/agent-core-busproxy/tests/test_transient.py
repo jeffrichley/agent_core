@@ -14,7 +14,7 @@ import socket
 
 import httpx
 import pytest
-from fastmcp.exceptions import ToolError
+from fastmcp.exceptions import NotFoundError, ToolError
 
 from agent_core_busproxy.transient import (
     TRANSIENT_ERROR_CODE,
@@ -120,3 +120,46 @@ async def test_no_daemon_url_treats_ambiguous_as_genuine() -> None:
 
     with pytest.raises(ToolError, match="envelope_id not found"):
         await mw.on_call_tool(object(), call_next)
+
+
+def test_classify_not_found_error_is_ambiguous() -> None:
+    # fastmcp 3.2.4 raises NotFoundError (NOT ToolError) server-side for an
+    # empty-registry unknown tool — the #91 backend-down path the proxy's
+    # middleware actually sees. Must be AMBIGUOUS so the liveness probe can
+    # disambiguate down-daemon vs a genuinely missing tool.
+    assert (
+        classify_backend_error(NotFoundError("Unknown tool: 'x'"))
+        is Disposition.AMBIGUOUS
+    )
+
+
+@pytest.mark.asyncio
+async def test_not_found_error_with_daemon_down_becomes_transient() -> None:
+    mw = TransientErrorMiddleware(daemon_url="http://127.0.0.1:65535")
+
+    async def call_next(_ctx):
+        raise NotFoundError("Unknown tool: 'consume'")
+
+    result = await mw.on_call_tool(object(), call_next)
+    assert result.structured_content["transient"] is True
+
+
+@pytest.mark.asyncio
+async def test_not_found_error_with_daemon_up_passes_through() -> None:
+    # The no-masking guarantee for the exact exception that motivated the
+    # Task 5 deviation: a genuinely-missing tool on a HEALTHY daemon must
+    # re-raise, never be masked as a retryable transient result.
+    srv = socket.socket()
+    srv.bind(("127.0.0.1", 0))
+    srv.listen(1)
+    host, port = srv.getsockname()
+    try:
+        mw = TransientErrorMiddleware(daemon_url=f"http://{host}:{port}")
+
+        async def call_next(_ctx):
+            raise NotFoundError("Unknown tool: 'genuinely_missing'")
+
+        with pytest.raises(NotFoundError, match="genuinely_missing"):
+            await mw.on_call_tool(object(), call_next)
+    finally:
+        srv.close()

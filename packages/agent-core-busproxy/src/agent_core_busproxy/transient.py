@@ -12,11 +12,11 @@ Two backend-down shapes (spec Amendment 2026-05-16):
      liveness probe to the daemon: unreachable => transient; reachable =>
      genuine, re-raised unchanged.
 
-     NOTE: fastmcp 3.2.4 raises fastmcp.exceptions.NotFoundError (not
-     ToolError) from server.call_tool() when the resolved tool list is
-     empty (source: fastmcp/server/server.py line 1157). ToolError is
-     also classified AMBIGUOUS for forward-compatibility with versions
-     that may change this behaviour.
+     NOTE: fastmcp raises `NotFoundError` server-side from
+     `FastMCP.call_tool` when the resolved tool list is empty (backend-down
+     → swallowed list → empty registry). ToolError is also classified
+     AMBIGUOUS for forward-compatibility with versions that may change this
+     behaviour.
 
 Unknown exception types are treated as genuine — a real bug is never
 masked as retryable.
@@ -76,10 +76,9 @@ def classify_backend_error(exc: BaseException) -> Disposition:
     """Triage a backend exception (see module docstring)."""
     if isinstance(exc, _TRANSIENT_TYPES):
         return Disposition.TRANSIENT
-    # NotFoundError: fastmcp 3.2.4 raises this (not ToolError) when the
-    # resolved tool list is empty due to a dead backend swallowing the
-    # tool-list fetch (source: fastmcp/server/server.py line 1157).
-    # ToolError: kept for forward-compatibility.
+    # NotFoundError: fastmcp raises this (not ToolError) from FastMCP.call_tool
+    # when the resolved tool list is empty (backend-down → swallowed list →
+    # empty registry). ToolError: kept for forward-compatibility.
     if isinstance(exc, (NotFoundError, ToolError)):
         return Disposition.AMBIGUOUS
     return Disposition.GENUINE
