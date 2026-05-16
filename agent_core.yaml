@@ -54,6 +54,26 @@ endpoints:
   #   voice: voice
   #   voice_id: my-agent
 
+  # Optional: Discord adapter. Uncomment + fill in token details per agent.
+  # See packages/agent-core-discord/ for the full endpoint implementation.
+  #
+  # - type: builtin.discord
+  #   name: discord-<agent>
+  #   description: "Discord adapter for <Agent>."
+  #   params:
+  #     target: <agent>              # bus endpoint name to deliver inbound messages to
+  #     token_env: DISCORD_TOKEN     # env var holding the bot token
+  #     env_file: ~/.agent-core/discord-<agent>.env
+  #
+  #     # Attachment auto-download retention (#76). All optional — defaults shown.
+  #     # Inbound Discord attachments are downloaded to
+  #     # ~/.agent-core/attachments/<endpoint_name>/<envelope_id>/ and a periodic
+  #     # sweep enforces both limits: age first, then the aggregate size cap
+  #     # (oldest envelope dirs evicted first).
+  #     attachment_retention_days: 30           # delete envelope dirs older than this
+  #     attachment_max_total_bytes: 1073741824  # 1 GiB aggregate cap
+  #     attachment_sweep_seconds: 3600          # sweep cadence (seconds)
+
 bus_hooks:
   pre_publish: []
   pre_deliver: []
