@@ -994,7 +994,7 @@ class DiscordEndpoint:
                         url=entry["url"], subdir=env_id
                     )
                     entry["local_path"] = str(local)
-                except Exception as exc:  # noqa: BLE001 — best-effort by design
+                except Exception as exc:  # best-effort by design
                     entry["local_path"] = None
                     safe_reason = _redact_url_qs(f"{type(exc).__name__}: {exc}")
                     entry["download_error"] = safe_reason
@@ -1343,7 +1343,7 @@ class DiscordEndpoint:
         total = sum(s for _, s, _ in survivors)
         if total > self.attachment_max_total_bytes:
             survivors.sort(key=lambda t: t[0])  # oldest first
-            for mtime, size, d in survivors:
+            for _mtime, size, d in survivors:
                 if total <= self.attachment_max_total_bytes:
                     break
                 if _safe_rmtree(d):
