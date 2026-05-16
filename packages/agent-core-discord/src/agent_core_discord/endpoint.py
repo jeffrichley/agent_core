@@ -244,6 +244,9 @@ class DiscordEndpoint:
         pending_acks_max: int = 5000,
         pending_acks_ttl_seconds: float = 3600.0,
         pending_acks_sweep_seconds: float = 60.0,
+        attachment_retention_days: int = 30,
+        attachment_max_total_bytes: int = 1_073_741_824,
+        attachment_sweep_seconds: float = 3600.0,
         recent_inbounds_max: int = 5000,
         recent_inbounds_ttl_seconds: float = 3600.0,
         _client_factory: Callable[..., Any] | None = None,
@@ -264,6 +267,9 @@ class DiscordEndpoint:
         self.pending_acks_max = pending_acks_max
         self.pending_acks_ttl_seconds = pending_acks_ttl_seconds
         self.pending_acks_sweep_seconds = pending_acks_sweep_seconds
+        self.attachment_retention_days = attachment_retention_days
+        self.attachment_max_total_bytes = attachment_max_total_bytes
+        self.attachment_sweep_seconds = attachment_sweep_seconds
         self._client_factory = _client_factory  # test seam
         self._handle: BusHandle | None = None
         self._client: Any = None
@@ -276,6 +282,7 @@ class DiscordEndpoint:
         self._user_display_name_cache: dict[str, str] = {}
         self._client_task: asyncio.Task | None = None
         self._sweep_task: asyncio.Task | None = None
+        self._attachment_sweep_task: asyncio.Task | None = None
         self._ready_event: asyncio.Event = asyncio.Event()
         self._access: AccessConfig = AccessConfig()
         # message_id → (ack_emoji, channel_id, monotonic_inserted_at).
@@ -573,6 +580,10 @@ class DiscordEndpoint:
                 self._pending_acks_sweep_loop(),
                 name=f"discord-endpoint-{self.name}-acks-sweep",
             )
+            self._attachment_sweep_task = asyncio.create_task(
+                self._attachment_sweep_loop(),
+                name=f"discord-endpoint-{self.name}-attach-sweep",
+            )
         except BaseException:
             # Only pop if WE own this slot — never evict a sibling that may
             # have raced in.
@@ -590,6 +601,18 @@ class DiscordEndpoint:
                         self.name,
                     )
                 self._sweep_task = None
+            if self._attachment_sweep_task is not None:
+                self._attachment_sweep_task.cancel()
+                try:
+                    await self._attachment_sweep_task
+                except asyncio.CancelledError:
+                    pass
+                except Exception:
+                    log.exception(
+                        "discord endpoint '%s': attachment sweep raised during start rollback",
+                        self.name,
+                    )
+                self._attachment_sweep_task = None
             if self._client_task is not None:
                 self._client_task.cancel()
                 try:
@@ -847,6 +870,18 @@ class DiscordEndpoint:
                     self.name,
                 )
             self._sweep_task = None
+        if self._attachment_sweep_task is not None:
+            self._attachment_sweep_task.cancel()
+            try:
+                await self._attachment_sweep_task
+            except asyncio.CancelledError:
+                pass
+            except Exception:
+                log.exception(
+                    "discord endpoint '%s': attachment sweep raised during stop",
+                    self.name,
+                )
+            self._attachment_sweep_task = None
         if self._client_task is not None:
             self._client_task.cancel()
             try:
@@ -1234,6 +1269,84 @@ class DiscordEndpoint:
                     self._sweep_pending_acks_once()
                 except Exception:
                     log.exception("discord endpoint '%s': sweep iteration failed", self.name)
+        except asyncio.CancelledError:
+            raise
+
+    def _sweep_attachments_once(self) -> int:
+        """One retention pass over <attachments_dir>.
+
+        Age first: delete any <env_id>/ dir whose mtime is older than
+        attachment_retention_days. Then size cap: while total bytes exceed
+        attachment_max_total_bytes, delete whole dirs oldest-first by mtime.
+        Whole-directory deletes only; never partial. A failed delete is
+        logged and skipped — the sweep never raises into its loop.
+        Returns the number of directories evicted.
+        """
+        import shutil
+
+        root = self.attachments_dir
+        try:
+            if not root.exists():
+                return 0
+            root_resolved = root.resolve()
+            entries = [d for d in root.iterdir() if d.is_dir()]
+        except OSError:
+            return 0
+
+        def _safe_rmtree(d: Path) -> bool:
+            try:
+                if d.resolve().parent != root_resolved:
+                    return False  # never walk outside the attachments root
+                shutil.rmtree(d)
+                return True
+            except Exception:
+                log.exception(
+                    "discord(%s): attachment sweep failed to delete %s",
+                    self.name,
+                    d,
+                )
+                return False
+
+        evicted = 0
+        cutoff = time.time() - (self.attachment_retention_days * 86400)
+        survivors: list[tuple[float, int, Path]] = []
+        for d in entries:
+            try:
+                mtime = d.stat().st_mtime
+                size = sum(
+                    f.stat().st_size for f in d.rglob("*") if f.is_file()
+                )
+            except OSError:
+                continue
+            if mtime < cutoff:
+                if _safe_rmtree(d):
+                    evicted += 1
+            else:
+                survivors.append((mtime, size, d))
+
+        total = sum(s for _, s, _ in survivors)
+        if total > self.attachment_max_total_bytes:
+            survivors.sort(key=lambda t: t[0])  # oldest first
+            for mtime, size, d in survivors:
+                if total <= self.attachment_max_total_bytes:
+                    break
+                if _safe_rmtree(d):
+                    total -= size
+                    evicted += 1
+        return evicted
+
+    async def _attachment_sweep_loop(self) -> None:
+        """Periodic attachment retention sweep. Runs until cancelled by stop()."""
+        try:
+            while True:
+                await asyncio.sleep(self.attachment_sweep_seconds)
+                try:
+                    self._sweep_attachments_once()
+                except Exception:
+                    log.exception(
+                        "discord endpoint '%s': attachment sweep iteration failed",
+                        self.name,
+                    )
         except asyncio.CancelledError:
             raise
 
