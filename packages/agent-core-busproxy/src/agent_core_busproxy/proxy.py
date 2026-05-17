@@ -18,6 +18,15 @@ long TTL covers expiry (YAGNI).
 `init_timeout` keeps a down/bouncing daemon from hanging the call: the
 backend connect fails fast and the TransientErrorMiddleware (attached in
 Task 5) turns that into a structured retryable tool result.
+
+Output-schema stripping (spec Amendment 2): a FastMCP ProxyProvider
+mirrors each backend tool's output_schema and the server then
+re-validates every result against it. That would reject the
+TransientErrorMiddleware's {transient:true} payload (it cannot match an
+arbitrary tool's schema) and mangle it into an opaque output-validation
+error. A transparent passthrough proxy must not re-validate the
+backend's own outputs anyway, so _NoOutputSchemaProxyProvider drops the
+output_schema on every proxied tool.
 """
 
 from __future__ import annotations
@@ -28,6 +37,28 @@ from fastmcp import FastMCP
 from fastmcp.server.providers.proxy import ProxyClient, ProxyProvider
 
 from agent_core_busproxy.transient import TransientErrorMiddleware
+
+
+class _NoOutputSchemaProxyProvider(ProxyProvider):
+    """ProxyProvider that drops backend tool output schemas.
+
+    See module docstring (spec Amendment 2). Overrides both the list and
+    single-tool resolution paths so FastMCP performs no output validation
+    on proxied results — letting the transient payload AND normal
+    passthrough results through unchanged.
+    """
+
+    @staticmethod
+    def _strip(tool: Any) -> Any:
+        if tool is None:
+            return None
+        return tool.model_copy(update={"output_schema": None})
+
+    async def _list_tools(self) -> Any:
+        return [self._strip(t) for t in await super()._list_tools()]
+
+    async def _get_tool(self, name: str, version: Any = None) -> Any:
+        return self._strip(await super()._get_tool(name, version))
 
 # Fail-fast: a down daemon must not hang a tool call. Small connect/init
 # budget; the agent owns the retry decision (spec: fail-fast retryable).
@@ -75,7 +106,9 @@ def build_busproxy(
 
     proxy = FastMCP(name=f"agent-core[{agent}]")
     proxy.add_provider(
-        ProxyProvider(client_factory, cache_ttl=_TOOL_CACHE_TTL_SECONDS)
+        _NoOutputSchemaProxyProvider(
+            client_factory, cache_ttl=_TOOL_CACHE_TTL_SECONDS
+        )
     )
     # daemon_url is the middleware's liveness-probe target. None on the
     # in-process test path => probing disabled (ambiguous => genuine).

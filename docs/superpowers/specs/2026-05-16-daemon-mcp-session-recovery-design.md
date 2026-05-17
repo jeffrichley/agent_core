@@ -291,6 +291,37 @@ the daemon is back and a tool list succeeds — this is the same surface as the
 spec's already-acknowledged residual SPOF (Task 9 respawn/relist
 verification).
 
+## Amendment 2 2026-05-16 (discovered during implementation, Task 7 regression)
+
+The Task 7 regression (real `HTTPHost`-served backend) exposed a second
+FastMCP-proxy behavior the design missed: a `ProxyProvider` mirrors each
+backend tool **including its `output_schema`**, and the FastMCP server then
+**re-validates every tool result against that schema**. When
+`TransientErrorMiddleware` returns the `{transient:true}` payload in the
+daemon-down window, it does not match the proxied tool's schema (e.g.
+`list_endpoints`) → FastMCP rejects it with `Output validation error` and
+the agent gets an opaque error instead of the structured retryable signal.
+
+- **Severity:** #91's core (one long-lived client survives a real daemon
+  stop+start) is sound — verified: the warm-cache `r1` call succeeds
+  end-to-end against an `HTTPHost`-served `ClaudeCodeMCPEndpoint`. Only the
+  down-window *signal shape* was broken.
+
+**Resolution (chosen 2026-05-16 — "strip output_schema on proxied tools"):**
+a small `ProxyProvider` subclass overrides `_list_tools`/`_get_tool` to
+`model_copy(update={"output_schema": None})` every proxied tool, so FastMCP
+performs no output validation on proxied results. This is semantically
+correct for a transparent passthrough proxy — the backend already owns and
+validated its outputs; the proxy must not re-impose a schema it cannot
+satisfy for synthetic transient results. Lets the transient payload AND
+normal passthrough results through. Stays within the approved architecture
+(still a FastMCP proxy + ProxyProvider; only output-schema re-validation is
+disabled). Also: the Task 7 harness was corrected to serve the backend via
+the real `agent_core.bus.http_host.HTTPHost` (production mount path
+`/mcp/<agent>` + session-manager lifespan), since a hand-rolled
+`uvicorn.Config(ep.asgi_app())` mounted at root did not reproduce the
+daemon's HTTP shape.
+
 ## Provenance
 
 #91 surfaced 2026-05-15 by Pepper from inside the affected session during the

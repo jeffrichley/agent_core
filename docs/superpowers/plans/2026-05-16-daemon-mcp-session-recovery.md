@@ -936,6 +936,20 @@ This is the load-bearing proof. Stand up a real `ClaudeCodeMCPEndpoint` FastMCP 
 > middleware's liveness probe still resolves it to transient — either way
 > the assertion holds. Do not "fix" the test if the internal path differs;
 > only the observable assertions matter.
+>
+> **Harness fidelity (corrected 2026-05-16 during impl):** the backend is
+> served through the **real `agent_core.bus.http_host.HTTPHost`**, not a
+> hand-rolled `uvicorn.Config(ep.asgi_app())`. The daemon mounts each
+> endpoint under its `.mount` path (`/mcp/<agent>`) via Starlette `Mount`
+> + a trailing-slash shim, and runs FastMCP's session-manager lifespan.
+> `build_busproxy` connects to `…/mcp/agent` (production-correct), so a
+> bare-root mount 404s every request ("Session terminated" → empty
+> registry → `Unknown tool`) and the hand-rolled server skipped the
+> session-manager lifespan. Using `HTTPHost` reproduces the production
+> HTTP shape exactly. The client is opened **while the first backend is
+> up** and kept open across the stop+start (one long-lived `Client` — the
+> #91 property), via explicit enter/exit so its lifetime crosscuts the
+> backend's.
 
 **Files:**
 - Create: `packages/agent-core-busproxy/tests/test_regression_daemon_bounce.py`
@@ -947,21 +961,24 @@ Create `packages/agent-core-busproxy/tests/test_regression_daemon_bounce.py`:
 ```python
 """#91 regression: a daemon restart must not strand a live session.
 
-A long-lived busproxy Client stays connected across a full backend
-stop+start. Because every tool call mints a fresh backend session, the
-post-restart call succeeds without any client re-initialize.
+A single long-lived busproxy Client stays connected across a full
+backend stop+start. Because every tool call mints a fresh backend
+session, the post-restart call succeeds without any client re-init.
+
+The backend is served through the production HTTPHost so the per-agent
+mount path (/mcp/agent), trailing-slash routing, and FastMCP session-
+manager lifespan exactly match the real daemon.
 """
 
 from __future__ import annotations
 
-import asyncio
 import contextlib
 import socket
 
 import pytest
-import uvicorn
 from fastmcp import Client
 
+from agent_core.bus.http_host import HTTPHost
 from agent_core.endpoints.claude_code_mcp import ClaudeCodeMCPEndpoint
 from agent_core_busproxy.proxy import build_busproxy
 
@@ -984,55 +1001,65 @@ def _free_port() -> int:
 
 @contextlib.asynccontextmanager
 async def _run_backend(port: int):
-    """Serve a real ClaudeCodeMCPEndpoint over HTTP on `port`."""
+    """Serve a real ClaudeCodeMCPEndpoint via the production HTTPHost.
+
+    HTTPHost mounts the endpoint at its `.mount` path (/mcp/agent) with
+    the trailing-slash shim and runs FastMCP's session-manager lifespan
+    — the exact HTTP shape the real daemon presents, so the proxy's
+    production URL path is exercised faithfully.
+    """
     ep = ClaudeCodeMCPEndpoint(name="agent", mount="/mcp/agent")
     await ep.start(_StubHandle())  # type: ignore[arg-type]
-    app = ep.asgi_app()
-    config = uvicorn.Config(app, host="127.0.0.1", port=port, log_level="error")
-    server = uvicorn.Server(config)
-    task = asyncio.create_task(server.serve())
-    # Bounded readiness poll (no fixed sleep).
-    for _ in range(100):
-        if server.started:
-            break
-        await asyncio.sleep(0.05)
+    host = HTTPHost(bind_host="127.0.0.1", bind_port=port)
+    host.mount(ep)
+    await host.start()
     try:
         yield ep
     finally:
-        server.should_exit = True
-        await task
+        await host.stop()
         await ep.stop()
 
 
 @pytest.mark.asyncio
 async def test_session_survives_backend_bounce() -> None:
     port = _free_port()
-    proxy = build_busproxy(
-        agent="agent", daemon_url=f"http://127.0.0.1:{port}"
-    )
+    proxy = build_busproxy(agent="agent", daemon_url=f"http://127.0.0.1:{port}")
 
-    async with Client(proxy) as client:  # one long-lived client
-        async with _run_backend(port):
+    # The client must be created while a backend is UP and then OUTLIVE a
+    # full backend stop+start — that crosscut is the whole #91 property,
+    # so the backend context is entered/exited explicitly rather than
+    # nested inside the client's `async with`.
+    backend = _run_backend(port)
+    await backend.__aenter__()  # backend #1 UP
+    entered_first = True
+    try:
+        async with Client(proxy) as client:  # one long-lived client
             r1 = await client.call_tool("list_endpoints", {})
             assert any(e["name"] == "discord" for e in r1.data)
 
-        # Backend is now DOWN. A call here is the daemon-down window.
-        mid = await client.call_tool("list_endpoints", {})
-        assert mid.structured_content["transient"] is True
+            await backend.__aexit__(None, None, None)  # backend DOWN
+            entered_first = False
 
-        # Bring a brand-new backend process up on the same port.
-        async with _run_backend(port):
-            r2 = await client.call_tool("list_endpoints", {})
-            # Succeeds with NO client re-handshake — #91 fixed.
-            assert any(e["name"] == "discord" for e in r2.data)
+            # Daemon-down window: same client, no re-handshake.
+            mid = await client.call_tool("list_endpoints", {})
+            assert mid.structured_content["transient"] is True
+
+            # Brand-new backend on the same port; SAME client.
+            async with _run_backend(port):
+                r2 = await client.call_tool("list_endpoints", {})
+                # Succeeds with NO client re-handshake — #91 fixed.
+                assert any(e["name"] == "discord" for e in r2.data)
+    finally:
+        if entered_first:
+            await backend.__aexit__(None, None, None)
 ```
 
-- [ ] **Step 2: Ensure `uvicorn` is available to the test**
+- [ ] **Step 2: Confirm `HTTPHost` is importable in the workspace env**
 
-`uvicorn` is already a transitive dep of the daemon HTTP host. Confirm it imports in the busproxy env:
+The test imports `agent_core.bus.http_host.HTTPHost` and `agent_core.endpoints.claude_code_mcp.ClaudeCodeMCPEndpoint` — both come from the in-repo `agent-core` package, available in the shared uv workspace venv at test time (the busproxy package does NOT declare `agent-core`/`uvicorn` as its own deps and must NOT — they are test-only, satisfied by the workspace venv, like `agent-core-channel`'s tests do).
 
-Run: `uv run --package agent-core-busproxy python -c "import uvicorn; print(uvicorn.__version__)"`
-Expected: a version prints. If `ModuleNotFoundError`, add `"uvicorn>=0.30"` to `packages/agent-core-busproxy/pyproject.toml` `dependencies`, re-run `uv sync`, and re-run this step.
+Run: `uv run --package agent-core-busproxy python -c "from agent_core.bus.http_host import HTTPHost; print('ok', HTTPHost.__name__)"`
+Expected: `ok HTTPHost`. (No pyproject change — do NOT add agent-core/uvicorn to busproxy deps.)
 
 - [ ] **Step 3: Run the regression**
 
@@ -1056,9 +1083,14 @@ If anything fails, the change leaked outside its package — stop and fix.
 - [ ] **Step 6: Commit**
 
 ```bash
-git add packages/agent-core-busproxy/tests/test_regression_daemon_bounce.py packages/agent-core-busproxy/pyproject.toml
+git add packages/agent-core-busproxy/tests/test_regression_daemon_bounce.py uv.lock
 git commit -m "test(busproxy): #91 regression — session survives daemon bounce"
 ```
+
+(`uv.lock` carries the legitimate workspace lock entry for the new
+`agent-core-busproxy` package — accumulated from Task 1's registration,
+not secrets/unrelated churn. Stage it explicitly; do NOT `git add -A`.
+Do NOT add `uvicorn`/`agent-core` to the busproxy `pyproject.toml`.)
 
 ---
 
