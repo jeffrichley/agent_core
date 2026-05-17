@@ -60,16 +60,15 @@ stays stopped and the error surfaces. Fix the underlying issue and re-run
 
 > **Note:** `daemon refresh` assumes a prior `daemon install` has already been run and recorded your `--extra` choice in the stamp file. If this is your first time setting up the daemon, run `daemon install --extra <x>` (e.g., `--extra cu130`) first — otherwise `refresh` will install with no extras (CPU-only torch).
 
-> **Live agent sessions must be restarted after a bounce.** `daemon refresh`
-> (and `install`/`start`/`stop`, and any crash) restarts the daemon process.
-> A new daemon process has no memory of prior MCP session IDs, so any
-> **already-running** Claude Code agent session (Pepper, testbot) is orphaned:
-> its tool calls fail with `Session not found`, and neither retrying nor
-> `/mcp reconnect` recovers it — only a full restart of that agent's Claude
-> Code session re-initializes the MCP connection. Agent work product is on
-> disk (vault/memory), independent of the bus, so nothing is lost — but plan
-> to restart any live agent session after a `daemon refresh`. Tracked in
-> [#91](https://github.com/jeffrichley/agent_core/issues/91).
+> **Live agent sessions survive a bounce (#91).** Agents connect to the
+> bus tool surface through the `agent-core-busproxy` stdio MCP server
+> (not directly over HTTP). Each tool call mints a fresh backend session,
+> so `daemon refresh`/`install`/`start`/`stop` (and crashes) no longer
+> strand a live Claude Code session: in-flight calls during the down
+> window return a structured `{"error":"bus_unavailable","transient":true,
+> "retry_after_seconds":5}` result that the agent retries, and the next
+> call after the daemon is back succeeds with no session restart. The
+> `agent-core-channel` wake relay already reconnects on its own.
 
 ## Why this exists
 
@@ -110,3 +109,33 @@ fresh.
 - `docs/superpowers/specs/2026-05-15-daemon-venv-isolation-design.md` — the design.
 - `agent_core.daemon.cli` — supervisor code.
 - `agent_core.daemon.install` — install orchestration.
+
+## Agent `.mcp.json` (resilient shape)
+
+Each agent's `<agent_root>/.mcp.json` must point the bus tool surface at
+the stdio busproxy — never the daemon HTTP URL directly:
+
+```json
+{
+  "mcpServers": {
+    "agent-core": {
+      "type": "stdio", "command": "uv",
+      "args": ["run", "--project", "<AGENT_CORE_REPO>",
+               "agent-core-busproxy", "--agent", "<AGENT>",
+               "--daemon-url", "http://127.0.0.1:8789"]
+    },
+    "agent-core-channel": {
+      "type": "stdio", "command": "uv",
+      "args": ["run", "--project", "<AGENT_CORE_REPO>",
+               "agent-core-channel", "--agent", "<AGENT>",
+               "--daemon-url", "http://127.0.0.1:8789"]
+    }
+  }
+}
+```
+
+Both surfaces are now stdio and reconnect independently. The old
+`{"type":"http","url":".../mcp/<agent>"}` form is the #91 failure mode —
+do not use it. Cut over per agent: a fresh/throwaway test agent first,
+validate across several real `daemon refresh` cycles, then Pepper last
+(rollback = restore the backed-up `.mcp.json`, a single file).
