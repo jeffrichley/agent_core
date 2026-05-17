@@ -20,9 +20,8 @@ import sys
 from pathlib import Path
 
 import pytest
-from fastmcp import Client
-
 from agent_core_busproxy.proxy import build_busproxy
+from fastmcp import Client
 
 _BACKEND = Path(__file__).parent / "_backend_server.py"
 
@@ -39,7 +38,7 @@ async def _port_open(port: int) -> bool:
     try:
         fut = asyncio.open_connection("127.0.0.1", port)
         _r, w = await asyncio.wait_for(fut, timeout=1.0)
-    except (OSError, asyncio.TimeoutError):
+    except (TimeoutError, OSError):
         return False
     w.close()
     return True

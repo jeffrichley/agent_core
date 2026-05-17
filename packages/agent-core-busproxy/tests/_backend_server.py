@@ -30,8 +30,8 @@ async def _main(port: int) -> None:
     host = HTTPHost(bind_host="127.0.0.1", bind_port=port)
     host.mount(ep)
     await host.start()
-    # Signal readiness to the parent (flushed line on stdout).
-    print("READY", flush=True)
+    # Readiness is observed by the parent via a TCP port-probe (this
+    # process's stdout is discarded), so nothing to emit here.
     # Serve until the parent kills this process (faithful daemon death).
     await asyncio.Event().wait()
 

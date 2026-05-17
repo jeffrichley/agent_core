@@ -50,6 +50,7 @@ class _NoOutputSchemaProxyProvider(ProxyProvider):
 
     @staticmethod
     def _strip(tool: Any) -> Any:
+        # Any: avoid annotating with fastmcp's non-public Tool internals.
         if tool is None:
             return None
         return tool.model_copy(update={"output_schema": None})
