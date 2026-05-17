@@ -14,8 +14,6 @@ import socket
 
 import httpx
 import pytest
-from fastmcp.exceptions import NotFoundError, ToolError
-
 from agent_core_busproxy.transient import (
     TRANSIENT_ERROR_CODE,
     Disposition,
@@ -24,6 +22,7 @@ from agent_core_busproxy.transient import (
     daemon_reachable,
     redact,
 )
+from fastmcp.exceptions import NotFoundError, ToolError
 
 
 def test_redact_strips_query_string() -> None:

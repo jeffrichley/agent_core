@@ -6,10 +6,9 @@ from __future__ import annotations
 import asyncio
 
 import pytest
-from fastmcp import Client
-
 from agent_core_busproxy.proxy import build_busproxy
 from agent_core_busproxy.transient import TRANSIENT_ERROR_CODE
+from fastmcp import Client
 
 
 @pytest.mark.asyncio

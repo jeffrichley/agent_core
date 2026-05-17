@@ -99,12 +99,12 @@ async def daemon_reachable(daemon_url: str) -> bool:
         _reader, writer = await asyncio.wait_for(
             fut, timeout=_PROBE_TIMEOUT_SECONDS
         )
-    except (OSError, asyncio.TimeoutError):
+    except (TimeoutError, OSError):
         return False
     writer.close()
     try:
         await writer.wait_closed()
-    except Exception:  # noqa: BLE001 - close best-effort
+    except Exception:  # close best-effort
         pass
     return True
 
@@ -136,7 +136,7 @@ class TransientErrorMiddleware(Middleware):
     async def on_call_tool(self, context: Any, call_next: Any) -> ToolResult:
         try:
             return await call_next(context)
-        except BaseException as exc:  # noqa: BLE001 - triage then re-raise
+        except BaseException as exc:  # triage then re-raise (never swallow)
             disposition = classify_backend_error(exc)
             if disposition is Disposition.TRANSIENT:
                 return _transient_result(exc)

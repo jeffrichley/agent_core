@@ -3,10 +3,10 @@
 from __future__ import annotations
 
 import pytest
+from agent_core_busproxy.proxy import build_busproxy
 from fastmcp import Client
 
 from agent_core.endpoints.claude_code_mcp import ClaudeCodeMCPEndpoint
-from agent_core_busproxy.proxy import build_busproxy
 
 
 class _StubHandle:

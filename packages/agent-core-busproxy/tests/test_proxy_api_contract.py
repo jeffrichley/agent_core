@@ -84,7 +84,7 @@ async def test_dead_backend_raises_on_tool_call() -> None:
     base = ProxyClient("http://127.0.0.1:65535/mcp/nobody", init_timeout=2.0)
     proxy = FastMCPProxy(client_factory=lambda: base.new(), name="probe")
 
-    with pytest.raises(BaseException) as excinfo:  # noqa: PT011 - characterizing
+    with pytest.raises(BaseException) as excinfo:  # broad: characterizing
         async with Client(proxy) as c:
             await c.call_tool("list_endpoints", {})
 

@@ -2,9 +2,8 @@
 
 from __future__ import annotations
 
-from typer.testing import CliRunner
-
 from agent_core_busproxy.__main__ import app
+from typer.testing import CliRunner
 
 
 def test_cli_help_runs() -> None:
