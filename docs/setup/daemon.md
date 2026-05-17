@@ -105,7 +105,7 @@ fresh.
 ## Related
 
 - [#79](https://github.com/jeffrichley/agent_core/issues/79) — the issue that motivated this.
-- [#91](https://github.com/jeffrichley/agent_core/issues/91) — daemon bounce orphans live agent MCP sessions (restart agents after `refresh`).
+- [#91](https://github.com/jeffrichley/agent_core/issues/91) — daemon-bounce MCP session recovery (fixed: agents use the `agent-core-busproxy` stdio surface; a bounce no longer needs an agent session restart — see above).
 - `docs/superpowers/specs/2026-05-15-daemon-venv-isolation-design.md` — the design.
 - `agent_core.daemon.cli` — supervisor code.
 - `agent_core.daemon.install` — install orchestration.
