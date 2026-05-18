@@ -51,7 +51,10 @@ This does three things in order:
 1. `daemon stop` — kills the running daemon.
 2. `daemon install` — re-runs `uv sync --frozen --no-editable --no-dev` against
    the workspace. Uses the extra you specified at install time (stamped in
-   `~/.agent-core/.daemon-install-stamp.json`).
+   `~/.agent-core/.daemon-install-stamp.json`). Every workspace member
+   carries `[tool.uv] cache-keys` with a git-commit entry, so a
+   source-only change is rebuilt as long as it is committed — no manual
+   `uv cache clean` is needed (see the "Defect A" section below).
 3. `daemon start` — relaunches the daemon from the refreshed venv.
 
 If `daemon install` fails (uv error, missing workspace, etc.), the daemon
@@ -83,6 +86,33 @@ The fix: install the daemon non-editable, into a venv outside the workspace
 tree. `uv sync` cannot reach it because there are no `.pth` files pointing
 at workspace source.
 
+## Why members carry `cache-keys` (Defect A)
+
+uv's build cache for a *local/workspace path* dependency is keyed by the
+`pyproject.toml` mtime, **not** the package version string (the
+`(name, version)` key applies only to *published* PyPI wheels; verified
+empirically on uv 0.7.13, cf. uv issue #15224). Before the fix, a change
+to only `src/*.py` did not invalidate the cached wheel, so
+`uv sync --frozen --no-editable` reused stale build output and the daemon
+ran old code while truthfully stamping the new git sha. The historical
+workaround was a manual surgical `uv cache clean <pkgs>` before every
+`daemon refresh`.
+
+The fix: every member `pyproject.toml` carries
+
+    [tool.uv]
+    cache-keys = [{ file = "pyproject.toml" }, { git = { commit = true } }]
+
+The `git commit` entry folds the current HEAD commit into the cache key,
+forcing a rebuild on every commit. `cache-keys` *replaces* uv's defaults,
+so the `pyproject.toml` file entry is kept to preserve
+dependency/metadata invalidation. Consequence: **the manual
+`uv cache clean` procedure is retired** — `daemon refresh` always
+installs the current committed code. (It keys on the *committed* HEAD;
+a refresh of uncommitted edits is not seen — the daemon only ever
+deploys committed state.) `packages/core/tests/test_member_cache_keys_guard.py` fails
+the fast test gate (`just check`) if any member loses the key.
+
 ## Disk cost
 
 The full workspace install with `--extra cu130` is ~6–7 GB (mostly torch
@@ -104,7 +134,9 @@ fresh.
 
 ## Related
 
-- [#79](https://github.com/jeffrichley/agent_core/issues/79) — the issue that motivated this.
+- [#79](https://github.com/jeffrichley/agent_core/issues/79) — the issue that motivated the venv isolation.
+- [#93](https://github.com/jeffrichley/agent_core/issues/93) — Defect A (stale daemon install); fixed by the per-member `tool.uv.cache-keys` git entry.
+- `docs/superpowers/specs/2026-05-18-agent-core-maturity-design.md` — the maturity spec (Phase 0 = this fix).
 - [#91](https://github.com/jeffrichley/agent_core/issues/91) — daemon-bounce MCP session recovery (fixed: agents use the `agent-core-busproxy` stdio surface; a bounce no longer needs an agent session restart — see above).
 - `docs/superpowers/specs/2026-05-15-daemon-venv-isolation-design.md` — the design.
 - `agent_core.daemon.cli` — supervisor code.
