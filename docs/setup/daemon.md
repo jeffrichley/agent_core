@@ -111,7 +111,7 @@ dependency/metadata invalidation. Consequence: **the manual
 installs the current committed code. (It keys on the *committed* HEAD;
 a refresh of uncommitted edits is not seen — the daemon only ever
 deploys committed state.) `packages/core/tests/test_member_cache_keys_guard.py` fails
-CI if any member loses the key.
+the fast test gate (`just check`) if any member loses the key.
 
 ## Disk cost
 
