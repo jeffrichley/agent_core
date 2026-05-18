@@ -19,6 +19,7 @@ cu130 = ["torch>=2.11", "torchaudio>=2.11"]
 voice_aliases = "agent_core_voice.plugin"
 
 [tool.uv]
+cache-keys = [{ file = "pyproject.toml" }, { git = { commit = true } }]
 conflicts = [
     [{ extra = "cpu" }, { extra = "cu130" }],
 ]
