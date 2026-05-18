@@ -14,6 +14,9 @@ memory-compiler/scripts/flush-context-*.md
 # Git worktrees (superpowers / parallel feature work)
 .worktrees/
 
+# Superpowers brainstorm mockups / scratch
+.superpowers/
+
 # Agent-core runtime state (handoffs, bus.sqlite, transcripts, etc.)
 .agent-core/
 
