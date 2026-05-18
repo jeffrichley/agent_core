@@ -203,4 +203,8 @@ def test_defect_a_source_only_change_is_picked_up(
     # The "daemon refresh" re-install.
     run_install(home=home, workspace=ws, extra=None, python_version=pyver)
 
+    # The `without-cache-key` param intentionally asserts V1 here: without the
+    # git cache-key uv reuses the stale wheel (Defect A). This param is a
+    # documentation/regression guard of the hazard, NOT a flaky test — do not
+    # "fix" it to V2.
     assert _installed_sentinel(home) == expected_after_refresh
