@@ -109,7 +109,7 @@ so the `pyproject.toml` file entry is kept to preserve
 dependency/metadata invalidation. Consequence: **the manual
 `uv cache clean` procedure is retired** — `daemon refresh` always
 installs the current committed code. (It keys on the *committed* HEAD;
-a refresh of uncommitted edits are not seen — the daemon only ever
+a refresh of uncommitted edits is not seen — the daemon only ever
 deploys committed state.) `packages/core/tests/test_member_cache_keys_guard.py` fails
 CI if any member loses the key.
 
