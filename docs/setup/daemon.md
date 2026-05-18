@@ -54,7 +54,7 @@ This does three things in order:
    `~/.agent-core/.daemon-install-stamp.json`). Every workspace member
    carries `[tool.uv] cache-keys` with a git-commit entry, so a
    source-only change is rebuilt as long as it is committed — no manual
-   `uv cache clean` is needed (see "Why members carry cache-keys").
+   `uv cache clean` is needed (see the "Defect A" section below).
 3. `daemon start` — relaunches the daemon from the refreshed venv.
 
 If `daemon install` fails (uv error, missing workspace, etc.), the daemon
@@ -109,8 +109,8 @@ so the `pyproject.toml` file entry is kept to preserve
 dependency/metadata invalidation. Consequence: **the manual
 `uv cache clean` procedure is retired** — `daemon refresh` always
 installs the current committed code. (It keys on the *committed* HEAD;
-a refresh of uncommitted edits is not seen — the daemon only ever
-deploys committed state.) `tests/test_member_cache_keys_guard.py` fails
+a refresh of uncommitted edits are not seen — the daemon only ever
+deploys committed state.) `packages/core/tests/test_member_cache_keys_guard.py` fails
 CI if any member loses the key.
 
 ## Disk cost
