@@ -22,7 +22,7 @@ hatch-being = "agent_core_hatchery.cli:app"
 hatchery-snapshot-elders = "agent_core_hatchery.snapshot_elders:app"
 
 [tool.uv]
-cache-keys = [{ file = "pyproject.toml" }, { git = { commit = true } }]
+cache-keys = [{ file = "pyproject.toml" }, { git = { commit = true, tags = true } }]
 
 [tool.uv.sources]
 agent-core = { workspace = true }

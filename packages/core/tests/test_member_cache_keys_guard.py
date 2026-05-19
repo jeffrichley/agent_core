@@ -15,7 +15,7 @@ from agent_core.daemon.install import find_workspace_root
 
 EXPECTED_CACHE_KEYS = [
     {"file": "pyproject.toml"},
-    {"git": {"commit": True}},
+    {"git": {"commit": True, "tags": True}},
 ]
 
 
