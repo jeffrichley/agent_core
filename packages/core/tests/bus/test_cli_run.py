@@ -76,9 +76,11 @@ class TestBusRunCLI:
         await asyncio.wait_for(_wait_until_ready(), timeout=30.0)
         proc.send_signal(signal.SIGINT)
         try:
-            await asyncio.wait_for(proc.wait(), timeout=10.0)
+            # communicate() drains stdout+stderr while waiting, so a chatty
+            # bus can't fill the OS pipe buffer and deadlock proc.wait().
+            await asyncio.wait_for(proc.communicate(), timeout=10.0)
         except TimeoutError:
             proc.kill()
-            await proc.wait()
+            await proc.communicate()
             pytest.fail("bus did not shut down on SIGINT")
         assert proc.returncode == 0
