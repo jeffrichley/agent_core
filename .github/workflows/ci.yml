@@ -48,6 +48,8 @@ jobs:
           enable-cache: true
           python-version: "3.12"
       - uses: extractions/setup-just@53165ef7e734c5c07cb06b3c8e7b647c5aa16db3  # v4
+      # The slow tests shell out to `uv venv --python 3.12`; ensure a managed CPython exists
+      - run: uv python install 3.12
       # --package agent-core intentionally excludes agent-core-voice/qwen-tts (no Torch in CI)
       - run: uv sync --locked --package agent-core
       # Scoped to packages/core/tests — the only location of slow-marked tests today
