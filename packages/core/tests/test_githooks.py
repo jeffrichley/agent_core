@@ -83,3 +83,23 @@ def test_main_returns_1_when_hooks_missing(
     monkeypatch.chdir(repo)
 
     assert main() == 1
+
+
+def test_committed_pre_push_runs_just_check_and_is_executable() -> None:
+    """The real .githooks/pre-push must exist, invoke `just check`, and be
+    tracked with git's executable mode (100755) so it runs on a fresh clone.
+    """
+    repo_root = Path(__file__).resolve().parents[3]
+    hook = repo_root / ".githooks" / "pre-push"
+    assert hook.is_file(), f"{hook} missing"
+
+    body = hook.read_text(encoding="utf-8")
+    assert "just check" in body
+
+    mode = subprocess.run(
+        ["git", "-C", str(repo_root), "ls-files", "--stage", ".githooks/pre-push"],
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout.split()
+    assert mode and mode[0] == "100755", f"pre-push git mode is {mode[:1]}, want 100755"
