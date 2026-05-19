@@ -62,7 +62,7 @@ fallback-version = "0.0.0"       # used only when .git absent (sdist)
 packages = ["src/agent_core"]    # unchanged (per member)
 
 [tool.uv]
-cache-keys = [{ file = "pyproject.toml" }, { git = { commit = true } }]   # Phase 0 — unchanged
+cache-keys = [{ file = "pyproject.toml" }, { git = { commit = true, tags = true } }]   # tags=true added in Phase 2 (see §2.2)
 ```
 
 Each member: drop static `version`, add `dynamic = ["version"]`, add
@@ -77,19 +77,29 @@ Each member: drop static `version`, add `dynamic = ["version"]`, add
 - **`uv-dynamic-versioning`** (hatchling plugin, dunamai-backed,
   uv-workspace-native — chosen over `hatch-vcs`/`setuptools-scm` per the
   umbrella spec's considered-alternatives).
-- **Exact `[tool.uv-dynamic-versioning]` keys** (`pattern`, `style`,
-  `bump`, `vcs`, `latest-tag`, etc.) are **verified via the context7 MCP
-  at plan time** — not guessed. Required behavior, fixed here:
+- **As-built `[tool.uv-dynamic-versioning]`**: only `fallback-version =
+  "0.0.0"` is set. **No custom `pattern` key** — the tool's default
+  v-prefixed tag matching (`^v...`) already ignores the repo's
+  `pepper-cutover-*` tags (they lack the `v` prefix). A slow test
+  (`test_pepper_cutover_tags_are_ignored`) guards this empirically.
+  Required behavior:
   - PEP 440 output.
-  - **Tag pattern matches only `^v\d+\.\d+\.\d+`** so the repo's two
-    `pepper-cutover-*` tags are ignored (verified: only those 2 tags
-    exist, both non-`v`).
+  - Default tag pattern matches only `v`-prefixed tags; `pepper-cutover-*`
+    tags are ignored (only those non-`v` tags exist; a slow test guards
+    this).
   - Exactly on a `vX.Y.Z` tagged commit → version is `X.Y.Z`.
   - Between tags → a PEP 440 dev/post form with the **git sha embedded**
     (e.g. `0.1.0.postN.devM+g<sha>`) — the "what's running" signal.
   - `.git` absent (sdist/tarball only) → `fallback-version` (`0.0.0`),
     no crash. The daemon path always builds from a checkout (has
     `.git`).
+- **As-built `[tool.uv] cache-keys`** (updated from Phase 0):
+  `[{ file = "pyproject.toml" }, { git = { commit = true, tags = true } }]`.
+  The `tags = true` is **required** — a new `vX.Y.Z` tag changes build
+  output (the embedded version), so uv must invalidate the build cache on
+  tag creation (otherwise the daemon would serve a stale-version wheel).
+  The Phase-0 guard test (`test_cache_keys`) was updated in lockstep with
+  this change.
 
 ### 2.3 `uv.lock` (research-verified, no thrash)
 
@@ -107,15 +117,15 @@ fast if it was forgotten.
   producing a single top-level **`CHANGELOG.md`**. This matches the
   lockstep reality (one `vX.Y.Z` tag, one daemon deploy for all 10
   packages); 10 per-package changelogs would be ceremony.
-- **Fragments stay per-package**: `packages/*/changelog.d/` holds
-  `<issue>.<type>.md` fragments; towncrier is configured to collect from
-  every member's `changelog.d/`. Contributors keep writing fragments
-  next to the code they changed.
-- **Backfill**: add `changelog.d/.gitkeep` to the 6 members lacking the
-  dir (agent-core-channel, agent-core-briefs, agent-core-webcam,
-  agent-core-hatchery, agent-core-voice, agent-core-busproxy). The 4
-  that already have fragments (core, agent-core-discord, credentials,
-  notify) are untouched.
+- **As-built: native towncrier *sections* model.** Towncrier reads
+  exactly **one** `directory`; scattered `packages/*/changelog.d/` dirs
+  are not viable. Fragments live in a single root `changelog.d/` with
+  one subdirectory per package: `changelog.d/<pkg>/<issue>.<type>.md`.
+  Each of the 10 packages has a subdirectory (with a `.gitkeep` to
+  persist across releases after fragments are consumed). The 13
+  previously scattered fragments were `git mv`-moved from
+  `packages/*/changelog.d/` to `changelog.d/<pkg>/` — history
+  preserved.
 - **Fragment types**: the keepachangelog set — `added`, `changed`,
   `deprecated`, `removed`, `fixed`, `security` — which covers the
   existing `.added/.changed/.fixed` fragments in the tree.
@@ -136,20 +146,26 @@ explicit, confirmed step (consistent with the project's
 
 ### 3.3 Inaugural `v0.1.0` & sequencing
 
-- The towncrier config, the generated/initial `CHANGELOG.md`, the
-  consumed fragments' deletions, the pyproject switch, the `uv lock`,
-  the `just release` recipe, the `daemon status` change, and the tests
-  are all part of the **Phase 2 PR**, which must pass `phase1-main-gate`
-  (the 3 green CI checks) like any change.
-- **Sequencing (critical):** the annotated `v0.1.0` tag is created on
-  the **`main` merge commit AFTER the Phase 2 PR lands** — never on the
-  feature branch — so the tag points at real `main` history and
-  `uv-dynamic-versioning`'s `git describe` math is correct. Pushing the
-  tag is done with **explicit user confirmation** (shared-state).
-- The first `towncrier build` **absorbs the existing accumulated
-  fragments** (~13 across the 4 members) into the first `CHANGELOG.md`.
-  This is intended and confirmed; it is effectively irreversible
-  (fragments deleted, recorded in `CHANGELOG.md` + git history).
+- **The Phase 2 PR does NOT consume fragments.** It ships only the
+  towncrier config, the `changelog.d/` reorg (fragments moved, not
+  deleted), and a **header-only `CHANGELOG.md`** (no release sections
+  yet). The inaugural `towncrier build` is a **post-merge step**, not
+  part of the PR.
+- The Phase 2 PR contains: the pyproject switch, the `uv lock`, the
+  root `[tool.towncrier]` config, the `changelog.d/` reorg, the
+  `.gitkeep` files, the `just release` recipe, the `daemon status`
+  change, the tests, and the header-only `CHANGELOG.md`. It must pass
+  `phase1-main-gate` (3 green CI checks) like any change.
+- **Sequencing (critical):** After the PR merges, `just release 0.1.0`
+  is run on the **`main` merge commit** — never on the feature branch —
+  so the annotated `v0.1.0` tag points at real `main` history and
+  `uv-dynamic-versioning`'s `git describe` math is correct. This step
+  consumes the ~13 accumulated fragments and writes the first real
+  release section to `CHANGELOG.md`. Pushing the tag is done with
+  **explicit user confirmation** (shared-state).
+- Fragment absorption is effectively irreversible (fragments deleted,
+  recorded in `CHANGELOG.md` + git history). This is intended and
+  confirmed.
 
 ## 4. `daemon status` version surfacing
 
@@ -212,12 +228,14 @@ unless a real `uv build` exceeds 5s (then marked `slow`, like the Phase
 ## 7. Rollout (CI-gated, mirrors Phase 0/1)
 
 1. Phase 2 PR (pyproject switch + `uv lock` + root `[tool.towncrier]` +
-   6 `changelog.d/.gitkeep` + `just release` recipe + `daemon status`
-   change + tests + the inaugural `CHANGELOG.md`) → passes
-   `phase1-main-gate` → merged via PR (not local-push; respect the
-   gate).
+   `changelog.d/` reorg with `.gitkeep` per package + `just release`
+   recipe + `daemon status` change + tests + **header-only**
+   `CHANGELOG.md`) → passes `phase1-main-gate` → merged via PR (not
+   local-push; respect the gate). **Fragments are NOT consumed in the
+   PR.**
 2. **After merge:** on the `main` merge commit, `just release 0.1.0`
-   (build `CHANGELOG.md` from fragments + local annotated `v0.1.0`
+   (runs `towncrier build` — consumes fragments, writes first release
+   section to `CHANGELOG.md`, commits, creates local annotated `v0.1.0`
    tag) → push the tag **with explicit confirmation** → verify a fresh
    `daemon refresh` reports `installed version: 0.1.0`.
 3. Phases 3 (dev/prod instance-parameterization) and 4 (Windows
