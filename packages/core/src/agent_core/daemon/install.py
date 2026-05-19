@@ -154,6 +154,7 @@ def run_install(
     venv = home / ".venv"
 
     # Step 1: create / refresh the venv with the pinned Python.
+    # --clear is required: uv >= 0.10 refuses to reuse an existing venv without it
     venv_cmd = ["uv", "venv", str(venv), "--python", python_version, "--clear"]
     try:
         result = subprocess.run(venv_cmd, capture_output=True, text=True, check=False)
