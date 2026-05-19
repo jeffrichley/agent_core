@@ -13,6 +13,8 @@ memory-compiler/scripts/flush-context-*.md
 
 # Git worktrees (superpowers / parallel feature work)
 .worktrees/
+# Native (harness) worktrees
+.claude/worktrees/
 
 # Superpowers brainstorm mockups / scratch
 .superpowers/
