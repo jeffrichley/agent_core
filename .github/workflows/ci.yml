@@ -21,11 +21,6 @@ jobs:
         os: [ubuntu-latest, windows-latest]
     runs-on: ${{ matrix.os }}
     timeout-minutes: 20
-    env:
-      # Typer/Rich bakes help width from COLUMNS at import; GitHub sets
-      # COLUMNS=110, wrapping help. TERMINAL_WIDTH is read by Typer as
-      # MAX_WIDTH at import and wins, keeping option names un-wrapped.
-      TERMINAL_WIDTH: "200"
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6.0.2
         with:
