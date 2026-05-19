@@ -69,6 +69,25 @@ def _daemon_python() -> str:
     return str(candidate) if candidate.exists() else sys.executable
 
 
+def _installed_version(python: str) -> str:
+    """Best-effort: the agent-core version installed in the daemon venv.
+
+    Read from the wheel metadata (the true 'what's running' signal — the
+    version is VCS-derived at build time, Phase 2). Never raises.
+    """
+    try:
+        result = subprocess.run(
+            [python, "-c",
+             "import importlib.metadata as m; print(m.version('agent-core'))"],
+            capture_output=True, text=True, check=False, timeout=10,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return "unknown"
+    if result.returncode != 0:
+        return "unknown"
+    return result.stdout.strip() or "unknown"
+
+
 @app.command()
 def start() -> None:
     """Spawn `agent-core bus run` detached, write the PID file."""
@@ -154,6 +173,7 @@ def status() -> None:
     if stamp is not None:
         console.print(f"installed at: {stamp.installed_at}")
         console.print(f"installed sha: {stamp.installed_sha}")
+        console.print(f"installed version: {_installed_version(daemon_py)}")
 
         # Lock-drift check (best-effort; skipped silently if workspace not findable).
         try:
