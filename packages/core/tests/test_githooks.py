@@ -7,7 +7,7 @@ from pathlib import Path
 
 import pytest
 
-from agent_core.githooks import HOOKS_DIR_NAME, HookInstallError, install_git_hooks
+from agent_core.githooks import HOOKS_DIR_NAME, HookInstallError, install_git_hooks, main
 
 
 def _git(repo: Path, *args: str) -> str:
@@ -59,3 +59,27 @@ def test_install_raises_when_pre_push_missing(tmp_path: Path) -> None:
 
     with pytest.raises(HookInstallError, match="pre-push"):
         install_git_hooks(repo)
+
+
+def test_main_succeeds_in_repo_with_hooks(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    repo = _init_repo(tmp_path)
+    _make_hooks(repo)
+    monkeypatch.chdir(repo)
+
+    assert main() == 0
+    assert _git(repo, "config", "--get", "core.hooksPath") == HOOKS_DIR_NAME
+    assert "git hooks installed" in capsys.readouterr().out
+
+
+def test_main_returns_1_when_hooks_missing(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    repo = _init_repo(tmp_path)  # no .githooks directory
+    monkeypatch.chdir(repo)
+
+    assert main() == 1

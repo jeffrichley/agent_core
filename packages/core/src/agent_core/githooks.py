@@ -53,7 +53,11 @@ def main() -> int:
         print(f"error: {exc}", file=sys.stderr)
         return 1
     except subprocess.CalledProcessError as exc:
-        print(f"error: git config failed (exit {exc.returncode})", file=sys.stderr)
+        msg = f"error: git config failed (exit {exc.returncode})"
+        stderr = exc.stderr
+        if stderr:
+            msg += f"\n{stderr.rstrip()}"
+        print(msg, file=sys.stderr)
         return 1
     print(f"git hooks installed: core.hooksPath -> {HOOKS_DIR_NAME} ({hooks_dir})")
     return 0
