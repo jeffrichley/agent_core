@@ -98,8 +98,8 @@ Each member: drop static `version`, add `dynamic = ["version"]`, add
   The `tags = true` is **required** — a new `vX.Y.Z` tag changes build
   output (the embedded version), so uv must invalidate the build cache on
   tag creation (otherwise the daemon would serve a stale-version wheel).
-  The Phase-0 guard test (`test_cache_keys`) was updated in lockstep with
-  this change.
+  The Phase-0 guard test (`test_member_cache_keys_guard`) was updated in
+  lockstep with this change.
 
 ### 2.3 `uv.lock` (research-verified, no thrash)
 
@@ -219,7 +219,7 @@ unless a real `uv build` exceeds 5s (then marked `slow`, like the Phase
 |---|---|
 | Forgot `uv lock` after the switch | Phase 1 CI `uv sync --locked` fails fast |
 | Tag created on feature branch → wrong version math | Spec mandates tagging the post-merge `main` commit only |
-| `pepper-cutover-*` tags picked up by the version tool | Tag `pattern` restricted to `^v\d+\.\d+\.\d+` (only 2 non-`v` tags exist) |
+| `pepper-cutover-*` tags picked up by the version tool | Default tag pattern (`^v...`) already ignores `pepper-cutover-*` tags; slow guard test (`test_pepper_cutover_tags_are_ignored`) confirms empirically |
 | Exact tool keys guessed wrong | `[tool.uv-dynamic-versioning]` keys verified via context7 at plan time |
 | A future member silently missing from the changelog | Guard test asserts every `packages/*` has `changelog.d/` |
 | Fragment-backlog absorption is irreversible | Explicitly confirmed with Jeff; recorded in `CHANGELOG.md` + git history |
