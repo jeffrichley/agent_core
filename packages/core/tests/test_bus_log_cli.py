@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import re
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -11,6 +12,17 @@ from typer.testing import CliRunner
 
 from agent_core.bus.envelope import Envelope, TextMessagePayload
 from agent_core.cli import app
+
+_ANSI_RE = re.compile(r"\x1b\[[0-9;]*m")
+
+
+def _norm(text: str) -> str:
+    """Strip ANSI escape codes and collapse whitespace.
+
+    Typer/Rich splits option tokens with ANSI style spans under CI
+    (no COLUMNS, non-tty), so raw substring checks are unreliable.
+    """
+    return re.sub(r"\s+", " ", _ANSI_RE.sub("", text))
 
 
 @pytest.fixture
@@ -53,8 +65,8 @@ def test_bus_log_show_requires_agent(sample_log: Path):
         "--log-root", str(sample_log),
     ])
     assert result.exit_code == 2
-    assert "Missing option" in result.output
-    assert "--agent" in result.output
+    assert "Missing option" in _norm(result.output)
+    assert "--agent" in _norm(result.output)
 
 
 def test_bus_log_show_projected_default_filters_to_agent(sample_log: Path):

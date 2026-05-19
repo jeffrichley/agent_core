@@ -134,6 +134,7 @@ fresh.
 
 ## Related
 
+- `docs/setup/ci.md` — the CI gate and the one-time `just install-hooks` bootstrap.
 - [#79](https://github.com/jeffrichley/agent_core/issues/79) — the issue that motivated the venv isolation.
 - [#93](https://github.com/jeffrichley/agent_core/issues/93) — Defect A (stale daemon install); fixed by the per-member `tool.uv.cache-keys` git entry.
 - `docs/superpowers/specs/2026-05-18-agent-core-maturity-design.md` — the maturity spec (Phase 0 = this fix).

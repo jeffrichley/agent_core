@@ -155,10 +155,11 @@ def test_run_install_invokes_uv_venv_then_uv_sync(
 
     run_install(home=home, workspace=workspace, extra="cu130", python_version="3.12")
 
-    # First call: uv venv ... --python 3.12
+    # First call: uv venv ... --python 3.12 --clear
     assert calls[0][:2] == ["uv", "venv"]
     assert "--python" in calls[0]
     assert "3.12" in calls[0]
+    assert "--clear" in calls[0]
     # Second call: uv sync --frozen --no-editable --no-dev --extra cu130
     assert calls[1] == [
         "uv",

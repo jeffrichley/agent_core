@@ -62,3 +62,7 @@ test-channel:
 # Setup
 sync:
     uv sync --dev
+
+# Install this clone's git hooks (.githooks/) — run once per clone/worktree
+install-hooks:
+    uv run --no-sync python -m agent_core.githooks

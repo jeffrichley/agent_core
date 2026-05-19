@@ -1,6 +1,7 @@
 """Tests for `agent-core bus run` — the long-running entry point."""
 
 import asyncio
+import os
 import signal
 import sys
 from pathlib import Path
@@ -56,13 +57,30 @@ class TestBusRunCLI:
             str(cfg_path),
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
+            env={**os.environ, "PYTHONUNBUFFERED": "1"},
         )
-        await asyncio.sleep(1.0)  # let it boot
+
+        async def _wait_until_ready() -> None:
+            assert proc.stdout is not None
+            while True:
+                line = await proc.stdout.readline()
+                if not line:
+                    raise AssertionError("bus exited before it became ready")
+                if b"bus running" in line:
+                    return
+
+        # Wait for the readiness line rather than a fixed sleep: on slow CI a
+        # fixed sleep can fire SIGINT before the signal handler is installed,
+        # which default-terminates the process (returncode -2) instead of a
+        # clean shutdown.
+        await asyncio.wait_for(_wait_until_ready(), timeout=30.0)
         proc.send_signal(signal.SIGINT)
         try:
-            await asyncio.wait_for(proc.wait(), timeout=10.0)
+            # communicate() drains stdout+stderr while waiting, so a chatty
+            # bus can't fill the OS pipe buffer and deadlock proc.wait().
+            await asyncio.wait_for(proc.communicate(), timeout=10.0)
         except TimeoutError:
             proc.kill()
-            await proc.wait()
+            await proc.communicate()
             pytest.fail("bus did not shut down on SIGINT")
         assert proc.returncode == 0
