@@ -7,7 +7,7 @@ from typer.testing import CliRunner
 
 
 def test_cli_help_runs() -> None:
-    result = CliRunner().invoke(app, ["--help"], env={"COLUMNS": "200"})
+    result = CliRunner().invoke(app, ["--help"])
     assert result.exit_code == 0
     assert "--agent" in result.output
     assert "--daemon-url" in result.output

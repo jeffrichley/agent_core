@@ -51,7 +51,7 @@ def test_bus_log_show_requires_agent(sample_log: Path):
         "bus-log", "show",
         "--date", "2026-05-03",
         "--log-root", str(sample_log),
-    ], env={"COLUMNS": "200"})
+    ])
     assert result.exit_code == 2
     assert "Missing option" in result.output
     assert "--agent" in result.output
