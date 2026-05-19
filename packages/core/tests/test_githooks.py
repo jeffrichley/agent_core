@@ -89,12 +89,16 @@ def test_committed_pre_push_runs_just_check_and_is_executable() -> None:
     """The real .githooks/pre-push must exist, invoke `just check`, and be
     tracked with git's executable mode (100755) so it runs on a fresh clone.
     """
-    repo_root = Path(__file__).resolve().parents[3]
+    repo_root = next(
+        p for p in Path(__file__).resolve().parents if (p / ".githooks").is_dir()
+    )
     hook = repo_root / ".githooks" / "pre-push"
     assert hook.is_file(), f"{hook} missing"
 
     body = hook.read_text(encoding="utf-8")
+    assert body.startswith("#!/bin/sh")
     assert "just check" in body
+    assert "\r\n" not in body, "pre-push contains CRLF line endings (breaks on Linux CI)"
 
     mode = subprocess.run(
         ["git", "-C", str(repo_root), "ls-files", "--stage", ".githooks/pre-push"],
