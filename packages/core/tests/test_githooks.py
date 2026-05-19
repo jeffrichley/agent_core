@@ -1,0 +1,61 @@
+"""Unit tests for agent_core.githooks.install_git_hooks (temp git repos only)."""
+
+from __future__ import annotations
+
+import subprocess
+from pathlib import Path
+
+import pytest
+
+from agent_core.githooks import HOOKS_DIR_NAME, HookInstallError, install_git_hooks
+
+
+def _git(repo: Path, *args: str) -> str:
+    return subprocess.run(
+        ["git", "-C", str(repo), *args],
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout.strip()
+
+
+def _init_repo(tmp_path: Path) -> Path:
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    subprocess.run(["git", "-C", str(repo), "init", "-q"], check=True)
+    return repo
+
+
+def _make_hooks(repo: Path) -> Path:
+    hooks = repo / HOOKS_DIR_NAME
+    hooks.mkdir()
+    (hooks / "pre-push").write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+    return hooks
+
+
+def test_install_sets_hookspath_to_githooks(tmp_path: Path) -> None:
+    repo = _init_repo(tmp_path)
+    hooks = _make_hooks(repo)
+
+    returned = install_git_hooks(repo)
+
+    assert returned == hooks.resolve()
+    assert _git(repo, "config", "--get", "core.hooksPath") == HOOKS_DIR_NAME
+
+
+def test_install_is_idempotent(tmp_path: Path) -> None:
+    repo = _init_repo(tmp_path)
+    _make_hooks(repo)
+
+    install_git_hooks(repo)
+    install_git_hooks(repo)  # second run must not raise
+
+    assert _git(repo, "config", "--get", "core.hooksPath") == HOOKS_DIR_NAME
+
+
+def test_install_raises_when_pre_push_missing(tmp_path: Path) -> None:
+    repo = _init_repo(tmp_path)
+    (repo / HOOKS_DIR_NAME).mkdir()  # dir exists but pre-push absent
+
+    with pytest.raises(HookInstallError, match="pre-push"):
+        install_git_hooks(repo)
