@@ -55,7 +55,13 @@ Phase 1 must land before Phases 2/3 so those are CI-protected.
 scoped away — full visibility.
 
 **Concurrency:** group `${{ github.workflow }}-${{ github.ref }}`,
-`cancel-in-progress: true`. A new push to a PR cancels the superseded run.
+`cancel-in-progress: ${{ github.event_name == 'pull_request' }}`.
+Superseded-run cancellation applies to PRs only — `push: [main]` runs
+always finish so every commit on `main` has a recorded green check.
+
+**Hardening:** a top-level `permissions: contents: read` restricts the
+workflow token to read-only access. Each job carries `timeout-minutes: 20`
+to prevent runaway billing from hung steps.
 
 **Supply chain:** every third-party action is pinned by **commit SHA**
 (a tag can be moved; a SHA cannot), with a trailing comment recording the
@@ -82,28 +88,26 @@ human-readable version.
   5. `just check`.
   6. `uv cache prune --ci`.
 
-### Job `integration` — daemon lifecycle (Windows only)
+### Job `integration` — slow suite (Windows only)
 
-- Runs on `windows-latest` only: bounce/refresh must hit the real prod
-  shell; it cannot be POSIX.
-- **CPU-only deps:** the daemon is installed/synced **without the
-  `cu130` extra**. A GitHub-hosted runner has no GPU; `cu130` is multi-GB
-  of wheels that can never be exercised there. The exact sync/daemon
-  install invocation that omits `cu130` is determined and verified at
-  plan time against the real daemon CLI (see §5, flagged item 1).
+- Runs on `windows-latest` only: the stale-cache regression must hit the
+  real prod shell; it cannot be POSIX.
+- **Narrow, Torch-free sync:** `uv sync --locked --package agent-core`.
+  This deliberately excludes `agent-core-voice` / `qwen-tts`. A
+  GitHub-hosted runner has no GPU; `--all-packages` here would pull
+  multi-GB Torch that can never be exercised. Do not "widen" this sync.
 - Steps:
-  1. Checkout, `setup-uv`, `setup-just` (as above).
-  2. Sync without `cu130`.
-  3. Create an ephemeral daemon: temporary `HOME` + a free port,
-     `agent-core daemon start`, poll `agent-core daemon status` until it
-     reports running (exact readiness signal verified at plan time).
-  4. `pytest -m slow` (includes the Phase 0 stale-cache regression).
-  5. **Always** tear down: an `if: always()` step runs
-     `agent-core daemon stop`.
-  6. On failure, upload the daemon log as a build artifact.
-- Because CPU-only makes this job light, it is a **required PR check**
-  (not deferred to `workflow_dispatch`-only) — a ruleset cannot require a
-  check that does not run on PRs.
+  1. Checkout, `setup-uv` (SHA-pinned, `enable-cache: true`,
+     `python-version: "3.12"`), `setup-just` (as above).
+  2. `uv sync --locked --package agent-core`.
+  3. `uv run --no-sync pytest packages/core/tests -m slow -v`.
+- The slow suite (`packages/core/tests/test_daemon_install_integration.py`)
+  is self-contained: it builds its own temporary workspace, needs no
+  running daemon, no `agent_core.yaml`, and no free port. No ephemeral
+  daemon is spun up; no teardown step is needed.
+- Because the job is light and self-contained, it is a **required PR
+  check** (not deferred to `workflow_dispatch`-only) — a ruleset cannot
+  require a check that does not run on PRs.
 
 ## 4. Pre-push hook + install recipe
 
@@ -153,8 +157,10 @@ human-readable version.
 
 - **`just install-hooks` unit test:** in a throwaway temp git repo,
   run the recipe and assert `git config core.hooksPath` resolves to
-  `.githooks` and the hook file is executable. Never touches the real
-  repo config.
+  `.githooks`. In addition, the test asserts the committed
+  `.githooks/pre-push` is tracked with git mode `100755`
+  (cross-platform-meaningful) — this check runs against the real repo,
+  not the temp repo. Never touches the real repo config.
 - **Workflow + ruleset validated by use:** the Phase 1 PR is itself the
   first thing the new gate runs on. If `check`/`integration` do not go
   green on Phase 1's own PR, Phase 1 is not done. No mocking CI.
@@ -163,13 +169,11 @@ human-readable version.
 
 ## 7. Flagged items (decisions recorded)
 
-1. **`integration` daemon must start without `cu130`.** Severity:
-   blocks the CPU-only integration job if false. Resolution: a **gating
-   plan-time verification step** — `uv sync` without the extra,
-   `agent-core daemon start`, confirm it comes up. If the daemon
-   hard-imports the GPU/Torch stack at boot, the fallback is `integration`
-   as `workflow_dispatch` + self-hosted only. This is a verification
-   step, not an assumption.
+1. **~~`integration` daemon must start without `cu130`.~~** **RESOLVED /
+   MOOT FOR CI.** The `integration` job's slow suite never starts the
+   supervised daemon — it is fully self-contained (builds its own temp
+   workspace). The question of whether the daemon can start without
+   `cu130` does not gate CI and is therefore moot for this phase.
 2. **`uv sync --all-packages` in `check` pulls CPU Torch.** The fast
    suite collects `packages/agent-core-voice/tests`, which likely import
    Torch, so `--all-packages` is the safe correctness default. Decision:
@@ -182,7 +186,7 @@ human-readable version.
 
 | Risk | Mitigation |
 |---|---|
-| Integration job can't run CPU-only (daemon hard-imports GPU stack) | Gating plan-time verification; fallback to `workflow_dispatch` + self-hosted (flagged item 1) |
+| ~~Integration job can't run CPU-only (daemon hard-imports GPU stack)~~ | MOOT — the slow suite is self-contained and never starts the daemon (flagged item 1, resolved) |
 | Stale lockfile silently passes | `uv sync --locked` (not `--frozen`) fails CI fast |
 | Ubuntu-only failure masks a Windows-only break | Matrix includes `windows-latest`; `fail-fast: false` |
 | CI failures become ignorable noise | Pre-push keeps failures rare; "failed-only" email posture keeps the alarm meaningful |
