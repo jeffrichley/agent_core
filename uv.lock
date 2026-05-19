@@ -99,7 +99,6 @@ wheels = [
 
 [[package]]
 name = "agent-core"
-version = "0.1.0"
 source = { editable = "packages/core" }
 dependencies = [
     { name = "agentmail" },
@@ -144,7 +143,6 @@ requires-dist = [
 
 [[package]]
 name = "agent-core-briefs"
-version = "0.1.0"
 source = { editable = "packages/agent-core-briefs" }
 dependencies = [
     { name = "agent-core" },
@@ -167,7 +165,6 @@ requires-dist = [
 
 [[package]]
 name = "agent-core-busproxy"
-version = "0.1.0"
 source = { editable = "packages/agent-core-busproxy" }
 dependencies = [
     { name = "anyio" },
@@ -188,7 +185,6 @@ requires-dist = [
 
 [[package]]
 name = "agent-core-channel"
-version = "0.1.0"
 source = { editable = "packages/agent-core-channel" }
 dependencies = [
     { name = "anyio" },
@@ -209,7 +205,6 @@ requires-dist = [
 
 [[package]]
 name = "agent-core-credentials"
-version = "0.1.0"
 source = { editable = "packages/credentials" }
 dependencies = [
     { name = "pykeepass" },
@@ -226,7 +221,6 @@ requires-dist = [
 
 [[package]]
 name = "agent-core-discord"
-version = "0.1.0"
 source = { editable = "packages/agent-core-discord" }
 dependencies = [
     { name = "agent-core" },
@@ -245,7 +239,6 @@ requires-dist = [
 
 [[package]]
 name = "agent-core-hatchery"
-version = "0.1.0"
 source = { editable = "packages/agent-core-hatchery" }
 dependencies = [
     { name = "agent-core" },
@@ -282,7 +275,6 @@ dev = [
 
 [[package]]
 name = "agent-core-notify"
-version = "0.1.0"
 source = { editable = "packages/notify" }
 dependencies = [
     { name = "desktop-notifier" },
@@ -297,7 +289,6 @@ requires-dist = [
 
 [[package]]
 name = "agent-core-voice"
-version = "0.1.0"
 source = { editable = "packages/agent-core-voice" }
 dependencies = [
     { name = "agent-core" },
@@ -335,7 +326,6 @@ provides-extras = ["cpu", "cu130"]
 
 [[package]]
 name = "agent-core-webcam"
-version = "0.1.0"
 source = { editable = "packages/agent-core-webcam" }
 dependencies = [
     { name = "agent-core" },

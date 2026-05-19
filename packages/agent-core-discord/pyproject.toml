@@ -1,6 +1,6 @@
 [project]
 name = "agent-core-discord"
-version = "0.1.0"
+dynamic = ["version"]
 description = "Discord bot adapter for the agent-core bus — one bot per agent (1:1)."
 requires-python = ">=3.12"
 dependencies = [
@@ -11,11 +11,17 @@ dependencies = [
 ]
 
 [build-system]
-requires = ["hatchling"]
+requires = ["hatchling", "uv-dynamic-versioning"]
 build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/agent_core_discord"]
+
+[tool.hatch.version]
+source = "uv-dynamic-versioning"
+
+[tool.uv-dynamic-versioning]
+fallback-version = "0.0.0"
 
 [tool.uv]
 cache-keys = [{ file = "pyproject.toml" }, { git = { commit = true, tags = true } }]

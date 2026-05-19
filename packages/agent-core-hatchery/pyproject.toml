@@ -1,10 +1,10 @@
 [build-system]
-requires = ["hatchling"]
+requires = ["hatchling", "uv-dynamic-versioning"]
 build-backend = "hatchling.build"
 
 [project]
 name = "agent-core-hatchery"
-version = "0.1.0"
+dynamic = ["version"]
 description = "Bootstrap system for hatching new agent-core beings"
 requires-python = ">=3.12"
 dependencies = [
@@ -35,3 +35,9 @@ dev = [
     "pytest>=8.0",
     "pytest-asyncio>=0.23",
 ]
+
+[tool.hatch.version]
+source = "uv-dynamic-versioning"
+
+[tool.uv-dynamic-versioning]
+fallback-version = "0.0.0"
