@@ -70,14 +70,40 @@ def test_write_then_read_stamp_round_trips(tmp_path: Path) -> None:
     stamp = InstallStamp(
         installed_at="2026-05-15T19:31:04Z",
         installed_sha="42713d7",
+        installed_version="0.1.0",
         python_version="3.12.5",
         extra="cu130",
-        uv_lock_hash="sha256:abc",
+        release_tag="v0.1.0",
     )
     write_stamp(tmp_path, stamp)
 
     assert (tmp_path / STAMP_FILENAME).exists()
     assert read_stamp(tmp_path) == stamp
+
+
+def test_read_stamp_old_phase2_schema_back_compat(tmp_path: Path) -> None:
+    """Stamps written by Phase 2 lacked installed_version/release_tag and
+    carried uv_lock_hash. read_stamp must accept them: drop the obsolete
+    field, default the new ones."""
+    import json as _json
+    (tmp_path / STAMP_FILENAME).write_text(
+        _json.dumps({
+            "installed_at": "2026-05-20T10:00:00Z",
+            "installed_sha": "abc1234",
+            "python_version": "3.12",
+            "extra": "cu130",
+            "uv_lock_hash": "sha256:legacy",
+        }) + "\n",
+        encoding="utf-8",
+    )
+
+    stamp = read_stamp(tmp_path)
+    assert stamp is not None
+    assert stamp.installed_at == "2026-05-20T10:00:00Z"
+    assert stamp.installed_sha == "abc1234"
+    assert stamp.installed_version == "unknown"   # new field defaulted
+    assert stamp.release_tag is None              # new field defaulted
+    # uv_lock_hash silently dropped — no attribute on the dataclass
 
 
 def test_read_stamp_returns_none_when_missing(tmp_path: Path) -> None:
@@ -193,12 +219,9 @@ def test_run_install_writes_stamp_with_lock_hash(
     assert stamp is not None
     assert stamp.installed_sha == "abc1234"
     assert stamp.extra is None
-    # uv_lock_hash matches sha256 of the lock file content
-    expected_hash = (
-        "sha256:"
-        + hashlib.sha256((workspace / "uv.lock").read_bytes()).hexdigest()
-    )
-    assert stamp.uv_lock_hash == expected_hash
+    # New (Phase 2.5) stamp fields — source installs use stub values
+    assert stamp.installed_version == "unknown"
+    assert stamp.release_tag is None
 
 
 def test_run_install_raises_uv_not_found_on_oserror(

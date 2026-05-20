@@ -175,18 +175,6 @@ def status() -> None:
         console.print(f"installed sha: {stamp.installed_sha}")
         console.print(f"installed version: {_installed_version(daemon_py)}")
 
-        # Lock-drift check (best-effort; skipped silently if workspace not findable).
-        try:
-            workspace = find_workspace_root(Path.cwd())
-            current_hash = compute_lock_hash(workspace)
-            if current_hash != stamp.uv_lock_hash:
-                console.print(
-                    "[yellow]daemon venv may be stale — "
-                    "run `agent-core daemon refresh`[/yellow]"
-                )
-        except (WorkspaceNotFoundError, FileNotFoundError):
-            pass  # Lock-drift is a nice-to-have; don't fail status on workspace issues.
-
     if log_file.exists():
         console.print("\n[dim]--- last 20 lines of daemon.log ---[/dim]")
         lines = log_file.read_text(encoding="utf-8", errors="replace").splitlines()

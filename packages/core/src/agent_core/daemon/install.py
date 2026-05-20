@@ -54,11 +54,12 @@ STAMP_FILENAME = ".daemon-install-stamp.json"
 class InstallStamp:
     """Captures what was installed into the daemon venv, when, and from where."""
 
-    installed_at: str  # ISO 8601 UTC
-    installed_sha: str  # git rev-parse HEAD at install time
-    python_version: str  # e.g., "3.12.5"
-    extra: str | None  # uv extra name, or None
-    uv_lock_hash: str  # sha256 of uv.lock at install time
+    installed_at: str            # ISO 8601 UTC
+    installed_sha: str           # git rev-parse / tag sha at install time
+    installed_version: str       # human-readable version (e.g. "0.1.0")
+    python_version: str          # e.g. "3.12.5"
+    extra: str | None            # uv extra name, or None
+    release_tag: str | None      # provenance: GH release tag (e.g. "v0.1.0")
 
 
 def write_stamp(home: Path, stamp: InstallStamp) -> None:
@@ -71,7 +72,12 @@ def write_stamp(home: Path, stamp: InstallStamp) -> None:
 
 
 def read_stamp(home: Path) -> InstallStamp | None:
-    """Read the install stamp. None on missing, corrupt, or schema-incomplete."""
+    """Read the install stamp. None on missing/corrupt.
+
+    Forward-compatible: unknown fields (e.g. Phase-2 `uv_lock_hash`) are
+    silently dropped. Missing new fields default to None / "unknown" so
+    older stamps from Phase 2 continue to read.
+    """
     path = home / STAMP_FILENAME
     if not path.exists():
         return None
@@ -83,9 +89,10 @@ def read_stamp(home: Path) -> InstallStamp | None:
         return InstallStamp(
             installed_at=data["installed_at"],
             installed_sha=data["installed_sha"],
+            installed_version=data.get("installed_version", "unknown"),
             python_version=data["python_version"],
             extra=data.get("extra"),
-            uv_lock_hash=data["uv_lock_hash"],
+            release_tag=data.get("release_tag"),
         )
     except (KeyError, TypeError):
         return None
@@ -183,12 +190,15 @@ def run_install(
         )
 
     # Step 3: stamp it.
+    # (This source-install path is removed in Task 8; for now we keep it
+    # writing the new schema so tests stay green.)
     stamp = InstallStamp(
         installed_at=datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ"),
         installed_sha=_git_head_sha(workspace),
+        installed_version="unknown",  # source installs don't know their version
         python_version=python_version,
         extra=extra,
-        uv_lock_hash=compute_lock_hash(workspace),
+        release_tag=None,  # source installs are not from a tagged release
     )
     write_stamp(home, stamp)
     return stamp

@@ -298,9 +298,10 @@ def test_refresh_reuses_stamped_extra_when_no_flag(
         InstallStamp(
             installed_at="2026-05-15T19:31:04Z",
             installed_sha="abc1234",
+            installed_version="0.1.0",
             python_version="3.12",
             extra="cu130",
-            uv_lock_hash="sha256:abc",
+            release_tag="v0.1.0",
         ),
     )
 
@@ -362,9 +363,10 @@ def test_status_shows_stamp_metadata(
         InstallStamp(
             installed_at="2026-05-15T19:31:04Z",
             installed_sha="abc1234",
+            installed_version="0.1.0",
             python_version="3.12",
             extra="cu130",
-            uv_lock_hash="sha256:deadbeef",
+            release_tag="v0.1.0",
         ),
     )
 
@@ -382,50 +384,10 @@ def test_status_shows_stamp_metadata(
     assert "2026-05-15" in result.stdout
 
 
-def test_status_flags_lock_drift(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    from agent_core.daemon.install import InstallStamp, write_stamp
+# test_status_flags_lock_drift removed in Phase 2.5: lock-drift check is gone
+# (the daemon is no longer source-installed from a workspace lock; releases
+# carry their own pinned requirements.txt).
 
-    monkeypatch.setenv("AGENT_CORE_HOME", str(tmp_path))
-    (tmp_path / "daemon.pid").write_text(str(os.getpid()))
-    # Stamp says the lock was hash "stale-hash"; workspace lock has different content.
-    write_stamp(
-        tmp_path,
-        InstallStamp(
-            installed_at="2026-05-15T19:31:04Z",
-            installed_sha="abc1234",
-            python_version="3.12",
-            extra=None,
-            uv_lock_hash="sha256:STALE",
-        ),
-    )
-
-    # Fake workspace with a uv.lock whose hash is different.
-    fake_ws = tmp_path / "fake-workspace"
-    fake_ws.mkdir()
-    (fake_ws / "uv.lock").write_text("# new content\n", encoding="utf-8")
-    monkeypatch.setattr(
-        "agent_core.daemon.cli.find_workspace_root", lambda _start: fake_ws
-    )
-
-    result = runner.invoke(daemon_app, ["status"])
-    assert "stale" in result.stdout.lower() or "refresh" in result.stdout.lower()
-
-
-def test_status_handles_missing_workspace_gracefully(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """status must not crash if workspace discovery fails — drift check is optional."""
-    monkeypatch.setenv("AGENT_CORE_HOME", str(tmp_path))
-    (tmp_path / "daemon.pid").write_text(str(os.getpid()))
-
-    def raise_not_found(_start):
-        from agent_core.daemon.install import WorkspaceNotFoundError
-
-        raise WorkspaceNotFoundError("no workspace")
-
-    monkeypatch.setattr("agent_core.daemon.cli.find_workspace_root", raise_not_found)
-
-    result = runner.invoke(daemon_app, ["status"])
-    assert result.exit_code == 0  # still succeeds
+# test_status_handles_missing_workspace_gracefully removed in Phase 2.5:
+# status no longer touches workspace at all (no lock-drift check, no
+# find_workspace_root call from cli.py status command).
