@@ -29,7 +29,6 @@ dev = [
     "types-PyYAML>=6.0",
     "types-psutil>=7.0.0.20251001",
     "import-linter>=2.0",
-    "towncrier>=23.11",
 ]
 
 [tool.ruff]
@@ -94,72 +93,3 @@ markers = [
     "slow: tests that hit network or take >5s; skipped by default in CI",
 ]
 
-[tool.towncrier]
-directory = "changelog.d"
-filename = "CHANGELOG.md"
-start_string = "<!-- towncrier release notes start -->\n"
-underlines = ["", "", ""]
-title_format = "## [{version}](https://github.com/jeffrichley/agent_core/tree/{version}) - {project_date}"
-issue_format = "[#{issue}](https://github.com/jeffrichley/agent_core/issues/{issue})"
-
-[[tool.towncrier.type]]
-name = "Security"
-
-[[tool.towncrier.type]]
-name = "Removed"
-
-[[tool.towncrier.type]]
-name = "Deprecated"
-
-[[tool.towncrier.type]]
-name = "Added"
-
-[[tool.towncrier.type]]
-name = "Changed"
-
-[[tool.towncrier.type]]
-name = "Fixed"
-
-[[tool.towncrier.section]]
-name = ""
-path = ""
-
-[[tool.towncrier.section]]
-name = "core"
-path = "core"
-
-[[tool.towncrier.section]]
-name = "credentials"
-path = "credentials"
-
-[[tool.towncrier.section]]
-name = "notify"
-path = "notify"
-
-[[tool.towncrier.section]]
-name = "agent-core-briefs"
-path = "agent-core-briefs"
-
-[[tool.towncrier.section]]
-name = "agent-core-busproxy"
-path = "agent-core-busproxy"
-
-[[tool.towncrier.section]]
-name = "agent-core-channel"
-path = "agent-core-channel"
-
-[[tool.towncrier.section]]
-name = "agent-core-discord"
-path = "agent-core-discord"
-
-[[tool.towncrier.section]]
-name = "agent-core-hatchery"
-path = "agent-core-hatchery"
-
-[[tool.towncrier.section]]
-name = "agent-core-voice"
-path = "agent-core-voice"
-
-[[tool.towncrier.section]]
-name = "agent-core-webcam"
-path = "agent-core-webcam"
