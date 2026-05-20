@@ -45,7 +45,7 @@ def resolve_version(
     version: str | None,
     *,
     repo: str,
-    fetcher: Fetcher = _default_fetcher,
+    fetcher: Fetcher | None = None,
 ) -> str:
     """Resolve a user-supplied version to a concrete `vX.Y.Z` tag.
 
@@ -56,6 +56,8 @@ def resolve_version(
     if version is not None:
         return version
 
+    if fetcher is None:
+        fetcher = _default_fetcher
     url = f"https://api.github.com/repos/{repo}/releases/latest"
     try:
         body = fetcher(url)
@@ -72,9 +74,11 @@ def list_release_wheels(
     version: str,
     *,
     repo: str,
-    fetcher: Fetcher = _default_fetcher,
+    fetcher: Fetcher | None = None,
 ) -> list[WheelAsset]:
     """Return the `.whl` assets attached to release `version` (e.g. `v0.1.0`)."""
+    if fetcher is None:
+        fetcher = _default_fetcher
     url = f"https://api.github.com/repos/{repo}/releases/tags/{version}"
     body = fetcher(url)
     data = json.loads(body)
@@ -94,7 +98,7 @@ def download_wheels(
     assets: list[WheelAsset],
     *,
     dest: Path,
-    fetcher: Fetcher = _default_fetcher,
+    fetcher: Fetcher | None = None,
 ) -> list[Path]:
     """Download each asset into `dest/`, skipping if a file of the same name exists.
 
@@ -103,6 +107,8 @@ def download_wheels(
     matching filename implies a matching wheel. If you need to force a
     redownload, delete the cache dir.
     """
+    if fetcher is None:
+        fetcher = _default_fetcher
     dest.mkdir(parents=True, exist_ok=True)
     out: list[Path] = []
     for asset in assets:
@@ -119,7 +125,7 @@ def download_requirements(
     *,
     repo: str,
     dest: Path,
-    fetcher: Fetcher = _default_fetcher,
+    fetcher: Fetcher | None = None,
 ) -> Path:
     """Download `requirements.txt` from the release `version` into `dest/`.
 
@@ -132,6 +138,8 @@ def download_requirements(
     if out_path.exists():
         return out_path
 
+    if fetcher is None:
+        fetcher = _default_fetcher
     url = f"https://api.github.com/repos/{repo}/releases/tags/{version}"
     body = fetcher(url)
     data = json.loads(body)

@@ -14,20 +14,26 @@ from __future__ import annotations
 import os
 import subprocess
 import sys
+from datetime import UTC, datetime
 from pathlib import Path
 
 import typer
 from rich.console import Console
 
-from agent_core.daemon.install import (
-    UvNotFoundError,
-    WorkspaceNotFoundError,
-    compute_lock_hash,
-    find_workspace_root,
-    read_stamp,
-    run_install,
+from agent_core.daemon.install import InstallStamp, read_stamp, write_stamp
+from agent_core.daemon.release import (
+    NoReleasesError,
+    download_requirements,
+    download_wheels,
+    ensure_venv,
+    install_requirements,
+    install_wheels,
+    list_release_wheels,
+    resolve_version,
 )
 from agent_core.daemon.supervisor import is_alive, kill_tree, read_pid, remove_pid, write_pid
+
+RELEASE_REPO = "jeffrichley/agent_core"
 
 app = typer.Typer(help="Daemon process supervision: start, stop, status, install, refresh.")
 console = Console()
@@ -67,6 +73,31 @@ def _daemon_python() -> str:
     else:
         candidate = _home() / ".venv" / "bin" / "python"
     return str(candidate) if candidate.exists() else sys.executable
+
+
+def _daemon_python_path() -> Path:
+    """The fixed path to the daemon venv's python, regardless of existence."""
+    if sys.platform == "win32":
+        return _home() / ".venv" / "Scripts" / "python.exe"
+    return _home() / ".venv" / "bin" / "python"
+
+
+def _git_sha_of_tag(tag: str) -> str:
+    """Best-effort: resolve a tag to a git short sha. Returns 'unknown' on failure."""
+    try:
+        result = subprocess.run(
+            ["git", "rev-parse", "--short", tag],
+            cwd=Path.cwd(),
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=5,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return "unknown"
+    if result.returncode != 0:
+        return "unknown"
+    return result.stdout.strip() or "unknown"
 
 
 def _installed_version(python: str) -> str:
@@ -184,14 +215,13 @@ def status() -> None:
 
 @app.command()
 def install(
-    extra: str | None = typer.Option(
-        None, "--extra", help="uv extra to install (e.g., cu130, cpu)."
-    ),
-    python_version: str = typer.Option(
-        "3.12", "--python", help="Python version to pin the daemon venv to."
+    release: str | None = typer.Option(
+        None,
+        "--release",
+        help="Release tag to install (e.g. v0.1.0). Default: latest release.",
     ),
 ) -> None:
-    """Populate ~/.agent-core/.venv/ from the workspace (non-editable, frozen)."""
+    """Populate ~/.agent-core/.venv/ from a GitHub Release artifact."""
     pid_file = _pid_path()
     existing = read_pid(pid_file)
     if existing is not None and is_alive(existing):
@@ -202,56 +232,77 @@ def install(
         )
         raise typer.Exit(code=1)
 
-    try:
-        workspace = find_workspace_root(Path.cwd())
-    except WorkspaceNotFoundError as exc:
-        console.print(f"[red]{exc}[/red]")
-        raise typer.Exit(code=1) from exc
-
     home = _home()
     home.mkdir(parents=True, exist_ok=True)
 
+    # Resolve version (None → latest).
     try:
-        stamp = run_install(
-            home=home,
-            workspace=workspace,
-            extra=extra,
-            python_version=python_version,
-        )
-    except UvNotFoundError as exc:
+        tag = resolve_version(release, repo=RELEASE_REPO)
+    except NoReleasesError as exc:
         console.print(f"[red]{exc}[/red]")
         raise typer.Exit(code=1) from exc
-    except subprocess.CalledProcessError as exc:
-        console.print(f"[red]uv exited with code {exc.returncode}.[/red]")
-        if exc.stderr:
-            console.print(exc.stderr.rstrip())
+
+    # Fetch + download artifacts.
+    cache_dir = home / "releases" / tag
+    assets = list_release_wheels(tag, repo=RELEASE_REPO)
+    if not assets:
+        console.print(f"[red]release {tag} has no .whl assets attached[/red]")
+        raise typer.Exit(code=1)
+    wheel_paths = download_wheels(assets, dest=cache_dir)
+    try:
+        req_path = download_requirements(tag, repo=RELEASE_REPO, dest=cache_dir)
+    except FileNotFoundError as exc:
+        console.print(f"[red]{exc}[/red]")
         raise typer.Exit(code=1) from exc
 
-    console.print(
-        f"[green]daemon venv installed[/green] "
-        f"(sha {stamp.installed_sha}, python {stamp.python_version}"
-        + (f", extra {stamp.extra}" if stamp.extra else "")
-        + f", at {stamp.installed_at})"
+    # Ensure daemon venv exists (creates if first install on this box).
+    venv = home / ".venv"
+    try:
+        ensure_venv(venv, python_version="3.12")
+    except subprocess.CalledProcessError as exc:
+        console.print(f"[red]uv venv failed (exit {exc.returncode}).[/red]")
+        raise typer.Exit(code=1) from exc
+
+    venv_python = _daemon_python_path()
+
+    # Install pinned dependencies (no-op-fast on upgrades when deps unchanged).
+    try:
+        install_requirements(req_path, venv_python=venv_python)
+    except subprocess.CalledProcessError as exc:
+        console.print(f"[red]dep install failed (exit {exc.returncode}).[/red]")
+        raise typer.Exit(code=1) from exc
+
+    # Surgically replace the agent_core* packages.
+    try:
+        install_wheels(wheel_paths, venv_python=venv_python)
+    except subprocess.CalledProcessError as exc:
+        console.print(f"[red]wheel install failed (exit {exc.returncode}).[/red]")
+        raise typer.Exit(code=1) from exc
+
+    # Stamp it.
+    version = tag.removeprefix("v")
+    stamp = InstallStamp(
+        installed_at=datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ"),
+        installed_sha=_git_sha_of_tag(tag),
+        installed_version=version,
+        python_version="3.12",
+        extra=None,
+        release_tag=tag,
     )
+    write_stamp(home, stamp)
+
+    console.print(f"[green]daemon updated to {tag}[/green]")
 
 
 @app.command()
 def refresh(
-    extra: str | None = typer.Option(
+    release: str | None = typer.Option(
         None,
-        "--extra",
-        help="uv extra to install. Defaults to the stamped extra from the last install.",
-    ),
-    python_version: str = typer.Option(
-        "3.12", "--python", help="Python version to pin the daemon venv to."
+        "--release",
+        help="Release tag to install (e.g. v0.1.0). Default: latest release.",
     ),
 ) -> None:
-    """Stop daemon → reinstall daemon venv → start daemon. Bundled lifecycle."""
-    if extra is None:
-        stamp = read_stamp(_home())
-        if stamp is not None:
-            extra = stamp.extra
-
+    """Stop daemon → install release artifacts → start daemon."""
     stop()
-    install(extra=extra, python_version=python_version)
+    install(release=release)
     start()

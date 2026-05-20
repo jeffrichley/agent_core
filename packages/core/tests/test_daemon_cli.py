@@ -6,7 +6,6 @@ import os
 import sys
 import time
 from pathlib import Path
-from unittest.mock import MagicMock
 
 import pytest
 import typer
@@ -134,107 +133,6 @@ def test_install_refuses_when_daemon_running(
     assert "refresh" in result.stdout.lower()
 
 
-def test_install_invokes_run_install_with_args(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    monkeypatch.setenv("AGENT_CORE_HOME", str(tmp_path))
-    captured: dict = {}
-
-    fake_stamp = MagicMock(
-        installed_sha="abc1234",
-        extra="cu130",
-        python_version="3.12",
-        installed_at="2026-05-15T19:31:04Z",
-    )
-
-    def fake_run_install(*, home, workspace, extra, python_version):
-        captured["home"] = home
-        captured["workspace"] = workspace
-        captured["extra"] = extra
-        captured["python_version"] = python_version
-        return fake_stamp
-
-    monkeypatch.setattr("agent_core.daemon.cli.run_install", fake_run_install)
-    monkeypatch.setattr(
-        "agent_core.daemon.cli.find_workspace_root",
-        lambda _start: tmp_path / "fake-workspace",
-    )
-
-    result = runner.invoke(daemon_app, ["install", "--extra", "cu130"])
-    assert result.exit_code == 0, result.stdout
-    assert captured["home"] == tmp_path
-    assert captured["workspace"] == tmp_path / "fake-workspace"
-    assert captured["extra"] == "cu130"
-    assert captured["python_version"] == "3.12"
-    assert "abc1234" in result.stdout  # stamp sha echoed
-
-
-def test_install_reports_workspace_not_found(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    monkeypatch.setenv("AGENT_CORE_HOME", str(tmp_path))
-
-    def raise_not_found(_start):
-        from agent_core.daemon.install import WorkspaceNotFoundError
-
-        raise WorkspaceNotFoundError("can't find workspace")
-
-    monkeypatch.setattr("agent_core.daemon.cli.find_workspace_root", raise_not_found)
-
-    result = runner.invoke(daemon_app, ["install"])
-    assert result.exit_code == 1
-    assert "workspace" in result.stdout.lower()
-
-
-def test_install_reports_uv_not_found(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    monkeypatch.setenv("AGENT_CORE_HOME", str(tmp_path))
-
-    def fake_run_install(*, home, workspace, extra, python_version):
-        from agent_core.daemon.install import UvNotFoundError
-
-        raise UvNotFoundError("uv not found on PATH")
-
-    monkeypatch.setattr("agent_core.daemon.cli.run_install", fake_run_install)
-    monkeypatch.setattr(
-        "agent_core.daemon.cli.find_workspace_root",
-        lambda _start: tmp_path / "fake-workspace",
-    )
-
-    result = runner.invoke(daemon_app, ["install"])
-    assert result.exit_code == 1
-    assert "uv not found" in result.stdout.lower()
-
-
-def test_install_reports_uv_exit_code(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """uv subprocess failure surfaces returncode + stderr cleanly."""
-    monkeypatch.setenv("AGENT_CORE_HOME", str(tmp_path))
-
-    def fake_run_install(*, home, workspace, extra, python_version):
-        import subprocess
-
-        raise subprocess.CalledProcessError(
-            returncode=1,
-            cmd=["uv", "sync", "--frozen"],
-            output="",
-            stderr="error: failed to resolve packages",
-        )
-
-    monkeypatch.setattr("agent_core.daemon.cli.run_install", fake_run_install)
-    monkeypatch.setattr(
-        "agent_core.daemon.cli.find_workspace_root",
-        lambda _start: tmp_path / "fake-workspace",
-    )
-
-    result = runner.invoke(daemon_app, ["install"])
-    assert result.exit_code == 1
-    assert "uv exited with code 1" in result.stdout
-    assert "failed to resolve" in result.stdout
-
-
 def test_refresh_calls_stop_install_start_in_order(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -244,8 +142,8 @@ def test_refresh_calls_stop_install_start_in_order(
     def fake_stop() -> None:
         order.append("stop")
 
-    def fake_install(extra: str | None = None, python_version: str = "3.12") -> None:
-        order.append(f"install:extra={extra}")
+    def fake_install(release: str | None = None) -> None:
+        order.append(f"install:release={release}")
 
     def fake_start() -> None:
         order.append("start")
@@ -254,9 +152,9 @@ def test_refresh_calls_stop_install_start_in_order(
     monkeypatch.setattr("agent_core.daemon.cli.install", fake_install)
     monkeypatch.setattr("agent_core.daemon.cli.start", fake_start)
 
-    result = runner.invoke(daemon_app, ["refresh", "--extra", "cu130"])
+    result = runner.invoke(daemon_app, ["refresh", "--release", "v0.1.0"])
     assert result.exit_code == 0, result.stdout
-    assert order == ["stop", "install:extra=cu130", "start"]
+    assert order == ["stop", "install:release=v0.1.0", "start"]
 
 
 def test_refresh_aborts_start_when_install_fails(
@@ -268,7 +166,7 @@ def test_refresh_aborts_start_when_install_fails(
     def fake_stop() -> None:
         order.append("stop")
 
-    def fake_install(extra: str | None = None, python_version: str = "3.12") -> None:
+    def fake_install(release: str | None = None) -> None:
         order.append("install")
         raise typer.Exit(code=1)
 
@@ -285,38 +183,59 @@ def test_refresh_aborts_start_when_install_fails(
     assert order == ["stop", "install"]
 
 
-def test_refresh_reuses_stamped_extra_when_no_flag(
+def test_install_release_orchestrates_full_chain(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """When --extra is omitted, refresh passes the stamped extra to install."""
+    """install --release vX.Y.Z fetches, downloads, installs, and stamps."""
+    import json
     monkeypatch.setenv("AGENT_CORE_HOME", str(tmp_path))
-    # Write a stamp with extra='cu130'
-    from agent_core.daemon.install import InstallStamp, write_stamp
 
-    write_stamp(
-        tmp_path,
-        InstallStamp(
-            installed_at="2026-05-15T19:31:04Z",
-            installed_sha="abc1234",
-            installed_version="0.1.0",
-            python_version="3.12",
-            extra="cu130",
-            release_tag="v0.1.0",
-        ),
-    )
+    fake_release_json = json.dumps({
+        "tag_name": "v0.2.0",
+        "assets": [
+            {"name": "agent_core-0.2.0-py3-none-any.whl",
+             "browser_download_url": "https://example/agent_core-0.2.0.whl"},
+            {"name": "requirements.txt",
+             "browser_download_url": "https://example/requirements.txt"},
+        ],
+    }).encode("utf-8")
 
-    captured: dict = {}
+    calls: list[list[str]] = []
 
-    def fake_install(extra: str | None = None, python_version: str = "3.12") -> None:
-        captured["extra"] = extra
+    def fake_fetcher(url: str) -> bytes:
+        if url.endswith("/releases/tags/v0.2.0"):
+            return fake_release_json
+        if url.endswith(".whl"):
+            return b"FAKE_WHEEL_BYTES"
+        if url.endswith("/requirements.txt"):
+            return b"# pinned\ntorch==2.12.0+cu130\n"
+        raise RuntimeError(f"unexpected URL: {url}")
 
-    monkeypatch.setattr("agent_core.daemon.cli.stop", lambda: None)
-    monkeypatch.setattr("agent_core.daemon.cli.install", fake_install)
-    monkeypatch.setattr("agent_core.daemon.cli.start", lambda: None)
+    def fake_subprocess_run(cmd, **kwargs):  # type: ignore[no-untyped-def]
+        calls.append(cmd)
 
-    result = runner.invoke(daemon_app, ["refresh"])
-    assert result.exit_code == 0
-    assert captured["extra"] == "cu130"
+        class _R:
+            returncode = 0
+            stdout = ""
+            stderr = ""
+        return _R()
+
+    monkeypatch.setattr("agent_core.daemon.release._default_fetcher", fake_fetcher)
+    monkeypatch.setattr("agent_core.daemon.release.subprocess.run", fake_subprocess_run)
+
+    result = runner.invoke(daemon_app, ["install", "--release", "v0.2.0"])
+
+    # At least 3 uv invocations (uv venv, uv pip install --requirement, uv pip install --no-deps)
+    assert result.exit_code == 0, result.stdout
+    uv_calls = [c for c in calls if c and c[0] == "uv"]
+    assert len(uv_calls) >= 2, f"expected at least 2 uv calls, got: {uv_calls}"
+    assert any("--requirement" in c for c in uv_calls), "requirements.txt install missing"
+    assert any("--no-deps" in c for c in uv_calls), "wheel surgical install missing"
+    # Stamp written with the right version + tag
+    stamp_text = (tmp_path / ".daemon-install-stamp.json").read_text()
+    stamp = json.loads(stamp_text)
+    assert stamp["installed_version"] == "0.2.0"
+    assert stamp["release_tag"] == "v0.2.0"
 
 
 def test_status_shows_fallback_warning_when_no_daemon_venv(
@@ -368,15 +287,6 @@ def test_status_shows_stamp_metadata(
             extra="cu130",
             release_tag="v0.1.0",
         ),
-    )
-
-    def _skip_workspace(_start):
-        from agent_core.daemon.install import WorkspaceNotFoundError
-
-        raise WorkspaceNotFoundError("hermetic test: skip drift check")
-
-    monkeypatch.setattr(
-        "agent_core.daemon.cli.find_workspace_root", _skip_workspace
     )
 
     result = runner.invoke(daemon_app, ["status"])
