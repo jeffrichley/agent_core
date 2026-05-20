@@ -241,7 +241,7 @@ def test_install_release_orchestrates_full_chain(
 def test_status_shows_fallback_warning_when_no_daemon_venv(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """When _daemon_python falls back to sys.executable, status warns."""
+    """When the daemon venv doesn't exist, status warns."""
     monkeypatch.setenv("AGENT_CORE_HOME", str(tmp_path))
     # Daemon is "running" — write a PID for the current process so is_alive=True
     (tmp_path / "daemon.pid").write_text(str(os.getpid()))
@@ -249,7 +249,31 @@ def test_status_shows_fallback_warning_when_no_daemon_venv(
     result = runner.invoke(daemon_app, ["status"])
     assert result.exit_code == 0
     assert "fallback" in result.stdout.lower()
-    assert "vulnerable to uv sync" in result.stdout.lower()
+    assert "no daemon venv" in result.stdout.lower()
+
+
+def test_status_b2_no_false_positive_when_invoked_from_daemon_venv(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """B2 regression: if the daemon venv exists, status must NOT warn 'fallback',
+    regardless of which python is invoking the CLI (e.g. when status is run
+    from inside the daemon venv after a refresh)."""
+    monkeypatch.setenv("AGENT_CORE_HOME", str(tmp_path))
+    (tmp_path / "daemon.pid").write_text(str(os.getpid()))
+    # Create the daemon venv python on disk
+    if sys.platform == "win32":
+        py = tmp_path / ".venv" / "Scripts" / "python.exe"
+    else:
+        py = tmp_path / ".venv" / "bin" / "python"
+    py.parent.mkdir(parents=True, exist_ok=True)
+    py.write_text("")
+
+    result = runner.invoke(daemon_app, ["status"])
+    assert result.exit_code == 0
+    assert "fallback" not in result.stdout.lower(), (
+        "B2: 'fallback' must not appear when daemon venv exists. Output:\n"
+        + result.stdout
+    )
 
 
 def test_status_no_warning_when_daemon_venv_present(

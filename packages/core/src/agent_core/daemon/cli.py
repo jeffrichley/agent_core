@@ -82,6 +82,18 @@ def _daemon_python_path() -> Path:
     return _home() / ".venv" / "bin" / "python"
 
 
+def _daemon_venv_exists() -> bool:
+    """True iff the daemon venv's python interpreter exists on disk.
+
+    Used by `daemon status` to decide whether to warn that the daemon is
+    running from sys.executable as a fallback. Replaces the old
+    `daemon_py == sys.executable` check which produced false positives
+    when the CLI itself was invoked from inside the daemon venv (B2 fix,
+    Phase 2.5).
+    """
+    return _daemon_python_path().exists()
+
+
 def _git_sha_of_tag(tag: str) -> str:
     """Best-effort: resolve a tag to a git short sha. Returns 'unknown' on failure."""
     try:
@@ -192,9 +204,9 @@ def status() -> None:
     # Diagnostic: which interpreter the supervisor would use today.
     daemon_py = _daemon_python()
     suffix = ""
-    if daemon_py == sys.executable:
+    if not _daemon_venv_exists():
         suffix = (
-            " [dim red](fallback — vulnerable to uv sync; "
+            " [dim red](fallback — no daemon venv; "
             "run `agent-core daemon install`)[/dim red]"
         )
     console.print(f"running from: {daemon_py}{suffix}")
