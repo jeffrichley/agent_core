@@ -2,12 +2,20 @@
 
 ## One-time per clone or worktree
 
-On a fresh clone or new worktree, in this order:
+On a fresh clone OR each new `git worktree add`, in this order:
 
 ```
 uv sync          # or: just sync  — populates the env
 just install-hooks
 ```
+
+**`core.hooksPath` is per-worktree-local in git.** It does NOT carry over
+when you `git worktree add` a new linked worktree — each fresh worktree
+starts with the default `.git/hooks` (empty) and the pre-push hook will
+NOT fire until you run `just install-hooks` there. If you forget, the
+fast guard test `packages/core/tests/test_hookspath_local_guard.py` fails
+on the next `just check` with a clear "run `just install-hooks`" message
+(the guard skips in CI, where the hook isn't needed).
 
 `just install-hooks` runs `uv run --no-sync python -m agent_core.githooks`,
 which points `core.hooksPath` at the version-controlled `.githooks/`. It
