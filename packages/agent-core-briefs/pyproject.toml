@@ -1,6 +1,6 @@
 [project]
 name = "agent-core-briefs"
-version = "0.1.0"
+dynamic = ["version"]
 description = "Brief framework — structured-composition pattern for agent_core"
 requires-python = ">=3.12"
 dependencies = [
@@ -16,11 +16,17 @@ dependencies = [
 briefs_aliases = "agent_core_briefs.plugin"
 
 [build-system]
-requires = ["hatchling"]
+requires = ["hatchling", "uv-dynamic-versioning"]
 build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/agent_core_briefs"]
 
+[tool.hatch.version]
+source = "uv-dynamic-versioning"
+
+[tool.uv-dynamic-versioning]
+fallback-version = "0.0.0"
+
 [tool.uv]
-cache-keys = [{ file = "pyproject.toml" }, { git = { commit = true } }]
+cache-keys = [{ file = "pyproject.toml" }, { git = { commit = true, tags = true } }]

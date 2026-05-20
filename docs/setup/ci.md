@@ -48,3 +48,7 @@ commit on `main` has a recorded check.
 - Settings → Notifications → Actions → **"Send notifications for failed
   workflows only."** Failures email; successes are silent. Failures stay
   rare because the pre-push hook catches breakage locally.
+
+## Related
+
+- `docs/setup/releases.md` — VCS-derived versioning and how to cut a release.

@@ -68,7 +68,15 @@ async def test_different_cameras_run_in_parallel(tmp_path):
         ep.capture_frame_safe(camera_index=1),
     )
     elapsed = time.monotonic() - start
-    # If serialized, would take ~0.20s. Parallel should be ~0.10s.
-    # Use 0.25 to decisively prove parallelism with comfortable jitter margin
-    # (was 0.18, raised to reduce flake risk on loaded CI runners).
-    assert elapsed < 0.25
+    # Primary correctness proof — the two cameras' busy intervals must
+    # actually overlap in time (threshold-independent; mirrors the sibling
+    # `test_same_camera_calls_serialize`'s use of busy_calls).
+    (s0, e0) = backend.busy_calls[0][0]
+    (s1, e1) = backend.busy_calls[1][0]
+    assert max(s0, s1) < min(e0, e1), (
+        f"camera intervals do not overlap (not parallel): "
+        f"cam0=({s0}, {e0}) cam1=({s1}, {e1})"
+    )
+    # Wall-clock sanity bound (0.18 → 0.25 → 0.40 to absorb Windows-runner
+    # scheduling latency); the overlap check above is what proves parallelism.
+    assert elapsed < 0.40

@@ -66,3 +66,12 @@ sync:
 # Install this clone's git hooks (.githooks/) — run once per clone/worktree
 install-hooks:
     uv run --no-sync python -m agent_core.githooks
+
+# Cut a release: build the aggregated CHANGELOG from fragments + a local
+# annotated tag. Does NOT push — push the tag explicitly when ready.
+release VERSION:
+    uv run --no-sync towncrier build --yes --version {{VERSION}}
+    git add CHANGELOG.md changelog.d
+    git commit -m "docs(changelog): release v{{VERSION}}"
+    git tag -a "v{{VERSION}}" -m "Release v{{VERSION}}"
+    @echo "Tagged v{{VERSION}} locally (changelog committed). Push when ready: git push origin v{{VERSION}}"

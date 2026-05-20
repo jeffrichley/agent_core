@@ -1,6 +1,6 @@
 [project]
 name = "agent-core-busproxy"
-version = "0.1.0"
+dynamic = ["version"]
 description = "Stdio MCP proxy — bridges Claude Code to the agent-core daemon bus tool surface with per-request backend sessions so a daemon bounce never strands the session."
 requires-python = ">=3.12"
 dependencies = [
@@ -15,11 +15,17 @@ dependencies = [
 agent-core-busproxy = "agent_core_busproxy.__main__:app"
 
 [build-system]
-requires = ["hatchling"]
+requires = ["hatchling", "uv-dynamic-versioning"]
 build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/agent_core_busproxy"]
 
+[tool.hatch.version]
+source = "uv-dynamic-versioning"
+
+[tool.uv-dynamic-versioning]
+fallback-version = "0.0.0"
+
 [tool.uv]
-cache-keys = [{ file = "pyproject.toml" }, { git = { commit = true } }]
+cache-keys = [{ file = "pyproject.toml" }, { git = { commit = true, tags = true } }]
