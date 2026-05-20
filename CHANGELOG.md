@@ -8,6 +8,13 @@ This project uses [*towncrier*](https://towncrier.readthedocs.io/); unreleased c
 
 <!-- towncrier release notes start -->
 
+## [0.2.0](https://github.com/jeffrichley/agent_core/compare/v0.1.0...v0.2.0) (2026-05-20)
+
+
+### Features
+
+* **release:** Phase 2.5 — release-artifact deploy + bug cleanup ([#102](https://github.com/jeffrichley/agent_core/issues/102)) ([079e493](https://github.com/jeffrichley/agent_core/commit/079e4930dc1bcab620dcadf226273dd1bc1be0f7))
+
 ## [0.1.0](https://github.com/jeffrichley/agent_core/tree/0.1.0) - 2026-05-20
 
 No significant changes.
