@@ -1,0 +1,40 @@
+name: release
+
+on:
+  release:
+    types: [published]
+
+permissions:
+  contents: write
+
+jobs:
+  build-and-upload:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6.0.2
+        with:
+          ref: ${{ github.event.release.tag_name }}
+          fetch-depth: 0
+          fetch-tags: true
+
+      - uses: astral-sh/setup-uv@08807647e7069bb48b6ef5acd8ec9567f424441b  # v8.1.0
+        with:
+          python-version: "3.12"
+
+      - name: Build wheels
+        run: uv build --all-packages --wheel --out-dir dist/
+
+      - name: Export pinned requirements (cu130 extra)
+        run: |
+          uv export --frozen --no-dev --extra cu130 \
+                    --no-hashes --format requirements-txt \
+                    > dist/requirements.txt
+
+      - name: List built artifacts
+        run: ls -la dist/
+
+      - name: Upload artifacts to GH Release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: gh release upload ${{ github.event.release.tag_name }} dist/*.whl dist/requirements.txt
