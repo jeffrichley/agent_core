@@ -153,3 +153,53 @@ def test_uninstall_autostart_returns_false_when_task_absent(
 
     monkeypatch.setattr("agent_core.daemon.autostart.subprocess.run", fake_run)
     assert uninstall_autostart() is False
+
+
+@pytest.mark.slow
+def test_build_xml_is_accepted_by_real_schtasks() -> None:
+    """The XML build_autostart_task emits must be accepted by the real
+    `schtasks`. Registers under a throwaway name, queries it back, deletes
+    it — never touches the real 'agent-core-daemon-prod' task.
+    """
+    import os
+    import shutil
+    import sys
+    import tempfile
+
+    if sys.platform != "win32" or shutil.which("schtasks") is None:
+        pytest.skip("schtasks is Windows-only")
+
+    test_task = "agent-core-daemon-phase4-itest"
+    # Use the real current account — schtasks validates the principal/trigger
+    # account exists.
+    account = os.environ.get("USERNAME") or os.getlogin()
+    xml = build_autostart_task(
+        agent_core_exe=Path(r"C:\Windows\System32\cmd.exe"),
+        account=account,
+    )
+
+    with tempfile.NamedTemporaryFile(
+        mode="w", encoding="utf-16", suffix=".xml", delete=False
+    ) as fh:
+        fh.write(xml)
+        xml_path = fh.name
+    try:
+        create = subprocess.run(
+            ["schtasks", "/create", "/tn", test_task, "/xml", xml_path, "/f"],
+            capture_output=True, text=True, check=False,
+        )
+        assert create.returncode == 0, (
+            f"schtasks rejected the XML: {create.stdout} {create.stderr}"
+        )
+        query = subprocess.run(
+            ["schtasks", "/query", "/tn", test_task],
+            capture_output=True, text=True, check=False,
+        )
+        assert query.returncode == 0
+        assert test_task in query.stdout
+    finally:
+        Path(xml_path).unlink(missing_ok=True)
+        subprocess.run(
+            ["schtasks", "/delete", "/tn", test_task, "/f"],
+            capture_output=True, text=True, check=False,
+        )
