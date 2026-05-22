@@ -161,7 +161,7 @@ def test_build_xml_is_accepted_by_real_schtasks() -> None:
     `schtasks`. Registers under a throwaway name, queries it back, deletes
     it — never touches the real 'agent-core-daemon-prod' task.
     """
-    import os
+    import getpass
     import shutil
     import sys
     import tempfile
@@ -172,7 +172,7 @@ def test_build_xml_is_accepted_by_real_schtasks() -> None:
     test_task = "agent-core-daemon-phase4-itest"
     # Use the real current account — schtasks validates the principal/trigger
     # account exists.
-    account = os.environ.get("USERNAME") or os.getlogin()
+    account = getpass.getuser()
     xml = build_autostart_task(
         agent_core_exe=Path(r"C:\Windows\System32\cmd.exe"),
         account=account,

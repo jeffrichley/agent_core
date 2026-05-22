@@ -19,6 +19,7 @@ overrides the home dir directly (test escape hatch).
 
 from __future__ import annotations
 
+import getpass
 import os
 import subprocess
 import sys
@@ -417,8 +418,10 @@ def install_autostart(
         )
         raise typer.Exit(code=1)
 
-    # USERNAME is always set on Windows; os.getlogin() is the fallback.
-    account = os.environ.get("USERNAME") or os.getlogin()
+    # getpass.getuser() resolves the username cross-platform from env vars
+    # (USER / USERNAME / ...) without os.getlogin(), which fails on headless
+    # hosts.
+    account = getpass.getuser()
     xml = autostart.build_autostart_task(agent_core_exe=exe, account=account)
     try:
         autostart.install_autostart(xml)
