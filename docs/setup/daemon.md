@@ -1,24 +1,43 @@
 # Daemon setup and refresh workflow
 
 The agent-core bus daemon supervises every endpoint (bus, Discord adapters,
-scheduler, briefs, webcam, voice). To keep it stable while you iterate on
-workspace code, the daemon runs from its **own** venv at
-`~/.agent-core/.venv/` — not from the workspace's `.venv/`. This isolates
-the daemon process from `uv sync` activity in the workspace.
+scheduler, briefs, webcam, voice). It runs from its **own** venv at
+`~/.agent-core/.venv/` — not from the workspace's `.venv/` — so `uv sync`
+activity in the workspace cannot disrupt the running daemon process.
 
-## One-time setup
+## Instances (Phase 3)
+
+The daemon supports two instances, selected with `--instance` on every
+`agent-core daemon` subcommand:
+
+| | `prod` (default) | `dev` |
+|---|---|---|
+| Home | `~/.agent-core/` | `~/.agent-core-dev/` |
+| Bus port | 8789 | 8788 |
+| Code source | release artifacts (`daemon install`) | the workspace `.venv` (editable) |
+| Install stamp | yes | none — dev is not installed |
+
+With no `--instance` flag and no `AGENT_CORE_INSTANCE` env var, every
+command resolves to `prod` with port 8789 — the live Pepper + Wren home.
+The dev instance is purely additive: a dev `start`/`stop`/`refresh`/crash
+can never touch prod's venv, port, or state.
+
+`AGENT_CORE_HOME`, when set, overrides the home directory directly (test
+escape hatch).
+
+## Prod: one-time setup
+
+Prod is installed from a GitHub Release artifact (Phase 2.5 — the daemon
+no longer builds from workspace source):
 
 ```bash
-# Stop any running daemon first.
-agent-core daemon stop
+# Scaffold the prod config if this box has never run the daemon.
+agent-core daemon init
 
-# Populate ~/.agent-core/.venv/ from the workspace.
-# --extra cu130 picks the CUDA torch wheels for GPU voice synthesis.
-# Use --extra cpu on machines without a GPU, or omit on machines that
-# don't run the voice endpoint.
-agent-core daemon install --extra cu130
+# Install the latest release into ~/.agent-core/.venv/.
+agent-core daemon install
 
-# Start the daemon — it now runs from ~/.agent-core/.venv/.
+# Start the daemon.
 agent-core daemon start
 
 # Verify.
@@ -28,147 +47,139 @@ agent-core daemon status
 `daemon status` should show:
 
 ```
-daemon is running (PID: NNNNN)
+prod daemon is running (PID: NNNNN)
 running from: ~/.agent-core/.venv/Scripts/python.exe   (or bin/python on POSIX)
 installed at: <timestamp>
 installed sha: <git short hash>
+installed version: <X.Y.Z>
 ```
 
-If you see `(fallback — vulnerable to uv sync; run \`agent-core daemon install\`)`
-next to `running from`, the daemon venv is missing and the supervisor fell
-back to the workspace venv. Run `daemon install` and `daemon refresh`.
-
-## Daily flow: picking up new code
-
-When you've made changes to agent-core (or pulled new code) and want the
-daemon to run them:
+## Prod: picking up a new release
 
 ```bash
-agent-core daemon refresh
+agent-core daemon refresh                  # install the latest release
+agent-core daemon refresh --release v0.2.0 # pin a specific version (rollback)
 ```
 
-This does three things in order:
-1. `daemon stop` — kills the running daemon.
-2. `daemon install` — re-runs `uv sync --frozen --no-editable --no-dev` against
-   the workspace. Uses the extra you specified at install time (stamped in
-   `~/.agent-core/.daemon-install-stamp.json`). Every workspace member
-   carries `[tool.uv] cache-keys` with a git-commit entry, so a
-   source-only change is rebuilt as long as it is committed — no manual
-   `uv cache clean` is needed (see the "Defect A" section below).
-3. `daemon start` — relaunches the daemon from the refreshed venv.
+`refresh` does, in order: `stop` → `install` (download the release wheels +
+`requirements.txt`, `uv pip install` into the daemon venv) → `start`. See
+`docs/setup/releases.md` for the full release flow.
 
-If `daemon install` fails (uv error, missing workspace, etc.), the daemon
-stays stopped and the error surfaces. Fix the underlying issue and re-run
-`daemon refresh`.
-
-> **Note:** `daemon refresh` assumes a prior `daemon install` has already been run and recorded your `--extra` choice in the stamp file. If this is your first time setting up the daemon, run `daemon install --extra <x>` (e.g., `--extra cu130`) first — otherwise `refresh` will install with no extras (CPU-only torch).
-
-> **Live agent sessions survive a bounce (#91).** Agents connect to the
-> bus tool surface through the `agent-core-busproxy` stdio MCP server
-> (not directly over HTTP). Each tool call mints a fresh backend session,
-> so `daemon refresh`/`install`/`start`/`stop` (and crashes) no longer
+> **Live agent sessions survive a bounce (#91).** Agents reach the bus
+> tool surface through the `agent-core-busproxy` stdio MCP server (not
+> directly over HTTP). Each tool call mints a fresh backend session, so
+> `daemon refresh`/`install`/`start`/`stop` (and crashes) no longer
 > strand a live Claude Code session: in-flight calls during the down
 > window return a structured `{"error":"bus_unavailable","transient":true,
 > "retry_after_seconds":5}` result that the agent retries, and the next
 > call after the daemon is back succeeds with no session restart. The
-> `agent-core-channel` wake relay already reconnects on its own.
+> `agent-core-channel` wake relay reconnects on its own.
 
-## Why this exists
+## Dev instance
 
-Before this change, the daemon ran from `<workspace>/.venv/Scripts/python.exe`
-(Windows) or `<workspace>/.venv/bin/python` (POSIX). On Windows, `uv sync`
-uses unlink-then-relink semantics that disrupt running processes holding open
+The dev instance lets you iterate on daemon code without bouncing the
+prod daemon that Pepper and Wren depend on. It runs **editable from the
+workspace `.venv`** — your source edits are live on the next restart.
+
+### One-time dev setup
+
+```bash
+agent-core daemon init --instance dev      # scaffolds ~/.agent-core-dev/agent_core.yaml
+agent-core daemon start --instance dev     # runs from the workspace .venv
+```
+
+`start --instance dev` must be run from inside the agent_core repo — it
+resolves the workspace `.venv` for the daemon interpreter.
+
+### The dev loop
+
+Edit daemon code in the repo, then:
+
+```bash
+agent-core daemon refresh --instance dev
+```
+
+For dev, `refresh` is a plain stop + start — **no install step**. The dev
+daemon runs editable from the workspace `.venv`, so the restart picks up
+your latest source edits.
+
+`agent-core daemon install --instance dev` is intentionally an error: the
+dev instance is never installed.
+
+The instance can also be set with the `AGENT_CORE_INSTANCE` env var.
+
+## Why the daemon runs from its own venv
+
+Before the daemon venv was isolated, it ran from
+`<workspace>/.venv/Scripts/python.exe`. On Windows, `uv sync` uses
+unlink-then-relink semantics that disrupt running processes holding open
 files in `.venv/`. Adding a workspace member re-resolved the lockfile and
-rewrote every package's editable `.pth` file, silently killing the running
+rewrote every package's editable `.pth`, silently killing the running
 daemon. Pepper went offline mid-session on 2026-05-10 from exactly this.
 
-The fix: install the daemon non-editable, into a venv outside the workspace
-tree. `uv sync` cannot reach it because there are no `.pth` files pointing
-at workspace source.
+The fix: install the prod daemon non-editable into a venv outside the
+workspace tree. The dev instance accepts the editable workspace venv on
+purpose — it exists for iteration, and is never the live Pepper/Wren home.
 
-## Why members carry `cache-keys` (Defect A)
+## Defect A — `cache-keys` history
 
 uv's build cache for a *local/workspace path* dependency is keyed by the
-`pyproject.toml` mtime, **not** the package version string (the
-`(name, version)` key applies only to *published* PyPI wheels; verified
-empirically on uv 0.7.13, cf. uv issue #15224). Before the fix, a change
-to only `src/*.py` did not invalidate the cached wheel, so
-`uv sync --frozen --no-editable` reused stale build output and the daemon
-ran old code while truthfully stamping the new git sha. The historical
-workaround was a manual surgical `uv cache clean <pkgs>` before every
-`daemon refresh`.
-
-The fix: every member `pyproject.toml` carries
-
-    [tool.uv]
-    cache-keys = [{ file = "pyproject.toml" }, { git = { commit = true } }]
-
-The `git commit` entry folds the current HEAD commit into the cache key,
-forcing a rebuild on every commit. `cache-keys` *replaces* uv's defaults,
-so the `pyproject.toml` file entry is kept to preserve
-dependency/metadata invalidation. Consequence: **the manual
-`uv cache clean` procedure is retired** — `daemon refresh` always
-installs the current committed code. (It keys on the *committed* HEAD;
-a refresh of uncommitted edits is not seen — the daemon only ever
-deploys committed state.) `packages/core/tests/test_member_cache_keys_guard.py` fails
-the fast test gate (`just check`) if any member loses the key.
-
-## Disk cost
-
-The full workspace install with `--extra cu130` is ~6–7 GB (mostly torch
-CUDA wheels). One-time. `daemon refresh` is a delta operation on the lockfile
-diff; usually fast.
-
-To reclaim the space, `rm -rf ~/.agent-core/.venv` then `daemon install`
-fresh.
+`pyproject.toml` mtime, **not** the package version string (verified
+empirically on uv 0.7.13, cf. uv issue #15224). Phase 0 added
+`[tool.uv] cache-keys` with a `git commit` entry to every member
+`pyproject.toml` so a source-only change invalidates the cached wheel.
+Phase 2.5 then moved prod installs to **pre-built release artifacts**, so
+the daemon no longer builds from workspace source at all — the cache-keys
+remain as defence for the CI wheel build and any local `uv build`.
+`packages/core/tests/test_member_cache_keys_guard.py` fails the fast test
+gate if any member loses the key.
 
 ## Troubleshooting
 
 | Symptom | Cause | Fix |
 |---|---|---|
-| `daemon is currently running` on install | Daemon supervises something | `daemon refresh` |
-| `couldn't find workspace root` | Running `install` outside the repo | `cd` into the agent-core repo |
-| `uv not found on PATH` | uv not installed | https://docs.astral.sh/uv/getting-started/installation/ |
-| `daemon venv may be stale` | `uv.lock` moved since last install | `daemon refresh` |
-| `fallback — vulnerable to uv sync` | `~/.agent-core/.venv/` not present | `daemon install` |
+| `No daemon config at ...` on `start` | config not scaffolded | `agent-core daemon init [--instance dev]` |
+| `daemon is currently running` on `install` | prod daemon is up | `agent-core daemon refresh` |
+| `dev daemon needs the workspace .venv` | ran `start --instance dev` outside the repo | `cd` into the agent-core repo |
+| `the dev instance is not installed` | ran `install --instance dev` | dev needs no install — `daemon start --instance dev` |
+| `unknown instance` | bad `--instance` value | use `prod` or `dev` |
 
 ## Related
 
+- `docs/setup/releases.md` — the release flow (release-please + GH Release artifacts).
 - `docs/setup/ci.md` — the CI gate and the one-time `just install-hooks` bootstrap.
-- [#79](https://github.com/jeffrichley/agent_core/issues/79) — the issue that motivated the venv isolation.
-- [#93](https://github.com/jeffrichley/agent_core/issues/93) — Defect A (stale daemon install); fixed by the per-member `tool.uv.cache-keys` git entry.
-- `docs/superpowers/specs/2026-05-18-agent-core-maturity-design.md` — the maturity spec (Phase 0 = this fix).
-- [#91](https://github.com/jeffrichley/agent_core/issues/91) — daemon-bounce MCP session recovery (fixed: agents use the `agent-core-busproxy` stdio surface; a bounce no longer needs an agent session restart — see above).
-- `docs/superpowers/specs/2026-05-15-daemon-venv-isolation-design.md` — the design.
-- `agent_core.daemon.cli` — supervisor code.
-- `agent_core.daemon.install` — install orchestration.
+- `docs/superpowers/specs/2026-05-21-phase3-dev-prod-daemon-design.md` — the dev/prod instance design.
+- `docs/superpowers/specs/2026-05-18-agent-core-maturity-design.md` — the maturity spec.
+- [#91](https://github.com/jeffrichley/agent_core/issues/91) — daemon-bounce MCP session recovery.
+- `agent_core.daemon.cli` — supervisor + instance code.
+- `agent_core.daemon.instance` — instance resolution.
 
 ## Agent `.mcp.json` (resilient shape)
 
-Each agent's `<agent_root>/.mcp.json` must point the bus tool surface at
-the stdio busproxy — never the daemon HTTP URL directly:
+Each agent's `<agent_root>/.mcp.json` points the bus tool surface at the
+stdio busproxy — never the daemon HTTP URL directly. The current shape
+invokes the prod daemon venv's binaries directly (Phase 2.5 migration —
+agents no longer launch via `uv run --project`):
 
 ```json
 {
   "mcpServers": {
     "agent-core": {
-      "type": "stdio", "command": "uv",
-      "args": ["run", "--project", "<AGENT_CORE_REPO>",
-               "agent-core-busproxy", "--agent", "<AGENT>",
+      "type": "stdio",
+      "command": "C:\\Users\\<you>\\.agent-core\\.venv\\Scripts\\python.exe",
+      "args": ["-m", "agent_core_busproxy", "--agent", "<AGENT>",
                "--daemon-url", "http://127.0.0.1:8789"]
     },
     "agent-core-channel": {
-      "type": "stdio", "command": "uv",
-      "args": ["run", "--project", "<AGENT_CORE_REPO>",
-               "agent-core-channel", "--agent", "<AGENT>",
+      "type": "stdio",
+      "command": "C:\\Users\\<you>\\.agent-core\\.venv\\Scripts\\python.exe",
+      "args": ["-m", "agent_core_channel", "--agent", "<AGENT>",
                "--daemon-url", "http://127.0.0.1:8789"]
     }
   }
 }
 ```
 
-Both surfaces are now stdio and reconnect independently. The old
+Both surfaces are stdio and reconnect independently. The old
 `{"type":"http","url":".../mcp/<agent>"}` form is the #91 failure mode —
-do not use it. Cut over per agent: a fresh/throwaway test agent first,
-validate across several real `daemon refresh` cycles, then Pepper last
-(rollback = restore the backed-up `.mcp.json`, a single file).
+do not use it.
