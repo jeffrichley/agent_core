@@ -417,3 +417,157 @@ def test_start_without_config_points_at_init(
     assert result.exit_code == 1
     assert "daemon init" in result.stdout
 
+
+@pytest.mark.slow
+def test_prod_and_dev_daemons_coexist(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A prod and a dev daemon run simultaneously on different ports,
+    each isolated — stopping one does not disturb the other.
+
+    Both instances are driven through the AGENT_CORE_HOME escape hatch
+    (one home per call), proving the core property: two daemons, two
+    homes, two ports, independent lifecycle.
+    """
+    import yaml as _yaml
+
+    prod_home = tmp_path / "prod"
+    dev_home = tmp_path / "dev"
+
+    def _run(args: list[str], home: Path):
+        monkeypatch.setenv("AGENT_CORE_HOME", str(home))
+        return runner.invoke(daemon_app, args)
+
+    # Scaffold minimal configs.
+    assert _run(["init"], prod_home).exit_code == 0
+    assert _run(["init", "--instance", "dev"], dev_home).exit_code == 0
+
+    # Rewrite each config to a free, distinct port to avoid clashing with
+    # a real daemon on 8789/8788.
+    for home, port in ((prod_home, 8991), (dev_home, 8992)):
+        cfg = home / "agent_core.yaml"
+        data = _yaml.safe_load(cfg.read_text())
+        data["http"]["bind_port"] = port
+        cfg.write_text(_yaml.safe_dump(data), encoding="utf-8")
+
+    try:
+        assert _run(["start"], prod_home).exit_code == 0
+        assert _run(["start"], dev_home).exit_code == 0
+
+        # Give both a moment to come up.
+        for _ in range(40):
+            prod_pid = read_pid(prod_home / "daemon.pid")
+            dev_pid = read_pid(dev_home / "daemon.pid")
+            if prod_pid and dev_pid and is_alive(prod_pid) and is_alive(dev_pid):
+                break
+            time.sleep(0.1)
+
+        # Both alive.
+        assert "is running" in _run(["status"], prod_home).stdout
+        assert "is running" in _run(["status"], dev_home).stdout
+
+        # Stop prod — dev must still be alive.
+        assert _run(["stop"], prod_home).exit_code == 0
+        assert "is running" in _run(["status"], dev_home).stdout
+        assert "not running" in _run(["status"], prod_home).stdout
+    finally:
+        _run(["stop"], prod_home)
+        _run(["stop"], dev_home)
+
+
+def test_install_autostart_dev_instance_errors(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("AGENT_CORE_HOME", str(tmp_path))
+    result = runner.invoke(daemon_app, ["install-autostart", "--instance", "dev"])
+    assert result.exit_code == 1
+    assert "prod-only" in result.stdout.lower()
+
+
+def test_install_autostart_errors_when_prod_exe_missing(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """install-autostart must refuse if the prod agent-core.exe is absent."""
+    monkeypatch.setenv("AGENT_CORE_HOME", str(tmp_path))
+    monkeypatch.setattr(sys, "platform", "win32")
+    result = runner.invoke(daemon_app, ["install-autostart", "--no-start"])
+    assert result.exit_code == 1
+    assert "not installed" in result.stdout.lower()
+
+
+def test_install_autostart_registers_and_skips_start_with_no_start_flag(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("AGENT_CORE_HOME", str(tmp_path))
+    monkeypatch.setattr(sys, "platform", "win32")
+    # Create the prod exe so the existence check passes.
+    exe = tmp_path / ".venv" / "Scripts" / "agent-core.exe"
+    exe.parent.mkdir(parents=True)
+    exe.write_text("")
+
+    registered: list[str] = []
+
+    def fake_install(xml: str) -> None:
+        registered.append(xml)
+
+    started: list[str] = []
+
+    def fake_start(instance: str | None = None) -> None:
+        started.append("start")
+
+    monkeypatch.setattr("agent_core.daemon.autostart.install_autostart", fake_install)
+    monkeypatch.setattr("agent_core.daemon.cli.start_daemon", fake_start)
+
+    result = runner.invoke(daemon_app, ["install-autostart", "--no-start"])
+    assert result.exit_code == 0, result.stdout
+    assert len(registered) == 1  # task registered
+    assert started == []  # --no-start skipped the daemon start
+
+
+def test_install_autostart_starts_with_start_flag(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("AGENT_CORE_HOME", str(tmp_path))
+    monkeypatch.setattr(sys, "platform", "win32")
+    exe = tmp_path / ".venv" / "Scripts" / "agent-core.exe"
+    exe.parent.mkdir(parents=True)
+    exe.write_text("")
+
+    monkeypatch.setattr(
+        "agent_core.daemon.autostart.install_autostart", lambda xml: None
+    )
+    started: list[str] = []
+    monkeypatch.setattr(
+        "agent_core.daemon.cli.start_daemon",
+        lambda instance=None: started.append("start"),
+    )
+
+    result = runner.invoke(daemon_app, ["install-autostart", "--start"])
+    assert result.exit_code == 0, result.stdout
+    assert started == ["start"]
+
+
+def test_uninstall_autostart_reports_removed(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("AGENT_CORE_HOME", str(tmp_path))
+    monkeypatch.setattr(sys, "platform", "win32")
+    monkeypatch.setattr(
+        "agent_core.daemon.autostart.uninstall_autostart", lambda: True
+    )
+    result = runner.invoke(daemon_app, ["uninstall-autostart"])
+    assert result.exit_code == 0
+    assert "removed" in result.stdout.lower()
+
+
+def test_uninstall_autostart_idempotent_when_absent(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("AGENT_CORE_HOME", str(tmp_path))
+    monkeypatch.setattr(sys, "platform", "win32")
+    monkeypatch.setattr(
+        "agent_core.daemon.autostart.uninstall_autostart", lambda: False
+    )
+    result = runner.invoke(daemon_app, ["uninstall-autostart"])
+    assert result.exit_code == 0  # not an error
+    assert "no autostart task" in result.stdout.lower()

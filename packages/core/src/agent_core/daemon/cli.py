@@ -28,6 +28,7 @@ from pathlib import Path
 import typer
 from rich.console import Console
 
+from agent_core.daemon import autostart
 from agent_core.daemon.config_template import build_default_config
 from agent_core.daemon.install import (
     InstallStamp,
@@ -161,6 +162,10 @@ def start(instance: str | None = _INSTANCE_OPTION) -> None:
     )
     write_pid(pid_file, proc.pid)
     console.print(f"[green]{inst} daemon started (PID: {proc.pid})[/green]")
+
+
+# Alias so other commands can call `start` without ambiguity.
+start_daemon = start
 
 
 @app.command()
@@ -380,3 +385,77 @@ def _git_sha_of_tag(tag: str) -> str:
     if result.returncode != 0:
         return "unknown"
     return result.stdout.strip() or "unknown"
+
+
+@app.command()
+def install_autostart(
+    instance: str | None = _INSTANCE_OPTION,
+    start: bool | None = typer.Option(
+        None,
+        "--start/--no-start",
+        help="Start the daemon now without prompting (for non-interactive use).",
+    ),
+) -> None:
+    """Register the prod daemon to auto-start at logon (Windows Task Scheduler)."""
+    inst = _resolve(instance)
+    if inst is not Instance.PROD:
+        console.print(
+            "[red]autostart is prod-only[/red] — the dev instance is started "
+            "by hand from the workspace."
+        )
+        raise typer.Exit(code=1)
+    if sys.platform != "win32":
+        console.print("[red]autostart is Windows-only.[/red]")
+        raise typer.Exit(code=1)
+
+    home = home_for(inst)
+    exe = home / ".venv" / "Scripts" / "agent-core.exe"
+    if not exe.exists():
+        console.print(
+            f"[red]prod daemon is not installed ({exe} missing).[/red]\n"
+            "   Run [bold]agent-core daemon install[/bold] first."
+        )
+        raise typer.Exit(code=1)
+
+    # USERNAME is always set on Windows; os.getlogin() is the fallback.
+    account = os.environ.get("USERNAME") or os.getlogin()
+    xml = autostart.build_autostart_task(agent_core_exe=exe, account=account)
+    try:
+        autostart.install_autostart(xml)
+    except subprocess.CalledProcessError as exc:
+        console.print(f"[red]schtasks failed (exit {exc.returncode}).[/red]")
+        if exc.stderr:
+            console.print(exc.stderr.rstrip())
+        raise typer.Exit(code=1) from exc
+
+    console.print(
+        f"[green]registered autostart task '{autostart.TASK_NAME}'[/green] — "
+        "the prod daemon will start at every logon."
+    )
+
+    should_start = start
+    if should_start is None:
+        should_start = typer.confirm("Start the prod daemon now?", default=False)
+    if should_start:
+        start_daemon(instance="prod")
+
+
+@app.command()
+def uninstall_autostart(instance: str | None = _INSTANCE_OPTION) -> None:
+    """Remove the prod daemon auto-start task (Windows Task Scheduler)."""
+    inst = _resolve(instance)
+    if inst is not Instance.PROD:
+        console.print("[red]autostart is prod-only.[/red]")
+        raise typer.Exit(code=1)
+    if sys.platform != "win32":
+        console.print("[red]autostart is Windows-only.[/red]")
+        raise typer.Exit(code=1)
+
+    if autostart.uninstall_autostart():
+        console.print(
+            f"[green]removed autostart task '{autostart.TASK_NAME}'[/green]"
+        )
+    else:
+        console.print(
+            f"[yellow]no autostart task '{autostart.TASK_NAME}' to remove[/yellow]"
+        )
