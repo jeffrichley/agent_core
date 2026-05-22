@@ -99,18 +99,22 @@ endpoints:
     assert not pid_file.exists()
 
 
-def test_daemon_python_returns_sys_executable_when_venv_missing(
+def test_daemon_python_prod_falls_back_to_sys_executable(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     monkeypatch.setenv("AGENT_CORE_HOME", str(tmp_path))
-    # No ~/.agent-core/.venv/ exists in tmp_path.
-    assert _daemon_python() == sys.executable
+    from agent_core.daemon.instance import Instance
+
+    # No prod .venv exists in tmp_path -> fallback to sys.executable.
+    assert _daemon_python(Instance.PROD, tmp_path) == sys.executable
 
 
-def test_daemon_python_returns_daemon_venv_python_when_present(
+def test_daemon_python_prod_uses_prod_venv_when_present(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     monkeypatch.setenv("AGENT_CORE_HOME", str(tmp_path))
+    from agent_core.daemon.instance import Instance
+
     if sys.platform == "win32":
         venv_python = tmp_path / ".venv" / "Scripts" / "python.exe"
     else:
@@ -118,7 +122,7 @@ def test_daemon_python_returns_daemon_venv_python_when_present(
     venv_python.parent.mkdir(parents=True)
     venv_python.write_text("# placeholder")
 
-    assert _daemon_python() == str(venv_python)
+    assert _daemon_python(Instance.PROD, tmp_path) == str(venv_python)
 
 
 def test_install_refuses_when_daemon_running(
@@ -139,13 +143,13 @@ def test_refresh_calls_stop_install_start_in_order(
     monkeypatch.setenv("AGENT_CORE_HOME", str(tmp_path))
     order: list[str] = []
 
-    def fake_stop() -> None:
+    def fake_stop(instance: str | None = None) -> None:
         order.append("stop")
 
-    def fake_install(release: str | None = None) -> None:
+    def fake_install(instance: str | None = None, release: str | None = None) -> None:
         order.append(f"install:release={release}")
 
-    def fake_start() -> None:
+    def fake_start(instance: str | None = None) -> None:
         order.append("start")
 
     monkeypatch.setattr("agent_core.daemon.cli.stop", fake_stop)
@@ -163,14 +167,14 @@ def test_refresh_aborts_start_when_install_fails(
     monkeypatch.setenv("AGENT_CORE_HOME", str(tmp_path))
     order: list[str] = []
 
-    def fake_stop() -> None:
+    def fake_stop(instance: str | None = None) -> None:
         order.append("stop")
 
-    def fake_install(release: str | None = None) -> None:
+    def fake_install(instance: str | None = None, release: str | None = None) -> None:
         order.append("install")
         raise typer.Exit(code=1)
 
-    def fake_start() -> None:
+    def fake_start(instance: str | None = None) -> None:
         order.append("start")  # must not be called
 
     monkeypatch.setattr("agent_core.daemon.cli.stop", fake_stop)
@@ -238,60 +242,8 @@ def test_install_release_orchestrates_full_chain(
     assert stamp["release_tag"] == "v0.2.0"
 
 
-def test_status_shows_fallback_warning_when_no_daemon_venv(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """When the daemon venv doesn't exist, status warns."""
-    monkeypatch.setenv("AGENT_CORE_HOME", str(tmp_path))
-    # Daemon is "running" — write a PID for the current process so is_alive=True
-    (tmp_path / "daemon.pid").write_text(str(os.getpid()))
-
-    result = runner.invoke(daemon_app, ["status"])
-    assert result.exit_code == 0
-    assert "fallback" in result.stdout.lower()
-    assert "no daemon venv" in result.stdout.lower()
-
-
-def test_status_b2_no_false_positive_when_invoked_from_daemon_venv(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """B2 regression: if the daemon venv exists, status must NOT warn 'fallback',
-    regardless of which python is invoking the CLI (e.g. when status is run
-    from inside the daemon venv after a refresh)."""
-    monkeypatch.setenv("AGENT_CORE_HOME", str(tmp_path))
-    (tmp_path / "daemon.pid").write_text(str(os.getpid()))
-    # Create the daemon venv python on disk
-    if sys.platform == "win32":
-        py = tmp_path / ".venv" / "Scripts" / "python.exe"
-    else:
-        py = tmp_path / ".venv" / "bin" / "python"
-    py.parent.mkdir(parents=True, exist_ok=True)
-    py.write_text("")
-
-    result = runner.invoke(daemon_app, ["status"])
-    assert result.exit_code == 0
-    assert "fallback" not in result.stdout.lower(), (
-        "B2: 'fallback' must not appear when daemon venv exists. Output:\n"
-        + result.stdout
-    )
-
-
-def test_status_no_warning_when_daemon_venv_present(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    monkeypatch.setenv("AGENT_CORE_HOME", str(tmp_path))
-    (tmp_path / "daemon.pid").write_text(str(os.getpid()))
-
-    if sys.platform == "win32":
-        venv_python = tmp_path / ".venv" / "Scripts" / "python.exe"
-    else:
-        venv_python = tmp_path / ".venv" / "bin" / "python"
-    venv_python.parent.mkdir(parents=True)
-    venv_python.write_text("# placeholder")
-
-    result = runner.invoke(daemon_app, ["status"])
-    assert result.exit_code == 0
-    assert "fallback" not in result.stdout.lower()
+# Phase 3 removed the status "fallback" warning — status is now factual
+# only. The B2 false-positive it guarded against is moot.
 
 
 def test_status_shows_stamp_metadata(
@@ -325,3 +277,136 @@ def test_status_shows_stamp_metadata(
 # test_status_handles_missing_workspace_gracefully removed in Phase 2.5:
 # status no longer touches workspace at all (no lock-drift check, no
 # find_workspace_root call from cli.py status command).
+
+
+def test_install_dev_instance_errors(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """`install --instance dev` must error — dev is editable, not installed."""
+    monkeypatch.setenv("AGENT_CORE_HOME", str(tmp_path))
+    result = runner.invoke(daemon_app, ["install", "--instance", "dev"])
+    assert result.exit_code == 1
+    assert "not installed" in result.stdout.lower()
+
+
+def test_refresh_dev_is_stop_then_start_no_install(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """`refresh --instance dev` bounces (stop + start), never install."""
+    monkeypatch.setenv("AGENT_CORE_HOME", str(tmp_path))
+    order: list[str] = []
+
+    def fake_stop(instance: str | None = None) -> None:
+        order.append("stop")
+
+    def fake_install(instance: str | None = None, release: str | None = None) -> None:
+        order.append("install")  # must NOT be called for dev
+
+    def fake_start(instance: str | None = None) -> None:
+        order.append("start")
+
+    monkeypatch.setattr("agent_core.daemon.cli.stop", fake_stop)
+    monkeypatch.setattr("agent_core.daemon.cli.install", fake_install)
+    monkeypatch.setattr("agent_core.daemon.cli.start", fake_start)
+
+    result = runner.invoke(daemon_app, ["refresh", "--instance", "dev"])
+    assert result.exit_code == 0, result.stdout
+    assert order == ["stop", "start"]
+    assert "install" not in order
+
+
+def test_init_writes_config_and_refuses_clobber(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """`init` scaffolds a config and won't overwrite without --force."""
+    monkeypatch.setenv("AGENT_CORE_HOME", str(tmp_path))
+
+    first = runner.invoke(daemon_app, ["init"])
+    assert first.exit_code == 0, first.stdout
+    cfg = tmp_path / "agent_core.yaml"
+    assert cfg.exists()
+
+    # Second init without --force is refused.
+    second = runner.invoke(daemon_app, ["init"])
+    assert second.exit_code == 1
+    assert "already exists" in second.stdout.lower()
+
+    # With --force it succeeds.
+    forced = runner.invoke(daemon_app, ["init", "--force"])
+    assert forced.exit_code == 0, forced.stdout
+
+
+def test_unknown_instance_errors(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("AGENT_CORE_HOME", str(tmp_path))
+    result = runner.invoke(daemon_app, ["status", "--instance", "staging"])
+    assert result.exit_code == 1
+    assert "unknown instance" in result.stdout.lower()
+
+
+def test_start_without_config_points_at_init(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """start with no config tells you to run `daemon init`."""
+    monkeypatch.setenv("AGENT_CORE_HOME", str(tmp_path))
+    result = runner.invoke(daemon_app, ["start"])
+    assert result.exit_code == 1
+    assert "daemon init" in result.stdout
+
+
+@pytest.mark.slow
+def test_prod_and_dev_daemons_coexist(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A prod and a dev daemon run simultaneously on different ports,
+    each isolated — stopping one does not disturb the other.
+
+    Both instances are driven through the AGENT_CORE_HOME escape hatch
+    (one home per call), proving the core property: two daemons, two
+    homes, two ports, independent lifecycle.
+    """
+    import yaml as _yaml
+
+    prod_home = tmp_path / "prod"
+    dev_home = tmp_path / "dev"
+
+    def _run(args: list[str], home: Path):
+        monkeypatch.setenv("AGENT_CORE_HOME", str(home))
+        return runner.invoke(daemon_app, args)
+
+    # Scaffold minimal configs.
+    assert _run(["init"], prod_home).exit_code == 0
+    assert _run(["init", "--instance", "dev"], dev_home).exit_code == 0
+
+    # Rewrite each config to a free, distinct port to avoid clashing with
+    # a real daemon on 8789/8788.
+    for home, port in ((prod_home, 8991), (dev_home, 8992)):
+        cfg = home / "agent_core.yaml"
+        data = _yaml.safe_load(cfg.read_text())
+        data["http"]["bind_port"] = port
+        cfg.write_text(_yaml.safe_dump(data), encoding="utf-8")
+
+    try:
+        assert _run(["start"], prod_home).exit_code == 0
+        assert _run(["start"], dev_home).exit_code == 0
+
+        # Give both a moment to come up.
+        for _ in range(40):
+            prod_pid = read_pid(prod_home / "daemon.pid")
+            dev_pid = read_pid(dev_home / "daemon.pid")
+            if prod_pid and dev_pid and is_alive(prod_pid) and is_alive(dev_pid):
+                break
+            time.sleep(0.1)
+
+        # Both alive.
+        assert "is running" in _run(["status"], prod_home).stdout
+        assert "is running" in _run(["status"], dev_home).stdout
+
+        # Stop prod — dev must still be alive.
+        assert _run(["stop"], prod_home).exit_code == 0
+        assert "is running" in _run(["status"], dev_home).stdout
+        assert "not running" in _run(["status"], prod_home).stdout
+    finally:
+        _run(["stop"], prod_home)
+        _run(["stop"], dev_home)
