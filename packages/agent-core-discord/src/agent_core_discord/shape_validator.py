@@ -127,21 +127,76 @@ def _unrecognized_arg_keys(args: object, known: frozenset[str]) -> list[str]:
     return sorted(set(args.keys()) - known)
 
 
+# Recognized keys under metadata.discord on OUTBOUND TextMessage
+# envelopes. INBOUND-only keys (message_id, guild_id, author_id,
+# author_display_name, is_dm) are not in this set — they are set by
+# the adapter when publishing inbound, and a sender that sets them on
+# an outbound is doing something the adapter does not route. Flag as
+# Unrecognized so the silent-drop class is closed (Task 4).
+_KNOWN_DISCORD_META_OUTBOUND_KEYS: frozenset[str] = frozenset({
+    "channel_id",
+    "embeds",
+    "reply_to",
+})
+
+
+def _validate_text_message(envelope: Envelope) -> ShapeValidation:
+    metadata = envelope.metadata or {}
+    discord_meta = metadata.get("discord")
+
+    if discord_meta is None:
+        # TextMessage without metadata.discord is not discord-bound.
+        # Adapter's existing routing handles this via outbound_channel_id
+        # fallback or _ToolError.
+        return Recognized("non_discord_text_message", None)
+
+    if not isinstance(discord_meta, dict):
+        # metadata.discord is present but malformed (string, list, etc.).
+        return Unrecognized(
+            fields=["metadata.discord"],
+            canonical_equivalent=(
+                "tool=discord_send with channel_id in args (metadata.discord "
+                "must be an object)"
+            ),
+        )
+
+    # Unrecognized-key detection lands in Task 4. For now, recognize
+    # legacy shapes by the most-discriminating field present.
+    if "embeds" in discord_meta:
+        return Recognized(
+            "legacy_textmessage_embeds",
+            "deprecated_shape: TextMessage + metadata.discord.embeds — "
+            "use tool=discord_send with embeds in args",
+        )
+    if "reply_to" in discord_meta:
+        return Recognized(
+            "legacy_textmessage_reply",
+            "deprecated_shape: TextMessage + metadata.discord.reply_to — "
+            "use tool=discord_send with reply_to in args",
+        )
+    if "channel_id" in discord_meta:
+        return Recognized(
+            "legacy_textmessage_plain",
+            "deprecated_shape: TextMessage + metadata.discord.channel_id — "
+            "use tool=discord_send with text in args",
+        )
+    # Ambiguous discord_meta block (e.g., empty {} or only message_id).
+    return Recognized(
+        "legacy_textmessage_ambiguous",
+        "deprecated_shape: TextMessage + metadata.discord without channel_id",
+    )
+
+
 def validate(envelope: Envelope) -> ShapeValidation:
     """Validate that the Discord adapter has routing for every field on
     envelope. Returns Recognized(shape_name, deprecation_log_line_or_None)
     or Unrecognized(fields, canonical_equivalent).
 
-    ToolInvocation shapes covered in Task 2; TextMessage handling in Task 3.
+    ToolInvocation and TextMessage shapes covered; unrecognized-field
+    detection (multi-field, nested) tightens in Task 4.
     """
     if envelope.kind == "ToolInvocation":
         return _validate_tool_invocation(envelope)
     if envelope.kind == "TextMessage":
-        # TextMessage handling lands in Task 3.
-        raise NotImplementedError("TextMessage validation — Task 3")
-    # Kinds outside ToolInvocation / TextMessage (Event, Cancellation,
-    # Progress, Acknowledgment) are not in the strict-mode scope; the
-    # adapter's existing else-branch handles them with an unsupported-kind
-    # warning Ack. The validator returns Recognized so deliver() does not
-    # double-handle them.
+        return _validate_text_message(envelope)
     return Recognized("non_send_kind", None)

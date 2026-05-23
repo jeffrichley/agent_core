@@ -118,3 +118,61 @@ def test_other_tool_invocation_is_non_send_tool():
     assert isinstance(result, Recognized)
     assert result.shape_name == "non_send_tool"
     assert result.deprecation_log_line is None
+
+
+def test_textmessage_plain_text_returns_recognized_with_deprecation():
+    """The most-common legacy shape: TextMessage with channel_id only."""
+    env = _make_env(
+        kind="TextMessage",
+        payload=TextMessagePayload(text="hello"),
+        metadata={"discord": {"channel_id": "123"}},
+    )
+    result = validate(env)
+    assert isinstance(result, Recognized)
+    assert result.shape_name == "legacy_textmessage_plain"
+    assert result.deprecation_log_line is not None
+
+
+def test_textmessage_with_embeds_returns_recognized_with_deprecation():
+    """The poster-child shape from #114 — routed since a278c68 but
+    still legacy. Embed presence determines the shape_name."""
+    env = _make_env(
+        kind="TextMessage",
+        payload=TextMessagePayload(text=""),
+        metadata={"discord": {"channel_id": "123", "embeds": [{"title": "x"}]}},
+    )
+    result = validate(env)
+    assert isinstance(result, Recognized)
+    assert result.shape_name == "legacy_textmessage_embeds"
+    assert result.deprecation_log_line is not None
+
+
+def test_textmessage_with_reply_to_returns_recognized_with_deprecation():
+    """reply_to legacy shape. message_id alias also tested via a fallback
+    test below."""
+    env = _make_env(
+        kind="TextMessage",
+        payload=TextMessagePayload(text="reply"),
+        metadata={
+            "discord": {"channel_id": "123", "reply_to": "456"},
+        },
+    )
+    result = validate(env)
+    assert isinstance(result, Recognized)
+    assert result.shape_name == "legacy_textmessage_reply"
+    assert result.deprecation_log_line is not None
+
+
+def test_textmessage_no_discord_metadata_is_non_discord():
+    """TextMessage envelopes with no metadata.discord block at all are
+    not discord-bound; validator returns Recognized so deliver() doesn't
+    treat the absence of routing as a failure."""
+    env = _make_env(
+        kind="TextMessage",
+        payload=TextMessagePayload(text="hi"),
+        metadata={},
+    )
+    result = validate(env)
+    assert isinstance(result, Recognized)
+    assert result.shape_name == "non_discord_text_message"
+    assert result.deprecation_log_line is None
