@@ -22,7 +22,6 @@ from typer.testing import CliRunner
 from agent_core.daemon.cli import app as daemon_app
 from agent_core.daemon.supervisor import is_alive, read_pid
 
-
 runner = CliRunner()
 
 pytestmark = pytest.mark.slow

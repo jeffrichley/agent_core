@@ -324,6 +324,7 @@ def test_install_code_path_identity_between_prod_and_test(
 
     def invoke_install(instance: str) -> None:
         from typer.testing import CliRunner
+
         from agent_core.daemon.cli import app as daemon_app
         result = CliRunner().invoke(
             daemon_app, ["install", "--instance", instance, "--release", "v0.2.0"]

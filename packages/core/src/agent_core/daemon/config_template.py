@@ -17,7 +17,7 @@ def build_default_config(*, instance: Instance, home: Path) -> str:
     """Return the text of a minimal `agent_core.yaml` for `instance`.
 
     `storage_path` points inside `home`; `bind_port` is the instance
-    default (8789 prod / 8788 dev).
+    default (prod 8789 / source 8788 / test 8787).
     """
     port = default_port(instance)
     storage = home / "bus.sqlite"
