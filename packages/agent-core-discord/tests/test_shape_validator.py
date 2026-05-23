@@ -148,8 +148,8 @@ def test_textmessage_with_embeds_returns_recognized_with_deprecation():
 
 
 def test_textmessage_with_reply_to_returns_recognized_with_deprecation():
-    """reply_to legacy shape. message_id alias also tested via a fallback
-    test below."""
+    """reply_to legacy shape — distinguished by the presence of reply_to
+    in the metadata.discord block."""
     env = _make_env(
         kind="TextMessage",
         payload=TextMessagePayload(text="reply"),
@@ -176,3 +176,20 @@ def test_textmessage_no_discord_metadata_is_non_discord():
     assert isinstance(result, Recognized)
     assert result.shape_name == "non_discord_text_message"
     assert result.deprecation_log_line is None
+
+
+def test_textmessage_ambiguous_discord_meta_returns_legacy_ambiguous():
+    """metadata.discord block with no recognized routing-discriminating
+    keys (no channel_id, embeds, or reply_to) is reachable today via
+    inbound-only keys like message_id slipping into an outbound. The
+    branch returns Recognized so deliver() does not silently drop, but
+    flags the shape as ambiguous in the structured log."""
+    env = _make_env(
+        kind="TextMessage",
+        payload=TextMessagePayload(text="hi"),
+        metadata={"discord": {"message_id": "789"}},
+    )
+    result = validate(env)
+    assert isinstance(result, Recognized)
+    assert result.shape_name == "legacy_textmessage_ambiguous"
+    assert result.deprecation_log_line is not None
