@@ -2454,3 +2454,30 @@ async def test_existing_clear_pending_ack_via_args_reply_to_path_unchanged(monke
         assert "target-mid" not in ep._awaiting_reply_ids_timestamps
     finally:
         await ep.stop()
+
+
+# --- #114 Task 6: discord_send alias + dispatch wiring ---
+
+
+@pytest.mark.asyncio
+async def test_dispatch_routes_discord_send_to_internal_send(monkeypatch):
+    """tool=discord_send must reach _send via _dispatch. Verifies the
+    new entry in _TOOL_ALIASES and the _dispatch table (#114 Task 6)."""
+    ep, handle, fake = await _started(monkeypatch)
+    ch = FakeChannel(id="123")
+    fake.add_channel(ch)
+    try:
+        env = _envelope(
+            "e-ds",
+            "agent-test",
+            "discord-test",
+            _toolcall("discord_send", {"channel_id": "123", "text": "hi"}),
+        )
+        await ep.deliver(env)
+        assert len(ch.sent) == 1
+        assert ch.sent[0]["content"] == "hi"
+        ack = [e for e in handle.published if e.kind == "Acknowledgment"][0]
+        result = json.loads(ack.payload.note)
+        assert result["status"] == "sent"
+    finally:
+        await ep.stop()

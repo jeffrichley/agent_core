@@ -41,6 +41,7 @@ from agent_core_discord.args import (
     _CreatePollArgs,
     _CreateScheduledEventArgs,
     _CreateThreadArgs,
+    _DiscordSendArgs,
     _DownloadAttachmentsArgs,
     _EditArgs,
     _FetchArgs,
@@ -65,6 +66,7 @@ log = logging.getLogger(__name__)
 # Pepper-facing tool names from cutover #03 map to the internal dispatcher keys.
 _TOOL_ALIASES: dict[str, str] = {
     "send_discord_message": "send",
+    "discord_send": "discord_send",  # #114: canonical passthrough
     "edit_message": "edit",
     "add_reaction": "react",
     "fetch_messages": "fetch",
@@ -803,6 +805,10 @@ class DiscordEndpoint:
                         raw["cleanup_inbound_message_id"] = cid
             return raw
 
+        if tool == "discord_send":
+            return await self._send(
+                _v(_DiscordSendArgs, _inject_channel_id(args))
+            )
         if tool == "send":
             return await self._send(_v(_SendArgs, _inject_channel_id(args)))
         if tool == "edit":
