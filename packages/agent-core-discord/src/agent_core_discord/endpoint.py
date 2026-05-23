@@ -1390,8 +1390,10 @@ class DiscordEndpoint:
             await msg.remove_reaction(emoji, self._client.user)
 
     async def _send(self, args: _SendArgs) -> dict:
-        if args.text is None and not args.embeds:
-            raise _ToolError("send: one of 'text' or 'embeds' is required")
+        if args.text is None and not args.embeds and not args.files:
+            raise _ToolError(
+                "send: one of 'text', 'embeds', or 'files' is required"
+            )
         ch = await self._resolve_channel(args.channel_id)
 
         # Build embeds list (validate via discord.Embed.from_dict).

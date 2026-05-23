@@ -2481,3 +2481,31 @@ async def test_dispatch_routes_discord_send_to_internal_send(monkeypatch):
         assert result["status"] == "sent"
     finally:
         await ep.stop()
+
+
+# --- #114 Task 7: _send empty-send guard names 'files' ---
+
+
+@pytest.mark.asyncio
+async def test_discord_send_with_no_payload_raises_explicit_error(monkeypatch):
+    """tool=discord_send with no text, no embeds, no files must produce
+    a clear yellow Ack naming all three options, not just text/embeds.
+    (#114 Task 7 — extends the existing _send guard to mention 'files'.)"""
+    ep, handle, fake = await _started(monkeypatch)
+    try:
+        env = _envelope(
+            "e-empty",
+            "agent-test",
+            "discord-test",
+            _toolcall("discord_send", {"channel_id": "123"}),
+        )
+        await ep.deliver(env)
+
+        # The Acknowledgment fired with a note listing all three payload options.
+        last_ack = [e for e in handle.published if e.kind == "Acknowledgment"][-1]
+        assert last_ack.urgency == "yellow"
+        assert "text" in last_ack.payload.note
+        assert "embeds" in last_ack.payload.note
+        assert "files" in last_ack.payload.note
+    finally:
+        await ep.stop()
