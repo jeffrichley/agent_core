@@ -215,7 +215,7 @@ def test_install_release_orchestrates_full_chain(
             return b"# pinned\ntorch==2.12.0+cu130\n"
         raise RuntimeError(f"unexpected URL: {url}")
 
-    def fake_subprocess_run(cmd, **kwargs):  # type: ignore[no-untyped-def]
+    def fake_subprocess_run(cmd, **kwargs):
         calls.append(cmd)
 
         class _R:
@@ -334,7 +334,7 @@ def test_install_test_instance_succeeds_via_mock(
             return b"# pinned\n"
         raise RuntimeError(f"unexpected URL: {url}")
 
-    def fake_subprocess_run(cmd, **kwargs):  # type: ignore[no-untyped-def]
+    def fake_subprocess_run(cmd, **kwargs):
         class _R:
             returncode = 0
             stdout = ""

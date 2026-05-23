@@ -190,7 +190,7 @@ def test_ensure_venv_no_op_when_python_exists(tmp_path: Path, monkeypatch: pytes
 
     calls: list[list[str]] = []
 
-    def fake_run(cmd, **kwargs):  # type: ignore[no-untyped-def]
+    def fake_run(cmd, **kwargs):
         calls.append(cmd)
 
         class _R:
@@ -209,7 +209,7 @@ def test_ensure_venv_creates_when_missing(tmp_path: Path, monkeypatch: pytest.Mo
     # venv dir doesn't exist yet
     calls: list[list[str]] = []
 
-    def fake_run(cmd, **kwargs):  # type: ignore[no-untyped-def]
+    def fake_run(cmd, **kwargs):
         calls.append(cmd)
 
         class _R:
@@ -276,7 +276,7 @@ def test_install_code_path_identity_between_prod_and_test(
             return b"# pinned\ntorch==2.12.0\n"
         raise RuntimeError(f"unexpected URL: {url}")
 
-    def fake_subprocess_run(cmd, **kwargs):  # type: ignore[no-untyped-def]
+    def fake_subprocess_run(cmd, **kwargs):
         class _R:
             returncode = 0
             stdout = ""
