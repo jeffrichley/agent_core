@@ -2567,3 +2567,167 @@ async def test_unrecognized_field_produces_failed_delivery_ack(monkeypatch):
         assert original_id in handle.acked
     finally:
         await ep.stop()
+
+
+# --- #114 Task 9: back-compat regression suite for the 4 documented legacy shapes ---
+
+
+@pytest.mark.asyncio
+async def test_legacy_textmessage_plain_still_delivers_and_logs_deprecation(
+    monkeypatch, caplog
+):
+    """Back-compat shape #1: TextMessage + metadata.discord.channel_id
+    plain text. Must still deliver. Must emit a structured
+    deprecation_shape log line keyed by shape_name."""
+    ep, handle, fake = await _started(monkeypatch)
+    ch = FakeChannel(id="123")
+    fake.add_channel(ch)
+
+    env = Envelope(
+        id="env-plain",
+        correlation_id="corr-plain",
+        to="discord-test",
+        kind="TextMessage",
+        payload=TextMessagePayload(text="hi"),
+        metadata={"discord": {"channel_id": "123"}},
+        created_at=datetime.now(UTC),
+        from_="some-sender",
+    )
+
+    try:
+        with caplog.at_level("WARNING"):
+            await ep.deliver(env)
+
+        assert ch.sent, "expected delivery to land at the Discord client"
+        assert ch.sent[0]["content"] == "hi"
+
+        deprecated_logs = [
+            r for r in caplog.records
+            if getattr(r, "event", None) == "deprecated_shape"
+        ]
+        assert len(deprecated_logs) == 1, (
+            f"expected 1 deprecated_shape log, got {len(deprecated_logs)}"
+        )
+        rec = deprecated_logs[0]
+        assert rec.shape_name == "legacy_textmessage_plain"
+        assert rec.sender == "some-sender"
+        assert rec.envelope_id == "env-plain"
+        assert rec.canonical_equivalent == "tool=discord_send"
+    finally:
+        await ep.stop()
+
+
+@pytest.mark.asyncio
+async def test_legacy_send_discord_message_with_embeds_still_delivers_and_logs(
+    monkeypatch, caplog
+):
+    """Back-compat shape #2: ToolInvocation + tool=send_discord_message
+    + args.{channel_id, text, embeds}."""
+    ep, handle, fake = await _started(monkeypatch)
+    ch = FakeChannel(id="123")
+    fake.add_channel(ch)
+
+    env = _envelope(
+        "env-sdm-embeds",
+        "agent-test",
+        "discord-test",
+        _toolcall(
+            "send_discord_message",
+            {"channel_id": "123", "text": "hi", "embeds": [{"title": "x"}]},
+        ),
+    )
+
+    try:
+        with caplog.at_level("WARNING"):
+            await ep.deliver(env)
+
+        assert ch.sent, "expected delivery to land at the Discord client"
+
+        deprecated_logs = [
+            r for r in caplog.records
+            if getattr(r, "event", None) == "deprecated_shape"
+        ]
+        assert len(deprecated_logs) == 1
+        assert deprecated_logs[0].shape_name == "legacy_tool_send_discord_message"
+    finally:
+        await ep.stop()
+
+
+@pytest.mark.asyncio
+async def test_legacy_send_discord_message_with_files_still_delivers_and_logs(
+    monkeypatch, caplog, tmp_path
+):
+    """Back-compat shape #3: ToolInvocation + tool=send_discord_message
+    + args.{channel_id, text, files} (verified 2026-05-11)."""
+    ep, handle, fake = await _started(monkeypatch)
+    ch = FakeChannel(id="123")
+    fake.add_channel(ch)
+
+    fake_file = tmp_path / "qa.zip"
+    fake_file.write_bytes(b"\x00")
+
+    env = _envelope(
+        "env-sdm-files",
+        "agent-test",
+        "discord-test",
+        _toolcall(
+            "send_discord_message",
+            {"channel_id": "123", "text": "ship it", "files": [str(fake_file)]},
+        ),
+    )
+
+    try:
+        with caplog.at_level("WARNING"):
+            await ep.deliver(env)
+
+        assert ch.sent, "expected delivery to land at the Discord client"
+
+        deprecated_logs = [
+            r for r in caplog.records
+            if getattr(r, "event", None) == "deprecated_shape"
+        ]
+        assert len(deprecated_logs) == 1
+        assert deprecated_logs[0].shape_name == "legacy_tool_send_discord_message"
+    finally:
+        await ep.stop()
+
+
+@pytest.mark.asyncio
+async def test_legacy_textmessage_with_embeds_still_delivers_and_logs(
+    monkeypatch, caplog
+):
+    """Back-compat shape #4: the poster-child. TextMessage + metadata.
+    discord.embeds was routed by commit a278c68; after #114 it still
+    routes but the deprecation log fires."""
+    ep, handle, fake = await _started(monkeypatch)
+    ch = FakeChannel(id="123")
+    fake.add_channel(ch)
+
+    env = Envelope(
+        id="env-embeds",
+        correlation_id="corr-embeds",
+        to="discord-test",
+        kind="TextMessage",
+        payload=TextMessagePayload(text=""),
+        metadata={"discord": {
+            "channel_id": "123",
+            "embeds": [{"title": "x"}],
+        }},
+        created_at=datetime.now(UTC),
+        from_="another-sender",
+    )
+
+    try:
+        with caplog.at_level("WARNING"):
+            await ep.deliver(env)
+
+        assert ch.sent, "expected delivery to land at the Discord client"
+
+        deprecated_logs = [
+            r for r in caplog.records
+            if getattr(r, "event", None) == "deprecated_shape"
+        ]
+        assert len(deprecated_logs) == 1
+        assert deprecated_logs[0].shape_name == "legacy_textmessage_embeds"
+    finally:
+        await ep.stop()
