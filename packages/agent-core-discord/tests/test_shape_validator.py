@@ -9,16 +9,16 @@ returned ShapeValidation value.
 from datetime import UTC, datetime
 
 import pytest
+from agent_core_discord.shape_validator import (
+    Recognized,
+    Unrecognized,
+    validate,
+)
 
 from agent_core.bus.envelope import (
     Envelope,
     TextMessagePayload,
     ToolInvocationPayload,
-)
-from agent_core_discord.shape_validator import (
-    Recognized,
-    Unrecognized,
-    validate,
 )
 
 

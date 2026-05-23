@@ -724,7 +724,7 @@ async def test_persist_attachment_raises_on_download_failure(monkeypatch, tmp_pa
 
 @pytest.mark.asyncio
 async def test_inbound_autodownloads_and_enriches_metadata(monkeypatch, tmp_path):
-    from agent_core_discord.testing.fakes import FakeChannel, FakeAttachment
+    from agent_core_discord.testing.fakes import FakeAttachment, FakeChannel
 
     ep, handle, fake = await _start_endpoint(monkeypatch)
     ep.attachments_dir = tmp_path
@@ -761,7 +761,7 @@ async def test_inbound_autodownloads_and_enriches_metadata(monkeypatch, tmp_path
 
 @pytest.mark.asyncio
 async def test_inbound_download_failure_degrades_url_only(monkeypatch, tmp_path):
-    from agent_core_discord.testing.fakes import FakeChannel, FakeAttachment
+    from agent_core_discord.testing.fakes import FakeAttachment, FakeChannel
 
     ep, handle, fake = await _start_endpoint(monkeypatch)
     ep.attachments_dir = tmp_path
@@ -794,7 +794,7 @@ async def test_inbound_download_failure_degrades_url_only(monkeypatch, tmp_path)
 
 @pytest.mark.asyncio
 async def test_inbound_multi_attachment_distinct_paths(monkeypatch, tmp_path):
-    from agent_core_discord.testing.fakes import FakeChannel, FakeAttachment
+    from agent_core_discord.testing.fakes import FakeAttachment, FakeChannel
 
     ep, handle, fake = await _start_endpoint(monkeypatch)
     ep.attachments_dir = tmp_path
@@ -813,7 +813,7 @@ async def test_inbound_multi_attachment_distinct_paths(monkeypatch, tmp_path):
 
     atts = [
         FakeAttachment(filename=f"{n}.png", url=u, content_type="image/png", size=len(b))
-        for (u, b), n in zip(payloads.items(), ["one", "two", "three"])
+        for (u, b), n in zip(payloads.items(), ["one", "two", "three"], strict=False)
     ]
     msg = _msg(id="m-multi", attachments=atts)
     msg.channel = fake.get_channel("200")
@@ -831,7 +831,7 @@ async def test_inbound_multi_attachment_distinct_paths(monkeypatch, tmp_path):
 
 @pytest.mark.asyncio
 async def test_inbound_download_error_redacts_signed_cdn_url(monkeypatch, tmp_path):
-    from agent_core_discord.testing.fakes import FakeChannel, FakeAttachment
+    from agent_core_discord.testing.fakes import FakeAttachment, FakeChannel
 
     ep, handle, fake = await _start_endpoint(monkeypatch)
     ep.attachments_dir = tmp_path

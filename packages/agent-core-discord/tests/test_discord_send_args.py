@@ -8,9 +8,8 @@ existing _ToolError path. No silent drop.
 """
 
 import pytest
-from pydantic import ValidationError
-
 from agent_core_discord.args import _DiscordSendArgs
+from pydantic import ValidationError
 
 
 def test_canonical_minimal_text_send_accepted():

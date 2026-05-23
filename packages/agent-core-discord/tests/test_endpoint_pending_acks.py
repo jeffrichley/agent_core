@@ -6,9 +6,9 @@ import time
 
 import pytest
 from agent_core_discord.endpoint import DiscordEndpoint
+from agent_core_discord.testing.fakes import FakeChannel, FakeDiscordClient, FakeMessage
 
 from agent_core.bus.envelope import EndpointInfo, Envelope
-from agent_core_discord.testing.fakes import FakeChannel, FakeDiscordClient, FakeMessage
 
 
 class _Recording:

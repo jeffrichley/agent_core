@@ -59,6 +59,8 @@ from agent_core_discord.send_retry import channel_send_with_retries
 from agent_core_discord.shape_validator import (
     Recognized,
     Unrecognized,
+)
+from agent_core_discord.shape_validator import (
     validate as validate_shape,
 )
 from agent_core_discord.sigil import parse_sigil
