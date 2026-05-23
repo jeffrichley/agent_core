@@ -160,8 +160,21 @@ def _validate_text_message(envelope: Envelope) -> ShapeValidation:
             ),
         )
 
-    # Unrecognized-key detection lands in Task 4. For now, recognize
-    # legacy shapes by the most-discriminating field present.
+    # Unrecognized-key detection. Senders that set metadata.discord.*
+    # fields the adapter does not route get a failed-delivery Ack — this
+    # is the load-bearing closure of the silent-drop class.
+    unrecognized_keys = sorted(
+        set(discord_meta.keys()) - _KNOWN_DISCORD_META_OUTBOUND_KEYS
+    )
+    if unrecognized_keys:
+        return Unrecognized(
+            fields=[f"metadata.discord.{k}" for k in unrecognized_keys],
+            canonical_equivalent=(
+                f"tool=discord_send with {', '.join(unrecognized_keys)} in args"
+            ),
+        )
+
+    # Recognized legacy shape — name by most-discriminating field.
     if "embeds" in discord_meta:
         return Recognized(
             "legacy_textmessage_embeds",

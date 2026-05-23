@@ -179,17 +179,103 @@ def test_textmessage_no_discord_metadata_is_non_discord():
 
 
 def test_textmessage_ambiguous_discord_meta_returns_legacy_ambiguous():
-    """metadata.discord block with no recognized routing-discriminating
-    keys (no channel_id, embeds, or reply_to) is reachable today via
-    inbound-only keys like message_id slipping into an outbound. The
-    branch returns Recognized so deliver() does not silently drop, but
-    flags the shape as ambiguous in the structured log."""
+    """metadata.discord block with no routing-discriminating keys (no
+    channel_id, embeds, or reply_to) and no unrecognized keys returns
+    the ambiguous shape. An empty {} block is the canonical trigger;
+    inbound-only keys (message_id etc.) now produce Unrecognized instead
+    (Task 4 closes the silent-drop class on those too)."""
+    env = _make_env(
+        kind="TextMessage",
+        payload=TextMessagePayload(text="hi"),
+        metadata={"discord": {}},
+    )
+    result = validate(env)
+    assert isinstance(result, Recognized)
+    assert result.shape_name == "legacy_textmessage_ambiguous"
+    assert result.deprecation_log_line is not None
+
+
+def test_textmessage_inbound_only_key_in_outbound_returns_unrecognized():
+    """Inbound-only keys (message_id, guild_id, etc.) set on an outbound
+    envelope are not in _KNOWN_DISCORD_META_OUTBOUND_KEYS. Task 4
+    closes the silent-drop class on these too — they return Unrecognized
+    so the sender receives a failed-delivery Ack rather than a silent drop."""
     env = _make_env(
         kind="TextMessage",
         payload=TextMessagePayload(text="hi"),
         metadata={"discord": {"message_id": "789"}},
     )
     result = validate(env)
-    assert isinstance(result, Recognized)
-    assert result.shape_name == "legacy_textmessage_ambiguous"
-    assert result.deprecation_log_line is not None
+    assert isinstance(result, Unrecognized)
+    assert result.fields == ["metadata.discord.message_id"]
+    assert "discord_send" in result.canonical_equivalent
+
+
+def test_textmessage_with_unrecognized_metadata_field_returns_unrecognized():
+    """The load-bearing case: an outbound carries a metadata.discord.*
+    field the adapter does not route. Validator must flag it so the Ack
+    can be published — silent-drop is what #114 closes."""
+    env = _make_env(
+        kind="TextMessage",
+        payload=TextMessagePayload(text="hi"),
+        metadata={"discord": {"channel_id": "123", "mystery_field": "X"}},
+    )
+    result = validate(env)
+    assert isinstance(result, Unrecognized)
+    assert result.fields == ["metadata.discord.mystery_field"]
+    assert "discord_send" in result.canonical_equivalent
+    assert "mystery_field" in result.canonical_equivalent
+
+
+def test_textmessage_with_multiple_unrecognized_fields_returns_all():
+    """Multi-field case enumerates all unrecognized fields in one Ack
+    rather than fragmenting across N redeliveries."""
+    env = _make_env(
+        kind="TextMessage",
+        payload=TextMessagePayload(text="hi"),
+        metadata={"discord": {
+            "channel_id": "123",
+            "mystery_field": "X",
+            "another_unknown": "Y",
+        }},
+    )
+    result = validate(env)
+    assert isinstance(result, Unrecognized)
+    # Order is sorted for determinism in the Ack note.
+    assert result.fields == [
+        "metadata.discord.another_unknown",
+        "metadata.discord.mystery_field",
+    ]
+
+
+def test_toolinvocation_canonical_with_unrecognized_arg_returns_unrecognized():
+    """args-level strict-mode for the canonical tool. The Pydantic
+    extra='forbid' on _DiscordSendArgs catches this at dispatch too;
+    the validator catches it before dispatch."""
+    env = _make_env(
+        kind="ToolInvocation",
+        payload=ToolInvocationPayload(
+            tool="discord_send",
+            args={"channel_id": "123", "text": "hi", "mystery_arg": "X"},
+        ),
+    )
+    result = validate(env)
+    assert isinstance(result, Unrecognized)
+    assert result.fields == ["args.mystery_arg"]
+    assert "discord_send" in result.canonical_equivalent
+
+
+def test_toolinvocation_legacy_with_unrecognized_arg_returns_unrecognized():
+    """Legacy tool with a new field the legacy args model never wired."""
+    env = _make_env(
+        kind="ToolInvocation",
+        payload=ToolInvocationPayload(
+            tool="send_discord_message",
+            args={"channel_id": "123", "text": "hi", "allowed_mentions": {}},
+        ),
+    )
+    result = validate(env)
+    assert isinstance(result, Unrecognized)
+    assert result.fields == ["args.allowed_mentions"]
+    assert "discord_send" in result.canonical_equivalent
+    assert "allowed_mentions" in result.canonical_equivalent
