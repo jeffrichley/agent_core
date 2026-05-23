@@ -22,7 +22,13 @@ from agent_core_discord.shape_validator import (
 )
 
 
-def _make_env(*, kind, payload, metadata=None, from_="test-sender"):
+def _make_env(
+    *,
+    kind: str,
+    payload: object,
+    metadata: dict[str, object] | None = None,
+    from_: str = "test-sender",
+) -> Envelope:
     """Helper: build an Envelope with sensible defaults for validator tests."""
     return Envelope(
         id="env-abc",
@@ -41,7 +47,7 @@ def test_recognized_and_unrecognized_are_frozen_dataclasses():
     by value and Recognized/Unrecognized can be used as dict keys later."""
     r = Recognized(shape_name="x", deprecation_log_line=None)
     u = Unrecognized(fields=["a"], canonical_equivalent="b")
-    with pytest.raises(Exception):
+    with pytest.raises(AttributeError):
         r.shape_name = "y"  # frozen
-    with pytest.raises(Exception):
+    with pytest.raises(AttributeError):
         u.fields = ["c"]    # frozen
