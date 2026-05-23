@@ -48,9 +48,9 @@ def test_recognized_and_unrecognized_are_frozen_dataclasses():
     r = Recognized(shape_name="x", deprecation_log_line=None)
     u = Unrecognized(fields=["a"], canonical_equivalent="b")
     with pytest.raises(AttributeError):
-        r.shape_name = "y"  # frozen
+        r.shape_name = "y"  # type: ignore[misc]  # frozen
     with pytest.raises(AttributeError):
-        u.fields = ["c"]    # frozen
+        u.fields = ["c"]  # type: ignore[misc]  # frozen
 
 
 def test_canonical_discord_send_returns_recognized_no_deprecation():

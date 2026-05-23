@@ -34,7 +34,7 @@ def test_all_optional_fields_accepted_independently():
 
 def test_missing_channel_id_raises():
     with pytest.raises(ValidationError) as exc:
-        _DiscordSendArgs(text="hi")
+        _DiscordSendArgs(text="hi")  # type: ignore[call-arg]
     assert "channel_id" in str(exc.value)
 
 
@@ -49,7 +49,7 @@ def test_extra_field_rejected_by_forbid():
     level raises ValidationError. The shape_validator should catch this
     case BEFORE Pydantic, but this is the defense-in-depth layer."""
     with pytest.raises(ValidationError) as exc:
-        _DiscordSendArgs(channel_id="123", text="hi", mystery_field="X")
+        _DiscordSendArgs(channel_id="123", text="hi", mystery_field="X")  # type: ignore[call-arg]
     msg = str(exc.value)
     assert "mystery_field" in msg or "extra" in msg.lower()
 
