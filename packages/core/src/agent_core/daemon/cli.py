@@ -93,7 +93,7 @@ def _prod_venv_python(home: Path) -> Path:
 
 
 def _workspace_venv_python() -> Path:
-    """Path to the workspace .venv python (the dev daemon interpreter).
+    """Path to the workspace .venv python (the source daemon interpreter).
 
     Resolves the workspace root from the current directory. Raises
     WorkspaceNotFoundError if the cwd is not inside the agent_core repo.

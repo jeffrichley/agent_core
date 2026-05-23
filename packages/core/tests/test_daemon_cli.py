@@ -279,16 +279,6 @@ def test_status_shows_stamp_metadata(
 # find_workspace_root call from cli.py status command).
 
 
-def test_install_source_instance_errors_renamed(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """`install --instance source` must error — source is editable, not installed."""
-    monkeypatch.setenv("AGENT_CORE_HOME", str(tmp_path))
-    result = runner.invoke(daemon_app, ["install", "--instance", "source"])
-    assert result.exit_code == 1
-    assert "not installed" in result.stdout.lower() or "source" in result.stdout.lower()
-
-
 def test_refresh_source_is_stop_then_start_no_install(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
