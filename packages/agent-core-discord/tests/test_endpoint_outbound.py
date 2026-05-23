@@ -42,11 +42,14 @@ from agent_core.bus.envelope import (
 class _Recording:
     def __init__(self):
         self.published: list[Envelope] = []
+        self.acked: set[str] = set()
 
     async def publish(self, envelope: Envelope, to=None) -> None:
         self.published.append(envelope)
 
-    async def ack(self, envelope_id: str) -> None: ...
+    async def ack(self, envelope_id: str) -> None:
+        self.acked.add(envelope_id)
+
     async def nack(self, envelope_id: str, requeue: bool = True) -> None: ...
     def endpoints(self) -> list[EndpointInfo]:
         return []
@@ -2507,5 +2510,60 @@ async def test_discord_send_with_no_payload_raises_explicit_error(monkeypatch):
         assert "text" in last_ack.payload.note
         assert "embeds" in last_ack.payload.note
         assert "files" in last_ack.payload.note
+    finally:
+        await ep.stop()
+
+
+# --- #114 Task 8: deliver() routes unrecognized envelopes to failed-delivery Ack ---
+
+
+@pytest.mark.asyncio
+async def test_unrecognized_field_produces_failed_delivery_ack(monkeypatch):
+    """LOAD-BEARING regression test (spec Testing section). The single
+    test that proves the silent-drop class is closed for this surface.
+
+    A TextMessage envelope with metadata.discord.mystery_field (unknown)
+    must produce a yellow failed-delivery Acknowledgment and NOT reach
+    the Discord API.
+    """
+    ep, handle, fake = await _started(monkeypatch)
+    ch = FakeChannel(id="123")
+    fake.add_channel(ch)
+
+    env = Envelope(
+        id=uuid.uuid4().hex,
+        correlation_id=uuid.uuid4().hex,
+        from_="agent-test",
+        to="discord-test",
+        kind="TextMessage",
+        payload=TextMessagePayload(text="hi"),
+        metadata={"discord": {
+            "channel_id": "123",
+            "mystery_field": "X",
+        }},
+        created_at=datetime.now(UTC),
+    )
+    original_id = env.id
+
+    try:
+        await ep.deliver(env)
+
+        # (a) No Discord API call.
+        assert ch.sent == [], (
+            "validator failed to gate: dispatch reached the Discord client"
+        )
+
+        # (b) Yellow Ack with right in_reply_to and the unrecognized field
+        # named in the note.
+        acks = [e for e in handle.published if e.kind == "Acknowledgment"]
+        assert acks, "no Acknowledgment was published"
+        ack = acks[-1]
+        assert ack.urgency == "yellow"
+        assert ack.in_reply_to == original_id
+        assert "metadata.discord.mystery_field" in ack.payload.note
+        assert "discord_send" in ack.payload.note
+
+        # (c) The inbound was acked (does not redeliver).
+        assert original_id in handle.acked
     finally:
         await ep.stop()

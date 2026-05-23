@@ -56,6 +56,11 @@ from agent_core_discord.args import (
 from agent_core_discord.briefing import build_briefing_embeds
 from agent_core_discord.chunking import smart_chunk_discord
 from agent_core_discord.send_retry import channel_send_with_retries
+from agent_core_discord.shape_validator import (
+    Recognized,
+    Unrecognized,
+    validate as validate_shape,
+)
 from agent_core_discord.sigil import parse_sigil
 
 if TYPE_CHECKING:
@@ -658,6 +663,63 @@ class DiscordEndpoint:
         """Handle ToolInvocation and TextMessage envelopes."""
         if self._handle is None:
             raise EndpointUnavailable(f"discord '{self.name}' not started")
+
+        # #114: strict-mode validator. Only consulted for kinds the adapter
+        # dispatches (TextMessage / ToolInvocation); other kinds fall through
+        # to the existing else-branch unchanged.
+        if envelope.kind in ("TextMessage", "ToolInvocation"):
+            try:
+                validation = validate_shape(envelope)
+            except Exception as exc:
+                log.exception("discord(%s): validator raised", self.name)
+                await self._reply(
+                    envelope,
+                    f"validator failed: {exc!r}",
+                    urgency="yellow",
+                )
+                await self._handle.ack(envelope.id)
+                return
+            if isinstance(validation, Unrecognized):
+                log.warning(
+                    "discord(%s): unrecognized_shape event",
+                    self.name,
+                    extra={
+                        "event": "unrecognized_shape",
+                        "envelope_kind": envelope.kind,
+                        "unrecognized_fields": validation.fields,
+                        "sender": envelope.from_,
+                        "envelope_id": envelope.id,
+                        "canonical_equivalent": validation.canonical_equivalent,
+                    },
+                )
+                field_list = validation.fields
+                if len(field_list) == 1:
+                    note = (
+                        f"Unrecognized field {field_list[0]!r} on "
+                        f"{envelope.kind}. Canonical: "
+                        f"{validation.canonical_equivalent}"
+                    )
+                else:
+                    note = (
+                        f"Unrecognized fields {field_list} on "
+                        f"{envelope.kind}. Canonical: "
+                        f"{validation.canonical_equivalent}"
+                    )
+                await self._reply(envelope, note, urgency="yellow")
+                await self._handle.ack(envelope.id)
+                return
+            if isinstance(validation, Recognized) and validation.deprecation_log_line:
+                log.warning(
+                    "discord(%s): deprecated_shape event",
+                    self.name,
+                    extra={
+                        "event": "deprecated_shape",
+                        "shape_name": validation.shape_name,
+                        "sender": envelope.from_,
+                        "envelope_id": envelope.id,
+                        "canonical_equivalent": "tool=discord_send",
+                    },
+                )
 
         if envelope.kind == "TextMessage":
             try:

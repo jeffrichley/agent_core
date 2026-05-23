@@ -128,14 +128,18 @@ def _unrecognized_arg_keys(args: object, known: frozenset[str]) -> list[str]:
 
 
 # Recognized keys under metadata.discord on OUTBOUND TextMessage
-# envelopes. INBOUND-only keys (message_id, guild_id, author_id,
+# envelopes. Pure INBOUND-only keys (guild_id, author_id,
 # author_display_name, is_dm) are not in this set — they are set by
 # the adapter when publishing inbound, and a sender that sets them on
 # an outbound is doing something the adapter does not route. Flag as
 # Unrecognized so the silent-drop class is closed (Task 4).
+# NOTE: message_id is included here — while the adapter also sets it
+# on inbound envelopes, _deliver_text_message() reads it on OUTBOUND
+# envelopes as a legacy reply-target alias for reply_to.
 _KNOWN_DISCORD_META_OUTBOUND_KEYS: frozenset[str] = frozenset({
     "channel_id",
     "embeds",
+    "message_id",
     "reply_to",
 })
 

@@ -196,18 +196,23 @@ def test_textmessage_ambiguous_discord_meta_returns_legacy_ambiguous():
 
 
 def test_textmessage_inbound_only_key_in_outbound_returns_unrecognized():
-    """Inbound-only keys (message_id, guild_id, etc.) set on an outbound
+    """Pure inbound-only keys (guild_id, author_id, etc.) set on an outbound
     envelope are not in _KNOWN_DISCORD_META_OUTBOUND_KEYS. Task 4
-    closes the silent-drop class on these too — they return Unrecognized
-    so the sender receives a failed-delivery Ack rather than a silent drop."""
+    closes the silent-drop class on these — they return Unrecognized
+    so the sender receives a failed-delivery Ack rather than a silent drop.
+
+    NOTE: message_id is NOT a pure inbound-only key — _deliver_text_message
+    reads metadata.discord.message_id as a legacy reply-to target, so it IS
+    in _KNOWN_DISCORD_META_OUTBOUND_KEYS. guild_id is used here instead as
+    a representative genuinely inbound-only key."""
     env = _make_env(
         kind="TextMessage",
         payload=TextMessagePayload(text="hi"),
-        metadata={"discord": {"message_id": "789"}},
+        metadata={"discord": {"guild_id": "789"}},
     )
     result = validate(env)
     assert isinstance(result, Unrecognized)
-    assert result.fields == ["metadata.discord.message_id"]
+    assert result.fields == ["metadata.discord.guild_id"]
     assert "discord_send" in result.canonical_equivalent
 
 
