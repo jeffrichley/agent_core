@@ -5,22 +5,22 @@ scheduler, briefs, webcam, voice). It runs from its **own** venv at
 `~/.agent-core/.venv/` — not from the workspace's `.venv/` — so `uv sync`
 activity in the workspace cannot disrupt the running daemon process.
 
-## Instances (Phase 3)
+## Instances (Phase 3.5)
 
-The daemon supports two instances, selected with `--instance` on every
+The daemon supports three instances, selected with `--instance` on every
 `agent-core daemon` subcommand:
 
-| | `prod` (default) | `dev` |
-|---|---|---|
-| Home | `~/.agent-core/` | `~/.agent-core-dev/` |
-| Bus port | 8789 | 8788 |
-| Code source | release artifacts (`daemon install`) | the workspace `.venv` (editable) |
-| Install stamp | yes | none — dev is not installed |
+| | `prod` (default) | `source` | `test` |
+|---|---|---|---|
+| Home | `~/.agent-core/` | `~/.agent-core-source/` | `~/.agent-core-test/` |
+| Bus port | 8789 | 8788 | 8787 |
+| Code source | release artifacts (`daemon install`) | the workspace `.venv` (editable) | release artifacts (`daemon install --release vX.Y.Z`) |
+| Install stamp | yes | none — source is not installed | yes |
 
 With no `--instance` flag and no `AGENT_CORE_INSTANCE` env var, every
 command resolves to `prod` with port 8789 — the live Pepper + Wren home.
-The dev instance is purely additive: a dev `start`/`stop`/`refresh`/crash
-can never touch prod's venv, port, or state.
+The `source` and `test` instances are purely additive: a `source`/`test`
+`start`/`stop`/`refresh`/crash can never touch prod's venv, port, or state.
 
 `AGENT_CORE_HOME`, when set, overrides the home directory directly (test
 escape hatch).
@@ -75,38 +75,76 @@ agent-core daemon refresh --release v0.2.0 # pin a specific version (rollback)
 > call after the daemon is back succeeds with no session restart. The
 > `agent-core-channel` wake relay reconnects on its own.
 
-## Dev instance
+## Source instance
 
-The dev instance lets you iterate on daemon code without bouncing the
+The source instance lets you iterate on daemon code without bouncing the
 prod daemon that Pepper and Wren depend on. It runs **editable from the
 workspace `.venv`** — your source edits are live on the next restart.
 
-### One-time dev setup
+### One-time source setup
 
 ```bash
-agent-core daemon init --instance dev      # scaffolds ~/.agent-core-dev/agent_core.yaml
-agent-core daemon start --instance dev     # runs from the workspace .venv
+agent-core daemon init --instance source      # scaffolds ~/.agent-core-source/agent_core.yaml
+agent-core daemon start --instance source     # runs from the workspace .venv
 ```
 
-`start --instance dev` must be run from inside the agent_core repo — it
+`start --instance source` must be run from inside the agent_core repo — it
 resolves the workspace `.venv` for the daemon interpreter.
 
-### The dev loop
+### The source loop
 
 Edit daemon code in the repo, then:
 
 ```bash
-agent-core daemon refresh --instance dev
+agent-core daemon refresh --instance source
 ```
 
-For dev, `refresh` is a plain stop + start — **no install step**. The dev
+For source, `refresh` is a plain stop + start — **no install step**. The source
 daemon runs editable from the workspace `.venv`, so the restart picks up
 your latest source edits.
 
-`agent-core daemon install --instance dev` is intentionally an error: the
-dev instance is never installed.
+`agent-core daemon install --instance source` is intentionally an error: the
+source instance is never installed.
 
 The instance can also be set with the `AGENT_CORE_INSTANCE` env var.
+
+## Test instance
+
+The test instance validates the **release deploy path end-to-end** before
+refreshing prod. Use it to confirm that a release candidate installs cleanly
+from wheels, that entry points resolve correctly, and that the daemon starts
+and handles traffic — all without touching the live prod or source instances.
+
+### What distinguishes test from source
+
+- **source** runs editable from the workspace `.venv` — code changes are live
+  on the next restart, no install required.
+- **test** installs from release wheels (same path as prod) — it exercises
+  the packaging and entry-point wiring that only shows up in a built artifact.
+
+### Typical test workflow
+
+```bash
+# 1. Scaffold the test config (one time).
+agent-core daemon init --instance test
+
+# 2. Install a specific release into ~/.agent-core-test/.venv/.
+agent-core daemon install --instance test --release vX.Y.Z
+
+# 3. Start the test daemon (port 8787).
+agent-core daemon start --instance test
+
+# 4. Exercise — run whatever checks, smoke-tests, or agent sessions you need.
+
+# 5. Stop and clean up when done.
+agent-core daemon stop --instance test
+```
+
+Once satisfied, promote to prod:
+
+```bash
+agent-core daemon refresh --release vX.Y.Z   # or just: agent-core daemon refresh
+```
 
 ## Why the daemon runs from its own venv
 
@@ -118,7 +156,7 @@ rewrote every package's editable `.pth`, silently killing the running
 daemon. Pepper went offline mid-session on 2026-05-10 from exactly this.
 
 The fix: install the prod daemon non-editable into a venv outside the
-workspace tree. The dev instance accepts the editable workspace venv on
+workspace tree. The source instance accepts the editable workspace venv on
 purpose — it exists for iteration, and is never the live Pepper/Wren home.
 
 ## Defect A — `cache-keys` history
@@ -138,17 +176,18 @@ gate if any member loses the key.
 
 | Symptom | Cause | Fix |
 |---|---|---|
-| `No daemon config at ...` on `start` | config not scaffolded | `agent-core daemon init [--instance dev]` |
+| `No daemon config at ...` on `start` | config not scaffolded | `agent-core daemon init [--instance source\|test]` |
 | `daemon is currently running` on `install` | prod daemon is up | `agent-core daemon refresh` |
-| `dev daemon needs the workspace .venv` | ran `start --instance dev` outside the repo | `cd` into the agent-core repo |
-| `the dev instance is not installed` | ran `install --instance dev` | dev needs no install — `daemon start --instance dev` |
-| `unknown instance` | bad `--instance` value | use `prod` or `dev` |
+| `source daemon needs the workspace .venv` | ran `start --instance source` outside the repo | `cd` into the agent-core repo |
+| `the source instance is not installed` | ran `install --instance source` | source needs no install — `daemon start --instance source` |
+| `unknown instance` | bad `--instance` value | use `prod`, `source`, or `test` |
 
 ## Related
 
 - `docs/setup/releases.md` — the release flow (release-please + GH Release artifacts).
 - `docs/setup/ci.md` — the CI gate and the one-time `just install-hooks` bootstrap.
-- `docs/superpowers/specs/2026-05-21-phase3-dev-prod-daemon-design.md` — the dev/prod instance design.
+- `docs/superpowers/specs/2026-05-23-phase35-three-instance-test-daemon-design.md` — the three-instance design (prod/source/test).
+- `docs/superpowers/specs/2026-05-21-phase3-dev-prod-daemon-design.md` — the original dev/prod instance design.
 - `docs/superpowers/specs/2026-05-18-agent-core-maturity-design.md` — the maturity spec.
 - [#91](https://github.com/jeffrichley/agent_core/issues/91) — daemon-bounce MCP session recovery.
 - `agent_core.daemon.cli` — supervisor + instance code.

@@ -211,5 +211,5 @@ Phase 3.5 lands first; PR #110 rebases on top. Reasoning: Phase 3.5 is a small t
 ## Footnotes / tradeoffs
 
 - **`AGENT_CORE_HOME` aimed at the wrong home.** The escape hatch can point at any path; a user setting `AGENT_CORE_HOME=~/.agent-core` while running `--instance test` will write test state into prod's home. Documented as user-responsibility; no new safeguard added because the escape hatch is explicitly opt-in.
-- **Tear-down race.** `rm -rf ~/.agent-core-test/` while the dev daemon is running leaves the daemon process holding handles to deleted files; eventually crashes. Same behavior as prod tear-down. Documented in `docs/setup/daemon.md`.
+- **Tear-down race.** `rm -rf ~/.agent-core-test/` while the test daemon is running leaves the daemon process holding handles to deleted files; eventually crashes. Same behavior as prod tear-down. Documented in `docs/setup/daemon.md`.
 - **Loud-fail trade on the hard cutover.** `--instance dev` parse-error gives an immediate, clear failure with a known fix. Trade: any caller we missed in the inventory pass breaks immediately on first invocation rather than silently using a deprecated path. Recoverable via a one-line follow-up patch in the affected file. This is the better failure shape than silent compat-shim drift.
