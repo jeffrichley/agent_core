@@ -279,20 +279,20 @@ def test_status_shows_stamp_metadata(
 # find_workspace_root call from cli.py status command).
 
 
-def test_install_dev_instance_errors(
+def test_install_source_instance_errors_renamed(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """`install --instance dev` must error — dev is editable, not installed."""
+    """`install --instance source` must error — source is editable, not installed."""
     monkeypatch.setenv("AGENT_CORE_HOME", str(tmp_path))
-    result = runner.invoke(daemon_app, ["install", "--instance", "dev"])
+    result = runner.invoke(daemon_app, ["install", "--instance", "source"])
     assert result.exit_code == 1
-    assert "not installed" in result.stdout.lower()
+    assert "not installed" in result.stdout.lower() or "source" in result.stdout.lower()
 
 
-def test_refresh_dev_is_stop_then_start_no_install(
+def test_refresh_source_is_stop_then_start_no_install(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """`refresh --instance dev` bounces (stop + start), never install."""
+    """`refresh --instance source` bounces (stop + start), never install."""
     monkeypatch.setenv("AGENT_CORE_HOME", str(tmp_path))
     order: list[str] = []
 
@@ -300,7 +300,7 @@ def test_refresh_dev_is_stop_then_start_no_install(
         order.append("stop")
 
     def fake_install(instance: str | None = None, release: str | None = None) -> None:
-        order.append("install")  # must NOT be called for dev
+        order.append("install")  # must NOT be called for source
 
     def fake_start(instance: str | None = None) -> None:
         order.append("start")
@@ -309,10 +309,83 @@ def test_refresh_dev_is_stop_then_start_no_install(
     monkeypatch.setattr("agent_core.daemon.cli.install", fake_install)
     monkeypatch.setattr("agent_core.daemon.cli.start", fake_start)
 
-    result = runner.invoke(daemon_app, ["refresh", "--instance", "dev"])
+    result = runner.invoke(daemon_app, ["refresh", "--instance", "source"])
     assert result.exit_code == 0, result.stdout
     assert order == ["stop", "start"]
     assert "install" not in order
+
+
+def test_install_test_instance_succeeds_via_mock(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """daemon install --instance test routes through the prod install path
+    against the test home. Mock release.py to verify the install was attempted
+    against the test home, not prod's."""
+    import json
+
+    monkeypatch.setenv("AGENT_CORE_HOME", str(tmp_path / "test_home"))
+
+    fake_release_json = json.dumps({
+        "tag_name": "v0.2.0",
+        "assets": [
+            {"name": "agent_core-0.2.0-py3-none-any.whl",
+             "browser_download_url": "https://example/agent_core-0.2.0.whl"},
+            {"name": "requirements.txt",
+             "browser_download_url": "https://example/requirements.txt"},
+        ],
+    }).encode("utf-8")
+
+    def fake_fetcher(url: str) -> bytes:
+        if url.endswith("/releases/tags/v0.2.0"):
+            return fake_release_json
+        if url.endswith(".whl"):
+            return b"FAKE_WHEEL_BYTES"
+        if url.endswith("/requirements.txt"):
+            return b"# pinned\n"
+        raise RuntimeError(f"unexpected URL: {url}")
+
+    def fake_subprocess_run(cmd, **kwargs):  # type: ignore[no-untyped-def]
+        class _R:
+            returncode = 0
+            stdout = ""
+            stderr = ""
+        return _R()
+
+    monkeypatch.setattr("agent_core.daemon.release._default_fetcher", fake_fetcher)
+    monkeypatch.setattr("agent_core.daemon.release.subprocess.run", fake_subprocess_run)
+
+    result = runner.invoke(
+        daemon_app,
+        ["install", "--instance", "test", "--release", "v0.2.0"],
+    )
+    assert result.exit_code == 0, result.output
+    # Stamp written — verifies the install completed against test_home
+    stamp_path = tmp_path / "test_home" / ".daemon-install-stamp.json"
+    assert stamp_path.exists(), f"stamp not found at {stamp_path}"
+    stamp = json.loads(stamp_path.read_text())
+    assert stamp["release_tag"] == "v0.2.0"
+
+
+def test_install_source_instance_errors() -> None:
+    """daemon install --instance source remains a deliberate error (renamed
+    from --instance dev). Source runs editable from workspace .venv; nothing
+    to install."""
+    result = runner.invoke(
+        daemon_app, ["install", "--instance", "source", "--release", "v0.2.0"]
+    )
+    assert result.exit_code != 0
+    assert "source" in result.output.lower()
+    assert "--instance dev" not in result.output
+
+
+def test_unknown_instance_dev_parse_error() -> None:
+    """Hard cutover: --instance dev parses as an unknown value, with a clear
+    error message naming the new {prod, source, test} choice set."""
+    result = runner.invoke(daemon_app, ["start", "--instance", "dev"])
+    assert result.exit_code != 0
+    msg = result.output.lower()
+    assert "dev" in msg
+    assert "prod" in msg or "source" in msg or "test" in msg
 
 
 def test_init_writes_config_and_refuses_clobber(
@@ -377,7 +450,7 @@ def test_prod_and_dev_daemons_coexist(
 
     # Scaffold minimal configs.
     assert _run(["init"], prod_home).exit_code == 0
-    assert _run(["init", "--instance", "dev"], dev_home).exit_code == 0
+    assert _run(["init", "--instance", "source"], dev_home).exit_code == 0
 
     # Rewrite each config to a free, distinct port to avoid clashing with
     # a real daemon on 8789/8788.

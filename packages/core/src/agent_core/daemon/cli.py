@@ -4,14 +4,15 @@ start: spawn `agent-core bus run --config <home>/agent_core.yaml`
        detached; write the resulting PID to <home>/daemon.pid.
 stop:  read the PID file, kill the process tree, remove the PID file.
 status: report running/not-running, PID, last 20 lines of daemon.log.
-install: populate the prod daemon venv from a GitHub Release.
-refresh: stop -> (prod: install) -> start.
+install: populate the prod or test daemon venv from a GitHub Release.
+refresh: stop -> (prod/test: install) -> start.
 init:   scaffold a minimal agent_core.yaml for an instance.
 
-Two instances are supported (Phase 3): `prod` (port 8789, home
-~/.agent-core/, release-installed venv) and `dev` (port 8788, home
-~/.agent-core-dev/, runs editable from the workspace .venv). The
-instance is resolved per-invocation from `--instance` / the
+Three instances are supported (Phase 3.5): `prod` (port 8789, home
+~/.agent-core/, release-installed venv), `source` (port 8788, home
+~/.agent-core-source/, runs editable from the workspace .venv), and
+`test` (port 8787, home ~/.agent-core-test/, release-installed venv).
+The instance is resolved per-invocation from `--instance` / the
 AGENT_CORE_INSTANCE env var / default `prod`. AGENT_CORE_HOME still
 overrides the home dir directly (test escape hatch).
 """
@@ -57,7 +58,7 @@ console = Console()
 
 # Shared --instance option definition (reused by every command).
 _INSTANCE_OPTION = typer.Option(
-    None, "--instance", help="Daemon instance: 'prod' (default) or 'dev'."
+    None, "--instance", help="Daemon instance: 'prod' (default), 'source', or 'test'."
 )
 
 
@@ -106,11 +107,11 @@ def _workspace_venv_python() -> Path:
 def _daemon_python(instance: Instance, home: Path) -> str:
     """Return the interpreter the supervisor should spawn the bus with.
 
-    prod: the prod daemon venv if present, else sys.executable (fallback).
-    dev:  the workspace .venv python (editable install). Raises
-          WorkspaceNotFoundError if not inside the repo.
+    prod/test: the daemon venv if present, else sys.executable (fallback).
+    source:    the workspace .venv python (editable install). Raises
+               WorkspaceNotFoundError if not inside the repo.
     """
-    if instance is Instance.DEV:
+    if instance is Instance.SOURCE:
         return str(_workspace_venv_python())
     candidate = _prod_venv_python(home)
     return str(candidate) if candidate.exists() else sys.executable
@@ -143,7 +144,7 @@ def start(instance: str | None = _INSTANCE_OPTION) -> None:
         daemon_py = _daemon_python(inst, home)
     except WorkspaceNotFoundError as exc:
         console.print(
-            f"[red]dev daemon needs the workspace .venv but {exc}[/red]\n"
+            f"[red]source daemon needs the workspace .venv but {exc}[/red]\n"
             "   Run this from inside the agent_core repo."
         )
         raise typer.Exit(code=1) from exc
@@ -211,8 +212,8 @@ def status(instance: str | None = _INSTANCE_OPTION) -> None:
     except WorkspaceNotFoundError:
         console.print("running from: [dim red](workspace .venv not found)[/dim red]")
 
-    # Diagnostic: install stamp — prod only (dev is editable, no stamp).
-    if inst is Instance.PROD:
+    # Diagnostic: install stamp — prod and test (release-installed); source is editable.
+    if inst is not Instance.SOURCE:
         stamp = read_stamp(home)
         if stamp is not None:
             console.print(f"installed at: {stamp.installed_at}")
@@ -258,14 +259,14 @@ def install(
         help="Release tag to install (e.g. v0.1.0). Default: latest release.",
     ),
 ) -> None:
-    """Populate the prod daemon venv from a GitHub Release artifact."""
+    """Populate the prod or test daemon venv from a GitHub Release artifact."""
     inst = _resolve(instance)
 
-    if inst is Instance.DEV:
+    if inst is Instance.SOURCE:
         console.print(
-            "[red]the dev instance is not installed[/red] — it runs editable "
+            "[red]the source instance is not installed[/red] — it runs editable "
             "from the workspace .venv.\n"
-            "   Just run [bold]agent-core daemon start --instance dev[/bold]."
+            "   Just run [bold]agent-core daemon start --instance source[/bold]."
         )
         raise typer.Exit(code=1)
 
@@ -339,7 +340,7 @@ def install(
     )
     write_stamp(home, stamp)
 
-    console.print(f"[green]prod daemon updated to {tag}[/green]")
+    console.print(f"[green]{inst} daemon updated to {tag}[/green]")
 
 
 @app.command()
@@ -351,14 +352,14 @@ def refresh(
         help="Release tag to install (prod only). Default: latest release.",
     ),
 ) -> None:
-    """Stop daemon -> (prod: install release) -> start daemon.
+    """Stop daemon -> (prod/test: install release) -> start daemon.
 
-    For dev this is a plain bounce: the dev daemon runs editable from the
-    workspace .venv, so a stop/start picks up the latest source edits.
+    For source this is a plain bounce: the source daemon runs editable from
+    the workspace .venv, so a stop/start picks up the latest source edits.
     """
     inst = _resolve(instance)
     stop(instance=instance)
-    if inst is Instance.PROD:
+    if inst is not Instance.SOURCE:
         install(instance=instance, release=release)
     start(instance=instance)
 
