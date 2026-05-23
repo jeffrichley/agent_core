@@ -64,3 +64,19 @@ def test_canonical_keys_in_sync_with_validator_catalog():
 
     model_fields = set(_DiscordSendArgs.model_fields.keys())
     assert model_fields == _KNOWN_CANONICAL_SEND_ARGS
+
+
+def test_legacy_keys_in_sync_with_validator_catalog():
+    """The legacy args field set (_SendArgs, used by tool=send and the
+    tool=send_discord_message alias) must stay in lockstep with
+    shape_validator._KNOWN_LEGACY_SEND_ARGS. Drift here would mean the
+    validator produces Unrecognized for envelopes that _dispatch
+    happily routes — a silent split.
+
+    Mirror of test_canonical_keys_in_sync_with_validator_catalog for
+    the legacy surface. Per the final-review feedback on #114."""
+    from agent_core_discord.args import _SendArgs
+    from agent_core_discord.shape_validator import _KNOWN_LEGACY_SEND_ARGS
+
+    model_fields = set(_SendArgs.model_fields.keys())
+    assert model_fields == _KNOWN_LEGACY_SEND_ARGS
