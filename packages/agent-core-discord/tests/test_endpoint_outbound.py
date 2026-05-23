@@ -2731,3 +2731,125 @@ async def test_legacy_textmessage_with_embeds_still_delivers_and_logs(
         assert deprecated_logs[0].shape_name == "legacy_textmessage_embeds"
     finally:
         await ep.stop()
+
+
+# --- #114 Task 10: multi-field + canonical + validator-exception integration tests ---
+
+
+@pytest.mark.asyncio
+async def test_multi_field_unrecognized_produces_one_ack_listing_all_fields(
+    monkeypatch,
+):
+    """When two or more unrecognized fields land on the same envelope,
+    ONE failed-delivery Ack lists all of them. Senders see the full
+    failure surface in one delivery, not in N redeliveries."""
+    ep, handle, fake = await _started(monkeypatch)
+    ch = FakeChannel(id="123")
+    fake.add_channel(ch)
+
+    try:
+        env = Envelope(
+            id="env-multi",
+            correlation_id="corr-multi",
+            to="discord-test",
+            kind="TextMessage",
+            payload=TextMessagePayload(text="hi"),
+            metadata={"discord": {
+                "channel_id": "123",
+                "mystery_one": "X",
+                "mystery_two": "Y",
+            }},
+            created_at=datetime.now(UTC),
+            from_="multi-sender",
+        )
+        await ep.deliver(env)
+
+        # No Discord API call.
+        assert ch.sent == []
+
+        # Exactly ONE Ack with BOTH fields named.
+        acks = [e for e in handle.published if e.kind == "Acknowledgment"]
+        assert len(acks) == 1
+        ack = acks[-1]
+        assert ack.urgency == "yellow"
+        assert "metadata.discord.mystery_one" in ack.payload.note
+        assert "metadata.discord.mystery_two" in ack.payload.note
+    finally:
+        await ep.stop()
+
+
+@pytest.mark.asyncio
+async def test_canonical_discord_send_delivers_silently_no_deprecation_log(
+    monkeypatch, caplog
+):
+    """The canonical path: tool=discord_send + canonical args delivers
+    and emits NO deprecation log. The deprecation-readiness telemetry
+    must see clean canonical sends as 'no event recorded'."""
+    ep, handle, fake = await _started(monkeypatch)
+    ch = FakeChannel(id="123")
+    fake.add_channel(ch)
+
+    try:
+        env = _envelope(
+            "env-canonical",
+            "agent-test",
+            "discord-test",
+            _toolcall("discord_send", {"channel_id": "123", "text": "hi"}),
+        )
+        with caplog.at_level("WARNING"):
+            await ep.deliver(env)
+
+        assert ch.sent, "canonical send should land at the Discord client"
+
+        deprecated_logs = [
+            r for r in caplog.records
+            if getattr(r, "event", None) == "deprecated_shape"
+        ]
+        assert deprecated_logs == [], (
+            f"canonical send must not log deprecation; got {deprecated_logs}"
+        )
+    finally:
+        await ep.stop()
+
+
+@pytest.mark.asyncio
+async def test_validator_internal_exception_produces_yellow_ack(
+    monkeypatch
+):
+    """If the validator itself raises (catalog bug, malformed envelope
+    from a test fixture), deliver()'s existing exception handler must
+    catch it and produce a yellow Ack with the error in the note. The
+    inbound must still be acked so no redelivery storm happens."""
+    ep, handle, fake = await _started(monkeypatch)
+    ch = FakeChannel(id="123")
+    fake.add_channel(ch)
+
+    try:
+        # Force validate_shape() to raise.
+        def _boom(_env):
+            raise RuntimeError("catalog bug for test")
+
+        monkeypatch.setattr(
+            "agent_core_discord.endpoint.validate_shape", _boom
+        )
+
+        env = _envelope(
+            "env-validator-exc",
+            "agent-test",
+            "discord-test",
+            _toolcall("discord_send", {"channel_id": "123", "text": "hi"}),
+        )
+        await ep.deliver(env)
+
+        # _send was NOT reached.
+        assert ch.sent == []
+        # Yellow Ack with "validator failed" in the note.
+        acks = [e for e in handle.published if e.kind == "Acknowledgment"]
+        assert acks, "expected an Acknowledgment after validator exception"
+        ack = acks[-1]
+        assert ack.urgency == "yellow"
+        assert "validator failed" in ack.payload.note.lower()
+        # Inbound was acked.
+        assert env.id in handle.acked
+    finally:
+        await ep.stop()
