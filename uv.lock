@@ -60,6 +60,7 @@ members = [
     "agent-core-notify",
     "agent-core-voice",
     "agent-core-webcam",
+    "qwen-tts",
 ]
 
 [manifest.dependency-groups]
@@ -314,7 +315,7 @@ requires-dist = [
     { name = "agent-core", editable = "packages/core" },
     { name = "fastmcp", specifier = ">=2.0" },
     { name = "pluggy", specifier = ">=1.6" },
-    { name = "qwen-tts", directory = "packages/agent-core-voice/vendor/Qwen3-TTS" },
+    { name = "qwen-tts", editable = "packages/agent-core-voice/vendor/Qwen3-TTS" },
     { name = "soundfile", specifier = ">=0.13" },
     { name = "torch", marker = "extra == 'cpu'", specifier = ">=2.11", index = "https://download.pytorch.org/whl/cpu", conflict = { package = "agent-core-voice", extra = "cpu" } },
     { name = "torch", marker = "extra == 'cu130'", specifier = ">=2.11", index = "https://download.pytorch.org/whl/cu130", conflict = { package = "agent-core-voice", extra = "cu130" } },
@@ -3508,7 +3509,7 @@ wheels = [
 [[package]]
 name = "qwen-tts"
 version = "0.1.1"
-source = { directory = "packages/agent-core-voice/vendor/Qwen3-TTS" }
+source = { editable = "packages/agent-core-voice/vendor/Qwen3-TTS" }
 dependencies = [
     { name = "accelerate" },
     { name = "einops" },

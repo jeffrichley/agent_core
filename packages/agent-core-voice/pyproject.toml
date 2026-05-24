@@ -33,8 +33,6 @@ torchaudio = [
     { index = "pytorch-cpu",   extra = "cpu"   },
     { index = "pytorch-cu130", extra = "cu130" },
 ]
-qwen-tts = { path = "vendor/Qwen3-TTS", editable = false }
-
 [[tool.uv.index]]
 name = "pytorch-cpu"
 url = "https://download.pytorch.org/whl/cpu"

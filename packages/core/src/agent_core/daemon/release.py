@@ -175,12 +175,27 @@ def ensure_venv(venv: Path, *, python_version: str = "3.12") -> None:
 def install_requirements(req_path: Path, *, venv_python: Path) -> None:
     """Install pinned dependencies from a requirements.txt into the daemon venv.
 
-    Resolves the PyTorch cu130 index URL embedded in the requirements file.
+    Passes --extra-index-url for the PyTorch cu130 index because pyproject's
+    [[tool.uv.index]] config does NOT propagate to `uv pip install -r` when
+    invoked from outside the workspace cwd (the daemon runs from its own
+    home directory).
+
+    Passes --index-strategy=unsafe-best-match because the cu130 index hosts
+    its own versions of common packages (certifi, etc.) at versions different
+    from the pinned PyPI versions. Without unsafe-best-match, uv's default
+    first-match policy refuses to fall through to PyPI when the cu130 index
+    has a wrong-version copy of a third-party package, blocking install.
+    cu130 is PyTorch-official; trust equivalence with PyPI is acceptable
+    for our supply chain.
+
+    Phase 2.6 Bug 1 + Bug 3 fallback per the spec.
     """
     cmd = [
         "uv", "pip", "install",
         "--python", str(venv_python),
         "--requirement", str(req_path),
+        "--extra-index-url=https://download.pytorch.org/whl/cu130",
+        "--index-strategy=unsafe-best-match",
     ]
     subprocess.run(cmd, check=True)
 
