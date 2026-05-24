@@ -10,10 +10,10 @@ import pytest
 from agent_core_discord import endpoint as endpoint_mod
 from agent_core_discord.args import _DownloadAttachmentsArgs, _FetchArgs
 from agent_core_discord.endpoint import DiscordEndpoint, _check_embeds_within_caps
+from agent_core_discord.testing.fakes import FakeChannel, FakeDiscordClient
 from pydantic import ValidationError
 
 from agent_core.bus.envelope import EndpointInfo, Envelope, ToolInvocationPayload
-from agent_core_discord.testing.fakes import FakeChannel, FakeDiscordClient
 
 
 class _Recording:

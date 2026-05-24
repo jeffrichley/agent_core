@@ -42,11 +42,14 @@ from agent_core.bus.envelope import (
 class _Recording:
     def __init__(self):
         self.published: list[Envelope] = []
+        self.acked: set[str] = set()
 
     async def publish(self, envelope: Envelope, to=None) -> None:
         self.published.append(envelope)
 
-    async def ack(self, envelope_id: str) -> None: ...
+    async def ack(self, envelope_id: str) -> None:
+        self.acked.add(envelope_id)
+
     async def nack(self, envelope_id: str, requeue: bool = True) -> None: ...
     def endpoints(self) -> list[EndpointInfo]:
         return []
@@ -2452,5 +2455,401 @@ async def test_existing_clear_pending_ack_via_args_reply_to_path_unchanged(monke
         # The pre-existing args.reply_to cleanup path cleared typing.
         assert "target-mid" not in ep._awaiting_reply_ids
         assert "target-mid" not in ep._awaiting_reply_ids_timestamps
+    finally:
+        await ep.stop()
+
+
+# --- #114 Task 6: discord_send alias + dispatch wiring ---
+
+
+@pytest.mark.asyncio
+async def test_dispatch_routes_discord_send_to_internal_send(monkeypatch):
+    """tool=discord_send must reach _send via _dispatch. Verifies the
+    new entry in _TOOL_ALIASES and the _dispatch table (#114 Task 6)."""
+    ep, handle, fake = await _started(monkeypatch)
+    ch = FakeChannel(id="123")
+    fake.add_channel(ch)
+    try:
+        env = _envelope(
+            "e-ds",
+            "agent-test",
+            "discord-test",
+            _toolcall("discord_send", {"channel_id": "123", "text": "hi"}),
+        )
+        await ep.deliver(env)
+        assert len(ch.sent) == 1
+        assert ch.sent[0]["content"] == "hi"
+        ack = [e for e in handle.published if e.kind == "Acknowledgment"][0]
+        result = json.loads(ack.payload.note)
+        assert result["status"] == "sent"
+    finally:
+        await ep.stop()
+
+
+# --- #114 Task 7: _send empty-send guard names 'files' ---
+
+
+@pytest.mark.asyncio
+async def test_discord_send_with_no_payload_raises_explicit_error(monkeypatch):
+    """tool=discord_send with no text, no embeds, no files must produce
+    a clear yellow Ack naming all three options, not just text/embeds.
+    (#114 Task 7 — extends the existing _send guard to mention 'files'.)"""
+    ep, handle, fake = await _started(monkeypatch)
+    try:
+        env = _envelope(
+            "e-empty",
+            "agent-test",
+            "discord-test",
+            _toolcall("discord_send", {"channel_id": "123"}),
+        )
+        await ep.deliver(env)
+
+        # The Acknowledgment fired with a note listing all three payload options.
+        last_ack = [e for e in handle.published if e.kind == "Acknowledgment"][-1]
+        assert last_ack.urgency == "yellow"
+        assert "text" in last_ack.payload.note
+        assert "embeds" in last_ack.payload.note
+        assert "files" in last_ack.payload.note
+    finally:
+        await ep.stop()
+
+
+# --- #114 Task 8: deliver() routes unrecognized envelopes to failed-delivery Ack ---
+
+
+@pytest.mark.asyncio
+async def test_unrecognized_field_produces_failed_delivery_ack(monkeypatch):
+    """LOAD-BEARING regression test (spec Testing section). The single
+    test that proves the silent-drop class is closed for this surface.
+
+    A TextMessage envelope with metadata.discord.mystery_field (unknown)
+    must produce a yellow failed-delivery Acknowledgment and NOT reach
+    the Discord API.
+    """
+    ep, handle, fake = await _started(monkeypatch)
+    ch = FakeChannel(id="123")
+    fake.add_channel(ch)
+
+    env = Envelope(
+        id=uuid.uuid4().hex,
+        correlation_id=uuid.uuid4().hex,
+        from_="agent-test",
+        to="discord-test",
+        kind="TextMessage",
+        payload=TextMessagePayload(text="hi"),
+        metadata={"discord": {
+            "channel_id": "123",
+            "mystery_field": "X",
+        }},
+        created_at=datetime.now(UTC),
+    )
+    original_id = env.id
+
+    try:
+        await ep.deliver(env)
+
+        # (a) No Discord API call.
+        assert ch.sent == [], (
+            "validator failed to gate: dispatch reached the Discord client"
+        )
+
+        # (b) Yellow Ack with right in_reply_to and the unrecognized field
+        # named in the note.
+        acks = [e for e in handle.published if e.kind == "Acknowledgment"]
+        assert acks, "no Acknowledgment was published"
+        ack = acks[-1]
+        assert ack.urgency == "yellow"
+        assert ack.in_reply_to == original_id
+        assert "metadata.discord.mystery_field" in ack.payload.note
+        assert "discord_send" in ack.payload.note
+
+        # (c) The inbound was acked (does not redeliver).
+        assert original_id in handle.acked
+    finally:
+        await ep.stop()
+
+
+# --- #114 Task 9: back-compat regression suite for the 4 documented legacy shapes ---
+
+
+@pytest.mark.asyncio
+async def test_legacy_textmessage_plain_still_delivers_and_logs_deprecation(
+    monkeypatch, caplog
+):
+    """Back-compat shape #1: TextMessage + metadata.discord.channel_id
+    plain text. Must still deliver. Must emit a structured
+    deprecation_shape log line keyed by shape_name."""
+    ep, handle, fake = await _started(monkeypatch)
+    ch = FakeChannel(id="123")
+    fake.add_channel(ch)
+
+    env = Envelope(
+        id="env-plain",
+        correlation_id="corr-plain",
+        to="discord-test",
+        kind="TextMessage",
+        payload=TextMessagePayload(text="hi"),
+        metadata={"discord": {"channel_id": "123"}},
+        created_at=datetime.now(UTC),
+        from_="some-sender",
+    )
+
+    try:
+        with caplog.at_level("WARNING"):
+            await ep.deliver(env)
+
+        assert ch.sent, "expected delivery to land at the Discord client"
+        assert ch.sent[0]["content"] == "hi"
+
+        deprecated_logs = [
+            r for r in caplog.records
+            if getattr(r, "event", None) == "deprecated_shape"
+        ]
+        assert len(deprecated_logs) == 1, (
+            f"expected 1 deprecated_shape log, got {len(deprecated_logs)}"
+        )
+        rec = deprecated_logs[0]
+        assert rec.shape_name == "legacy_textmessage_plain"
+        assert rec.sender == "some-sender"
+        assert rec.envelope_id == "env-plain"
+        assert rec.canonical_equivalent == "tool=discord_send"
+    finally:
+        await ep.stop()
+
+
+@pytest.mark.asyncio
+async def test_legacy_send_discord_message_with_embeds_still_delivers_and_logs(
+    monkeypatch, caplog
+):
+    """Back-compat shape #2: ToolInvocation + tool=send_discord_message
+    + args.{channel_id, text, embeds}."""
+    ep, handle, fake = await _started(monkeypatch)
+    ch = FakeChannel(id="123")
+    fake.add_channel(ch)
+
+    env = _envelope(
+        "env-sdm-embeds",
+        "agent-test",
+        "discord-test",
+        _toolcall(
+            "send_discord_message",
+            {"channel_id": "123", "text": "hi", "embeds": [{"title": "x"}]},
+        ),
+    )
+
+    try:
+        with caplog.at_level("WARNING"):
+            await ep.deliver(env)
+
+        assert ch.sent, "expected delivery to land at the Discord client"
+
+        deprecated_logs = [
+            r for r in caplog.records
+            if getattr(r, "event", None) == "deprecated_shape"
+        ]
+        assert len(deprecated_logs) == 1
+        assert deprecated_logs[0].shape_name == "legacy_tool_send_discord_message"
+    finally:
+        await ep.stop()
+
+
+@pytest.mark.asyncio
+async def test_legacy_send_discord_message_with_files_still_delivers_and_logs(
+    monkeypatch, caplog, tmp_path
+):
+    """Back-compat shape #3: ToolInvocation + tool=send_discord_message
+    + args.{channel_id, text, files} (verified 2026-05-11)."""
+    ep, handle, fake = await _started(monkeypatch)
+    ch = FakeChannel(id="123")
+    fake.add_channel(ch)
+
+    fake_file = tmp_path / "qa.zip"
+    fake_file.write_bytes(b"\x00")
+
+    env = _envelope(
+        "env-sdm-files",
+        "agent-test",
+        "discord-test",
+        _toolcall(
+            "send_discord_message",
+            {"channel_id": "123", "text": "ship it", "files": [str(fake_file)]},
+        ),
+    )
+
+    try:
+        with caplog.at_level("WARNING"):
+            await ep.deliver(env)
+
+        assert ch.sent, "expected delivery to land at the Discord client"
+
+        deprecated_logs = [
+            r for r in caplog.records
+            if getattr(r, "event", None) == "deprecated_shape"
+        ]
+        assert len(deprecated_logs) == 1
+        assert deprecated_logs[0].shape_name == "legacy_tool_send_discord_message"
+    finally:
+        await ep.stop()
+
+
+@pytest.mark.asyncio
+async def test_legacy_textmessage_with_embeds_still_delivers_and_logs(
+    monkeypatch, caplog
+):
+    """Back-compat shape #4: the poster-child. TextMessage + metadata.
+    discord.embeds was routed by commit a278c68; after #114 it still
+    routes but the deprecation log fires."""
+    ep, handle, fake = await _started(monkeypatch)
+    ch = FakeChannel(id="123")
+    fake.add_channel(ch)
+
+    env = Envelope(
+        id="env-embeds",
+        correlation_id="corr-embeds",
+        to="discord-test",
+        kind="TextMessage",
+        payload=TextMessagePayload(text=""),
+        metadata={"discord": {
+            "channel_id": "123",
+            "embeds": [{"title": "x"}],
+        }},
+        created_at=datetime.now(UTC),
+        from_="another-sender",
+    )
+
+    try:
+        with caplog.at_level("WARNING"):
+            await ep.deliver(env)
+
+        assert ch.sent, "expected delivery to land at the Discord client"
+
+        deprecated_logs = [
+            r for r in caplog.records
+            if getattr(r, "event", None) == "deprecated_shape"
+        ]
+        assert len(deprecated_logs) == 1
+        assert deprecated_logs[0].shape_name == "legacy_textmessage_embeds"
+    finally:
+        await ep.stop()
+
+
+# --- #114 Task 10: multi-field + canonical + validator-exception integration tests ---
+
+
+@pytest.mark.asyncio
+async def test_multi_field_unrecognized_produces_one_ack_listing_all_fields(
+    monkeypatch,
+):
+    """When two or more unrecognized fields land on the same envelope,
+    ONE failed-delivery Ack lists all of them. Senders see the full
+    failure surface in one delivery, not in N redeliveries."""
+    ep, handle, fake = await _started(monkeypatch)
+    ch = FakeChannel(id="123")
+    fake.add_channel(ch)
+
+    try:
+        env = Envelope(
+            id="env-multi",
+            correlation_id="corr-multi",
+            to="discord-test",
+            kind="TextMessage",
+            payload=TextMessagePayload(text="hi"),
+            metadata={"discord": {
+                "channel_id": "123",
+                "mystery_one": "X",
+                "mystery_two": "Y",
+            }},
+            created_at=datetime.now(UTC),
+            from_="multi-sender",
+        )
+        await ep.deliver(env)
+
+        # No Discord API call.
+        assert ch.sent == []
+
+        # Exactly ONE Ack with BOTH fields named.
+        acks = [e for e in handle.published if e.kind == "Acknowledgment"]
+        assert len(acks) == 1
+        ack = acks[-1]
+        assert ack.urgency == "yellow"
+        assert "metadata.discord.mystery_one" in ack.payload.note
+        assert "metadata.discord.mystery_two" in ack.payload.note
+    finally:
+        await ep.stop()
+
+
+@pytest.mark.asyncio
+async def test_canonical_discord_send_delivers_silently_no_deprecation_log(
+    monkeypatch, caplog
+):
+    """The canonical path: tool=discord_send + canonical args delivers
+    and emits NO deprecation log. The deprecation-readiness telemetry
+    must see clean canonical sends as 'no event recorded'."""
+    ep, handle, fake = await _started(monkeypatch)
+    ch = FakeChannel(id="123")
+    fake.add_channel(ch)
+
+    try:
+        env = _envelope(
+            "env-canonical",
+            "agent-test",
+            "discord-test",
+            _toolcall("discord_send", {"channel_id": "123", "text": "hi"}),
+        )
+        with caplog.at_level("WARNING"):
+            await ep.deliver(env)
+
+        assert ch.sent, "canonical send should land at the Discord client"
+
+        deprecated_logs = [
+            r for r in caplog.records
+            if getattr(r, "event", None) == "deprecated_shape"
+        ]
+        assert deprecated_logs == [], (
+            f"canonical send must not log deprecation; got {deprecated_logs}"
+        )
+    finally:
+        await ep.stop()
+
+
+@pytest.mark.asyncio
+async def test_validator_internal_exception_produces_yellow_ack(
+    monkeypatch
+):
+    """If the validator itself raises (catalog bug, malformed envelope
+    from a test fixture), deliver()'s existing exception handler must
+    catch it and produce a yellow Ack with the error in the note. The
+    inbound must still be acked so no redelivery storm happens."""
+    ep, handle, fake = await _started(monkeypatch)
+    ch = FakeChannel(id="123")
+    fake.add_channel(ch)
+
+    try:
+        # Force validate_shape() to raise.
+        def _boom(_env):
+            raise RuntimeError("catalog bug for test")
+
+        monkeypatch.setattr(
+            "agent_core_discord.endpoint.validate_shape", _boom
+        )
+
+        env = _envelope(
+            "env-validator-exc",
+            "agent-test",
+            "discord-test",
+            _toolcall("discord_send", {"channel_id": "123", "text": "hi"}),
+        )
+        await ep.deliver(env)
+
+        # _send was NOT reached.
+        assert ch.sent == []
+        # Yellow Ack with "validator failed" in the note.
+        acks = [e for e in handle.published if e.kind == "Acknowledgment"]
+        assert acks, "expected an Acknowledgment after validator exception"
+        ack = acks[-1]
+        assert ack.urgency == "yellow"
+        assert "validator failed" in ack.payload.note.lower()
+        # Inbound was acked.
+        assert env.id in handle.acked
     finally:
         await ep.stop()

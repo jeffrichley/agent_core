@@ -8,9 +8,9 @@ from datetime import UTC
 
 import pytest
 from agent_core_discord.endpoint import DiscordEndpoint, _active_endpoints
+from agent_core_discord.testing.fakes import FakeBusHandle
 
 from agent_core.bus.protocol import Endpoint
-from agent_core_discord.testing.fakes import FakeBusHandle
 
 
 def test_endpoint_satisfies_endpoint_protocol():

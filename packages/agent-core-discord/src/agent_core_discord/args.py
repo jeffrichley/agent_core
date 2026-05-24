@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from typing import Any, Literal, Self
 
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 
 class _SendArgs(BaseModel):
@@ -118,3 +118,37 @@ class _CreateThreadArgs(BaseModel):
 class _SendTypingArgs(BaseModel):
     channel_id: str = Field(min_length=1)
     duration_seconds: float = Field(default=5.0, ge=0.5, le=10.0)
+
+
+class _DiscordSendArgs(BaseModel):
+    """Canonical args for tool=discord_send (#114).
+
+    Pydantic extra='forbid' is the second strict layer behind the
+    envelope-level shape_validator. The validator catches unrecognized
+    fields BEFORE dispatch (yellow Ack via _reply); ValidationError
+    here catches them at dispatch (yellow Ack via _ToolError). Both
+    paths surface to the sender — no silent drop.
+
+    The canonical field set must stay in lockstep with
+    shape_validator._KNOWN_CANONICAL_SEND_ARGS. The
+    test_canonical_keys_in_sync_with_validator_catalog test asserts
+    the invariant.
+
+    allowed_mentions and components are future-proof slots: the args
+    model accepts them, but the adapter's _send() does not yet pass
+    them through to discord.py. A caller that sets them today gets a
+    successful send with the option silently unapplied. A future
+    ticket adds the wiring in _send when there is named demand; no
+    args-model migration needed.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    channel_id: str = Field(min_length=1)
+    text: str | None = None
+    embeds: list[dict[str, Any]] | None = None
+    files: list[str] | None = None
+    reply_to: str | None = None
+    allowed_mentions: dict[str, Any] | None = None
+    components: list[dict[str, Any]] | None = None
+    cleanup_inbound_message_id: str | None = None

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import discord
 import pytest
-from agent_core_discord.testing.fakes import FakeChannel
+from agent_core_discord.testing.fakes import FakeAttachment, FakeChannel
 
 
 @pytest.mark.asyncio
@@ -29,9 +29,6 @@ async def test_fake_message_records_attachments_from_send_call(tmp_path):
     finally:
         for df in discord_files:
             df.close()
-
-
-from agent_core_discord.testing.fakes import FakeAttachment
 
 
 def test_fake_attachment_carries_content_type_and_size():
