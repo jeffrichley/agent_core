@@ -8,6 +8,17 @@ This project uses [*towncrier*](https://towncrier.readthedocs.io/); unreleased c
 
 <!-- towncrier release notes start -->
 
+## [0.3.0](https://github.com/jeffrichley/agent_core/compare/v0.2.0...v0.3.0) (2026-05-24)
+
+
+### Features
+
+* **#114:** unified discord_send envelope shape + strict-mode validator ([#119](https://github.com/jeffrichley/agent_core/issues/119)) ([a6d17fc](https://github.com/jeffrichley/agent_core/commit/a6d17fcd16b7831d6a4c637785b9f78dd15070df))
+* **daemon:** dev/prod daemon instance-parameterization (Phase 3) ([#108](https://github.com/jeffrichley/agent_core/issues/108)) ([16c4cc6](https://github.com/jeffrichley/agent_core/commit/16c4cc69d719d0fb69c4d1ad080c47c10a2082eb))
+* **daemon:** three-instance model — prod / source / test (Phase 3.5) ([#120](https://github.com/jeffrichley/agent_core/issues/120)) ([5301505](https://github.com/jeffrichley/agent_core/commit/5301505e312fc905637932574ffc89b908336222))
+* **qa:** agent-core-qa — release-validation scenario runner ([#122](https://github.com/jeffrichley/agent_core/issues/122)) ([cc1d099](https://github.com/jeffrichley/agent_core/commit/cc1d09923c32ad6f46105c0ca27df64b413ac620))
+* **release:** phase 2.6 — end-to-end install validation (closes 3 release-pipeline bugs) ([#121](https://github.com/jeffrichley/agent_core/issues/121)) ([ce8ee59](https://github.com/jeffrichley/agent_core/commit/ce8ee5971acb46d64944f3df3149249214dabcf8))
+
 ## [0.2.0](https://github.com/jeffrichley/agent_core/compare/v0.1.0...v0.2.0) (2026-05-20)
 
 
