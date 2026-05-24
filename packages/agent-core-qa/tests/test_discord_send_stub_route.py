@@ -156,8 +156,13 @@ async def test_discord_send_tool_routes_through_stub(client):
         f"succeeded.  The bus routing table may not be validating destinations. "
         f"Response: {broken_result.text[:300]}"
     )
-    # Confirm the error text indicates the routing rejection.
+    # Confirm the error text indicates the routing rejection (a different
+    # 500 from some unrelated transport bug should not count as a pass).
     broken_text = broken_result.text.lower()
-    assert "unregistered" in broken_text or "not found" in broken_text or "unknown" in broken_text or broken_result.status_code != 200, (
+    assert (
+        "unregistered" in broken_text
+        or "not found" in broken_text
+        or "unknown" in broken_text
+    ), (
         f"Broken-envelope error did not mention routing failure: {broken_result.text[:300]}"
     )

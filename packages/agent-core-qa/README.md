@@ -36,6 +36,8 @@ uv run pytest tests/
 
 For an already-running test daemon, `agent-core daemon refresh --instance test --release vX.Y.Z` does install + restart in one command.
 
+**Runtime note:** `pytest tests/` triggers Scenario 3 (`test_install_identity_dynamic_keystone`), which performs a SECOND install into a sandbox at `/tmp/qa-<uuid>/` to prove the install path is idempotent against a clean home. On a cold cache the torch download alone can take 5–10 minutes; budget 10–15 minutes for a full validation run on first invocation, 2–3 minutes on subsequent runs once wheels are cached.
+
 ## Scenarios
 
 1. `test_daemon_liveness` — precondition (autouse).
