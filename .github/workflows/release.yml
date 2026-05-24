@@ -27,7 +27,7 @@ jobs:
 
       - name: Export pinned requirements (cu130 extra)
         run: |
-          uv export --frozen --no-dev --extra cu130 \
+          uv export --frozen --no-dev --extra cu130 --no-emit-workspace \
                     --no-hashes --format requirements-txt \
                     > dist/requirements.txt
 
