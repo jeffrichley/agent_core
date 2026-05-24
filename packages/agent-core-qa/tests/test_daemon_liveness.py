@@ -6,7 +6,6 @@ precondition means every other scenario gets clean skip-with-reason instead
 of cryptic connection errors when the daemon isn't up.
 """
 
-import pytest
 
 
 def test_daemon_liveness(client):

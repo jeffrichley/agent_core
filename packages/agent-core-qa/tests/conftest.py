@@ -9,9 +9,7 @@ from __future__ import annotations
 import os
 
 import pytest
-
 from agent_core_qa.client import DaemonClient
-
 
 DEFAULT_DAEMON_URL = "http://127.0.0.1:8787"
 
