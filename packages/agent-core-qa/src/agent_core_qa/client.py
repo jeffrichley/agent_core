@@ -246,3 +246,40 @@ class DaemonClient:
         except Exception:
             pass
         return {"meta": {}, "items": []}
+
+    async def call_tool(
+        self,
+        tool_name: str,
+        arguments: dict[str, Any] | None = None,
+    ) -> _MCPToolResult:
+        """Call any MCP tool on the agent's ClaudeCodeMCPEndpoint.
+
+        Generic escape hatch for tools beyond `send` and `list_pending`.
+        Used by Scenario 4 to call `compose_brief` and `submit_brief`
+        on the `qa` endpoint (which has the briefs tools mounted via
+        ``briefs_orchestrator`` wiring in the test daemon's config).
+
+        Returns an _MCPToolResult with status_code=200 on success (the
+        tool returned without raising) and status_code=500 on transport
+        error or tool exception. The parsed result is available via
+        ``.json()``; the raw text via ``.text``.
+        """
+        if not _HAS_FASTMCP:  # pragma: no cover
+            return _MCPToolResult(
+                status_code=500,
+                text="fastmcp not installed; add fastmcp>=3.0 to agent-core-qa deps",
+            )
+
+        try:
+            async with _FastMCPClient(self._mcp_url, timeout=self._timeout) as mcp:
+                result = await mcp.call_tool(tool_name, arguments=arguments or {})
+
+            data: Any = None
+            if result and hasattr(result[0], "text"):
+                try:
+                    data = json.loads(result[0].text)
+                except (json.JSONDecodeError, AttributeError):
+                    data = result[0].text if hasattr(result[0], "text") else str(result)
+            return _MCPToolResult(status_code=200, data=data, text=str(data))
+        except Exception as exc:
+            return _MCPToolResult(status_code=500, text=str(exc))
