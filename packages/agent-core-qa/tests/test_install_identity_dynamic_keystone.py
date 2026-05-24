@@ -39,7 +39,6 @@ import sys
 import uuid
 from pathlib import Path
 
-
 EXPECTED_PACKAGES = [
     "agent_core",
     "agent_core_briefs",
