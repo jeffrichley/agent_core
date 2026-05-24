@@ -4,6 +4,7 @@ from __future__ import annotations
 import json
 from collections.abc import Callable
 from pathlib import Path
+from typing import Any
 
 import pytest
 
@@ -377,16 +378,24 @@ def test_install_code_path_identity_between_prod_and_test(
 
 # ---- install_requirements ---------------------------------------------------
 
-def test_install_requirements_passes_pytorch_cu130_extra_index_url(monkeypatch, tmp_path):
-    """Phase 2.6 Bug 1 fallback: install_requirements must pass the
-    pytorch-cu130 extra-index-url to uv pip install. pyproject.toml's
-    [[tool.uv.index]] config does NOT propagate to `uv pip install -r`
-    when run from outside the workspace cwd (the daemon runs from its
-    own home directory where there's no pyproject). The flag is the documented
-    fallback path per the Phase 2.6 spec."""
+def test_install_requirements_passes_cu130_index_and_strategy(monkeypatch, tmp_path):
+    """Phase 2.6 Bug 1 + Bug 3 fallback: install_requirements must pass both
+    the pytorch-cu130 extra-index-url AND --index-strategy=unsafe-best-match
+    to uv pip install.
+
+    Bug 1: pyproject.toml's [[tool.uv.index]] config does NOT propagate to
+    `uv pip install -r` when run from outside the workspace cwd (the daemon
+    runs from its own home directory where there's no pyproject). The
+    --extra-index-url flag is the documented fallback.
+
+    Bug 3: the cu130 index hosts its own versions of common packages (certifi,
+    etc.) at versions different from the pinned PyPI versions. Without
+    --index-strategy=unsafe-best-match, uv's default first-match policy
+    refuses to fall through to PyPI when the cu130 index has a wrong-version
+    copy of a third-party package, blocking install."""
     from agent_core.daemon import release
 
-    captured = {}
+    captured: dict[str, Any] = {}
 
     def fake_subprocess_run(cmd, **kwargs):
         captured["cmd"] = list(cmd)
@@ -410,6 +419,10 @@ def test_install_requirements_passes_pytorch_cu130_extra_index_url(monkeypatch, 
     cmd = captured["cmd"]
     assert "--extra-index-url=https://download.pytorch.org/whl/cu130" in cmd or \
            ("--extra-index-url" in cmd and "https://download.pytorch.org/whl/cu130" in cmd), (
-        f"install_requirements command must include the pytorch-cu130 extra-index-url; "
-        f"got: {cmd}"
+        f"install_requirements command must include the pytorch-cu130 extra-index-url "
+        f"(Phase 2.6 Bug 1); got: {cmd}"
+    )
+    assert any("unsafe-best-match" in arg for arg in cmd), (
+        f"install_requirements command must include --index-strategy=unsafe-best-match "
+        f"(Phase 2.6 Bug 3); got: {cmd}"
     )

@@ -7,10 +7,8 @@ surfaced: install couldn't find torch==2.12.0+cu130 because the cu130
 index wasn't reachable from any config layer uv consults.
 """
 
-from pathlib import Path
-
 import tomllib
-
+from pathlib import Path
 
 PYPROJECT = Path(__file__).resolve().parents[3] / "pyproject.toml"
 
