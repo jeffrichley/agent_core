@@ -5,6 +5,11 @@
 [tool.uv.workspace]
 members = ["packages/*"]
 
+[[tool.uv.index]]
+name = "pytorch-cu130"
+url = "https://download.pytorch.org/whl/cu130"
+explicit = true
+
 [tool.uv.sources]
 agent-core = { workspace = true }
 agent-core-notify = { workspace = true }
@@ -16,6 +21,9 @@ agent-core-webcam = { workspace = true }
 agent-core-hatchery = { workspace = true }
 agent-core-voice = { workspace = true }
 agent-core-busproxy = { workspace = true }
+torch = [
+  { index = "pytorch-cu130", extra = "cu130" },
+]
 
 [dependency-groups]
 # Dev tools only; real package deps live in member pyprojects.
