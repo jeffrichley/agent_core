@@ -30,13 +30,13 @@ Transport discovery (Preflight Step 0, Task 3):
 
 from __future__ import annotations
 
+import asyncio
+import json
 import socket
 import time
 import urllib.parse
 from collections.abc import Callable
 from typing import Any
-
-import httpx
 
 try:
     from fastmcp.client import Client as _FastMCPClient
@@ -169,8 +169,6 @@ class DaemonClient:
                     },
                 )
             # fastmcp returns a list of content items; unwrap the first text block.
-            import json
-
             data: Any = None
             if result and hasattr(result[0], "text"):
                 try:
@@ -205,9 +203,6 @@ class DaemonClient:
         if not _HAS_FASTMCP:  # pragma: no cover
             return None
 
-        import asyncio
-        import json
-
         deadline = time.monotonic() + timeout
         while time.monotonic() < deadline:
             try:
@@ -238,8 +233,6 @@ class DaemonClient:
         """
         if not _HAS_FASTMCP:  # pragma: no cover
             return {"meta": {}, "items": []}
-
-        import json
 
         try:
             async with _FastMCPClient(self._mcp_url, timeout=self._timeout) as mcp:
