@@ -50,8 +50,12 @@ def daemon_liveness_required(request, client: DaemonClient):
     install." If the daemon is down, dependent scenarios skip with a clear
     reason instead of failing with cryptic connection errors.
     """
-    # The liveness scenario itself shouldn't skip itself.
-    if request.node.name == "test_daemon_liveness":
+    # Tests that do their own daemon management bypass the liveness check.
+    BYPASS_LIVENESS = {
+        "test_daemon_liveness",
+        "test_install_identity_dynamic_keystone",
+    }
+    if request.node.name in BYPASS_LIVENESS:
         return
     try:
         response = client.health_check()
