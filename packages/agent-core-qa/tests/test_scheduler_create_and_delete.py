@@ -69,7 +69,7 @@ so no side effects from the job existing while the test runs.
 from __future__ import annotations
 
 import uuid
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 
 
 def _toolinvocation_payload(tool: str, args: dict) -> dict:
@@ -110,7 +110,7 @@ async def test_scheduler_create_and_delete_roundtrip(client):
     """
     job_name = f"qa-probe-{uuid.uuid4().hex[:8]}"
     # One year in the future — will not fire during test execution.
-    fires_at = (datetime.now(timezone.utc) + timedelta(days=365)).isoformat()
+    fires_at = (datetime.now(UTC) + timedelta(days=365)).isoformat()
 
     create_args = {
         "name": job_name,
