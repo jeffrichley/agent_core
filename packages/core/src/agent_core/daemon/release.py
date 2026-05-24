@@ -175,12 +175,16 @@ def ensure_venv(venv: Path, *, python_version: str = "3.12") -> None:
 def install_requirements(req_path: Path, *, venv_python: Path) -> None:
     """Install pinned dependencies from a requirements.txt into the daemon venv.
 
-    Resolves the PyTorch cu130 index URL embedded in the requirements file.
+    Passes --extra-index-url for the PyTorch cu130 index because pyproject's
+    [[tool.uv.index]] config does NOT propagate to `uv pip install -r` when
+    invoked from outside the workspace cwd (the daemon runs from its own
+    home directory). Phase 2.6 Bug 1 fallback per the spec.
     """
     cmd = [
         "uv", "pip", "install",
         "--python", str(venv_python),
         "--requirement", str(req_path),
+        "--extra-index-url=https://download.pytorch.org/whl/cu130",
     ]
     subprocess.run(cmd, check=True)
 

@@ -373,3 +373,43 @@ def test_install_code_path_identity_between_prod_and_test(
         + f"\nTEST calls ({len(test_norm)}):\n"
         + "\n".join(f"  {c}" for c in test_norm)
     )
+
+
+# ---- install_requirements ---------------------------------------------------
+
+def test_install_requirements_passes_pytorch_cu130_extra_index_url(monkeypatch, tmp_path):
+    """Phase 2.6 Bug 1 fallback: install_requirements must pass the
+    pytorch-cu130 extra-index-url to uv pip install. pyproject.toml's
+    [[tool.uv.index]] config does NOT propagate to `uv pip install -r`
+    when run from outside the workspace cwd (the daemon runs from its
+    own home directory where there's no pyproject). The flag is the documented
+    fallback path per the Phase 2.6 spec."""
+    from agent_core.daemon import release
+
+    captured = {}
+
+    def fake_subprocess_run(cmd, **kwargs):
+        captured["cmd"] = list(cmd)
+        captured["kwargs"] = kwargs
+        # Return a mock CompletedProcess-shaped object
+        class _Result:
+            returncode = 0
+            stdout = ""
+            stderr = ""
+        return _Result()
+
+    monkeypatch.setattr("agent_core.daemon.release.subprocess.run", fake_subprocess_run)
+
+    req_path = tmp_path / "requirements.txt"
+    req_path.write_text("# stub\n")
+    venv_python = tmp_path / ".venv" / "Scripts" / "python.exe"
+
+    release.install_requirements(req_path, venv_python=venv_python)
+
+    assert "cmd" in captured, "install_requirements did not invoke subprocess.run"
+    cmd = captured["cmd"]
+    assert "--extra-index-url=https://download.pytorch.org/whl/cu130" in cmd or \
+           ("--extra-index-url" in cmd and "https://download.pytorch.org/whl/cu130" in cmd), (
+        f"install_requirements command must include the pytorch-cu130 extra-index-url; "
+        f"got: {cmd}"
+    )
