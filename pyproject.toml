@@ -3,7 +3,10 @@
 # This file holds: workspace declaration, dev deps, shared ruff/pytest config.
 
 [tool.uv.workspace]
-members = ["packages/*"]
+members = [
+    "packages/*",
+    "packages/agent-core-voice/vendor/Qwen3-TTS",
+]
 
 [[tool.uv.index]]
 name = "pytorch-cu130"
@@ -21,6 +24,7 @@ agent-core-webcam = { workspace = true }
 agent-core-hatchery = { workspace = true }
 agent-core-voice = { workspace = true }
 agent-core-busproxy = { workspace = true }
+qwen-tts = { workspace = true }
 torch = [
   { index = "pytorch-cu130", extra = "cu130" },
 ]
