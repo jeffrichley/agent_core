@@ -125,7 +125,7 @@ class Persistence:
                 env.from_,
                 env.to,
                 env.kind,
-                env.payload.model_dump_json(),
+                env.payload.model_dump_json() if hasattr(env.payload, "model_dump_json") else json.dumps(env.payload),
                 json.dumps(env.metadata),
                 env.urgency,
                 env.expires_at.isoformat() if env.expires_at else None,

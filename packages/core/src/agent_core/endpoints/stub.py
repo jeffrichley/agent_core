@@ -56,7 +56,7 @@ class StubEndpoint:
             correlation_id=correlation_id or uuid.uuid4().hex,
             in_reply_to=in_reply_to,
             to=to,
-            kind=kind,  # type: ignore[arg-type]
+            kind=kind,
             payload=payload,
             metadata=metadata or {},
             expires_at=expires_at,
