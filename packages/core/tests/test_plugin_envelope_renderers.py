@@ -13,7 +13,6 @@ from agent_core.plugins.manager import (
     get_envelope_renderers,
 )
 
-
 hookimpl = pluggy.HookimplMarker("agent_core")
 
 
