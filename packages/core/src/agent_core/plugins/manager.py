@@ -96,6 +96,31 @@ def get_hook_tool_types(pm: pluggy.PluginManager) -> dict[str, type[Any]]:
     return _merge_type_maps(pm.hook.register_hook_tool_types(), kind="hook-tool")
 
 
+def get_envelope_renderers(pm: pluggy.PluginManager) -> dict[str, Any]:
+    """Aggregate ``{kind: renderer_callable}`` registrations across all plugins.
+
+    Raises ``PluginRegistryError`` on duplicate-kind collisions (same
+    invariant as :func:`get_endpoint_types`). Distinct plugins MAY register
+    distinct kinds; two plugins registering the same kind is a programming
+    error surfaced loudly at startup.
+
+    Per spec §2.4, callers merge this with built-in renderers in
+    ``agent-core-channel/rendering.py``; the plugin-registered renderers
+    take precedence on collisions with built-ins (operator-aware override).
+    """
+    merged: dict[str, Any] = {}
+    for mapping in pm.hook.register_envelope_renderers():
+        if not mapping:
+            continue
+        for kind, renderer in mapping.items():
+            if kind in merged and merged[kind] is not renderer:
+                raise PluginRegistryError(
+                    f"duplicate envelope-renderer kind {kind!r} registered by multiple plugins"
+                )
+            merged[kind] = renderer
+    return merged
+
+
 def get_bus_log_projectors(pm: pluggy.PluginManager) -> dict[str, Any]:
     """Discover projector registrations from all loaded plugins.
 

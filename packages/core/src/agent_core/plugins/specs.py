@@ -135,3 +135,30 @@ class AgentCoreSpecs:
           - ``services``: same RunnerServices passed to
             ``configure_endpoint_instance``.
         """
+
+    @hookspec
+    def register_envelope_renderers(self) -> dict[str, Any]:
+        """Return ``{kind: renderer_callable}`` for plugin-registered envelope kinds.
+
+        Each renderer takes an envelope dict and returns the rendered body
+        string for inclusion inside an ``<inbox>`` tag at inline-wake
+        rendering. The ``kind`` value becomes a first-class envelope kind
+        once registered — produced envelopes set ``Envelope.kind`` to the
+        registered string and carry their own dict payload that the plugin
+        is responsible for validating (no bus-side payload-validator
+        hookspec in v0; see
+        ``docs/superpowers/specs/2026-05-25-envelope-extension-hookspec-design.md``
+        §1.5 + §6.1).
+
+        Duplicate kinds across plugins raise ``PluginRegistryError`` at
+        startup, mirroring the ``register_endpoint_types`` collision
+        policy: kind-id duplicates are programming errors, not
+        configurations. A plugin may override a built-in renderer by
+        registering the same kind explicitly (operator-aware decision).
+
+        Renderer signature: ``Callable[[dict], str]``. The dict mirrors
+        the wire-format envelope shape (id, kind, from, payload, metadata,
+        urgency, etc.). The returned string is the body text inside the
+        ``<inbox>`` tag; the framework attrs are added separately.
+        """
+        raise NotImplementedError
