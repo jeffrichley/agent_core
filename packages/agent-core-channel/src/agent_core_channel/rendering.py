@@ -142,6 +142,30 @@ _RENDERERS: dict[str, Callable[[dict], str]] = {
     "Event": _render_event_body,
 }
 
+# Plugin-registered renderers for extension envelope kinds (Desire, Thought, …).
+# Populated by the runner during bootstrap via set_plugin_renderers(), sourced
+# from agent_core.plugins.manager.get_envelope_renderers(pm). Plugin renderers
+# take precedence over built-in _RENDERERS on kind collision (operator-aware
+# override). See docs/superpowers/specs/2026-05-25-envelope-extension-hookspec-design.md.
+_PLUGIN_RENDERERS: dict[str, Callable[[dict], str]] = {}
+
+
+def set_plugin_renderers(renderers: dict[str, Callable[[dict], str]]) -> None:
+    """Set the plugin-registered envelope-renderer dispatch table.
+
+    Called by the bus runner during bootstrap after plugin discovery. The
+    runner aggregates plugin contributions via
+    ``agent_core.plugins.manager.get_envelope_renderers(pm)`` and hands the
+    mapping in here. Replacing (not merging) the table makes registration
+    explicit + testable; callers always pass the full intended state.
+
+    Idempotent across re-registration. Pass an empty dict to clear (used
+    in tests).
+    """
+    global _PLUGIN_RENDERERS
+    _PLUGIN_RENDERERS = dict(renderers)
+
+
 # Kinds that use the generic JSON payload renderer rather than the fallback marker.
 _GENERIC_KINDS: frozenset[str] = frozenset(
     {"BriefRequest", "ToolInvocation", "Progress", "ComposeBrief"}
@@ -188,26 +212,41 @@ def _inbox_attrs(env: dict) -> list[str]:
 
 
 def render_envelope(env: dict) -> str:
-    """Render one envelope as an <inbox>...</inbox> block with HTML-escaped body."""
+    """Render one envelope as an <inbox>...</inbox> block with HTML-escaped body.
+
+    Dispatch order:
+      1. Plugin-registered renderer for ``kind`` (allows override of built-ins).
+      2. Built-in ``_RENDERERS`` for ``kind``.
+      3. ``_GENERIC_KINDS`` JSON-payload renderer.
+      4. Fallback (marker block, ``render='fallback'`` attribute).
+    """
     kind = env.get("kind", "Unknown")
 
-    renderer = _RENDERERS.get(kind)
     is_fallback = False
-    if renderer is not None:
+    plugin_renderer = _PLUGIN_RENDERERS.get(kind)
+    if plugin_renderer is not None:
         try:
-            body = renderer(env)
-        except Exception:
-            body = _render_fallback_body(env)
-            is_fallback = True
-    elif kind in _GENERIC_KINDS:
-        try:
-            body = _render_generic_body(env)
+            body = plugin_renderer(env)
         except Exception:
             body = _render_fallback_body(env)
             is_fallback = True
     else:
-        body = _render_fallback_body(env)
-        is_fallback = True
+        renderer = _RENDERERS.get(kind)
+        if renderer is not None:
+            try:
+                body = renderer(env)
+            except Exception:
+                body = _render_fallback_body(env)
+                is_fallback = True
+        elif kind in _GENERIC_KINDS:
+            try:
+                body = _render_generic_body(env)
+            except Exception:
+                body = _render_fallback_body(env)
+                is_fallback = True
+        else:
+            body = _render_fallback_body(env)
+            is_fallback = True
 
     attrs = _inbox_attrs(env)
     if is_fallback:

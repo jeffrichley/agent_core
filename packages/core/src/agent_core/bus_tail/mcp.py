@@ -66,7 +66,7 @@ def _envelope_to_full(env: Envelope) -> dict[str, Any]:
         "expires_at": env.expires_at.isoformat() if env.expires_at else None,
         "payload_summary": summarize_payload(env.payload),
         "metadata_keys": sorted(env.metadata.keys()),
-        "payload": env.payload.model_dump(),
+        "payload": env.payload.model_dump() if hasattr(env.payload, "model_dump") else dict(env.payload),
         "metadata": env.metadata,
     }
 

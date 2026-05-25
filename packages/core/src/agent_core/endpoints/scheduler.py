@@ -610,7 +610,7 @@ async def _fire(
         id=uuid.uuid4().hex,
         correlation_id=uuid.uuid4().hex,
         to=target,
-        kind=env_kind,  # type: ignore[arg-type]
+        kind=env_kind,
         payload=env_payload,
         metadata=md,
         created_at=datetime.now(UTC),
