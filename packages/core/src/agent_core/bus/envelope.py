@@ -119,10 +119,25 @@ class Envelope(BaseModel):
     def validate_kind_matches_payload(self) -> "Envelope":
         """Enforce that the outer kind matches the payload's kind.
 
-        Built-in kinds: payload is a Pydantic model with a literal `kind`
-        attribute. Plugin kinds: payload is a dict whose "kind" key must
-        match.
+        Built-in kinds: payload MUST validate as the typed Pydantic model
+        (TextMessagePayload, EventPayload, etc.). If the typed branch of
+        the discriminated union failed to match (missing required fields,
+        wrong shape), Pydantic falls through to ``dict`` — we reject that
+        here to preserve the pre-extension backward-compat invariant that
+        built-in payloads are always strict.
+
+        Plugin kinds: payload is a dict whose ``"kind"`` key must match
+        the envelope's ``kind`` field. Plugin code is responsible for
+        validating its own payload shape (no bus-side payload-validator
+        hookspec in v0; see spec §1.5).
         """
+        if self.kind in BUILTIN_KINDS and isinstance(self.payload, dict):
+            raise ValueError(
+                f"Envelope kind '{self.kind}' is a built-in; payload must validate "
+                f"as the typed model. Got dict (typed validation likely failed — "
+                f"check for missing required fields)."
+            )
+
         if hasattr(self.payload, "kind"):
             payload_kind = self.payload.kind
         elif isinstance(self.payload, dict):
