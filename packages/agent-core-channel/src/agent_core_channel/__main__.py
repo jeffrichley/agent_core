@@ -59,8 +59,18 @@ def main(
     inline_per_envelope_bytes: int | None = _INLINE_PER_ENVELOPE_BYTES_OPTION,
 ) -> None:
     """Run the agent-core stdio channel relay."""
+    from agent_core.plugins.manager import create_plugin_manager, get_envelope_renderers
     from agent_core_channel.config import load_config
+    from agent_core_channel.rendering import set_plugin_renderers
     from agent_core_channel.stdio_server import run_relay
+
+    # Wire plugin-registered envelope renderers into the rendering dispatch
+    # table. agent_core PR #124 added the capability + dispatch but deferred
+    # the bootstrap wiring; without this call, plugin renderers like
+    # pepper-roots' `Desire` renderer never load and dispatch falls back to
+    # JSON. Caught by Pepper's behavioral round-trip 2026-05-25.
+    pm = create_plugin_manager()
+    set_plugin_renderers(get_envelope_renderers(pm))
 
     cli_args = SimpleNamespace(
         inline_mode=inline_mode,
