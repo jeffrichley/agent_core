@@ -115,3 +115,39 @@ class TestSetPluginRenderersTableManagement:
         set_plugin_renderers({})
         out = render_envelope(_env("X"))
         assert "render='fallback'" in out
+
+
+class TestMainBootstrapWiring:
+    """Regression: channel-relay's main() bootstrap actually wires plugin renderers.
+
+    Caught 2026-05-25 by Pepper's behavioral round-trip — PR #124 added
+    set_plugin_renderers() as a capability but never wired it to be CALLED at
+    channel-relay startup. The renderer table stayed empty at runtime; plugin
+    renderers like pepper-roots' Desire never loaded; wakes fell back to JSON.
+    """
+
+    def test_bootstrap_pattern_populates_table_without_error(self) -> None:
+        """Mirror what __main__.main() does at startup; verify it runs cleanly.
+
+        Doesn't assert specific plugins are present (depends on what's installed
+        in the test venv). Does assert that the wiring chain runs end-to-end:
+        create_plugin_manager → get_envelope_renderers → set_plugin_renderers.
+        """
+        from agent_core.plugins.manager import (
+            create_plugin_manager,
+            get_envelope_renderers,
+        )
+        from agent_core_channel.rendering import (
+            _PLUGIN_RENDERERS,
+            set_plugin_renderers,
+        )
+
+        pm = create_plugin_manager()
+        renderers = get_envelope_renderers(pm)
+        set_plugin_renderers(renderers)
+
+        # The table reflects whatever get_envelope_renderers returned for this
+        # venv's installed plugins. Could be {} (clean test venv) or contain
+        # plugin-registered kinds. Either way, the wiring ran.
+        assert _PLUGIN_RENDERERS == renderers
+        assert isinstance(_PLUGIN_RENDERERS, dict)
