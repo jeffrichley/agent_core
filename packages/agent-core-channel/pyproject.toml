@@ -2,6 +2,7 @@
 name = "agent-core-channel"
 dynamic = ["version"]
 description = "Stdio MCP channel relay — bridges agent-core daemon notifications to Claude Code's wake mechanism."
+license = "MIT"
 requires-python = ">=3.12"
 dependencies = [
     "mcp>=1.0",
