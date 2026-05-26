@@ -19,8 +19,11 @@ def write_addressed(
 ) -> tuple[Path, str]:
     """Write ``audio`` to ``<root>/<sha256>.wav`` with a meta sidecar.
 
-    Returns (path, sha256_hex). Idempotent: identical audio re-writes the
-    same file (no-op if already present and meta matches).
+    Returns (path, sha256_hex). The WAV body is content-addressed and
+    only written if not already present (so identical audio dedupes).
+    The meta sidecar IS rewritten on every call, refreshing
+    ``written_at_utc`` and effectively resetting the TTL window —
+    LRU-ish semantics: actively-touched WAVs stay alive longer.
     """
     sha = hashlib.sha256(audio).hexdigest()
     root.mkdir(parents=True, exist_ok=True)
@@ -46,9 +49,11 @@ def retain_until_iso(*, retain_s: float, now: datetime | None = None) -> str:
 
 
 def cleanup_expired(*, root: Path) -> int:
-    """Walk ``root``, delete WAVs whose meta's mtime + retain_s < now.
+    """Walk ``root``, delete WAVs whose ``written_at_utc + retain_s < now``.
 
-    Returns count removed. Safe to call on a nonexistent root.
+    The deadline is read from the meta sidecar (``written_at_utc`` field),
+    not the filesystem mtime, so it survives backup/restore. Returns
+    count removed. Safe to call on a nonexistent root.
     """
     if not root.exists():
         return 0
