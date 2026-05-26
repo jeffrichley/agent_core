@@ -37,7 +37,12 @@ def test_voice_info_is_frozen_dataclass() -> None:
 
 
 def test_tts_backend_is_runtime_checkable() -> None:
-    """isinstance(obj, TTSBackend) works at runtime."""
+    """isinstance(obj, TTSBackend) works at runtime.
+
+    The Protocol comes from madrigal (post Phase-1 swap) and requires
+    ``prepare_voice``, ``synthesize``, AND ``synthesize_batch``. A
+    backend missing any one of those isn't a TTSBackend.
+    """
 
     class _Impl:
         def prepare_voice(self, voice_id, ref_wav, ref_text):  # type: ignore[no-untyped-def]
@@ -45,6 +50,9 @@ def test_tts_backend_is_runtime_checkable() -> None:
 
         def synthesize(self, voice_id, text, seed):  # type: ignore[no-untyped-def]
             return b"", 0.0
+
+        def synthesize_batch(self, voice_id, texts, seed):  # type: ignore[no-untyped-def]
+            return [b""] * len(texts), [0.0] * len(texts)
 
     class _Missing:
         def prepare_voice(self, voice_id, ref_wav, ref_text):  # type: ignore[no-untyped-def]
