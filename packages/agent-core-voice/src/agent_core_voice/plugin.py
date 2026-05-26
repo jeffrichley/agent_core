@@ -97,20 +97,27 @@ def wire_endpoints_after_registration(
                 f"{voice_name!r} has no such voice. Available voice ids: {available}"
             )
 
+        # Bind agent → voice_id at wire time so the voice endpoint's
+        # envelope handler can resolve envelope.from_ to a voice without
+        # trusting caller-supplied voice ids on the wire.
+        voice_ep.register_agent(name, voice_id)
+
         def _mounter(
             bus_handle,
             *,
             voice_ep: VoiceEndpoint = voice_ep,
+            voice_endpoint_name: str = voice_name,
             mcp_endpoint=endpoint,
             voice_id: str = voice_id,
             agent_name: str = name,
         ) -> None:
-            del bus_handle  # voice tools don't publish onto the bus
             register_voice_tools(
                 mcp=mcp_endpoint._mcp,
-                endpoint=voice_ep,
+                bus_handle=bus_handle,
+                voice_endpoint_name=voice_endpoint_name,
                 voice_id=voice_id,
                 agent_name=agent_name,
+                voice_info=voice_ep.voice_info(voice_id),
             )
 
         endpoint.deferred_tool_mounters.append(_mounter)

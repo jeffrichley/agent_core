@@ -1,8 +1,12 @@
 """Envelope wire format — Pydantic models for the bus's universal message shape.
 
-Every message that crosses the bus is an Envelope. `kind` is a closed structural
-discriminator; for kind=Event, the inner `Event.payload.type` is open-ended for
-domain events.
+Every message that crosses the bus is an Envelope. `kind` is an open str
+field. Built-in kinds (BUILTIN_KINDS) get strict Pydantic payload validation
+via the EnvelopePayload discriminated union; plugin-registered kinds carry
+dict payloads validated by the plugin's own code. See
+docs/superpowers/specs/2026-05-25-envelope-extension-hookspec-design.md.
+
+For kind=Event, the inner `Event.payload.type` is open-ended for domain events.
 
 The `from_` field defaults to "" because the bus stamps it at publish time
 (see BusHandle in handle.py). Endpoints do not need to know their own name.
@@ -76,9 +80,26 @@ EnvelopePayload = Annotated[
     Field(discriminator="kind"),
 ]
 
+# Built-in kinds with typed Pydantic payload models. Plugin-registered kinds
+# (e.g., "Desire" from pepper-roots) carry dict payloads validated by the
+# plugin's own code; the discriminated union does not match them.
+BUILTIN_KINDS: frozenset[str] = frozenset({
+    "TextMessage",
+    "Event",
+    "ToolInvocation",
+    "Cancellation",
+    "Progress",
+    "Acknowledgment",
+})
+
 
 class Envelope(BaseModel):
-    """The bus's universal wire format."""
+    """The bus's universal wire format.
+
+    `kind` is an open str field. Built-in kinds in BUILTIN_KINDS get strict
+    Pydantic payload validation via EnvelopePayload; plugin kinds carry
+    dict payloads that the plugin's own code is responsible for validating.
+    """
 
     model_config = ConfigDict(populate_by_name=True)
 
@@ -87,15 +108,8 @@ class Envelope(BaseModel):
     in_reply_to: str | None = None
     from_: str = Field(default="", alias="from")
     to: str
-    kind: Literal[
-        "TextMessage",
-        "Event",
-        "ToolInvocation",
-        "Cancellation",
-        "Progress",
-        "Acknowledgment",
-    ]
-    payload: EnvelopePayload
+    kind: str
+    payload: EnvelopePayload | dict[str, Any]
     metadata: dict[str, Any] = Field(default_factory=dict)
     urgency: Literal["green", "yellow", "red"] = "green"
     expires_at: datetime | None = None
@@ -103,10 +117,37 @@ class Envelope(BaseModel):
 
     @model_validator(mode="after")
     def validate_kind_matches_payload(self) -> "Envelope":
-        """Enforce that the outer kind matches the payload's kind."""
-        if self.payload.kind != self.kind:
+        """Enforce that the outer kind matches the payload's kind.
+
+        Built-in kinds: payload MUST validate as the typed Pydantic model
+        (TextMessagePayload, EventPayload, etc.). If the typed branch of
+        the discriminated union failed to match (missing required fields,
+        wrong shape), Pydantic falls through to ``dict`` — we reject that
+        here to preserve the pre-extension backward-compat invariant that
+        built-in payloads are always strict.
+
+        Plugin kinds: payload is a dict whose ``"kind"`` key must match
+        the envelope's ``kind`` field. Plugin code is responsible for
+        validating its own payload shape (no bus-side payload-validator
+        hookspec in v0; see spec §1.5).
+        """
+        if self.kind in BUILTIN_KINDS and isinstance(self.payload, dict):
             raise ValueError(
-                f"Envelope kind '{self.kind}' does not match payload kind '{self.payload.kind}'"
+                f"Envelope kind '{self.kind}' is a built-in; payload must validate "
+                f"as the typed model. Got dict (typed validation likely failed — "
+                f"check for missing required fields)."
+            )
+
+        if hasattr(self.payload, "kind"):
+            payload_kind = self.payload.kind
+        elif isinstance(self.payload, dict):
+            payload_kind = self.payload.get("kind")
+        else:
+            payload_kind = None
+
+        if payload_kind != self.kind:
+            raise ValueError(
+                f"Envelope kind '{self.kind}' does not match payload kind '{payload_kind}'"
             )
         return self
 

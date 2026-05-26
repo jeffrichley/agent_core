@@ -7,9 +7,9 @@ from datetime import UTC, datetime
 
 import pytest
 from agent_core_discord.endpoint import DiscordEndpoint
+from agent_core_discord.testing.fakes import FakeDiscordClient
 
 from agent_core.bus.envelope import Envelope, TextMessagePayload
-from agent_core_discord.testing.fakes import FakeDiscordClient
 
 
 async def _make_endpoint(monkeypatch, **kwargs):

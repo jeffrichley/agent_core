@@ -8,6 +8,49 @@ This project uses [*towncrier*](https://towncrier.readthedocs.io/); unreleased c
 
 <!-- towncrier release notes start -->
 
+## [0.5.0](https://github.com/jeffrichley/agent_core/compare/v0.4.1...v0.5.0) (2026-05-26)
+
+
+### ⚠ BREAKING CHANGES
+
+* voice-library bus-async migration (Phase 1-4 + caller audit) ([#130](https://github.com/jeffrichley/agent_core/issues/130))
+
+### Features
+
+* voice-library bus-async migration (Phase 1-4 + caller audit) ([#130](https://github.com/jeffrichley/agent_core/issues/130)) ([574044c](https://github.com/jeffrichley/agent_core/commit/574044c4560f504a02c49b736fcc80cbe170672a))
+
+## [0.4.1](https://github.com/jeffrichley/agent_core/compare/v0.4.0...v0.4.1) (2026-05-25)
+
+
+### Bug Fixes
+
+* **channel:** wire set_plugin_renderers at __main__ bootstrap ([#128](https://github.com/jeffrichley/agent_core/issues/128)) ([c1579fc](https://github.com/jeffrichley/agent_core/commit/c1579fc42dc3169a42049f372293b32e353fbc57))
+
+## [0.4.0](https://github.com/jeffrichley/agent_core/compare/v0.3.0...v0.4.0) (2026-05-25)
+
+
+### Features
+
+* envelope extension hookspec — content-agnostic plugin seam for new kinds + renderers ([#124](https://github.com/jeffrichley/agent_core/issues/124)) ([ad4e166](https://github.com/jeffrichley/agent_core/commit/ad4e16686448f34f95e0203c8abccc79819163c8))
+
+## [0.3.0](https://github.com/jeffrichley/agent_core/compare/v0.2.0...v0.3.0) (2026-05-24)
+
+
+### Features
+
+* **#114:** unified discord_send envelope shape + strict-mode validator ([#119](https://github.com/jeffrichley/agent_core/issues/119)) ([a6d17fc](https://github.com/jeffrichley/agent_core/commit/a6d17fcd16b7831d6a4c637785b9f78dd15070df))
+* **daemon:** dev/prod daemon instance-parameterization (Phase 3) ([#108](https://github.com/jeffrichley/agent_core/issues/108)) ([16c4cc6](https://github.com/jeffrichley/agent_core/commit/16c4cc69d719d0fb69c4d1ad080c47c10a2082eb))
+* **daemon:** three-instance model — prod / source / test (Phase 3.5) ([#120](https://github.com/jeffrichley/agent_core/issues/120)) ([5301505](https://github.com/jeffrichley/agent_core/commit/5301505e312fc905637932574ffc89b908336222))
+* **qa:** agent-core-qa — release-validation scenario runner ([#122](https://github.com/jeffrichley/agent_core/issues/122)) ([cc1d099](https://github.com/jeffrichley/agent_core/commit/cc1d09923c32ad6f46105c0ca27df64b413ac620))
+* **release:** phase 2.6 — end-to-end install validation (closes 3 release-pipeline bugs) ([#121](https://github.com/jeffrichley/agent_core/issues/121)) ([ce8ee59](https://github.com/jeffrichley/agent_core/commit/ce8ee5971acb46d64944f3df3149249214dabcf8))
+
+## [0.2.0](https://github.com/jeffrichley/agent_core/compare/v0.1.0...v0.2.0) (2026-05-20)
+
+
+### Features
+
+* **release:** Phase 2.5 — release-artifact deploy + bug cleanup ([#102](https://github.com/jeffrichley/agent_core/issues/102)) ([079e493](https://github.com/jeffrichley/agent_core/commit/079e4930dc1bcab620dcadf226273dd1bc1be0f7))
+
 ## [0.1.0](https://github.com/jeffrichley/agent_core/tree/0.1.0) - 2026-05-20
 
 No significant changes.

@@ -552,7 +552,7 @@ class ClaudeCodeMCPEndpoint:
             "kind": env.kind,
             "correlation_id": env.correlation_id,
             "in_reply_to": env.in_reply_to,
-            "payload": env.payload.model_dump(),
+            "payload": env.payload.model_dump() if hasattr(env.payload, "model_dump") else dict(env.payload),
             "metadata": env.metadata,
             "urgency": env.urgency,
             "created_at": env.created_at.isoformat(),
@@ -851,8 +851,8 @@ class ClaudeCodeMCPEndpoint:
                 correlation_id=correlation_id or uuid.uuid4().hex,
                 in_reply_to=in_reply_to,
                 to=to,
-                kind=kind,  # type: ignore[arg-type]
-                payload=payload,  # type: ignore[arg-type]  # discriminated by kind
+                kind=kind,
+                payload=payload,  # discriminated by kind
                 metadata=metadata or {},
                 urgency=urgency,  # type: ignore[arg-type]  # validated by Pydantic
                 expires_at=datetime.fromisoformat(expires_at) if expires_at else None,
@@ -1065,7 +1065,7 @@ class ClaudeCodeMCPEndpoint:
                 in_reply_to=in_reply_to,
                 to=from_,
                 kind="TextMessage",
-                payload=payload,  # type: ignore[arg-type]  # discriminated by kind
+                payload=payload,  # discriminated by kind
                 metadata=out_metadata,
                 urgency=out_urgency,  # type: ignore[arg-type]  # validated by Pydantic
                 created_at=datetime.now(UTC),

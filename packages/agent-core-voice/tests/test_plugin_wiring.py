@@ -9,9 +9,9 @@ from unittest.mock import MagicMock
 import pytest
 from agent_core_voice import plugin as voice_plugin
 from agent_core_voice.endpoint import VoiceEndpoint
-from agent_core_voice.fake import FakeTTSBackend
 from agent_core_voice.protocol import VoiceInfo
 from fastmcp import FastMCP
+from madrigal.engine import FakeTTSBackend
 
 
 def test_register_endpoint_types() -> None:

@@ -41,6 +41,7 @@ from agent_core_discord.args import (
     _CreatePollArgs,
     _CreateScheduledEventArgs,
     _CreateThreadArgs,
+    _DiscordSendArgs,
     _DownloadAttachmentsArgs,
     _EditArgs,
     _FetchArgs,
@@ -55,6 +56,13 @@ from agent_core_discord.args import (
 from agent_core_discord.briefing import build_briefing_embeds
 from agent_core_discord.chunking import smart_chunk_discord
 from agent_core_discord.send_retry import channel_send_with_retries
+from agent_core_discord.shape_validator import (
+    Recognized,
+    Unrecognized,
+)
+from agent_core_discord.shape_validator import (
+    validate as validate_shape,
+)
 from agent_core_discord.sigil import parse_sigil
 
 if TYPE_CHECKING:
@@ -65,6 +73,7 @@ log = logging.getLogger(__name__)
 # Pepper-facing tool names from cutover #03 map to the internal dispatcher keys.
 _TOOL_ALIASES: dict[str, str] = {
     "send_discord_message": "send",
+    "discord_send": "discord_send",  # #114: canonical passthrough
     "edit_message": "edit",
     "add_reaction": "react",
     "fetch_messages": "fetch",
@@ -657,6 +666,63 @@ class DiscordEndpoint:
         if self._handle is None:
             raise EndpointUnavailable(f"discord '{self.name}' not started")
 
+        # #114: strict-mode validator. Only consulted for kinds the adapter
+        # dispatches (TextMessage / ToolInvocation); other kinds fall through
+        # to the existing else-branch unchanged.
+        if envelope.kind in ("TextMessage", "ToolInvocation"):
+            try:
+                validation = validate_shape(envelope)
+            except Exception as exc:
+                log.exception("discord(%s): validator raised", self.name)
+                await self._reply(
+                    envelope,
+                    f"validator failed: {exc!r}",
+                    urgency="yellow",
+                )
+                await self._handle.ack(envelope.id)
+                return
+            if isinstance(validation, Unrecognized):
+                log.warning(
+                    "discord(%s): unrecognized_shape event",
+                    self.name,
+                    extra={
+                        "event": "unrecognized_shape",
+                        "envelope_kind": envelope.kind,
+                        "unrecognized_fields": validation.fields,
+                        "sender": envelope.from_,
+                        "envelope_id": envelope.id,
+                        "canonical_equivalent": validation.canonical_equivalent,
+                    },
+                )
+                field_list = validation.fields
+                if len(field_list) == 1:
+                    note = (
+                        f"Unrecognized field {field_list[0]!r} on "
+                        f"{envelope.kind}. Canonical: "
+                        f"{validation.canonical_equivalent}"
+                    )
+                else:
+                    note = (
+                        f"Unrecognized fields {field_list} on "
+                        f"{envelope.kind}. Canonical: "
+                        f"{validation.canonical_equivalent}"
+                    )
+                await self._reply(envelope, note, urgency="yellow")
+                await self._handle.ack(envelope.id)
+                return
+            if isinstance(validation, Recognized) and validation.deprecation_log_line:
+                log.warning(
+                    "discord(%s): deprecated_shape event",
+                    self.name,
+                    extra={
+                        "event": "deprecated_shape",
+                        "shape_name": validation.shape_name,
+                        "sender": envelope.from_,
+                        "envelope_id": envelope.id,
+                        "canonical_equivalent": "tool=discord_send",
+                    },
+                )
+
         if envelope.kind == "TextMessage":
             try:
                 result = await self._deliver_text_message(envelope)
@@ -803,6 +869,10 @@ class DiscordEndpoint:
                         raw["cleanup_inbound_message_id"] = cid
             return raw
 
+        if tool == "discord_send":
+            return await self._send(
+                _v(_DiscordSendArgs, _inject_channel_id(args))
+            )
         if tool == "send":
             return await self._send(_v(_SendArgs, _inject_channel_id(args)))
         if tool == "edit":
@@ -1384,8 +1454,10 @@ class DiscordEndpoint:
             await msg.remove_reaction(emoji, self._client.user)
 
     async def _send(self, args: _SendArgs) -> dict:
-        if args.text is None and not args.embeds:
-            raise _ToolError("send: one of 'text' or 'embeds' is required")
+        if args.text is None and not args.embeds and not args.files:
+            raise _ToolError(
+                "send: one of 'text', 'embeds', or 'files' is required"
+            )
         ch = await self._resolve_channel(args.channel_id)
 
         # Build embeds list (validate via discord.Embed.from_dict).

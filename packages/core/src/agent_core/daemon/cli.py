@@ -4,9 +4,17 @@ start: spawn `agent-core bus run --config <home>/agent_core.yaml`
        detached; write the resulting PID to <home>/daemon.pid.
 stop:  read the PID file, kill the process tree, remove the PID file.
 status: report running/not-running, PID, last 20 lines of daemon.log.
+install: populate the prod or test daemon venv from a GitHub Release.
+refresh: stop -> (prod/test: install) -> start.
+init:   scaffold a minimal agent_core.yaml for an instance.
 
-The daemon's home directory defaults to ~/.agent-core/ but can be
-overridden via the AGENT_CORE_HOME env var (used by tests).
+Three instances are supported (Phase 3.5): `prod` (port 8789, home
+~/.agent-core/, release-installed venv), `source` (port 8788, home
+~/.agent-core-source/, runs editable from the workspace .venv), and
+`test` (port 8787, home ~/.agent-core-test/, release-installed venv).
+The instance is resolved per-invocation from `--instance` / the
+AGENT_CORE_INSTANCE env var / default `prod`. AGENT_CORE_HOME still
+overrides the home dir directly (test escape hatch).
 """
 
 from __future__ import annotations
@@ -14,91 +22,114 @@ from __future__ import annotations
 import os
 import subprocess
 import sys
+from datetime import UTC, datetime
 from pathlib import Path
 
 import typer
 from rich.console import Console
 
+from agent_core.daemon.config_template import build_default_config
 from agent_core.daemon.install import (
-    UvNotFoundError,
+    InstallStamp,
     WorkspaceNotFoundError,
-    compute_lock_hash,
     find_workspace_root,
     read_stamp,
-    run_install,
+    write_stamp,
+)
+from agent_core.daemon.instance import Instance, home_for, resolve_instance
+from agent_core.daemon.release import (
+    NoReleasesError,
+    download_requirements,
+    download_wheels,
+    ensure_venv,
+    install_requirements,
+    install_wheels,
+    list_release_wheels,
+    resolve_version,
 )
 from agent_core.daemon.supervisor import is_alive, kill_tree, read_pid, remove_pid, write_pid
 
-app = typer.Typer(help="Daemon process supervision: start, stop, status, install, refresh.")
+RELEASE_REPO = "jeffrichley/agent_core"
+
+app = typer.Typer(
+    help="Daemon process supervision: start, stop, status, install, refresh, init."
+)
 console = Console()
 
-
-def _home() -> Path:
-    """Return ~/.agent-core/ unless AGENT_CORE_HOME overrides it."""
-    override = os.environ.get("AGENT_CORE_HOME")
-    if override:
-        return Path(override)
-    return Path.home() / ".agent-core"
+# Shared --instance option definition (reused by every command).
+_INSTANCE_OPTION = typer.Option(
+    None, "--instance", help="Daemon instance: 'prod' (default), 'source', or 'test'."
+)
 
 
-def _pid_path() -> Path:
-    return _home() / "daemon.pid"
+def _resolve(instance: str | None) -> Instance:
+    """Resolve the instance from the flag + AGENT_CORE_INSTANCE env."""
+    try:
+        return resolve_instance(
+            flag=instance, env=os.environ.get("AGENT_CORE_INSTANCE")
+        )
+    except ValueError as exc:
+        console.print(f"[red]{exc}[/red]")
+        raise typer.Exit(code=1) from exc
 
 
-def _config_path() -> Path:
-    return _home() / "agent_core.yaml"
+def _pid_path(home: Path) -> Path:
+    return home / "daemon.pid"
 
 
-def _log_path() -> Path:
-    return _home() / "daemon.log"
+def _config_path(home: Path) -> Path:
+    return home / "agent_core.yaml"
 
 
-def _daemon_python() -> str:
-    """Return the daemon's preferred interpreter, with fallback.
+def _log_path(home: Path) -> Path:
+    return home / "daemon.log"
 
-    Prefers `~/.agent-core/.venv/Scripts/python.exe` (Windows) or
-    `~/.agent-core/.venv/bin/python` (POSIX) when present; falls back
-    to `sys.executable` (today's behavior) when the daemon venv is
-    missing. This keeps the supervisor working unchanged on machines
-    that haven't run `agent-core daemon install` yet.
-    """
+
+def _prod_venv_python(home: Path) -> Path:
+    """Fixed path to the prod daemon venv's python, regardless of existence."""
     if sys.platform == "win32":
-        candidate = _home() / ".venv" / "Scripts" / "python.exe"
-    else:
-        candidate = _home() / ".venv" / "bin" / "python"
+        return home / ".venv" / "Scripts" / "python.exe"
+    return home / ".venv" / "bin" / "python"
+
+
+def _workspace_venv_python() -> Path:
+    """Path to the workspace .venv python (the source daemon interpreter).
+
+    Resolves the workspace root from the current directory. Raises
+    WorkspaceNotFoundError if the cwd is not inside the agent_core repo.
+    """
+    workspace = find_workspace_root(Path.cwd())
+    if sys.platform == "win32":
+        return workspace / ".venv" / "Scripts" / "python.exe"
+    return workspace / ".venv" / "bin" / "python"
+
+
+def _daemon_python(instance: Instance, home: Path) -> str:
+    """Return the interpreter the supervisor should spawn the bus with.
+
+    prod/test: the daemon venv if present, else sys.executable (fallback).
+    source:    the workspace .venv python (editable install). Raises
+               WorkspaceNotFoundError if not inside the repo.
+    """
+    if instance is Instance.SOURCE:
+        return str(_workspace_venv_python())
+    candidate = _prod_venv_python(home)
     return str(candidate) if candidate.exists() else sys.executable
 
 
-def _installed_version(python: str) -> str:
-    """Best-effort: the agent-core version installed in the daemon venv.
-
-    Read from the wheel metadata (the true 'what's running' signal — the
-    version is VCS-derived at build time, Phase 2). Never raises.
-    """
-    try:
-        result = subprocess.run(
-            [python, "-c",
-             "import importlib.metadata as m; print(m.version('agent-core'))"],
-            capture_output=True, text=True, check=False, timeout=10,
-        )
-    except (OSError, subprocess.SubprocessError):
-        return "unknown"
-    if result.returncode != 0:
-        return "unknown"
-    return result.stdout.strip() or "unknown"
-
-
 @app.command()
-def start() -> None:
+def start(instance: str | None = _INSTANCE_OPTION) -> None:
     """Spawn `agent-core bus run` detached, write the PID file."""
-    pid_file = _pid_path()
-    cfg = _config_path()
-    log_file = _log_path()
+    inst = _resolve(instance)
+    home = home_for(inst)
+    pid_file = _pid_path(home)
+    cfg = _config_path(home)
+    log_file = _log_path(home)
 
     if not cfg.exists():
         console.print(
             f"[red]No daemon config at {cfg}.[/red] "
-            f"Create it manually for v1 (sub-project C handles auto-init)."
+            f"Run [bold]agent-core daemon init --instance {inst}[/bold] first."
         )
         raise typer.Exit(code=1)
 
@@ -107,85 +138,87 @@ def start() -> None:
         console.print(f"[yellow]daemon already running (PID: {existing})[/yellow]")
         raise typer.Exit(code=1)
     if existing is not None:
-        # Stale.
-        remove_pid(pid_file)
+        remove_pid(pid_file)  # stale
+
+    try:
+        daemon_py = _daemon_python(inst, home)
+    except WorkspaceNotFoundError as exc:
+        console.print(
+            f"[red]source daemon needs the workspace .venv but {exc}[/red]\n"
+            "   Run this from inside the agent_core repo."
+        )
+        raise typer.Exit(code=1) from exc
 
     log_file.parent.mkdir(parents=True, exist_ok=True)
     log_handle = open(log_file, "ab", buffering=0)
 
     proc = subprocess.Popen(
-        [_daemon_python(), "-m", "agent_core.cli", "bus", "run", "--config", str(cfg)],
+        [daemon_py, "-m", "agent_core.cli", "bus", "run", "--config", str(cfg)],
         stdout=log_handle,
         stderr=subprocess.STDOUT,
         stdin=subprocess.DEVNULL,
         start_new_session=True,
     )
     write_pid(pid_file, proc.pid)
-    console.print(f"[green]daemon started (PID: {proc.pid})[/green]")
+    console.print(f"[green]{inst} daemon started (PID: {proc.pid})[/green]")
 
 
 @app.command()
-def stop() -> None:
+def stop(instance: str | None = _INSTANCE_OPTION) -> None:
     """Kill the daemon and clean the PID file. Idempotent."""
-    pid_file = _pid_path()
+    inst = _resolve(instance)
+    home = home_for(inst)
+    pid_file = _pid_path(home)
     pid = read_pid(pid_file)
     if pid is None:
-        console.print("[yellow]daemon is not running[/yellow]")
+        console.print(f"[yellow]{inst} daemon is not running[/yellow]")
         return
     if not is_alive(pid):
-        console.print("[yellow]daemon is not running (stale PID file removed)[/yellow]")
+        console.print(
+            f"[yellow]{inst} daemon is not running (stale PID file removed)[/yellow]"
+        )
         remove_pid(pid_file)
         return
     kill_tree(pid)
     remove_pid(pid_file)
-    console.print(f"[green]daemon stopped (PID: {pid})[/green]")
+    console.print(f"[green]{inst} daemon stopped (PID: {pid})[/green]")
 
 
 @app.command()
-def status() -> None:
+def status(instance: str | None = _INSTANCE_OPTION) -> None:
     """Report daemon liveness and tail the log."""
-    pid_file = _pid_path()
-    log_file = _log_path()
+    inst = _resolve(instance)
+    home = home_for(inst)
+    pid_file = _pid_path(home)
+    log_file = _log_path(home)
     pid = read_pid(pid_file)
 
     if pid is None:
-        console.print("[yellow]daemon is not running[/yellow]")
+        console.print(f"[yellow]{inst} daemon is not running[/yellow]")
         return
     if not is_alive(pid):
-        console.print("[yellow]daemon is not running (stale PID file removed)[/yellow]")
+        console.print(
+            f"[yellow]{inst} daemon is not running (stale PID file removed)[/yellow]"
+        )
         remove_pid(pid_file)
         return
 
-    console.print(f"[green]daemon is running (PID: {pid})[/green]")
+    console.print(f"[green]{inst} daemon is running (PID: {pid})[/green]")
 
-    # Diagnostic: which interpreter the supervisor would use today.
-    daemon_py = _daemon_python()
-    suffix = ""
-    if daemon_py == sys.executable:
-        suffix = (
-            " [dim red](fallback — vulnerable to uv sync; "
-            "run `agent-core daemon install`)[/dim red]"
-        )
-    console.print(f"running from: {daemon_py}{suffix}")
+    # Diagnostic: which interpreter the supervisor would use.
+    try:
+        daemon_py = _daemon_python(inst, home)
+        console.print(f"running from: {daemon_py}")
+    except WorkspaceNotFoundError:
+        console.print("running from: [dim red](workspace .venv not found)[/dim red]")
 
-    # Diagnostic: stamp metadata, if present.
-    stamp = read_stamp(_home())
-    if stamp is not None:
-        console.print(f"installed at: {stamp.installed_at}")
-        console.print(f"installed sha: {stamp.installed_sha}")
-        console.print(f"installed version: {_installed_version(daemon_py)}")
-
-        # Lock-drift check (best-effort; skipped silently if workspace not findable).
-        try:
-            workspace = find_workspace_root(Path.cwd())
-            current_hash = compute_lock_hash(workspace)
-            if current_hash != stamp.uv_lock_hash:
-                console.print(
-                    "[yellow]daemon venv may be stale — "
-                    "run `agent-core daemon refresh`[/yellow]"
-                )
-        except (WorkspaceNotFoundError, FileNotFoundError):
-            pass  # Lock-drift is a nice-to-have; don't fail status on workspace issues.
+    # Diagnostic: install stamp — prod and test (release-installed); source is editable.
+    if inst is not Instance.SOURCE:
+        stamp = read_stamp(home)
+        if stamp is not None:
+            console.print(f"installed at: {stamp.installed_at}")
+            console.print(f"installed sha: {stamp.installed_sha}")
+            console.print(f"installed version: {stamp.installed_version}")
 
     if log_file.exists():
         console.print("\n[dim]--- last 20 lines of daemon.log ---[/dim]")
@@ -195,75 +228,155 @@ def status() -> None:
 
 
 @app.command()
-def install(
-    extra: str | None = typer.Option(
-        None, "--extra", help="uv extra to install (e.g., cu130, cpu)."
-    ),
-    python_version: str = typer.Option(
-        "3.12", "--python", help="Python version to pin the daemon venv to."
+def init(
+    instance: str | None = _INSTANCE_OPTION,
+    force: bool = typer.Option(
+        False, "--force", help="Overwrite an existing agent_core.yaml."
     ),
 ) -> None:
-    """Populate ~/.agent-core/.venv/ from the workspace (non-editable, frozen)."""
-    pid_file = _pid_path()
+    """Scaffold a minimal agent_core.yaml for an instance."""
+    inst = _resolve(instance)
+    home = home_for(inst)
+    cfg = _config_path(home)
+
+    if cfg.exists() and not force:
+        console.print(
+            f"[red]config already exists at {cfg}[/red] — pass --force to overwrite."
+        )
+        raise typer.Exit(code=1)
+
+    home.mkdir(parents=True, exist_ok=True)
+    cfg.write_text(build_default_config(instance=inst, home=home), encoding="utf-8")
+    console.print(f"[green]wrote {inst} daemon config: {cfg}[/green]")
+
+
+@app.command()
+def install(
+    instance: str | None = _INSTANCE_OPTION,
+    release: str | None = typer.Option(
+        None,
+        "--release",
+        help="Release tag to install (e.g. v0.1.0). Default: latest release.",
+    ),
+) -> None:
+    """Populate the prod or test daemon venv from a GitHub Release artifact."""
+    inst = _resolve(instance)
+
+    if inst is Instance.SOURCE:
+        console.print(
+            "[red]the source instance is not installed[/red] — it runs editable "
+            "from the workspace .venv.\n"
+            "   Just run [bold]agent-core daemon start --instance source[/bold]."
+        )
+        raise typer.Exit(code=1)
+
+    home = home_for(inst)
+    pid_file = _pid_path(home)
     existing = read_pid(pid_file)
     if existing is not None and is_alive(existing):
         console.print(
             f"[red]daemon is currently running (PID {existing}).[/red]\n"
             "   • Run [bold]agent-core daemon stop[/bold] and re-run install, or\n"
-            "   • Run [bold]agent-core daemon refresh[/bold] to stop/install/start in one step."
+            "   • Run [bold]agent-core daemon refresh[/bold] to stop/install/start "
+            "in one step."
         )
         raise typer.Exit(code=1)
 
-    try:
-        workspace = find_workspace_root(Path.cwd())
-    except WorkspaceNotFoundError as exc:
-        console.print(f"[red]{exc}[/red]")
-        raise typer.Exit(code=1) from exc
-
-    home = _home()
     home.mkdir(parents=True, exist_ok=True)
 
+    # Resolve version (None -> latest).
     try:
-        stamp = run_install(
-            home=home,
-            workspace=workspace,
-            extra=extra,
-            python_version=python_version,
-        )
-    except UvNotFoundError as exc:
+        tag = resolve_version(release, repo=RELEASE_REPO)
+    except NoReleasesError as exc:
         console.print(f"[red]{exc}[/red]")
         raise typer.Exit(code=1) from exc
-    except subprocess.CalledProcessError as exc:
-        console.print(f"[red]uv exited with code {exc.returncode}.[/red]")
-        if exc.stderr:
-            console.print(exc.stderr.rstrip())
+
+    # Fetch + download artifacts.
+    cache_dir = home / "releases" / tag
+    assets = list_release_wheels(tag, repo=RELEASE_REPO)
+    if not assets:
+        console.print(f"[red]release {tag} has no .whl assets attached[/red]")
+        raise typer.Exit(code=1)
+    wheel_paths = download_wheels(assets, dest=cache_dir)
+    try:
+        req_path = download_requirements(tag, repo=RELEASE_REPO, dest=cache_dir)
+    except FileNotFoundError as exc:
+        console.print(f"[red]{exc}[/red]")
         raise typer.Exit(code=1) from exc
 
-    console.print(
-        f"[green]daemon venv installed[/green] "
-        f"(sha {stamp.installed_sha}, python {stamp.python_version}"
-        + (f", extra {stamp.extra}" if stamp.extra else "")
-        + f", at {stamp.installed_at})"
+    # Ensure daemon venv exists (creates if first install on this box).
+    venv = home / ".venv"
+    try:
+        ensure_venv(venv, python_version="3.12")
+    except subprocess.CalledProcessError as exc:
+        console.print(f"[red]uv venv failed (exit {exc.returncode}).[/red]")
+        raise typer.Exit(code=1) from exc
+
+    venv_python = _prod_venv_python(home)
+
+    # Install pinned dependencies (no-op-fast on upgrades when deps unchanged).
+    try:
+        install_requirements(req_path, venv_python=venv_python)
+    except subprocess.CalledProcessError as exc:
+        console.print(f"[red]dep install failed (exit {exc.returncode}).[/red]")
+        raise typer.Exit(code=1) from exc
+
+    # Surgically replace the agent_core* packages.
+    try:
+        install_wheels(wheel_paths, venv_python=venv_python)
+    except subprocess.CalledProcessError as exc:
+        console.print(f"[red]wheel install failed (exit {exc.returncode}).[/red]")
+        raise typer.Exit(code=1) from exc
+
+    # Stamp it.
+    version = tag.removeprefix("v")
+    stamp = InstallStamp(
+        installed_at=datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ"),
+        installed_sha=_git_sha_of_tag(tag),
+        installed_version=version,
+        python_version="3.12",
+        extra=None,
+        release_tag=tag,
     )
+    write_stamp(home, stamp)
+
+    console.print(f"[green]{inst} daemon updated to {tag}[/green]")
 
 
 @app.command()
 def refresh(
-    extra: str | None = typer.Option(
+    instance: str | None = _INSTANCE_OPTION,
+    release: str | None = typer.Option(
         None,
-        "--extra",
-        help="uv extra to install. Defaults to the stamped extra from the last install.",
-    ),
-    python_version: str = typer.Option(
-        "3.12", "--python", help="Python version to pin the daemon venv to."
+        "--release",
+        help="Release tag to install (prod only). Default: latest release.",
     ),
 ) -> None:
-    """Stop daemon → reinstall daemon venv → start daemon. Bundled lifecycle."""
-    if extra is None:
-        stamp = read_stamp(_home())
-        if stamp is not None:
-            extra = stamp.extra
+    """Stop daemon -> (prod/test: install release) -> start daemon.
 
-    stop()
-    install(extra=extra, python_version=python_version)
-    start()
+    For source this is a plain bounce: the source daemon runs editable from
+    the workspace .venv, so a stop/start picks up the latest source edits.
+    """
+    inst = _resolve(instance)
+    stop(instance=instance)
+    if inst is not Instance.SOURCE:
+        install(instance=instance, release=release)
+    start(instance=instance)
+
+
+def _git_sha_of_tag(tag: str) -> str:
+    """Best-effort: resolve a tag to a git short sha. Returns 'unknown' on failure."""
+    try:
+        result = subprocess.run(
+            ["git", "rev-parse", "--short", tag],
+            cwd=Path.cwd(),
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=5,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return "unknown"
+    if result.returncode != 0:
+        return "unknown"
+    return result.stdout.strip() or "unknown"

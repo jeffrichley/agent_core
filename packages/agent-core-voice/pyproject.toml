@@ -2,10 +2,12 @@
 name = "agent-core-voice"
 dynamic = ["version"]
 description = "Voice synthesis endpoint for agent_core — per-agent Qwen3-TTS via ICL voice cloning"
+license = "MIT"
 requires-python = ">=3.12"
 dependencies = [
     "agent-core",
     "fastmcp>=2.0",
+    "madrigal >= 0.2.0",
     "pluggy>=1.6",
     "soundfile>=0.13",
     "qwen-tts",
@@ -33,8 +35,6 @@ torchaudio = [
     { index = "pytorch-cpu",   extra = "cpu"   },
     { index = "pytorch-cu130", extra = "cu130" },
 ]
-qwen-tts = { path = "vendor/Qwen3-TTS", editable = false }
-
 [[tool.uv.index]]
 name = "pytorch-cpu"
 url = "https://download.pytorch.org/whl/cpu"

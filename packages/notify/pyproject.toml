@@ -2,6 +2,7 @@
 name = "agent-core-notify"
 dynamic = ["version"]
 description = "Desktop notification MCP server for agent-core agents"
+license = "MIT"
 requires-python = ">=3.12"
 dependencies = [
     "desktop-notifier>=5.0",

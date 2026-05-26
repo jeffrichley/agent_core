@@ -7,7 +7,6 @@ import time
 from pathlib import Path
 
 import pytest
-
 from agent_core_discord.endpoint import DiscordEndpoint
 
 
