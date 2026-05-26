@@ -7,10 +7,10 @@ from pathlib import Path
 
 import pytest
 from agent_core_voice.endpoint import VoiceEndpoint
-from agent_core_voice.fake import FakeTTSBackend
 from agent_core_voice.mcp import register_voice_tools
 from agent_core_voice.protocol import VoiceInfo
 from fastmcp import FastMCP
+from madrigal.engine import FakeTTSBackend
 
 
 @pytest.fixture
@@ -70,7 +70,7 @@ async def test_synthesize_speech_success(endpoint: VoiceEndpoint) -> None:
     result = await tools["synthesize_speech"].run({"text": "hello world", "seed": 42})
     payload = json.loads(_text_from(result))
     assert "path" in payload and Path(payload["path"]).exists()
-    assert payload["sample_rate"] == 24000
+    assert payload["sample_rate"] == FakeTTSBackend.SAMPLE_RATE_HZ
     assert payload["duration_s"] > 0
 
 
@@ -86,12 +86,20 @@ async def test_synthesize_speech_failure(endpoint: VoiceEndpoint) -> None:
 
 
 class _BoomBackend:
-    """Backend whose synthesize raises a non-VoiceError exception."""
+    """Backend whose synthesize raises a non-VoiceError exception.
+
+    Implements ``synthesize_batch`` too because the endpoint routes
+    through ``madrigal.generate`` with ``parallel=True`` +
+    ``chunk_strategy="sentence"``, which calls the batch path.
+    """
 
     def prepare_voice(self, voice_id, ref_wav, ref_text):  # type: ignore[no-untyped-def]
         return None
 
     def synthesize(self, voice_id, text, seed):  # type: ignore[no-untyped-def]
+        raise RuntimeError("boom")
+
+    def synthesize_batch(self, voice_id, texts, seed):  # type: ignore[no-untyped-def]
         raise RuntimeError("boom")
 
 

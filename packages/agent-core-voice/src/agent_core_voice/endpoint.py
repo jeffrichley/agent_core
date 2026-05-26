@@ -8,9 +8,15 @@ output directory, and the audit log.
 Construction wiring:
 
 * Production: bus runner calls ``VoiceEndpoint(name=..., **yaml_params)``
-  which constructs ``QwenTTSBackend`` internally (added in Task 11).
+  which constructs ``madrigal.engine.QwenTTSBackend`` internally.
 * Tests: ``VoiceEndpoint.for_test(backend=fake, voices=..., ...)`` skips
-  the real backend and injects a fake.
+  the real backend and injects a fake (typically
+  ``madrigal.engine.FakeTTSBackend``).
+
+Synthesis routes through ``madrigal.generate()`` with chunked + parallel
+batching enabled (Phase 1 of the bus-async migration). The endpoint no
+longer calls ``backend.synthesize`` directly; the voice library owns
+chunking, batching, and wav concatenation.
 """
 
 from __future__ import annotations
@@ -100,7 +106,7 @@ class VoiceEndpoint:
                     "VoiceEndpoint requires either backend=... (tests) or "
                     "model_path=... (production with QwenTTSBackend)"
                 )
-            from agent_core_voice.qwen_backend import QwenTTSBackend
+            from madrigal.engine import QwenTTSBackend
 
             backend = QwenTTSBackend(
                 model_path=model_path,
@@ -179,11 +185,25 @@ class VoiceEndpoint:
         text: str,
         seed: int,
     ) -> SynthesisSuccess | SynthesisError:
-        """Synthesize text in ``voice_id``, write the wav, append audit, return envelope.
+        """Synthesize via ``madrigal.generate()`` (chunked + parallel-batched).
 
         Never raises. All failures land as ``SynthesisError(message=...)``.
         """
+        # Lazy-import to keep module import cheap and to honor the
+        # backend-swap boundary: madrigal is the runtime dep, not a hard
+        # import-time dep for tests that only touch protocol/audit code.
+        from madrigal import Spec, generate
+
         now = datetime.now(UTC)
+
+        # Endpoint-level text validation. The chunker would also raise on
+        # empty input, but doing the pre-check here keeps the error path
+        # uniform (single error class, audited identically) regardless of
+        # whether chunking is enabled.
+        if not text or not text.strip():
+            return await self._record_error(
+                now, agent_name, voice_id, text, seed, EmptyTextError("text is empty")
+            )
         if len(text) > self._max_text_len:
             return await self._record_error(
                 now,
@@ -195,15 +215,35 @@ class VoiceEndpoint:
                     f"text length {len(text)} exceeds endpoint budget {self._max_text_len}"
                 ),
             )
+
         try:
-            wav_bytes, generation_s = await asyncio.to_thread(
-                self._backend.synthesize, voice_id, text, seed
+            result = await asyncio.to_thread(
+                generate,
+                text,
+                Spec(
+                    voice_id=voice_id,
+                    seed=seed,
+                    chunk_strategy="sentence",
+                    parallel=True,
+                ),
+                backend=self._backend,
             )
         except VoiceError as exc:
             return await self._record_error(now, agent_name, voice_id, text, seed, exc)
-        except Exception as exc:  # defensive — unknown backend failure
-            log.exception("voice backend raised unexpected exception")
+        except Exception as exc:  # defensive — unknown backend/library failure
+            log.exception("madrigal.generate raised unexpected exception")
             return await self._record_error(now, agent_name, voice_id, text, seed, exc)
+
+        wav_bytes = result.audio
+        if wav_bytes is None:
+            return await self._record_error(
+                now,
+                agent_name,
+                voice_id,
+                text,
+                seed,
+                _WavPhaseError(RuntimeError("madrigal returned no audio bytes")),
+            )
 
         try:
             duration_s, sample_rate = self._wav_duration(wav_bytes)
@@ -213,6 +253,13 @@ class VoiceEndpoint:
             return await self._record_error(
                 now, agent_name, voice_id, text, seed, _WavPhaseError(exc)
             )
+
+        # generation_s = sum of per-chunk wall times reported by the
+        # backend (madrigal exposes these in result.timings). When timings
+        # are absent (cache hit, sequential single-call path on some
+        # backends) we fall back to 0.0; callers should treat
+        # generation_s as a hint, not a guarantee.
+        generation_s = float(sum(result.timings)) if result.timings else 0.0
 
         await self._audit.write(
             AuditEvent(

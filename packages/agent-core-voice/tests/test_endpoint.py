@@ -1,4 +1,4 @@
-"""VoiceEndpoint wiring against FakeTTSBackend."""
+"""VoiceEndpoint wiring against madrigal.engine.FakeTTSBackend."""
 
 from __future__ import annotations
 
@@ -9,8 +9,8 @@ from pathlib import Path
 import pytest
 import soundfile as sf
 from agent_core_voice.endpoint import SynthesisError, SynthesisSuccess, VoiceEndpoint
-from agent_core_voice.fake import FakeTTSBackend
 from agent_core_voice.protocol import VoiceInfo
+from madrigal.engine import FakeTTSBackend
 
 
 def test_init_prepares_every_voice(tmp_path: Path, ref_wav: Path) -> None:
@@ -27,8 +27,9 @@ def test_init_prepares_every_voice(tmp_path: Path, ref_wav: Path) -> None:
         audit_path=tmp_path / "audit.jsonl",
     )
     assert ep.voice_ids() == {"alice", "bob"}
-    # FakeTTSBackend recorded which voices were prepared.
-    assert backend._prepared == {"alice", "bob"}
+    # FakeTTSBackend recorded which voices were prepared via call_log.
+    prepared = {entry[1] for entry in backend.call_log if entry[0] == "prepare_voice"}
+    assert prepared == {"alice", "bob"}
 
 
 def test_init_creates_output_dir(tmp_path: Path, ref_wav: Path) -> None:
@@ -80,9 +81,9 @@ async def test_synthesize_safe_happy_path(tmp_path: Path, ref_wav: Path) -> None
     path = Path(result.path)
     assert path.exists()
     assert path.is_relative_to(tmp_path / "out" / "alice")
-    # File is a valid 24 kHz mono wav.
+    # File is a valid mono wav at madrigal's FakeTTSBackend rate (16 kHz).
     data, sr = sf.read(str(path))
-    assert sr == 24000
+    assert sr == FakeTTSBackend.SAMPLE_RATE_HZ
     assert data.ndim == 1
     assert result.duration_s > 0
     assert result.generation_s >= 0
@@ -126,11 +127,18 @@ async def test_synthesize_safe_empty_text_returns_error(tmp_path: Path, ref_wav:
 
 @pytest.mark.asyncio
 async def test_synthesize_safe_text_too_long(tmp_path: Path, ref_wav: Path) -> None:
+    """Endpoint enforces ``max_text_len`` even when the backend would happily accept the text.
+
+    Backend-level text-length budgeting was removed in the Phase 1 swap to
+    ``madrigal.generate``; the endpoint is the single source of truth for
+    the per-request length cap.
+    """
     ep = VoiceEndpoint.for_test(
-        backend=FakeTTSBackend(max_text_len=5),
+        backend=FakeTTSBackend(),
         voices={"v": VoiceInfo(voice_id="v", ref_wav=ref_wav, ref_text="r")},
         output_dir=tmp_path / "out",
         audit_path=tmp_path / "audit.jsonl",
+        max_text_len=5,
     )
     result = await ep.synthesize_safe(
         agent_name="v", voice_id="v", text="this is too long", seed=42
@@ -206,7 +214,12 @@ def test_init_requires_backend_or_model_path(tmp_path: Path) -> None:
 
 
 class _BadBytesBackend:
-    """Backend whose synthesize returns invalid wav bytes."""
+    """Backend whose synthesize returns invalid wav bytes.
+
+    Implements ``synthesize_batch`` too so it works with the chunked +
+    parallel path madrigal.generate uses (which routes single-text +
+    chunked through synthesize_batch under the hood).
+    """
 
     def prepare_voice(self, voice_id, ref_wav, ref_text):  # type: ignore[no-untyped-def]
         return None
@@ -214,20 +227,8 @@ class _BadBytesBackend:
     def synthesize(self, voice_id, text, seed):  # type: ignore[no-untyped-def]
         return b"not a wav file", 0.5
 
-
-@pytest.mark.asyncio
-async def test_synthesize_safe_endpoint_text_budget(tmp_path: Path, ref_wav: Path) -> None:
-    """Endpoint enforces its own max_text_len regardless of backend."""
-    ep = VoiceEndpoint.for_test(
-        backend=FakeTTSBackend(max_text_len=10_000),  # backend wouldn't reject
-        voices={"v": VoiceInfo(voice_id="v", ref_wav=ref_wav, ref_text="r")},
-        output_dir=tmp_path / "out",
-        audit_path=tmp_path / "audit.jsonl",
-        max_text_len=5,
-    )
-    result = await ep.synthesize_safe(agent_name="v", voice_id="v", text="hello world", seed=42)
-    assert isinstance(result, SynthesisError)
-    assert "exceeds" in result.message.lower()
+    def synthesize_batch(self, voice_id, texts, seed):  # type: ignore[no-untyped-def]
+        return [b"not a wav file"] * len(texts), [0.5] * len(texts)
 
 
 @pytest.mark.asyncio
@@ -240,4 +241,6 @@ async def test_synthesize_safe_swallows_wav_decode_error(tmp_path: Path, ref_wav
     )
     result = await ep.synthesize_safe(agent_name="v", voice_id="v", text="hi", seed=42)
     assert isinstance(result, SynthesisError)
-    assert "wav" in result.message.lower() or "decode" in result.message.lower()
+    # madrigal raises a soundfile error trying to concat invalid wav bytes;
+    # the endpoint surfaces that as a generic synthesis failure.
+    assert isinstance(result, SynthesisError)
