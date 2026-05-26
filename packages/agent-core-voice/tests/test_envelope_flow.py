@@ -26,6 +26,7 @@ from agent_core_voice.envelopes import (
 )
 from agent_core_voice.protocol import (
     GPUOOMError,
+    TextTooLongError,
     VoiceInfo,
 )
 from madrigal.engine import FakeTTSBackend
@@ -93,6 +94,52 @@ class _OOMBackend:
         self, voice_id: str, texts: list[str], seed: int
     ) -> tuple[list[bytes], list[float]]:
         raise GPUOOMError("simulated OOM")
+
+
+class _TextTooLongBackend:
+    """TTSBackend that always raises TextTooLongError — exercises VoiceError mapping."""
+
+    SAMPLE_RATE_HZ = FakeTTSBackend.SAMPLE_RATE_HZ
+    SAMPLE_WIDTH_BYTES = FakeTTSBackend.SAMPLE_WIDTH_BYTES
+
+    def __init__(self) -> None:
+        self._inner = FakeTTSBackend()
+
+    def prepare_voice(self, voice_id: str, ref_wav: Path, ref_text: str) -> None:
+        self._inner.prepare_voice(voice_id, ref_wav, ref_text)
+
+    def synthesize(self, voice_id: str, text: str, seed: int) -> tuple[bytes, float]:
+        raise TextTooLongError("simulated text too long")
+
+    def synthesize_batch(
+        self, voice_id: str, texts: list[str], seed: int
+    ) -> tuple[list[bytes], list[float]]:
+        raise TextTooLongError("simulated text too long")
+
+
+class _GenericFailureBackend:
+    """TTSBackend that raises a non-VoiceError — exercises INTERNAL_ERROR mapping.
+
+    The endpoint's catch-all ``except Exception`` branch maps unknown
+    backend/library failures to ``INTERNAL_ERROR`` with retryable=False.
+    """
+
+    SAMPLE_RATE_HZ = FakeTTSBackend.SAMPLE_RATE_HZ
+    SAMPLE_WIDTH_BYTES = FakeTTSBackend.SAMPLE_WIDTH_BYTES
+
+    def __init__(self) -> None:
+        self._inner = FakeTTSBackend()
+
+    def prepare_voice(self, voice_id: str, ref_wav: Path, ref_text: str) -> None:
+        self._inner.prepare_voice(voice_id, ref_wav, ref_text)
+
+    def synthesize(self, voice_id: str, text: str, seed: int) -> tuple[bytes, float]:
+        raise RuntimeError("simulated unknown backend failure")
+
+    def synthesize_batch(
+        self, voice_id: str, texts: list[str], seed: int
+    ) -> tuple[list[bytes], list[float]]:
+        raise RuntimeError("simulated unknown backend failure")
 
 
 def _build_request_payload(
@@ -386,3 +433,119 @@ def test_register_agent_rejects_unknown_voice_id(
     )
     with pytest.raises(ValueError, match="not configured"):
         voice_ep.register_agent("caller", "nonexistent_voice")
+
+
+async def test_text_too_long_maps_to_failed_text_too_long(
+    tmp_path: Path,
+    ref_wav: Path,
+) -> None:
+    """A TextTooLongError from the backend maps to SynthesisFailed(TEXT_TOO_LONG, retryable=False)."""
+    backend = _TextTooLongBackend()
+    voice_ep = VoiceEndpoint.for_test(
+        name="voice",
+        backend=backend,
+        voices={
+            "caller_voice": VoiceInfo(
+                voice_id="caller_voice",
+                ref_wav=ref_wav,
+                ref_text="reference",
+            ),
+        },
+        output_dir=tmp_path / "wav_out",
+        audit_path=tmp_path / "audit.jsonl",
+    )
+    voice_ep.register_agent("caller", "caller_voice")
+    caller = StubEndpoint(name="caller")
+    bus = Bus(BusConfig(storage_path=tmp_path / "bus.sqlite"))
+    bus.register(EndpointSpec(endpoint=voice_ep))
+    bus.register(EndpointSpec(endpoint=caller))
+    await bus.start()
+    try:
+        await caller.send(
+            to="voice",
+            kind="Event",
+            payload=_build_request_payload(text="some text"),
+        )
+        reply = await _wait_for_reply(caller)
+    finally:
+        await bus.stop()
+
+    assert reply.payload.type == "SynthesisFailed"
+    failed = SynthesisFailedPayload.model_validate(reply.payload.data)
+    assert failed.reason == "TEXT_TOO_LONG"
+    assert failed.retryable is False
+
+
+async def test_generic_backend_exception_yields_internal_error(
+    tmp_path: Path,
+    ref_wav: Path,
+) -> None:
+    """A non-VoiceError exception from the backend maps to SynthesisFailed(INTERNAL_ERROR, retryable=False)."""
+    backend = _GenericFailureBackend()
+    voice_ep = VoiceEndpoint.for_test(
+        name="voice",
+        backend=backend,
+        voices={
+            "caller_voice": VoiceInfo(
+                voice_id="caller_voice",
+                ref_wav=ref_wav,
+                ref_text="reference",
+            ),
+        },
+        output_dir=tmp_path / "wav_out",
+        audit_path=tmp_path / "audit.jsonl",
+    )
+    voice_ep.register_agent("caller", "caller_voice")
+    caller = StubEndpoint(name="caller")
+    bus = Bus(BusConfig(storage_path=tmp_path / "bus.sqlite"))
+    bus.register(EndpointSpec(endpoint=voice_ep))
+    bus.register(EndpointSpec(endpoint=caller))
+    await bus.start()
+    try:
+        await caller.send(
+            to="voice",
+            kind="Event",
+            payload=_build_request_payload(text="some text"),
+        )
+        reply = await _wait_for_reply(caller)
+    finally:
+        await bus.stop()
+
+    assert reply.payload.type == "SynthesisFailed"
+    failed = SynthesisFailedPayload.model_validate(reply.payload.data)
+    assert failed.reason == "INTERNAL_ERROR"
+    assert failed.retryable is False
+    # The wrapped RuntimeError type name should surface in the message.
+    assert "RuntimeError" in failed.message
+
+
+async def test_malformed_payload_yields_internal_error(
+    wired_bus: tuple[Bus, VoiceEndpoint, StubEndpoint],
+) -> None:
+    """A SynthesisRequest envelope with a payload that fails pydantic validation
+    maps to SynthesisFailed(INTERNAL_ERROR, retryable=False).
+
+    This exercises the deliver()-side validation path: the endpoint calls
+    SynthesisRequestPayload.model_validate(envelope.payload.data) and on
+    failure publishes INTERNAL_ERROR. We bypass _build_request_payload (which
+    pre-validates) and send raw EventPayload data with the wrong shape.
+    """
+    _bus, _voice_ep, caller = wired_bus
+
+    # ``text`` is required and must have min_length=1; missing it triggers
+    # pydantic ValidationError inside the endpoint's deliver() handler.
+    await caller.send(
+        to="voice",
+        kind="Event",
+        payload=EventPayload(
+            type="SynthesisRequest",
+            data={"timeout_s": 5.0},  # no text → invalid
+        ),
+    )
+
+    reply = await _wait_for_reply(caller)
+    assert reply.payload.type == "SynthesisFailed"
+    failed = SynthesisFailedPayload.model_validate(reply.payload.data)
+    assert failed.reason == "INTERNAL_ERROR"
+    assert failed.retryable is False
+    assert "invalid SynthesisRequest payload" in failed.message
