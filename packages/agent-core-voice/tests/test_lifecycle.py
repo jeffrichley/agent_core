@@ -7,6 +7,8 @@ import time
 from datetime import UTC, datetime
 from pathlib import Path
 
+import pytest
+
 from agent_core_voice.lifecycle import (
     cleanup_expired,
     retain_until_iso,
@@ -63,3 +65,58 @@ def test_cleanup_expired_keeps_live_files(tmp_path: Path) -> None:
     n_removed = cleanup_expired(root=tmp_path)
     assert n_removed == 0
     assert path.exists()
+
+
+@pytest.mark.asyncio
+async def test_endpoint_cleanup_tick_removes_expired(tmp_path):
+    """VoiceEndpoint exposes a cleanup_tick coroutine that drives the lifecycle sweep."""
+    import asyncio
+
+    from madrigal.engine import FakeTTSBackend
+
+    from agent_core_voice.endpoint import VoiceEndpoint
+    from agent_core_voice.lifecycle import write_addressed
+    from agent_core_voice.protocol import VoiceInfo
+
+    output_dir = tmp_path / "voice-out"
+    output_dir.mkdir()
+    audio = b"RIFF" + b"\x00" * 100
+    path, _ = write_addressed(audio, root=output_dir, retain_s=0.05)
+    assert path.exists()
+
+    ref_wav = tmp_path / "ref.wav"
+    ref_wav.write_bytes(b"RIFF" + b"\x00" * 64)
+
+    ep = VoiceEndpoint.for_test(
+        backend=FakeTTSBackend(),
+        voices={"v1": VoiceInfo(voice_id="v1", ref_wav=ref_wav, ref_text="hi")},
+        output_dir=output_dir,
+        audit_path=tmp_path / "audit.jsonl",
+    )
+
+    await asyncio.sleep(0.1)
+    n = await ep.cleanup_tick()
+    assert n == 1
+    assert not path.exists()
+
+
+@pytest.mark.asyncio
+async def test_endpoint_cleanup_tick_no_op_on_clean_dir(tmp_path):
+    """cleanup_tick returns 0 when no expired files exist."""
+    from madrigal.engine import FakeTTSBackend
+
+    from agent_core_voice.endpoint import VoiceEndpoint
+    from agent_core_voice.protocol import VoiceInfo
+
+    ref_wav = tmp_path / "ref.wav"
+    ref_wav.write_bytes(b"RIFF" + b"\x00" * 64)
+
+    ep = VoiceEndpoint.for_test(
+        backend=FakeTTSBackend(),
+        voices={"v1": VoiceInfo(voice_id="v1", ref_wav=ref_wav, ref_text="hi")},
+        output_dir=tmp_path / "voice-out",
+        audit_path=tmp_path / "audit.jsonl",
+    )
+
+    n = await ep.cleanup_tick()
+    assert n == 0

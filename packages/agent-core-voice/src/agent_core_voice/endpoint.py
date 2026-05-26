@@ -203,6 +203,22 @@ class VoiceEndpoint:
             "mode": "1.7B Base + ICL voice clone",
         }
 
+    async def cleanup_tick(self) -> int:
+        """Sweep expired WAVs from the output directory. Returns count removed.
+
+        Called periodically (every 5 min by the scheduler endpoint) to enforce
+        the file lifecycle policy. Safe to call manually for tests or ops.
+
+        NOTE: Wire this in production by adding a scheduler job to
+        ``~/.agent-core/jobs.yaml`` that targets the voice endpoint and calls
+        ``cleanup_tick()`` every 5 minutes. Exact yaml shape depends on the
+        scheduler endpoint's job format — check
+        ``agent_core/endpoints/scheduler.py`` for the current schema.
+        """
+        from agent_core_voice.lifecycle import cleanup_expired
+
+        return await asyncio.to_thread(cleanup_expired, root=self._output_dir)
+
     async def synthesize_safe(
         self,
         *,
