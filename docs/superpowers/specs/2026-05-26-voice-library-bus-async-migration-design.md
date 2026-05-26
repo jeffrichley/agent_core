@@ -95,7 +95,7 @@ payload:
 
 Defaults (endpoint-side):
 
-- `timeout_s` default 300s (5 min). Caller can override down (e.g., 30s for quick acks) or up. Hard cap: 600s (10 min). Requests with `timeout_s > 600` are rejected with `SynthesisFailed reason=INTERNAL_ERROR message="timeout_s exceeds 600s cap"` at request-parse time.
+- `timeout_s` default 300s (5 min). Caller can override down (e.g., 30s for quick acks) or up. Hard cap: 600s (10 min). Requests with `timeout_s > 600` are rejected with `SynthesisFailed reason=INTERNAL_ERROR message="timeout_s exceeds 600s cap"` at request-parse time. The cap is per-request, not per-passage — voice-library's chunker keeps per-chunk synthesis well under the cap even for long audio (audiobook batch generation chunks into per-paragraph requests, each well under 600s). The cap may be revisited if Chrona audiobook generation pushes against it.
 - `retain_s` default 3600s (1 hour). Caller can override; capped at 86400s (24h).
 - `options.chunk_strategy` default `"sentence"`.
 - `options.parallel` default `True`.
@@ -199,9 +199,7 @@ Voice endpoint emits `SynthesisFailed` whenever it can detect a failure (model e
 
 ### 7.2 Caller-side timeout
 
-Caller sets `timeout_s` on the request (default 300s). Voice endpoint tracks the deadline; if synthesis hasn't completed by then, it emits `SynthesisFailed` with `reason=TIMEOUT`.
-
-If the voice endpoint itself dies mid-request and cannot emit anything, the caller's MCP runtime sees no envelope at all. The caller must implement its own outer-timeout safety net (the inbox-wake-or-give-up loop) for this case. This is the same pattern as any other event-driven request — voice doesn't get special treatment.
+Caller sets `timeout_s` on the request (default 300s). Voice endpoint tracks the deadline; if synthesis hasn't completed by then, it emits `SynthesisFailed` with `reason=TIMEOUT`. This requires the voice endpoint to be alive and responsive — the orphan-envelope case (voice dies mid-request, never emits anything) is called out as a v1 gap in §10.
 
 ## 8. Backward compatibility
 
@@ -232,10 +230,10 @@ Mechanically split into independent units that ship in order.
 **Phase 2 — envelope handler (medium risk):**
 
 1. Add `SynthesisRequest` handler to the voice endpoint — listens on bus for envelopes addressed to `voice`, kind=Event, type=SynthesisRequest.
-2. On receive: spawn synthesis task (subprocess or async task), record deadline.
+2. On receive: spawn synthesis as an **asyncio task in the daemon's existing event loop** (the same loop the bus uses to dispatch handlers). Record deadline = `now + timeout_s`.
 3. On synthesis complete: publish `SynthesisReady` with the WAV path + metadata.
-4. On synthesis failure: publish `SynthesisFailed` with reason + retryable.
-5. On timeout reached: publish `SynthesisFailed` with reason=TIMEOUT, cancel the task.
+4. On synthesis failure (exception from `voice.generate`): publish `SynthesisFailed` with reason mapped from the `VoiceError` subclass + retryable hint.
+5. On timeout reached: publish `SynthesisFailed` with reason=TIMEOUT, mark the task cancelled. **Cancellation is soft** — Qwen3-TTS's blocking GPU work does not honor asyncio cancellation, so the underlying inference runs to completion and its eventual result is discarded. The GPU stays busy for the duration of the cancelled task; subsequent SynthesisRequests queue behind it. A hard-cancel mechanism (subprocess isolation per synthesis) is deferred to v2 if cancellation latency becomes a real problem; for v1 the soft path is sufficient because the timeout is the safety net, not a routine flow.
 
 **Phase 3 — MCP tool flip (low risk, but breaking):**
 
@@ -259,6 +257,7 @@ Not part of this migration. Open issue against `voice` repo: "chunker over-split
 - **Per-chunk text limit unknown at spec-time.** Qwen3-TTS has some tokenizer limit per call. Voice-library's chunker mitigates by sentence-splitting, but the practical per-chunk safe limit isn't documented. Implementation plan should include an empirical discoverable. Until then, `TEXT_TOO_LONG` is the reason callers get when a single chunk overflows; the failure is non-retryable with the same text.
 - **No streaming.** Voice-library's batched path synthesizes all chunks in parallel then returns the concat. Callers wait the full inference window before getting anything. Adequate for current consumers (Pepper, audiobook batch); a future streaming variant is a separate feature.
 - **Single GPU serialization.** Voice endpoint runs one synthesis at a time on the single GPU. Concurrent SynthesisRequests queue up behind the active one. Acceptable for the current 2-agent consumer base; multi-GPU sharding is out of scope.
+- **Orphan-envelope risk (v1 gap).** If the voice endpoint dies mid-synthesis or is offline at request time, the caller's correlation never resolves — no SynthesisReady, no SynthesisFailed, no TIMEOUT (because TIMEOUT requires voice to be alive enough to emit it). The caller waits forever on a request that won't come back. Two crash modes: (1) voice crashes after receiving SynthesisRequest but before completing; (2) SynthesisRequest published to a queue that voice never drains. A centralized caller-side safety net (one shared "wake me at deadline if no in_reply_to matches" utility, living in agent_core_channel or as a bus primitive) is the right v2 mechanism — better than every consumer reimplementing the deadline-watcher. For v1 this is documented as a known gap; consumers tolerate the wedge in exchange for not blocking individual implementations on the centralized primitive. Daemon-supervisor heartbeats already detect voice-endpoint death within ~30s; recovery from an orphaned request is a manual session-restart for now.
 
 ## 11. Implementation cost estimate
 
