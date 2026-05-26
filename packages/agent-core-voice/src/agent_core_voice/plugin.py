@@ -97,6 +97,11 @@ def wire_endpoints_after_registration(
                 f"{voice_name!r} has no such voice. Available voice ids: {available}"
             )
 
+        # Bind agent → voice_id at wire time so the voice endpoint's
+        # envelope handler can resolve envelope.from_ to a voice without
+        # trusting caller-supplied voice ids on the wire.
+        voice_ep.register_agent(name, voice_id)
+
         def _mounter(
             bus_handle,
             *,
