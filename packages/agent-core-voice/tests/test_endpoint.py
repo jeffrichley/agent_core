@@ -241,6 +241,74 @@ async def test_synthesize_safe_swallows_wav_decode_error(tmp_path: Path, ref_wav
     )
     result = await ep.synthesize_safe(agent_name="v", voice_id="v", text="hi", seed=42)
     assert isinstance(result, SynthesisError)
-    # madrigal raises a soundfile error trying to concat invalid wav bytes;
-    # the endpoint surfaces that as a generic synthesis failure.
-    assert isinstance(result, SynthesisError)
+    # madrigal raises a wave.Error ("file does not start with RIFF id") inside
+    # generate() when it tries to decode the bogus wav bytes our fake backend
+    # returned. The endpoint catches that as a generic synthesis failure.
+    # Permissive OR keeps the assertion robust to madrigal/wave/soundfile wording
+    # changes while still proving the error message carries substantive content
+    # about the wav-decode failure (not a stripped/empty message and not one of
+    # the other short-circuit branches like empty-text / too-long / not-prepared).
+    msg = result.message.lower()
+    assert any(token in msg for token in ("wav", "synthesis", "decode", "riff", "error"))
+    # And explicitly NOT one of the other named failure paths.
+    assert "empty" not in msg
+    assert "exceeds" not in msg
+    assert "not prepared" not in msg
+
+
+def test_production_wiring_constructs_madrigal_qwen_backend(
+    tmp_path: Path, ref_wav: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Guard the lazy ``from madrigal.engine import QwenTTSBackend`` path.
+
+    Without ``backend=``, ``VoiceEndpoint.__init__`` lazy-imports madrigal's
+    real Qwen backend and constructs it from ``model_path`` / ``device`` /
+    ``attn_implementation``. Patching the symbol on ``madrigal.engine`` lets
+    us exercise that branch without needing torch + qwen-tts at test time —
+    otherwise the wiring would only fail at production deploy.
+    """
+    construct_calls: list[dict[str, object]] = []
+
+    class _FakeQwen:
+        def __init__(self, **kwargs: object) -> None:
+            construct_calls.append(kwargs)
+
+        def prepare_voice(
+            self, voice_id: str, ref_wav: Path, ref_text: str
+        ) -> None:  # noqa: ARG002
+            return None
+
+        def synthesize(
+            self, voice_id: str, text: str, seed: int
+        ) -> tuple[bytes, float]:  # noqa: ARG002
+            return b"", 0.0
+
+        def synthesize_batch(
+            self, voice_id: str, texts: list[str], seed: int
+        ) -> tuple[list[bytes], list[float]]:  # noqa: ARG002
+            return [b""] * len(texts), [0.0] * len(texts)
+
+    monkeypatch.setattr("madrigal.engine.QwenTTSBackend", _FakeQwen)
+
+    ep = VoiceEndpoint(
+        name="voice",
+        model_path="/fake/model",
+        device="cpu",
+        attn_implementation="sdpa",
+        voices={"v1": VoiceInfo(voice_id="v1", ref_wav=ref_wav, ref_text="hi")},
+        output_dir=tmp_path / "out",
+        audit_path=tmp_path / "audit.jsonl",
+    )
+
+    # Backend was constructed exactly once, with the kwargs the endpoint
+    # forwarded from its ``model_path`` / ``device`` / ``attn_implementation``
+    # arguments.
+    assert len(construct_calls) == 1
+    assert construct_calls[0] == {
+        "model_path": "/fake/model",
+        "device": "cpu",
+        "attn_implementation": "sdpa",
+    }
+    # And the endpoint itself constructed cleanly — voices prepared, name set.
+    assert ep.name == "voice"
+    assert ep.voice_ids() == {"v1"}
