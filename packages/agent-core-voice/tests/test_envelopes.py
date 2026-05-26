@@ -32,6 +32,10 @@ class TestSynthesisRequestPayload:
         with pytest.raises(ValidationError):
             SynthesisRequestPayload(text="hello", timeout_s=-1.0)
 
+    def test_negative_retain_rejected(self) -> None:
+        with pytest.raises(ValidationError):
+            SynthesisRequestPayload(text="hello", retain_s=-1.0)
+
     def test_empty_text_rejected(self) -> None:
         with pytest.raises(ValidationError):
             SynthesisRequestPayload(text="")
@@ -58,14 +62,41 @@ class TestSynthesisReadyPayload:
         )
         assert p.wav_path == "/tmp/x.wav"
 
+    def test_negative_file_size_rejected(self) -> None:
+        with pytest.raises(ValidationError):
+            SynthesisReadyPayload(
+                wav_path="/tmp/x.wav",
+                file_size_bytes=-1,
+                duration_s=1.5,
+                elapsed_s=0.8,
+                sample_rate_hz=24000,
+                cache_hit=False,
+                chunks=1,
+                retain_until="2026-05-26T15:00:00+00:00",
+            )
+
+    def test_zero_chunks_rejected(self) -> None:
+        with pytest.raises(ValidationError):
+            SynthesisReadyPayload(
+                wav_path="/tmp/x.wav",
+                file_size_bytes=100,
+                duration_s=1.5,
+                elapsed_s=0.8,
+                sample_rate_hz=24000,
+                cache_hit=False,
+                chunks=0,  # ge=1 should reject
+                retain_until="2026-05-26T15:00:00+00:00",
+            )
+
 
 class TestSynthesisFailedPayload:
-    def test_valid_reason_accepted(self) -> None:
-        p = SynthesisFailedPayload(
-            reason="GPU_OOM", message="GPU is OOM", retryable=True
-        )
-        assert p.reason == "GPU_OOM"
-        assert p.retryable is True
+    @pytest.mark.parametrize(
+        "reason",
+        ["GPU_OOM", "TEXT_TOO_LONG", "VOICE_NOT_PREPARED", "INTERNAL_ERROR", "TIMEOUT"],
+    )
+    def test_valid_reason_accepted(self, reason: str) -> None:
+        p = SynthesisFailedPayload(reason=reason, message="m", retryable=True)
+        assert p.reason == reason
 
     def test_invalid_reason_rejected(self) -> None:
         with pytest.raises(ValidationError):
