@@ -8,6 +8,13 @@ This project uses [*towncrier*](https://towncrier.readthedocs.io/); unreleased c
 
 <!-- towncrier release notes start -->
 
+## [0.4.1](https://github.com/jeffrichley/agent_core/compare/v0.4.0...v0.4.1) (2026-05-25)
+
+
+### Bug Fixes
+
+* **channel:** wire set_plugin_renderers at __main__ bootstrap ([#128](https://github.com/jeffrichley/agent_core/issues/128)) ([c1579fc](https://github.com/jeffrichley/agent_core/commit/c1579fc42dc3169a42049f372293b32e353fbc57))
+
 ## [0.4.0](https://github.com/jeffrichley/agent_core/compare/v0.3.0...v0.4.0) (2026-05-25)
 
 
