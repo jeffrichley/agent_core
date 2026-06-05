@@ -141,6 +141,7 @@ class HandoffJobsEndpoint:
         transcript_tail_max_bytes: int = 256 * 1024,
         transcript_tail_max_messages: int = 200,
         jobs_log_dir: str | Path | None = None,
+        handoff_publish_dedupe_seconds: float = 60.0,
     ):
         self.name = name
         self.mount = mount
@@ -156,6 +157,19 @@ class HandoffJobsEndpoint:
         self._jobs: asyncio.Queue[_QueuedJob] = asyncio.Queue()
         self._worker_task: asyncio.Task[None] | None = None
         self._idempotency_index: dict[str, str] = {}
+        # Issue #136: time-windowed publish-side dedupe for SessionEnd-driven
+        # HandoffReady envelopes. ``/compact`` spawns N parallel summarization
+        # sub-sessions, each fires SessionEnd, each runs handoff_writer → POST
+        # → worker → publish. Distinct session_ids mean the intake idempotency
+        # key (#42 design) correctly distinguishes them, but the user-visible
+        # symptom is N envelopes landing in one mailbox. We coalesce here.
+        # ``0.0`` disables dedupe entirely (always publish). Negatives clamp
+        # to 0.
+        self._handoff_publish_dedupe_seconds = max(
+            0.0, float(handoff_publish_dedupe_seconds)
+        )
+        self._recent_handoff_publishes: dict[str, float] = {}
+        self._max_tracked_handoff_publishes = 10_000
 
     # ---- Bus endpoint protocol ----
     async def start(self, bus: BusHandle) -> None:
@@ -406,6 +420,27 @@ Transcript:
             )
         return response_text
 
+    def _evict_stale_handoff_publishes(self, now: float) -> None:
+        """Evict expired/capped entries from the SessionEnd dedupe map.
+
+        Mirrors the ``_evict_stale_outbounds`` pattern in
+        ``claude_code_mcp.py``. TTL is a safety multiple (4x) of the
+        configured dedupe window so we never evict a still-load-bearing
+        entry while the window is open, but we also don't hoard entries
+        forever. The size cap (default 10_000) bounds memory regardless.
+        """
+        ttl = max(self._handoff_publish_dedupe_seconds, 1.0) * 4
+        stale = [
+            k for k, t in self._recent_handoff_publishes.items() if now - t > ttl
+        ]
+        for k in stale:
+            self._recent_handoff_publishes.pop(k, None)
+        while len(self._recent_handoff_publishes) > self._max_tracked_handoff_publishes:
+            oldest_key = min(
+                self._recent_handoff_publishes.items(), key=lambda kv: kv[1]
+            )[0]
+            self._recent_handoff_publishes.pop(oldest_key)
+
     async def _publish_result(
         self,
         *,
@@ -420,6 +455,30 @@ Transcript:
         if self._handle is None:
             log.warning("cannot publish %s for job=%s: endpoint not started", kind, job_id)
             return
+
+        # Issue #136: dedupe SessionEnd-driven HandoffReady envelopes within
+        # a sliding window per routing_target. PreCompact (the first envelope
+        # of a /compact cycle, meaningful state-change signal) and
+        # HandoffFailed (failures are signal, not noise) are never suppressed.
+        now = asyncio.get_running_loop().time()
+        self._evict_stale_handoff_publishes(now)
+        if (
+            kind == "HandoffReady"
+            and req.event == "SessionEnd"
+            and self._handoff_publish_dedupe_seconds > 0
+        ):
+            last = self._recent_handoff_publishes.get(req.routing_target)
+            if last is not None and now - last < self._handoff_publish_dedupe_seconds:
+                log.info(
+                    "handoff publish suppressed: routing_target=%s "
+                    "event=SessionEnd age_seconds=%.2f window_seconds=%.2f "
+                    "job_id=%s",
+                    req.routing_target,
+                    now - last,
+                    self._handoff_publish_dedupe_seconds,
+                    job_id,
+                )
+                return
 
         payload_data: dict[str, Any] = {
             "job_id": job_id,
@@ -443,6 +502,12 @@ Transcript:
             created_at=datetime.now(UTC),
         )
         await self._handle.publish(env)
+
+        # Record the publish for dedupe bookkeeping AFTER a successful publish.
+        # PreCompact and HandoffFailed envelopes do NOT poison the SessionEnd
+        # slot — that bookkeeping is SessionEnd-only by design (per spec).
+        if kind == "HandoffReady" and req.event == "SessionEnd":
+            self._recent_handoff_publishes[req.routing_target] = now
 
     # ---- Status + filesystem helpers ----
     @staticmethod
