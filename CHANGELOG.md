@@ -8,6 +8,17 @@ This project uses [*towncrier*](https://towncrier.readthedocs.io/); unreleased c
 
 <!-- towncrier release notes start -->
 
+## [0.5.0](https://github.com/jeffrichley/agent_core/compare/v0.4.1...v0.5.0) (2026-05-26)
+
+
+### ⚠ BREAKING CHANGES
+
+* voice-library bus-async migration (Phase 1-4 + caller audit) ([#130](https://github.com/jeffrichley/agent_core/issues/130))
+
+### Features
+
+* voice-library bus-async migration (Phase 1-4 + caller audit) ([#130](https://github.com/jeffrichley/agent_core/issues/130)) ([574044c](https://github.com/jeffrichley/agent_core/commit/574044c4560f504a02c49b736fcc80cbe170672a))
+
 ## [0.4.1](https://github.com/jeffrichley/agent_core/compare/v0.4.0...v0.4.1) (2026-05-25)
 
 
