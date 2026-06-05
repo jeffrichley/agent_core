@@ -44,6 +44,10 @@ endpoints:
     name: handoff-jobs
     params:
       mount: /internal/handoff-jobs
+      # Dedupe window for SessionEnd-driven HandoffReady envelopes
+      # (issue #136). 0.0 disables. Code default is 60.0; uncomment
+      # only to override.
+      # handoff_publish_dedupe_seconds: 60.0
 
   - type: builtin.claude_code_mcp
     name: pepper

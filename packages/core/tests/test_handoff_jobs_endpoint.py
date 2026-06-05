@@ -1450,3 +1450,628 @@ endpoints:
     finally:
         await http_host.stop()
 
+
+# ----------------------------------------------------------------------
+# Issue #136 — publish-side dedupe for SessionEnd HandoffReady storms.
+# ----------------------------------------------------------------------
+
+
+async def _wait_for_extract_count(target: int, counter: dict[str, int], timeout: float = 3.0) -> None:
+    """Poll until ``counter['count'] >= target`` or timeout."""
+    deadline = asyncio.get_running_loop().time() + timeout
+    while counter["count"] < target:
+        if asyncio.get_running_loop().time() > deadline:
+            return
+        await asyncio.sleep(0.05)
+
+
+def _ready_envelopes(stub_ep) -> list:
+    return [
+        env
+        for env in stub_ep.inbox
+        if env.kind == "Event"
+        and isinstance(env.payload, EventPayload)
+        and env.payload.type == "HandoffReady"
+    ]
+
+
+def _failed_envelopes(stub_ep) -> list:
+    return [
+        env
+        for env in stub_ep.inbox
+        if env.kind == "Event"
+        and isinstance(env.payload, EventPayload)
+        and env.payload.type == "HandoffFailed"
+    ]
+
+
+@pytest.mark.asyncio
+async def test_handoff_publish_dedupe_suppresses_consecutive_session_end(
+    tmp_path, monkeypatch
+):
+    vault_root = tmp_path / "vault"
+    vault_root.mkdir(parents=True, exist_ok=True)
+    transcript_root = tmp_path / "claude_projects"
+    transcript_root.mkdir(parents=True, exist_ok=True)
+    transcript_path = transcript_root / "session.jsonl"
+    transcript_path.write_text(
+        '{"message":{"role":"user","content":"hi"}}\n', encoding="utf-8"
+    )
+    handoff_path = vault_root / "handoff.md"
+    status_path = vault_root / "handoff-status.json"
+
+    cfg = tmp_path / "agent_core.yaml"
+    cfg.write_text(
+        f"""
+bus:
+  storage_path: {tmp_path / "bus.sqlite"}
+http:
+  bind_host: 127.0.0.1
+  bind_port: 0
+endpoints:
+  - type: builtin.handoff_jobs
+    name: handoff-jobs
+    params:
+      mount: /internal/handoff-jobs
+  - type: builtin.stub
+    name: pepper
+""",
+        encoding="utf-8",
+    )
+
+    bus, http_host = await build_bus_from_config(cfg)
+    assert http_host is not None
+    await http_host.start()
+    counter = {"count": 0}
+    try:
+        await bus.start()
+        try:
+            endpoint = bus._endpoints_by_name["handoff-jobs"].endpoint
+
+            async def _fake_extract(self, req, transcript_text, job_id):
+                counter["count"] += 1
+                return "# Handoff\n"
+
+            monkeypatch.setattr(type(endpoint), "_extract_handoff", _fake_extract)
+            url = f"http://127.0.0.1:{http_host.port}/internal/handoff-jobs"
+            base = {
+                "event": "SessionEnd",
+                "agent_name": "pepper",
+                "vault_root": str(vault_root),
+                "handoff_path": str(handoff_path),
+                "handoff_status_path": str(status_path),
+                "transcript_path": str(transcript_path),
+                "transcript_root": str(transcript_root),
+            }
+            async with httpx.AsyncClient(timeout=5.0) as client:
+                resp_a = await client.post(
+                    url,
+                    json={
+                        **base,
+                        "session_id": "session-a",
+                        "requested_at": datetime.now(UTC).isoformat(),
+                    },
+                )
+                resp_b = await client.post(
+                    url,
+                    json={
+                        **base,
+                        "session_id": "session-b",
+                        "requested_at": datetime.now(UTC).isoformat(),
+                    },
+                )
+            assert resp_a.status_code == 202
+            assert resp_b.status_code == 202
+
+            await _wait_for_extract_count(2, counter)
+            # Give the worker one more loop iteration to publish.
+            await asyncio.sleep(0.15)
+
+            stub_ep = bus._endpoints_by_name["pepper"].endpoint
+            ready = _ready_envelopes(stub_ep)
+            assert len(ready) == 1, (
+                f"expected 1 HandoffReady (second suppressed by dedupe), "
+                f"got {len(ready)}"
+            )
+        finally:
+            await bus.stop()
+    finally:
+        await http_host.stop()
+
+
+@pytest.mark.asyncio
+async def test_handoff_publish_dedupe_window_resets(tmp_path, monkeypatch):
+    vault_root = tmp_path / "vault"
+    vault_root.mkdir(parents=True, exist_ok=True)
+    transcript_root = tmp_path / "claude_projects"
+    transcript_root.mkdir(parents=True, exist_ok=True)
+    transcript_path = transcript_root / "session.jsonl"
+    transcript_path.write_text(
+        '{"message":{"role":"user","content":"hi"}}\n', encoding="utf-8"
+    )
+    handoff_path = vault_root / "handoff.md"
+    status_path = vault_root / "handoff-status.json"
+
+    cfg = tmp_path / "agent_core.yaml"
+    cfg.write_text(
+        f"""
+bus:
+  storage_path: {tmp_path / "bus.sqlite"}
+http:
+  bind_host: 127.0.0.1
+  bind_port: 0
+endpoints:
+  - type: builtin.handoff_jobs
+    name: handoff-jobs
+    params:
+      mount: /internal/handoff-jobs
+      handoff_publish_dedupe_seconds: 0.05
+  - type: builtin.stub
+    name: pepper
+""",
+        encoding="utf-8",
+    )
+
+    bus, http_host = await build_bus_from_config(cfg)
+    assert http_host is not None
+    await http_host.start()
+    counter = {"count": 0}
+    try:
+        await bus.start()
+        try:
+            endpoint = bus._endpoints_by_name["handoff-jobs"].endpoint
+
+            async def _fake_extract(self, req, transcript_text, job_id):
+                counter["count"] += 1
+                return "# Handoff\n"
+
+            monkeypatch.setattr(type(endpoint), "_extract_handoff", _fake_extract)
+            url = f"http://127.0.0.1:{http_host.port}/internal/handoff-jobs"
+            base = {
+                "event": "SessionEnd",
+                "agent_name": "pepper",
+                "vault_root": str(vault_root),
+                "handoff_path": str(handoff_path),
+                "handoff_status_path": str(status_path),
+                "transcript_path": str(transcript_path),
+                "transcript_root": str(transcript_root),
+            }
+            async with httpx.AsyncClient(timeout=5.0) as client:
+                resp_a = await client.post(
+                    url,
+                    json={
+                        **base,
+                        "session_id": "session-a",
+                        "requested_at": datetime.now(UTC).isoformat(),
+                    },
+                )
+            assert resp_a.status_code == 202
+
+            await _wait_for_extract_count(1, counter)
+            # Sleep past the (very small) dedupe window.
+            await asyncio.sleep(0.2)
+
+            async with httpx.AsyncClient(timeout=5.0) as client:
+                resp_b = await client.post(
+                    url,
+                    json={
+                        **base,
+                        "session_id": "session-b",
+                        "requested_at": datetime.now(UTC).isoformat(),
+                    },
+                )
+            assert resp_b.status_code == 202
+
+            await _wait_for_extract_count(2, counter)
+            await asyncio.sleep(0.15)
+
+            stub_ep = bus._endpoints_by_name["pepper"].endpoint
+            ready = _ready_envelopes(stub_ep)
+            assert len(ready) == 2, (
+                f"expected 2 HandoffReady (window expired between posts), "
+                f"got {len(ready)}"
+            )
+        finally:
+            await bus.stop()
+    finally:
+        await http_host.stop()
+
+
+@pytest.mark.asyncio
+async def test_handoff_publish_dedupe_zero_disables(tmp_path, monkeypatch):
+    vault_root = tmp_path / "vault"
+    vault_root.mkdir(parents=True, exist_ok=True)
+    transcript_root = tmp_path / "claude_projects"
+    transcript_root.mkdir(parents=True, exist_ok=True)
+    transcript_path = transcript_root / "session.jsonl"
+    transcript_path.write_text(
+        '{"message":{"role":"user","content":"hi"}}\n', encoding="utf-8"
+    )
+    handoff_path = vault_root / "handoff.md"
+    status_path = vault_root / "handoff-status.json"
+
+    cfg = tmp_path / "agent_core.yaml"
+    cfg.write_text(
+        f"""
+bus:
+  storage_path: {tmp_path / "bus.sqlite"}
+http:
+  bind_host: 127.0.0.1
+  bind_port: 0
+endpoints:
+  - type: builtin.handoff_jobs
+    name: handoff-jobs
+    params:
+      mount: /internal/handoff-jobs
+      handoff_publish_dedupe_seconds: 0.0
+  - type: builtin.stub
+    name: pepper
+""",
+        encoding="utf-8",
+    )
+
+    bus, http_host = await build_bus_from_config(cfg)
+    assert http_host is not None
+    await http_host.start()
+    counter = {"count": 0}
+    try:
+        await bus.start()
+        try:
+            endpoint = bus._endpoints_by_name["handoff-jobs"].endpoint
+
+            async def _fake_extract(self, req, transcript_text, job_id):
+                counter["count"] += 1
+                return "# Handoff\n"
+
+            monkeypatch.setattr(type(endpoint), "_extract_handoff", _fake_extract)
+            url = f"http://127.0.0.1:{http_host.port}/internal/handoff-jobs"
+            base = {
+                "event": "SessionEnd",
+                "agent_name": "pepper",
+                "vault_root": str(vault_root),
+                "handoff_path": str(handoff_path),
+                "handoff_status_path": str(status_path),
+                "transcript_path": str(transcript_path),
+                "transcript_root": str(transcript_root),
+            }
+            async with httpx.AsyncClient(timeout=5.0) as client:
+                resp_a = await client.post(
+                    url,
+                    json={
+                        **base,
+                        "session_id": "session-a",
+                        "requested_at": datetime.now(UTC).isoformat(),
+                    },
+                )
+                resp_b = await client.post(
+                    url,
+                    json={
+                        **base,
+                        "session_id": "session-b",
+                        "requested_at": datetime.now(UTC).isoformat(),
+                    },
+                )
+            assert resp_a.status_code == 202
+            assert resp_b.status_code == 202
+
+            await _wait_for_extract_count(2, counter)
+            await asyncio.sleep(0.15)
+
+            stub_ep = bus._endpoints_by_name["pepper"].endpoint
+            ready = _ready_envelopes(stub_ep)
+            assert len(ready) == 2, (
+                f"expected 2 HandoffReady (dedupe disabled with 0.0), "
+                f"got {len(ready)}"
+            )
+        finally:
+            await bus.stop()
+    finally:
+        await http_host.stop()
+
+
+@pytest.mark.asyncio
+async def test_handoff_publish_dedupe_precompact_never_suppressed(
+    tmp_path, monkeypatch
+):
+    vault_root = tmp_path / "vault"
+    vault_root.mkdir(parents=True, exist_ok=True)
+    transcript_root = tmp_path / "claude_projects"
+    transcript_root.mkdir(parents=True, exist_ok=True)
+    transcript_path = transcript_root / "session.jsonl"
+    transcript_path.write_text(
+        '{"message":{"role":"user","content":"hi"}}\n', encoding="utf-8"
+    )
+    handoff_path = vault_root / "handoff.md"
+    status_path = vault_root / "handoff-status.json"
+
+    cfg = tmp_path / "agent_core.yaml"
+    cfg.write_text(
+        f"""
+bus:
+  storage_path: {tmp_path / "bus.sqlite"}
+http:
+  bind_host: 127.0.0.1
+  bind_port: 0
+endpoints:
+  - type: builtin.handoff_jobs
+    name: handoff-jobs
+    params:
+      mount: /internal/handoff-jobs
+  - type: builtin.stub
+    name: pepper
+""",
+        encoding="utf-8",
+    )
+
+    bus, http_host = await build_bus_from_config(cfg)
+    assert http_host is not None
+    await http_host.start()
+    counter = {"count": 0}
+    try:
+        await bus.start()
+        try:
+            endpoint = bus._endpoints_by_name["handoff-jobs"].endpoint
+
+            async def _fake_extract(self, req, transcript_text, job_id):
+                counter["count"] += 1
+                return "# Handoff\n"
+
+            monkeypatch.setattr(type(endpoint), "_extract_handoff", _fake_extract)
+            url = f"http://127.0.0.1:{http_host.port}/internal/handoff-jobs"
+            base = {
+                "event": "PreCompact",
+                "agent_name": "pepper",
+                "vault_root": str(vault_root),
+                "handoff_path": str(handoff_path),
+                "handoff_status_path": str(status_path),
+                "transcript_path": str(transcript_path),
+                "transcript_root": str(transcript_root),
+            }
+            async with httpx.AsyncClient(timeout=5.0) as client:
+                resp_a = await client.post(
+                    url,
+                    json={
+                        **base,
+                        "session_id": "session-a",
+                        "requested_at": datetime.now(UTC).isoformat(),
+                    },
+                )
+                resp_b = await client.post(
+                    url,
+                    json={
+                        **base,
+                        "session_id": "session-b",
+                        "requested_at": datetime.now(UTC).isoformat(),
+                    },
+                )
+            assert resp_a.status_code == 202
+            assert resp_b.status_code == 202
+
+            await _wait_for_extract_count(2, counter)
+            await asyncio.sleep(0.15)
+
+            stub_ep = bus._endpoints_by_name["pepper"].endpoint
+            ready = _ready_envelopes(stub_ep)
+            assert len(ready) == 2, (
+                f"expected 2 HandoffReady (PreCompact never suppressed), "
+                f"got {len(ready)}"
+            )
+
+            # Now also confirm PreCompact didn't poison the SessionEnd
+            # bookkeeping slot — a subsequent SessionEnd within the window
+            # should still get published once.
+            base_se = {**base, "event": "SessionEnd"}
+            async with httpx.AsyncClient(timeout=5.0) as client:
+                resp_c = await client.post(
+                    url,
+                    json={
+                        **base_se,
+                        "session_id": "session-c",
+                        "requested_at": datetime.now(UTC).isoformat(),
+                    },
+                )
+            assert resp_c.status_code == 202
+            await _wait_for_extract_count(3, counter)
+            await asyncio.sleep(0.15)
+            ready_after = _ready_envelopes(stub_ep)
+            assert len(ready_after) == 3, (
+                f"expected 3 HandoffReady (PreCompact slots don't block "
+                f"SessionEnd), got {len(ready_after)}"
+            )
+        finally:
+            await bus.stop()
+    finally:
+        await http_host.stop()
+
+
+@pytest.mark.asyncio
+async def test_handoff_publish_dedupe_independent_per_mailbox(
+    tmp_path, monkeypatch
+):
+    vault_root = tmp_path / "vault"
+    vault_root.mkdir(parents=True, exist_ok=True)
+    transcript_root = tmp_path / "claude_projects"
+    transcript_root.mkdir(parents=True, exist_ok=True)
+    transcript_path = transcript_root / "session.jsonl"
+    transcript_path.write_text(
+        '{"message":{"role":"user","content":"hi"}}\n', encoding="utf-8"
+    )
+    handoff_path = vault_root / "handoff.md"
+    status_path = vault_root / "handoff-status.json"
+
+    cfg = tmp_path / "agent_core.yaml"
+    cfg.write_text(
+        f"""
+bus:
+  storage_path: {tmp_path / "bus.sqlite"}
+http:
+  bind_host: 127.0.0.1
+  bind_port: 0
+endpoints:
+  - type: builtin.handoff_jobs
+    name: handoff-jobs
+    params:
+      mount: /internal/handoff-jobs
+  - type: builtin.stub
+    name: pepper
+  - type: builtin.stub
+    name: wren
+""",
+        encoding="utf-8",
+    )
+
+    bus, http_host = await build_bus_from_config(cfg)
+    assert http_host is not None
+    await http_host.start()
+    counter = {"count": 0}
+    try:
+        await bus.start()
+        try:
+            endpoint = bus._endpoints_by_name["handoff-jobs"].endpoint
+
+            async def _fake_extract(self, req, transcript_text, job_id):
+                counter["count"] += 1
+                return "# Handoff\n"
+
+            monkeypatch.setattr(type(endpoint), "_extract_handoff", _fake_extract)
+            url = f"http://127.0.0.1:{http_host.port}/internal/handoff-jobs"
+            base = {
+                "event": "SessionEnd",
+                "vault_root": str(vault_root),
+                "handoff_path": str(handoff_path),
+                "handoff_status_path": str(status_path),
+                "transcript_path": str(transcript_path),
+                "transcript_root": str(transcript_root),
+            }
+            async with httpx.AsyncClient(timeout=5.0) as client:
+                resp_a = await client.post(
+                    url,
+                    json={
+                        **base,
+                        "agent_name": "pepper",
+                        "session_id": "session-pepper",
+                        "requested_at": datetime.now(UTC).isoformat(),
+                    },
+                )
+                resp_b = await client.post(
+                    url,
+                    json={
+                        **base,
+                        "agent_name": "wren",
+                        "session_id": "session-wren",
+                        "requested_at": datetime.now(UTC).isoformat(),
+                    },
+                )
+            assert resp_a.status_code == 202
+            assert resp_b.status_code == 202
+
+            await _wait_for_extract_count(2, counter)
+            await asyncio.sleep(0.15)
+
+            pepper_ep = bus._endpoints_by_name["pepper"].endpoint
+            wren_ep = bus._endpoints_by_name["wren"].endpoint
+            assert len(_ready_envelopes(pepper_ep)) == 1, (
+                "pepper should receive exactly 1 HandoffReady"
+            )
+            assert len(_ready_envelopes(wren_ep)) == 1, (
+                "wren should receive exactly 1 HandoffReady — cross-mailbox "
+                "dedupe is a bug"
+            )
+        finally:
+            await bus.stop()
+    finally:
+        await http_host.stop()
+
+
+@pytest.mark.asyncio
+async def test_handoff_publish_dedupe_failed_not_suppressed(tmp_path, monkeypatch):
+    vault_root = tmp_path / "vault"
+    vault_root.mkdir(parents=True, exist_ok=True)
+    transcript_root = tmp_path / "claude_projects"
+    transcript_root.mkdir(parents=True, exist_ok=True)
+    transcript_path = transcript_root / "session.jsonl"
+    transcript_path.write_text(
+        '{"message":{"role":"user","content":"hi"}}\n', encoding="utf-8"
+    )
+    handoff_path = vault_root / "handoff.md"
+    status_path = vault_root / "handoff-status.json"
+
+    cfg = tmp_path / "agent_core.yaml"
+    cfg.write_text(
+        f"""
+bus:
+  storage_path: {tmp_path / "bus.sqlite"}
+http:
+  bind_host: 127.0.0.1
+  bind_port: 0
+endpoints:
+  - type: builtin.handoff_jobs
+    name: handoff-jobs
+    params:
+      mount: /internal/handoff-jobs
+      max_attempts: 1
+      retry_backoff_seconds: 0.0
+  - type: builtin.stub
+    name: pepper
+""",
+        encoding="utf-8",
+    )
+
+    bus, http_host = await build_bus_from_config(cfg)
+    assert http_host is not None
+    await http_host.start()
+    counter = {"count": 0}
+    try:
+        await bus.start()
+        try:
+            endpoint = bus._endpoints_by_name["handoff-jobs"].endpoint
+
+            async def _always_fail(self, req, transcript_text, job_id):
+                counter["count"] += 1
+                raise RuntimeError("forced extract failure")
+
+            monkeypatch.setattr(type(endpoint), "_extract_handoff", _always_fail)
+            url = f"http://127.0.0.1:{http_host.port}/internal/handoff-jobs"
+            base = {
+                "event": "SessionEnd",
+                "agent_name": "pepper",
+                "vault_root": str(vault_root),
+                "handoff_path": str(handoff_path),
+                "handoff_status_path": str(status_path),
+                "transcript_path": str(transcript_path),
+                "transcript_root": str(transcript_root),
+            }
+            async with httpx.AsyncClient(timeout=5.0) as client:
+                resp_a = await client.post(
+                    url,
+                    json={
+                        **base,
+                        "session_id": "session-a",
+                        "requested_at": datetime.now(UTC).isoformat(),
+                    },
+                )
+                resp_b = await client.post(
+                    url,
+                    json={
+                        **base,
+                        "session_id": "session-b",
+                        "requested_at": datetime.now(UTC).isoformat(),
+                    },
+                )
+            assert resp_a.status_code == 202
+            assert resp_b.status_code == 202
+
+            await _wait_for_extract_count(2, counter)
+            await asyncio.sleep(0.15)
+
+            stub_ep = bus._endpoints_by_name["pepper"].endpoint
+            failed = _failed_envelopes(stub_ep)
+            assert len(failed) == 2, (
+                f"expected 2 HandoffFailed (failures are signal, not noise), "
+                f"got {len(failed)}"
+            )
+        finally:
+            await bus.stop()
+    finally:
+        await http_host.stop()
+
