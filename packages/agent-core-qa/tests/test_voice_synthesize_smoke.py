@@ -1,72 +1,88 @@
-"""Scenario 7: voice synthesis smoke.
+"""Scenario 7: voice synthesis smoke (envelope-fire contract).
 
 Why v0.3.0 needs it: Phase 2.6 promoted qwen-tts to a workspace member.
 If the promotion broke the actual synthesis path (vs. just the install),
 this catches it. The static install test (Scenario 3) asserts the wheel
-installs; this asserts it RUNS and produces output.
+installs; this asserts it RUNS end-to-end and produces output.
 
 Does NOT validate audio quality — that is a human-loop concern, out of scope.
 
-Transport finding (Preflight Step 0):
-    VoiceEndpoint is tool-only — VoiceEndpoint.deliver() is a no-op (logs at
-    DEBUG and acks; no reply envelope is ever published). The ToolInvocation
-    envelope path therefore produces no observable reply from the bus side.
+Contract (post Phase 3 / voice-bus-async migration, Task 7):
+    ``synthesize_speech`` is **publish-and-return**. The tool call no longer
+    returns ``{path, duration_s}`` synchronously. It builds a
+    ``SynthesisRequest`` envelope, publishes it to the voice endpoint, and
+    returns ``{"request_id", "status": "queued"}`` immediately. The synthesized
+    WAV arrives later as a correlated ``SynthesisReady`` (or
+    ``SynthesisFailed``) Event envelope on the caller's inbox.
 
-    The synthesis surface is exposed as an MCP tool (``synthesize_speech``)
-    mounted on the agent's ClaudeCodeMCPEndpoint via
-    ``register_voice_tools()`` (agent_core_voice/mcp.py). This wiring happens
-    at bus.start() only when the agent's yaml params include both ``voice:``
-    and ``voice_id:``.
-
-    Transport chosen: **Route (a) — direct MCP tool call** via
-    ``client.call_tool("synthesize_speech", {"text": "..."})`` on the ``qa``
-    endpoint. This is the same pattern used by Scenario 4 (brief tools) and
-    is the cleanest path: one HTTP round-trip, synchronous result, no polling.
-
-    The qa endpoint MUST have voice wiring in the test daemon's config for
-    ``synthesize_speech`` to be present. If the tool is absent (not mounted),
-    the client returns status_code=500. The test skips in that case with a
-    clear operator-actionable message.
+Transport finding:
+    The qa endpoint is a ClaudeCodeMCPEndpoint, which exposes the standard
+    bus tools (``send``, ``list_pending``, ``handle``, ``ack``). The voice
+    plugin mounts ``synthesize_speech`` + ``voice_info`` on the same endpoint
+    when its yaml params include both ``voice:`` and ``voice_id:``. If voice
+    wiring is absent the tool is not mounted; the test skips with a clear
+    operator-actionable message.
 
 Assertion strategy:
-    1. call_tool("synthesize_speech", {"text": "hello"}) returns status 200.
-    2. Result is not an error string (no "synthesis failed:" prefix).
-    3. Result is a dict containing a non-empty ``path`` key (the saved WAV
-       file path), proving the synthesis pipeline ran end-to-end.
-    4. ``duration_s > 0`` proves audio content was actually generated (not an
-       empty or zero-length file).
+    1. ``call_tool("synthesize_speech", {"text": "hello"})`` returns 200 and a
+       dict shaped ``{"request_id", "status": "queued"}``.
+    2. Poll ``list_pending`` on the qa endpoint for a correlated reply
+       envelope (``in_reply_to == request_id``).
+    3. The reply MUST be ``kind == "Event"`` with ``payload.type ==
+       "SynthesisReady"`` (a ``SynthesisFailed`` reply is a synthesis failure
+       — the test fails with the reported reason).
+    4. ``payload.data.wav_path`` points to a non-empty file on disk and
+       ``duration_s > 0`` proves audio content was generated.
 
 Timeout:
-    The qa endpoint's default MCP timeout (30s) should be sufficient for
-    short utterances on a warmed GPU. If the daemon is on CPU, first-load can
-    exceed 30s — operators must configure a longer timeout or set
-    AGENT_CORE_QA_DAEMON_TIMEOUT. The test does NOT try to override the client
-    timeout itself; that would require a test-specific client fixture. Instead,
-    the DaemonClient default is used and the skip message explains what to do
-    if the test flakes on first-load.
+    Tool publish is fast (<1s). The actual synthesis runs on the voice
+    endpoint's backend (cuda or cpu). The smoke poll budget is 90s — enough
+    for a warm-GPU short utterance with comfortable margin. CPU first-load
+    can exceed this; operators on cpu-only hosts should set
+    ``AGENT_CORE_QA_SYNTH_TIMEOUT_S`` to a larger value (e.g. 600).
 
 The test SKIPs (via autouse ``daemon_liveness_required``) when no daemon is
-reachable at the configured URL, and SKIPs explicitly when the ``qa`` endpoint
-is not configured with voice wiring.
+reachable, and SKIPs explicitly when the qa endpoint is not configured with
+voice wiring (so ``synthesize_speech`` is not mounted). The reply-envelope
+poll path runs on the same machine as the daemon — ``wav_path`` is read
+locally, not over a network transport.
 """
 
 from __future__ import annotations
 
+import os
+from pathlib import Path
+from typing import Any
+
 import pytest
+
+# Synthesis budget. Override via env for slow (cpu) hosts.
+_SYNTH_TIMEOUT_S = float(os.environ.get("AGENT_CORE_QA_SYNTH_TIMEOUT_S", "90"))
+_POLL_INTERVAL_S = 0.5
+
+
+def _is_synthesis_reply(item: dict[str, Any], request_id: str) -> bool:
+    """Match a SynthesisReady or SynthesisFailed envelope correlated to request_id."""
+    if item.get("kind") != "Event":
+        return False
+    if item.get("in_reply_to") != request_id:
+        return False
+    payload = item.get("payload") or {}
+    return payload.get("type") in {"SynthesisReady", "SynthesisFailed"}
 
 
 async def test_voice_synthesize_returns_audio_bytes(client):
-    """Call synthesize_speech via the qa MCP endpoint; assert synthesis ran and produced output.
+    """Publish a synthesize_speech request via MCP; await SynthesisReady on inbox.
 
-    Transport: direct MCP tool call (Route a) — client.call_tool("synthesize_speech", ...).
-    The tool is only mounted when the qa endpoint's yaml params include
-    ``voice: <name>`` and ``voice_id: <id>``.
+    Post Phase 3 contract: the tool returns ``{request_id, status: "queued"}``
+    immediately and the WAV arrives via an envelope on the caller's inbox.
 
     Asserts:
-    - call_tool returns status 200 (tool present and did not raise)
-    - result is not a "synthesis failed:" error string
-    - result dict contains a non-empty "path" (saved WAV file path)
-    - result dict contains duration_s > 0 (audio content generated)
+    - call_tool returns status 200 and yields a request_id
+    - a SynthesisReady (or SynthesisFailed) envelope correlated to the
+      request_id arrives within _SYNTH_TIMEOUT_S
+    - the reply is SynthesisReady (not SynthesisFailed)
+    - wav_path points to a non-empty file with duration_s > 0
     """
     result = await client.call_tool(
         "synthesize_speech",
@@ -75,7 +91,6 @@ async def test_voice_synthesize_returns_audio_bytes(client):
 
     if result.status_code != 200:
         # Tool not found (not mounted) or transport error.
-        # Distinguish "voice not wired" from a genuine crash:
         err_lower = result.text.lower()
         if (
             "not found" in err_lower
@@ -94,33 +109,75 @@ async def test_voice_synthesize_returns_audio_bytes(client):
             f"expected 200. Error: {result.text[:400]}"
         )
 
-    # The tool returned without raising. Check the result content.
+    # The tool returned without raising. Tool surface must be the new
+    # envelope-fire shape: {"request_id", "status": "queued"}.
     data = result.json()
 
-    # Error path: the tool returns TextContent with "synthesis failed: <reason>"
-    # as plain text (not a dict) when the backend reports a VoiceError.
-    if isinstance(data, str):
-        if data.startswith("synthesis failed:"):
-            pytest.fail(
-                f"synthesize_speech returned a synthesis error: {data[:400]}"
-            )
-        # Any other plain-string response is unexpected.
+    if isinstance(data, dict) and data.get("error"):
+        # Tool-side validation rejected the request (e.g. empty text). The
+        # smoke probe sends a valid non-empty string so this is a genuine bug.
         pytest.fail(
-            f"synthesize_speech returned unexpected plain string: {data[:400]}"
+            f"synthesize_speech rejected the request at the tool surface: {data!r}"
         )
 
     assert isinstance(data, dict), (
         f"synthesize_speech returned non-dict result: {type(data).__name__}: {data!r}"
     )
-
-    # Assert the WAV path was written.
-    path = data.get("path")
-    assert path and isinstance(path, str), (
-        f"synthesize_speech result missing non-empty 'path' key; got: {data!r}"
+    request_id = data.get("request_id")
+    status = data.get("status")
+    assert request_id and isinstance(request_id, str), (
+        f"synthesize_speech result missing non-empty 'request_id'; got: {data!r}"
+    )
+    assert status == "queued", (
+        f"synthesize_speech result missing status='queued'; got: {data!r}"
     )
 
-    # Assert audio content was generated (duration > 0 means non-empty WAV).
-    duration_s = data.get("duration_s")
+    # Await the correlated SynthesisReady on the qa endpoint's inbox.
+    reply = await client.poll_envelopes(
+        predicate=lambda item: _is_synthesis_reply(item, request_id),
+        timeout=_SYNTH_TIMEOUT_S,
+        interval=_POLL_INTERVAL_S,
+    )
+    assert reply is not None, (
+        f"no SynthesisReady/SynthesisFailed envelope correlated to "
+        f"request_id={request_id!r} arrived within {_SYNTH_TIMEOUT_S}s. "
+        f"For slow (cpu) hosts, raise AGENT_CORE_QA_SYNTH_TIMEOUT_S."
+    )
+
+    payload = reply.get("payload") or {}
+    payload_type = payload.get("type")
+    payload_data = payload.get("data") or {}
+
+    if payload_type == "SynthesisFailed":
+        pytest.fail(
+            f"synthesize_speech failed: reason={payload_data.get('reason')!r} "
+            f"message={payload_data.get('message')!r} "
+            f"retryable={payload_data.get('retryable')!r}"
+        )
+
+    assert payload_type == "SynthesisReady", (
+        f"unexpected reply payload type {payload_type!r}; envelope={reply!r}"
+    )
+
+    wav_path = payload_data.get("wav_path")
+    assert wav_path and isinstance(wav_path, str), (
+        f"SynthesisReady missing non-empty 'wav_path'; payload={payload_data!r}"
+    )
+
+    # The smoke runner shares a filesystem with the daemon (same host).
+    # If wav_path doesn't exist locally that's a real failure — voice
+    # endpoint claimed success but produced no file.
+    wav_file = Path(wav_path)
+    assert wav_file.exists(), (
+        f"SynthesisReady reported wav_path={wav_path!r} but the file is not "
+        f"present on this host. The smoke runner must share the filesystem "
+        f"with the daemon."
+    )
+    assert wav_file.stat().st_size > 0, (
+        f"SynthesisReady wav_path points to an empty file: {wav_path!r}"
+    )
+
+    duration_s = payload_data.get("duration_s")
     assert isinstance(duration_s, (int, float)) and duration_s > 0, (
-        f"synthesize_speech result has non-positive duration_s; got: {data!r}"
+        f"SynthesisReady has non-positive duration_s; payload={payload_data!r}"
     )

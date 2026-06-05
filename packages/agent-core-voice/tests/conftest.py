@@ -7,12 +7,17 @@ from pathlib import Path
 import numpy as np
 import pytest
 import soundfile as sf
-from agent_core_voice.fake import FakeTTSBackend
+from madrigal.engine import FakeTTSBackend
 
 
 @pytest.fixture
 def ref_wav(tmp_path: Path) -> Path:
-    """A 1-second 24 kHz mono wav file usable as a reference clip."""
+    """A 1-second 24 kHz mono wav file usable as a reference clip.
+
+    Sample rate of the ref clip is independent of the backend's output
+    sample rate; madrigal's FakeTTSBackend only checks ref_wav existence,
+    not its rate.
+    """
     path = tmp_path / "ref.wav"
     sf.write(str(path), np.zeros(24000, dtype="float32"), 24000)
     return path
