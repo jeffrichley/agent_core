@@ -419,20 +419,25 @@ def test_start_without_config_points_at_init(
 
 
 @pytest.mark.slow
-def test_prod_and_dev_daemons_coexist(
+def test_prod_and_source_daemons_coexist(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """A prod and a dev daemon run simultaneously on different ports,
+    """A prod and a source daemon run simultaneously on different ports,
     each isolated — stopping one does not disturb the other.
 
     Both instances are driven through the AGENT_CORE_HOME escape hatch
     (one home per call), proving the core property: two daemons, two
     homes, two ports, independent lifecycle.
+
+    Pre-rename name was ``test_prod_and_dev_daemons_coexist``; renamed
+    after main's dev→source cutover (--instance dev is now an unknown
+    value, so the original ``init --instance dev`` line errored at
+    parse time).
     """
     import yaml as _yaml
 
     prod_home = tmp_path / "prod"
-    dev_home = tmp_path / "dev"
+    source_home = tmp_path / "source"
 
     def _run(args: list[str], home: Path):
         monkeypatch.setenv("AGENT_CORE_HOME", str(home))
@@ -440,11 +445,11 @@ def test_prod_and_dev_daemons_coexist(
 
     # Scaffold minimal configs.
     assert _run(["init"], prod_home).exit_code == 0
-    assert _run(["init", "--instance", "dev"], dev_home).exit_code == 0
+    assert _run(["init", "--instance", "source"], source_home).exit_code == 0
 
     # Rewrite each config to a free, distinct port to avoid clashing with
     # a real daemon on 8789/8788.
-    for home, port in ((prod_home, 8991), (dev_home, 8992)):
+    for home, port in ((prod_home, 8991), (source_home, 8992)):
         cfg = home / "agent_core.yaml"
         data = _yaml.safe_load(cfg.read_text())
         data["http"]["bind_port"] = port
@@ -452,27 +457,27 @@ def test_prod_and_dev_daemons_coexist(
 
     try:
         assert _run(["start"], prod_home).exit_code == 0
-        assert _run(["start"], dev_home).exit_code == 0
+        assert _run(["start"], source_home).exit_code == 0
 
         # Give both a moment to come up.
         for _ in range(40):
             prod_pid = read_pid(prod_home / "daemon.pid")
-            dev_pid = read_pid(dev_home / "daemon.pid")
-            if prod_pid and dev_pid and is_alive(prod_pid) and is_alive(dev_pid):
+            source_pid = read_pid(source_home / "daemon.pid")
+            if prod_pid and source_pid and is_alive(prod_pid) and is_alive(source_pid):
                 break
             time.sleep(0.1)
 
         # Both alive.
         assert "is running" in _run(["status"], prod_home).stdout
-        assert "is running" in _run(["status"], dev_home).stdout
+        assert "is running" in _run(["status"], source_home).stdout
 
-        # Stop prod — dev must still be alive.
+        # Stop prod — source must still be alive.
         assert _run(["stop"], prod_home).exit_code == 0
-        assert "is running" in _run(["status"], dev_home).stdout
+        assert "is running" in _run(["status"], source_home).stdout
         assert "not running" in _run(["status"], prod_home).stdout
     finally:
         _run(["stop"], prod_home)
-        _run(["stop"], dev_home)
+        _run(["stop"], source_home)
 
 
 def test_install_autostart_source_instance_errors(
