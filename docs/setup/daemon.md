@@ -222,3 +222,32 @@ agents no longer launch via `uv run --project`):
 Both surfaces are stdio and reconnect independently. The old
 `{"type":"http","url":".../mcp/<agent>"}` form is the #91 failure mode —
 do not use it.
+
+## Auto-start at boot (Windows)
+
+The prod daemon can register itself with Windows Task Scheduler so it
+returns automatically after a reboot — no manual `daemon start`.
+
+```bash
+# Register the autostart task (prod only). Prompts whether to start now.
+agent-core daemon install-autostart
+
+# Remove it.
+agent-core daemon uninstall-autostart
+```
+
+`install-autostart` registers a Task Scheduler task named
+`agent-core-daemon-prod` that runs `agent-core daemon start --instance
+prod` at your logon, with restart-on-failure and start-when-available.
+It runs as your own user with least privilege (the daemon binds
+127.0.0.1 only — no admin needed).
+
+`install-autostart` requires the prod daemon to be installed first
+(`agent-core daemon install`) — it points the task at
+`~/.agent-core/.venv/Scripts/agent-core.exe`. Re-running it replaces the
+existing task (idempotent). Pass `--no-start` / `--start` to skip the
+"start now?" prompt in non-interactive use.
+
+Auto-start is prod-only and Windows-only. It brings the **daemon** back
+after a reboot; auto-launching Pepper's own Claude Code session is a
+separate, still-open problem.
