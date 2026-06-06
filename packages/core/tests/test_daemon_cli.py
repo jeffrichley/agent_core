@@ -475,11 +475,16 @@ def test_prod_and_dev_daemons_coexist(
         _run(["stop"], dev_home)
 
 
-def test_install_autostart_dev_instance_errors(
+def test_install_autostart_source_instance_errors(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    """install-autostart against the source instance must fail loudly with
+    a clear "prod-only" message. Source runs editable from the workspace .venv
+    and is started by hand; auto-starting it would silently launch dev code at
+    logon. The PR's original test used --instance dev; renamed to --instance
+    source after main's dev→source cutover."""
     monkeypatch.setenv("AGENT_CORE_HOME", str(tmp_path))
-    result = runner.invoke(daemon_app, ["install-autostart", "--instance", "dev"])
+    result = runner.invoke(daemon_app, ["install-autostart", "--instance", "source"])
     assert result.exit_code == 1
     assert "prod-only" in result.stdout.lower()
 

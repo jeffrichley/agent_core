@@ -401,7 +401,7 @@ def install_autostart(
     inst = _resolve(instance)
     if inst is not Instance.PROD:
         console.print(
-            "[red]autostart is prod-only[/red] — the dev instance is started "
+            "[red]autostart is prod-only[/red] — the source instance is started "
             "by hand from the workspace."
         )
         raise typer.Exit(code=1)
