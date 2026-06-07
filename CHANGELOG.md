@@ -8,6 +8,13 @@ This project uses [*towncrier*](https://towncrier.readthedocs.io/); unreleased c
 
 <!-- towncrier release notes start -->
 
+## [0.6.1](https://github.com/jeffrichley/agent_core/compare/v0.6.0...v0.6.1) (2026-06-07)
+
+
+### Bug Fixes
+
+* **discord:** on_message hands bot authors to the access gate ([#159](https://github.com/jeffrichley/agent_core/issues/159)) ([b36e44a](https://github.com/jeffrichley/agent_core/commit/b36e44a0a97ef1c3954df745caa144fb6acad997))
+
 ## [0.6.0](https://github.com/jeffrichley/agent_core/compare/v0.5.0...v0.6.0) (2026-06-07)
 
 
