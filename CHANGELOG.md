@@ -8,6 +8,15 @@ This project uses [*towncrier*](https://towncrier.readthedocs.io/); unreleased c
 
 <!-- towncrier release notes start -->
 
+## [0.6.0](https://github.com/jeffrichley/agent_core/compare/v0.5.0...v0.6.0) (2026-06-07)
+
+
+### Features
+
+* canonical skills library + scheduler as first entry ([#134](https://github.com/jeffrichley/agent_core/issues/134)) ([6859010](https://github.com/jeffrichley/agent_core/commit/6859010359db3379550373eaea1dcb0d6a00b879))
+* **daemon:** windows daemon auto-start (Phase 4) ([#110](https://github.com/jeffrichley/agent_core/issues/110)) ([c819b5d](https://github.com/jeffrichley/agent_core/commit/c819b5de19ff1a385cbb50b0f3a334effa814460))
+* **discord-access:** add allowedBotIds opt-in allowlist for other-bot authors ([#158](https://github.com/jeffrichley/agent_core/issues/158)) ([aa0a835](https://github.com/jeffrichley/agent_core/commit/aa0a835c07fc7d6a8198847be2665fbe0b4ccd3e)), closes [#143](https://github.com/jeffrichley/agent_core/issues/143)
+
 ## [0.5.0](https://github.com/jeffrichley/agent_core/compare/v0.4.1...v0.5.0) (2026-05-26)
 
 
