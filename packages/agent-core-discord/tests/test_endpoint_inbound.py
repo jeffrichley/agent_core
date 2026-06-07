@@ -76,7 +76,12 @@ async def test_on_message_publishes_text_envelope(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_on_message_drops_messages_from_bots(monkeypatch):
+async def test_on_message_drops_messages_from_bots_not_in_allowlist(monkeypatch):
+    """A bot author with empty allowedBotIds is gate-denied — same outcome
+    as the historical "all bots blocked" default. The drop now happens at
+    the gate layer (not the on_message pre-filter), so allowed_bot_ids
+    can still grant specific other-bots through.
+    """
     ep, handle, fake = await _start_endpoint(monkeypatch)
     fake.add_channel(FakeChannel(id="200"))
     msg = _msg(content="hi", is_bot=True)
@@ -84,6 +89,52 @@ async def test_on_message_drops_messages_from_bots(monkeypatch):
     try:
         await fake.fire("on_message", msg)
         assert handle.published == []
+    finally:
+        await ep.stop()
+
+
+@pytest.mark.asyncio
+async def test_on_message_allows_bots_in_allowed_bot_ids(monkeypatch, tmp_path):
+    """foreman#143 regression guard: a bot author whose id IS in the
+    access config's ``allowedBotIds`` must reach the bus inbox.
+
+    The Pepper-Wren cross-bot rollout surfaced this 2026-06-07: PR #158
+    added the ``allowed_bot_ids`` field to ``AccessConfig`` + the gate
+    logic, but the on_message handler still pre-filtered ALL bots
+    (``message.author.bot`` → return) before the gate could see them,
+    AND constructed ``InboundContext`` with ``is_bot=False`` hardcoded —
+    so even if the pre-filter were dropped, the gate would never route
+    through the bot-allowlist branch. Both layers had to know about the
+    rule for ``allowedBotIds`` to actually work.
+    """
+    import json
+
+    pepper_bot_id = "1480938766246871050"
+    access = tmp_path / "access.json"
+    access.write_text(
+        json.dumps({"dmPolicy": "open", "allowedBotIds": [pepper_bot_id]}),
+        encoding="utf-8",
+    )
+    ep, handle, fake = await _start_endpoint(monkeypatch, access_path=str(access))
+    fake.add_channel(FakeChannel(id="200"))
+    msg = _msg(
+        id="m-bot",
+        channel_id="200",
+        content="cross-bot smoke test",
+        author_id=pepper_bot_id,
+        is_bot=True,
+    )
+    msg.channel = fake.get_channel("200")
+    try:
+        await fake.fire("on_message", msg)
+        assert len(handle.published) == 1, (
+            "allowedBotIds entry should let this bot's message through to the bus"
+        )
+        env = handle.published[0]
+        assert env.payload.text == "cross-bot smoke test"
+        assert env.metadata["discord"]["author_id"] == pepper_bot_id
+        # is_bot must be piped through so downstream consumers can see who's a bot.
+        assert env.metadata["discord"]["is_bot"] is True
     finally:
         await ep.stop()
 
