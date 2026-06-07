@@ -63,10 +63,73 @@ def _ctx(*, is_dm: bool, author_id: str = "100", channel_id: str = "200") -> Inb
     return InboundContext(is_dm=is_dm, author_id=author_id, channel_id=channel_id, is_bot=False)
 
 
-def test_gate_blocks_bot_authors_unconditionally():
+def test_gate_blocks_bot_authors_by_default():
+    """Empty allowed_bot_ids preserves the historical 'all bots blocked' default."""
     cfg = AccessConfig(dm_policy="open")
     ctx = InboundContext(is_dm=False, author_id="100", channel_id="200", is_bot=True)
     assert gate_message(cfg, ctx) is False
+
+
+def test_gate_allows_bot_in_allowlist():
+    cfg = AccessConfig(dm_policy="open", allowed_bot_ids=["1480938766246871050"])
+    ctx = InboundContext(
+        is_dm=False, author_id="1480938766246871050", channel_id="200", is_bot=True
+    )
+    assert gate_message(cfg, ctx) is True
+
+
+def test_gate_blocks_bot_not_in_allowlist():
+    cfg = AccessConfig(dm_policy="open", allowed_bot_ids=["1480938766246871050"])
+    ctx = InboundContext(is_dm=False, author_id="999", channel_id="200", is_bot=True)
+    assert gate_message(cfg, ctx) is False
+
+
+def test_load_access_config_reads_allowed_bot_ids(tmp_path):
+    p = tmp_path / "access.json"
+    p.write_text(
+        json.dumps({"allowedBotIds": ["123", "456"]}),
+        encoding="utf-8",
+    )
+    cfg = load_access_config(p)
+    assert cfg.allowed_bot_ids == ["123", "456"]
+
+
+def test_load_access_config_missing_allowed_bot_ids_defaults_empty(tmp_path):
+    p = tmp_path / "access.json"
+    p.write_text(json.dumps({"dmPolicy": "open"}), encoding="utf-8")
+    cfg = load_access_config(p)
+    assert cfg.allowed_bot_ids == []
+
+
+def test_load_access_config_non_list_allowed_bot_ids_falls_back_to_empty(tmp_path, caplog):
+    """A non-list value (string, dict, etc.) for allowedBotIds is rejected
+    and the loader falls back to empty. Prevents a stringified id from
+    being iterated as characters and silently admitting bots whose id is
+    any single matching character."""
+    import logging
+
+    p = tmp_path / "access.json"
+    p.write_text(
+        json.dumps({"allowedBotIds": "1480938766246871050"}),
+        encoding="utf-8",
+    )
+    with caplog.at_level(logging.WARNING):
+        cfg = load_access_config(p)
+    assert cfg.allowed_bot_ids == []
+    assert any("allowedBotIds must be a list" in rec.message for rec in caplog.records)
+
+
+def test_load_access_config_coerces_int_bot_ids_to_str(tmp_path):
+    """Discord ids are conceptually strings but JSON authors may write them
+    as integers. The loader coerces so equality against `ctx.author_id`
+    (which is always str) doesn't silently fail."""
+    p = tmp_path / "access.json"
+    p.write_text(
+        json.dumps({"allowedBotIds": [1480938766246871050]}),
+        encoding="utf-8",
+    )
+    cfg = load_access_config(p)
+    assert cfg.allowed_bot_ids == ["1480938766246871050"]
 
 
 def test_gate_open_dm_policy_allows_any_dm():

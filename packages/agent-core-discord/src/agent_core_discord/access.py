@@ -1,8 +1,13 @@
 """DM-policy + channel-allowlist access gate.
 
 Ported from Pepper's `pepper/integrations/discord/access.py`. The shape of
-the JSON config (dmPolicy / allowFrom / channels / ackReaction) is preserved
-verbatim so existing Pepper access configs migrate without rewrite.
+the JSON config (dmPolicy / allowFrom / channels / ackReaction / allowedBotIds)
+is preserved verbatim so existing Pepper access configs migrate without rewrite.
+
+The `allowedBotIds` field (added for agent_core#143) opt-in-grants specific
+other-bot authors past the otherwise-default bot block — this is how Pepper
+and Wren see each other on Discord without losing the default-deny posture
+for unknown bots.
 """
 
 from __future__ import annotations
@@ -27,6 +32,7 @@ class AccessConfig:
     allow_from: list[str] = field(default_factory=list)
     channels: dict[str, dict[str, Any]] = field(default_factory=dict)
     ack_reaction: str = "👀"
+    allowed_bot_ids: list[str] = field(default_factory=list)
 
 
 @dataclass
@@ -62,18 +68,34 @@ def load_access_config(path: Path | str | None) -> AccessConfig:
             dm_policy,
         )
         dm_policy = "deny"
+    raw_allowed_bot_ids = raw.get("allowedBotIds", [])
+    if not isinstance(raw_allowed_bot_ids, list):
+        # Fail-closed on shape mismatch: a non-list value (string, dict, etc.)
+        # could otherwise be coerced into a per-character iterable and silently
+        # admit every bot whose id is a single matching character.
+        log.warning(
+            "access config %s: allowedBotIds must be a list; got %s — falling back to empty",
+            p,
+            type(raw_allowed_bot_ids).__name__,
+        )
+        raw_allowed_bot_ids = []
     return AccessConfig(
         dm_policy=dm_policy,  # type: ignore[arg-type]
         allow_from=list(raw.get("allowFrom", [])),
         channels=dict(raw.get("channels", {})),
         ack_reaction=raw.get("ackReaction", "👀"),
+        allowed_bot_ids=[str(b) for b in raw_allowed_bot_ids],
     )
 
 
 def gate_message(cfg: AccessConfig, ctx: InboundContext) -> bool:
     """Return True if the inbound message passes the access gate.
 
-    Bot-authored messages are always blocked. DMs go through dm_policy:
+    Bot-authored messages are default-blocked; the `allowed_bot_ids`
+    allowlist opt-in-grants specific other-bot authors past the block.
+    Empty allowlist preserves the historical "all bots blocked" default.
+
+    DMs go through dm_policy:
         - "open"      → allow.
         - "deny"      → block.
         - "allowlist" → allow only if author_id is in allow_from.
@@ -82,7 +104,7 @@ def gate_message(cfg: AccessConfig, ctx: InboundContext) -> bool:
         - non-empty           → allow only if channel_id is a key.
     """
     if ctx.is_bot:
-        return False
+        return ctx.author_id in cfg.allowed_bot_ids
     if ctx.is_dm:
         if cfg.dm_policy == "open":
             return True
