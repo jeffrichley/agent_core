@@ -994,17 +994,29 @@ class DiscordEndpoint:
 
     def _make_on_message_handler(self):
         async def on_message(message: Any) -> None:
-            # 1. Filter our own messages and other bots.
-            if message.author == self._client.user or message.author.bot:
+            # 1. Filter our OWN messages only — self-loops would feed the
+            # bot its own posts. Other bots are NOT pre-filtered here:
+            # the access gate's ``allowed_bot_ids`` field (added in
+            # PR #158 for agent_core#143) is the right layer to decide
+            # which other-bot authors should pass. Pre-filtering all
+            # bots here made ``allowed_bot_ids`` structurally
+            # unreachable; surfaced 2026-06-07 during the Pepper-Wren
+            # cross-bot rollout smoke test, where Pepper's posts in a
+            # shared channel never reached Wren's bus inbox.
+            if message.author == self._client.user:
                 return
 
-            # 2. Build inbound context for the access gate.
+            # 2. Build inbound context for the access gate. ``is_bot`` is
+            # piped through from the discord.py Member/User flag so the
+            # gate can route through the allowed_bot_ids branch
+            # correctly (was hardcoded ``False`` before, which made the
+            # ``ctx.is_bot`` check in ``gate_message`` permanently dead).
             is_dm = message.guild is None
             ctx = InboundContext(
                 is_dm=is_dm,
                 author_id=str(message.author.id),
                 channel_id=str(message.channel.id),
-                is_bot=False,
+                is_bot=bool(getattr(message.author, "bot", False)),
             )
 
             # 3. Run the access gate.
@@ -1083,6 +1095,11 @@ class DiscordEndpoint:
                     "author_id": str(message.author.id),
                     "author_display_name": getattr(message.author, "display_name", "") or "",
                     "is_dm": is_dm,
+                    # is_bot piped through so downstream beings can tell "this
+                    # is from another agent-core being" vs "this is from Jeff"
+                    # without inspecting bot id maps. Pairs with the
+                    # allowed_bot_ids gate (agent_core#143).
+                    "is_bot": ctx.is_bot,
                 },
             }
             if attachments:
