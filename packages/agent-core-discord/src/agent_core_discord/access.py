@@ -102,9 +102,19 @@ def gate_message(cfg: AccessConfig, ctx: InboundContext) -> bool:
     Guild messages go through the channel allowlist if non-empty:
         - empty channels dict → allow all guild channels.
         - non-empty           → allow only if channel_id is a key.
+
+    The bot-block is a default-deny *guard* layered on top of the
+    DM-or-channel checks, NOT a terminal answer. An allowlisted bot
+    must STILL pass the channel filter for guild posts (and dm_policy
+    for DMs) — same gate every other author goes through. Previously
+    the bot-block returned early with `ctx.author_id in allowed_bot_ids`,
+    which bypassed the channel allowlist entirely and let any
+    allowlisted bot's posts in any channel through. Caught 2026-06-08
+    after the Wren endpoint observed every Pepper-to-Jeff message in
+    #pepper-chat (which is NOT in discord-wren's channel allowlist).
     """
-    if ctx.is_bot:
-        return ctx.author_id in cfg.allowed_bot_ids
+    if ctx.is_bot and ctx.author_id not in cfg.allowed_bot_ids:
+        return False
     if ctx.is_dm:
         if cfg.dm_policy == "open":
             return True

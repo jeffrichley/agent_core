@@ -175,6 +175,58 @@ def test_gate_allowlist_dm_policy_does_not_block_guild_messages():
     assert gate_message(cfg, _ctx(is_dm=False, author_id="999", channel_id="200")) is True
 
 
+def test_gate_allowlisted_bot_must_still_pass_channel_filter():
+    """Regression: an allowlisted other-bot in a NON-allowlisted channel must
+    be blocked. The bot-id allowlist opts a bot past the default bot-block,
+    not past the channel filter — both checks must apply for guild posts.
+
+    Pre-fix bug: `gate_message` returned `ctx.author_id in cfg.allowed_bot_ids`
+    as a terminal answer at the top, short-circuiting the channel filter for
+    every allowlisted bot regardless of where it posted. Pepper's bot posts
+    in #pepper-chat (which is NOT in discord-wren's `channels` allowlist)
+    reached the wren endpoint anyway. The bot-block must layer: deny
+    non-allowlisted bots, then fall through to the same channel + DM checks
+    every other author goes through.
+    """
+    cfg = AccessConfig(
+        dm_policy="open",
+        channels={"allowed-channel": {}},
+        allowed_bot_ids=["pepper-bot"],
+    )
+    ctx_allowed = InboundContext(
+        is_dm=False,
+        author_id="pepper-bot",
+        channel_id="allowed-channel",
+        is_bot=True,
+    )
+    ctx_wrong_channel = InboundContext(
+        is_dm=False,
+        author_id="pepper-bot",
+        channel_id="other-channel",
+        is_bot=True,
+    )
+    assert gate_message(cfg, ctx_allowed) is True
+    assert gate_message(cfg, ctx_wrong_channel) is False
+
+
+def test_gate_allowlisted_bot_dm_still_goes_through_dm_policy():
+    """An allowlisted bot DMing must still respect dm_policy. With
+    `allowlist` dm_policy and the bot's id not in `allow_from`, deny.
+    The bot-id allowlist opens up bot authorship, not DM access."""
+    cfg = AccessConfig(
+        dm_policy="allowlist",
+        allow_from=["jeff-user"],
+        allowed_bot_ids=["pepper-bot"],
+    )
+    ctx = InboundContext(
+        is_dm=True,
+        author_id="pepper-bot",
+        channel_id="dm",
+        is_bot=True,
+    )
+    assert gate_message(cfg, ctx) is False
+
+
 def test_load_access_config_silently_ignores_legacy_urgency_red_regex(tmp_path):
     """Migration: existing access JSON files with urgencyRedRegex set must
     still load cleanly under the post-#38 AccessConfig (which doesn't have
