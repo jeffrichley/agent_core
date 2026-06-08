@@ -2569,6 +2569,89 @@ async def test_unrecognized_field_produces_failed_delivery_ack(monkeypatch):
         await ep.stop()
 
 
+# --- #161: NACK coverage pins the exact bug-repro inbound-enrichment shape ---
+
+
+@pytest.mark.asyncio
+async def test_inbound_enrichment_fields_on_outbound_produce_failed_delivery_ack(
+    monkeypatch,
+):
+    """Issue #161 regression: a ``TextMessage`` outbound carrying the
+    full Discord inbound-enrichment set (``guild_id``, ``author_id``,
+    ``author_display_name``, ``is_dm``, ``is_bot``) on
+    ``metadata.discord`` — the exact fingerprint from the bug repro —
+    must produce a yellow failed-delivery ``Acknowledgment`` and NOT
+    reach the Discord API.
+
+    Parallels ``test_unrecognized_field_produces_failed_delivery_ack``
+    (which uses a synthetic ``mystery_field``); this test pins the
+    real-world shape so a future change that loosens the validator's
+    known-outbound-keys set (e.g., adds ``is_bot`` to it) flips a red
+    CI light. Independent of the ``reply()`` fix in the core MCP
+    endpoint — the adapter must NACK even if a future caller (or a
+    future inbound-enrichment-only bus producer) ever surfaces this
+    shape.
+    """
+    ep, handle, fake = await _started(monkeypatch)
+    ch = FakeChannel(id="123")
+    fake.add_channel(ch)
+
+    env = Envelope(
+        id=uuid.uuid4().hex,
+        correlation_id=uuid.uuid4().hex,
+        from_="agent-test",
+        to="discord-test",
+        kind="TextMessage",
+        payload=TextMessagePayload(text="hi"),
+        metadata={
+            "discord": {
+                "channel_id": "123",
+                "message_id": "456",
+                "guild_id": "789",
+                "author_id": "1011",
+                "author_display_name": "test-user",
+                "is_dm": False,
+                "is_bot": True,
+            }
+        },
+        created_at=datetime.now(UTC),
+    )
+    original_id = env.id
+
+    try:
+        await ep.deliver(env)
+
+        # (a) No Discord API call landed.
+        assert ch.sent == [], (
+            "validator failed to gate: dispatch reached the Discord client"
+        )
+
+        # (b) Yellow Ack with right in_reply_to and EVERY inbound-only
+        # field name enumerated in the note. ``channel_id`` and
+        # ``message_id`` are outbound-safe per the validator so they
+        # must NOT appear in the note as unrecognized.
+        acks = [e for e in handle.published if e.kind == "Acknowledgment"]
+        assert acks, "no Acknowledgment was published"
+        ack = acks[-1]
+        assert ack.urgency == "yellow"
+        assert ack.in_reply_to == original_id
+        for inbound_only_field in (
+            "guild_id",
+            "author_id",
+            "author_display_name",
+            "is_dm",
+            "is_bot",
+        ):
+            assert (
+                f"metadata.discord.{inbound_only_field}" in ack.payload.note
+            ), f"Ack note missing {inbound_only_field!r}: {ack.payload.note!r}"
+
+        # (c) The original envelope was acked (does not redeliver).
+        assert original_id in handle.acked
+    finally:
+        await ep.stop()
+
+
 # --- #114 Task 9: back-compat regression suite for the 4 documented legacy shapes ---
 
 

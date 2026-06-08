@@ -24,7 +24,7 @@ import logging
 import re
 import uuid
 from collections import Counter
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal, cast
@@ -53,6 +53,60 @@ _META_KEY_RE = re.compile(r"^[A-Za-z0-9_]+$")
 _MISSING_ACK_DELAY_MAX_SECONDS = 86400.0  # 24 hours
 _OUTBOUND_REGISTRY_TTL_MIN_SECONDS = 1.0
 _OUTBOUND_REGISTRY_TTL_MAX_SECONDS = 86400.0 * 366  # ~one year
+
+# Outbound-safe subset of inbound ``metadata.discord`` keys that ``reply()``
+# may merge from the inbound onto the outbound envelope. Keep in lockstep
+# with the inbound enrichment site —
+# ``agent_core_discord.endpoint.DiscordEndpoint._make_on_message_handler``
+# populates ``metadata.discord`` on inbound with the full enrichment set
+# (``channel_id``, ``message_id``, ``guild_id``, ``author_id``,
+# ``author_display_name``, ``is_dm``, ``is_bot``). The Discord adapter's
+# strict-mode shape validator (#114) rejects everything outside
+# ``shape_validator._KNOWN_DISCORD_META_OUTBOUND_KEYS`` on outbound, which
+# silently drops ``reply()`` outputs against Discord-routed inbounds (#161).
+# Of the enrichment fields, only ``channel_id`` and ``message_id`` are
+# also outbound-safe per the validator's known-outbound set; the rest are
+# inbound-only and must be filtered before the merge.
+#
+# If a new outbound-safe field is added on the enrichment side, add it
+# here AND to ``shape_validator._KNOWN_DISCORD_META_OUTBOUND_KEYS``.
+_OUTBOUND_SAFE_INBOUND_DISCORD_KEYS: frozenset[str] = frozenset({"channel_id", "message_id"})
+
+
+def _filter_inbound_discord_metadata(metadata: Mapping[str, Any]) -> dict[str, Any]:
+    """Return a shallow copy of ``metadata`` with ``metadata['discord']``
+    filtered to the outbound-safe key set.
+
+    The Discord adapter populates ``metadata.discord`` on inbound with
+    enrichment fields (``guild_id``, ``author_id``, ``author_display_name``,
+    ``is_dm``, ``is_bot``) that the strict-mode shape validator (#114)
+    rejects on outbound. ``reply()`` shallow-merges inbound metadata into
+    its outbound envelope; without this filter, those fields leak into
+    the outbound and trigger an ``Unrecognized`` NACK at the adapter,
+    silently dropping the user-visible reply (issue #161).
+
+    Lockstep with the inbound enrichment site:
+    ``agent_core_discord.endpoint.DiscordEndpoint._make_on_message_handler``,
+    the ``metadata = {"discord": {...}}`` block. If a new outbound-safe
+    field is added on the enrichment side, add it to
+    ``_OUTBOUND_SAFE_INBOUND_DISCORD_KEYS`` AND to
+    ``shape_validator._KNOWN_DISCORD_META_OUTBOUND_KEYS``.
+
+    Non-``"discord"`` top-level keys (e.g., ``"trace_id"``,
+    ``"attachments"``) pass through untouched. If ``metadata["discord"]``
+    is missing, not-a-dict (string, list, ``None``), or already empty,
+    the value passes through unchanged — adapter-level validation handles
+    those cases downstream. Pure function, no I/O, no logging.
+    """
+    result = dict(metadata)
+    discord = result.get("discord")
+    if isinstance(discord, dict):
+        result["discord"] = {
+            k: v
+            for k, v in discord.items()
+            if k in _OUTBOUND_SAFE_INBOUND_DISCORD_KEYS
+        }
+    return result
 
 
 class SessionRegistry(Middleware):
@@ -1019,7 +1073,12 @@ class ClaudeCodeMCPEndpoint:
             ``{"discord": {"channel_id": "X"}}`` replaces the entire
             ``discord`` dict, dropping sibling keys like ``guild_id`` from the
             inbound. Override fully or not at all when touching transport
-            metadata.
+            metadata. Inbound ``metadata.discord.*`` keys outside
+            ``_OUTBOUND_SAFE_INBOUND_DISCORD_KEYS`` (``channel_id``,
+            ``message_id``) are stripped before the merge so the outbound
+            passes the Discord adapter's strict-mode shape validator (#114);
+            without this, replies to Discord-routed inbounds silently drop
+            at the adapter (#161).
 
             ``urgency`` defaults to ``"green"`` (matching ``send()``); a
             reply is its own message and inherits no urgency by default.
@@ -1057,7 +1116,10 @@ class ClaudeCodeMCPEndpoint:
                 inbound_correlation = cached["correlation_id"]
 
             out_urgency: str = inbound_urgency if urgency == "auto" else urgency
-            out_metadata = {**inbound_metadata, **(metadata or {})}
+            out_metadata = {
+                **_filter_inbound_discord_metadata(inbound_metadata),
+                **(metadata or {}),
+            }
 
             env = Envelope(
                 id=uuid.uuid4().hex,
