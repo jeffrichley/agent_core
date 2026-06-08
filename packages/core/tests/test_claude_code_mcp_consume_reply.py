@@ -219,7 +219,10 @@ async def test_reply_publishes_and_acks_atomically() -> None:
         assert out.in_reply_to == "in-1"
         assert out.to == "discord-pepper"
         assert out.kind == "TextMessage"
-        assert out.metadata == {"discord": {"channel_id": "C1", "guild_id": "G1"}}
+        # ``guild_id`` is inbound-only enrichment — the filter strips it
+        # before the merge so the outbound passes the Discord adapter's
+        # strict-mode shape validator (#161).
+        assert out.metadata == {"discord": {"channel_id": "C1"}}
         # urgency default is green (does NOT inherit inbound urgency)
         assert out.urgency == "green"
         assert out.correlation_id == inbound.correlation_id
@@ -355,6 +358,227 @@ async def test_reply_after_consume_uses_recent_inbounds_cache() -> None:
         assert res.data["acked_envelope_id"] == "in-1"  # type: ignore[index]
         assert handle.published[0].to == "discord-pepper"
         assert handle.published[0].metadata == {"discord": {"channel_id": "C1"}}
+    finally:
+        await ep.stop()
+
+
+@pytest.mark.asyncio
+async def test_reply_strips_inbound_only_discord_keys_from_outbound_metadata() -> None:
+    """Issue #161: ``reply()`` against a Discord-routed inbound must strip
+    inbound-only enrichment keys (``guild_id``, ``author_id``,
+    ``author_display_name``, ``is_dm``, ``is_bot``) from
+    ``metadata.discord`` before the merge so the outbound is not silently
+    dropped at the adapter's strict-mode shape validator (#114).
+    Only ``channel_id`` and ``message_id`` (the outbound-safe subset of
+    the enrichment) survive."""
+    ep = ClaudeCodeMCPEndpoint(name="agent", mount="/mcp/agent")
+    handle = _RecordingHandle()
+    await ep.start(handle)  # type: ignore[arg-type]
+    try:
+        inbound_meta = {
+            "discord": {
+                "channel_id": "C1",
+                "message_id": "M1",
+                "guild_id": "G1",
+                "author_id": "A1",
+                "author_display_name": "wren",
+                "is_dm": False,
+                "is_bot": True,
+            },
+        }
+        ep.queue_for_pickup(
+            _inbound_text("in-1", from_="discord-pepper", metadata=inbound_meta)
+        )
+
+        async with Client(ep._mcp) as client:
+            await client.call_tool(
+                "reply",
+                {
+                    "in_reply_to": "in-1",
+                    "payload": {"kind": "TextMessage", "text": "hi"},
+                },
+            )
+
+        out = handle.published[0]
+        # Exact-shape assertion: a regression on the allowlist contents
+        # surfaces as a precise diff, not a wildcard pass.
+        assert out.metadata == {
+            "discord": {"channel_id": "C1", "message_id": "M1"}
+        }
+    finally:
+        await ep.stop()
+
+
+@pytest.mark.asyncio
+async def test_reply_preserves_non_discord_top_level_metadata() -> None:
+    """The inbound-only filter must touch only ``metadata['discord']`` —
+    sibling top-level keys (``trace_id``, ``attachments``, etc.) pass
+    through unchanged. Defends against the filter accidentally widening."""
+    ep = ClaudeCodeMCPEndpoint(name="agent", mount="/mcp/agent")
+    handle = _RecordingHandle()
+    await ep.start(handle)  # type: ignore[arg-type]
+    try:
+        inbound_meta = {
+            "discord": {"channel_id": "C1", "guild_id": "G1"},
+            "trace_id": "T1",
+        }
+        ep.queue_for_pickup(_inbound_text("in-1", metadata=inbound_meta))
+
+        async with Client(ep._mcp) as client:
+            await client.call_tool(
+                "reply",
+                {
+                    "in_reply_to": "in-1",
+                    "payload": {"kind": "TextMessage", "text": "hi"},
+                },
+            )
+
+        out = handle.published[0]
+        assert out.metadata == {
+            "discord": {"channel_id": "C1"},
+            "trace_id": "T1",
+        }
+    finally:
+        await ep.stop()
+
+
+@pytest.mark.asyncio
+async def test_reply_caller_metadata_override_still_replaces_discord_block() -> None:
+    """The filter runs on the *inbound* side of the merge, not on the
+    caller-supplied override. A caller that supplies
+    ``metadata={"discord": {"channel_id": "Z"}}`` still gets exactly that
+    on the outbound — the existing shallow-merge override semantics
+    survive the filter."""
+    ep = ClaudeCodeMCPEndpoint(name="agent", mount="/mcp/agent")
+    handle = _RecordingHandle()
+    await ep.start(handle)  # type: ignore[arg-type]
+    try:
+        inbound_meta = {
+            "discord": {
+                "channel_id": "C1",
+                "message_id": "M1",
+                "guild_id": "G1",
+                "author_id": "A1",
+                "author_display_name": "wren",
+                "is_dm": False,
+                "is_bot": True,
+            },
+        }
+        ep.queue_for_pickup(_inbound_text("in-1", metadata=inbound_meta))
+
+        async with Client(ep._mcp) as client:
+            await client.call_tool(
+                "reply",
+                {
+                    "in_reply_to": "in-1",
+                    "payload": {"kind": "TextMessage", "text": "hi"},
+                    "metadata": {"discord": {"channel_id": "Z"}},
+                },
+            )
+
+        out = handle.published[0]
+        assert out.metadata == {"discord": {"channel_id": "Z"}}
+    finally:
+        await ep.stop()
+
+
+@pytest.mark.asyncio
+async def test_reply_handles_missing_discord_block_in_inbound_metadata() -> None:
+    """When the inbound carries no ``discord`` block at all (e.g., a
+    non-Discord-routed inbound), the filter passes through unchanged —
+    no ``KeyError``, no spurious ``discord`` key on the outbound."""
+    ep = ClaudeCodeMCPEndpoint(name="agent", mount="/mcp/agent")
+    handle = _RecordingHandle()
+    await ep.start(handle)  # type: ignore[arg-type]
+    try:
+        ep.queue_for_pickup(_inbound_text("in-1", metadata={}))
+
+        async with Client(ep._mcp) as client:
+            await client.call_tool(
+                "reply",
+                {
+                    "in_reply_to": "in-1",
+                    "payload": {"kind": "TextMessage", "text": "hi"},
+                },
+            )
+
+        out = handle.published[0]
+        assert out.metadata == {}
+    finally:
+        await ep.stop()
+
+
+@pytest.mark.asyncio
+async def test_reply_handles_non_dict_discord_block_in_inbound_metadata() -> None:
+    """When ``metadata['discord']`` is malformed (string, list, ``None``),
+    the filter leaves the value untouched — adapter-level validation
+    handles the case downstream (validator returns ``Unrecognized`` and
+    the adapter publishes a yellow NACK Acknowledgment)."""
+    ep = ClaudeCodeMCPEndpoint(name="agent", mount="/mcp/agent")
+    handle = _RecordingHandle()
+    await ep.start(handle)  # type: ignore[arg-type]
+    try:
+        ep.queue_for_pickup(
+            _inbound_text("in-1", metadata={"discord": "not-a-dict"})
+        )
+
+        async with Client(ep._mcp) as client:
+            await client.call_tool(
+                "reply",
+                {
+                    "in_reply_to": "in-1",
+                    "payload": {"kind": "TextMessage", "text": "hi"},
+                },
+            )
+
+        out = handle.published[0]
+        assert out.metadata == {"discord": "not-a-dict"}
+    finally:
+        await ep.stop()
+
+
+@pytest.mark.asyncio
+async def test_reply_after_consume_uses_recent_inbounds_cache_and_strips() -> None:
+    """Parallels ``test_reply_after_consume_uses_recent_inbounds_cache``
+    but with the full enrichment payload on the inbound — proves the
+    filter also runs when the routing came out of the ``_recent_inbounds``
+    cache, not just the ``_pending`` queue. Canary against future cache-
+    copy semantics that bypass the merge site."""
+    ep = ClaudeCodeMCPEndpoint(name="agent", mount="/mcp/agent")
+    handle = _RecordingHandle()
+    await ep.start(handle)  # type: ignore[arg-type]
+    try:
+        inbound_meta = {
+            "discord": {
+                "channel_id": "C1",
+                "message_id": "M1",
+                "guild_id": "G1",
+                "author_id": "A1",
+                "author_display_name": "wren",
+                "is_dm": False,
+                "is_bot": True,
+            },
+        }
+        ep.queue_for_pickup(
+            _inbound_text("in-1", from_="discord-pepper", metadata=inbound_meta)
+        )
+
+        async with Client(ep._mcp) as client:
+            await client.call_tool("consume", {})  # auto_ack=True
+            assert ep._pending == []
+            await client.call_tool(
+                "reply",
+                {
+                    "in_reply_to": "in-1",
+                    "payload": {"kind": "TextMessage", "text": "after consume"},
+                },
+            )
+
+        out = handle.published[0]
+        assert out.to == "discord-pepper"
+        assert out.metadata == {
+            "discord": {"channel_id": "C1", "message_id": "M1"}
+        }
     finally:
         await ep.stop()
 
