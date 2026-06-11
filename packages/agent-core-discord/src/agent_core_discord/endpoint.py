@@ -1135,6 +1135,49 @@ class DiscordEndpoint:
 
         return on_message
 
+    def _should_route_event(
+        self,
+        *,
+        channel_id: str,
+        guild_id: str,
+        author_id: str = "",
+        is_bot: bool = False,
+    ) -> bool:
+        """Apply the inbound channel-allowlist + dm_policy gate to a lifecycle event.
+
+        Reuses ``gate_message`` so the answer to "should this bot see
+        lifecycle events about this message?" stays in lockstep with
+        "should this bot see this message?" — the foreman#170 fix.
+
+        Defaults:
+
+        - ``author_id=""`` — sentinel for the raw lifecycle path
+          (``on_raw_message_edit`` / ``on_raw_message_delete``).
+          ``discord.RawMessageUpdateEvent`` and
+          ``discord.RawMessageDeleteEvent`` carry only IDs; the
+          original message author is NOT on the raw event. Guild
+          channels don't consult ``author_id`` in ``gate_message`` so
+          the sentinel is fine there; for DM with
+          ``dm_policy == "allowlist"`` the sentinel deliberately fails
+          the allowlist — a lifecycle event with no resolvable author
+          can't prove it satisfies the allowlist, so it gets dropped.
+        - ``is_bot=False`` — same reasoning: the raw event has no
+          author, so ``is_bot`` cannot be truthful. Falsy skips the
+          gate's default-bot-block, falling through to the channel/DM
+          check, which is the only signal we actually have. Reactions
+          have a real ``user.bot`` and pipe it through; reactions also
+          short-circuit other-bot authors before this helper runs, so
+          the value passed in the reaction path is moot but kept
+          consistent with ``_make_on_message_handler``.
+        """
+        ctx = InboundContext(
+            is_dm=not guild_id,
+            author_id=author_id,
+            channel_id=channel_id,
+            is_bot=is_bot,
+        )
+        return gate_message(self._access, ctx)
+
     def _make_on_reaction_add_handler(self):
         async def on_reaction_add(reaction: Any, user: Any) -> None:
             # 1. Drop the bot's own reactions.
@@ -1146,8 +1189,26 @@ class DiscordEndpoint:
             if ack_emoji and str(reaction.emoji) == ack_emoji:
                 return
 
-            # 3. Build the Event envelope.
+            # 3. Apply the channel-allowlist + dm_policy gate (foreman#170).
+            # Reaction events must answer to the same "should this bot
+            # see this channel?" rule that ``on_message`` does, so a bot
+            # sitting in a guild doesn't receive reaction events for a
+            # channel its access config does not list.
             message = reaction.message
+            if not self._should_route_event(
+                channel_id=str(message.channel.id),
+                guild_id=str(message.guild.id) if message.guild else "",
+                author_id=str(user.id),
+                is_bot=bool(getattr(user, "bot", False)),
+            ):
+                log.debug(
+                    "discord(%s): gate denied reaction_add in channel %s",
+                    self.name,
+                    message.channel.id,
+                )
+                return
+
+            # 4. Build the Event envelope.
             data: dict[str, Any] = {
                 "emoji": str(reaction.emoji),
                 "channel_id": str(message.channel.id),
@@ -1269,10 +1330,29 @@ class DiscordEndpoint:
         """
 
         async def on_raw_message_lifecycle(raw: Any) -> None:
+            # Channel-allowlist + dm_policy gate (foreman#170). Raw
+            # lifecycle events carry no author; the helper's sentinel
+            # ``author_id=""`` / ``is_bot=False`` defaults route the
+            # gate through the channel-only branch for guild events and
+            # fail safely against ``dmPolicy: "allowlist"`` for DMs (no
+            # resolvable author cannot satisfy an allowlist). See
+            # ``_should_route_event`` docstring for the full contract.
+            guild_id_str = str(raw.guild_id) if raw.guild_id else ""
+            if not self._should_route_event(
+                channel_id=str(raw.channel_id),
+                guild_id=guild_id_str,
+            ):
+                log.debug(
+                    "discord(%s): gate denied %s in channel %s",
+                    self.name,
+                    event_type,
+                    raw.channel_id,
+                )
+                return
             data: dict[str, Any] = {
                 "message_id": str(raw.message_id),
                 "channel_id": str(raw.channel_id),
-                "guild_id": str(raw.guild_id) if raw.guild_id else "",
+                "guild_id": guild_id_str,
             }
             env = Envelope(
                 id=uuid.uuid4().hex,

@@ -386,6 +386,114 @@ async def test_on_reaction_add_dm_context(monkeypatch):
         await ep.stop()
 
 
+# --- foreman#170: reaction/edit/delete must respect the channel allowlist.
+#
+# The on_message handler already passes inbound TextMessages through
+# ``gate_message``; the lifecycle handlers historically did not, so a bot
+# sitting in a guild with a non-allowlisted channel received
+# ``discord.reaction_add`` / ``discord.message_edit`` /
+# ``discord.message_delete`` envelopes for messages it never saw the
+# TextMessage for. Confirmed live on 2026-06-10 (#pepper-chat edit leaking
+# to Wren's inbox). These tests lock the fix.
+
+
+@pytest.mark.asyncio
+async def test_on_reaction_add_dropped_when_channel_not_in_allowlist(
+    monkeypatch, tmp_path
+):
+    """Reaction in a non-allowlisted guild channel must be gate-dropped.
+
+    Mirrors ``test_on_message_respects_channel_allowlist`` for the
+    reaction handler: a bot whose access config restricts inbound traffic
+    to channel ``200`` must NOT emit a ``discord.reaction_add`` envelope
+    for a reaction posted in channel ``999``.
+    """
+    import json
+
+    access = tmp_path / "access.json"
+    access.write_text(
+        json.dumps({"dmPolicy": "open", "channels": {"200": {}}}),
+        encoding="utf-8",
+    )
+    ep, handle, fake = await _start_endpoint(monkeypatch, access_path=str(access))
+    fake.add_channel(FakeChannel(id="999"))
+    msg = FakeMessage(id="m-out", channel_id="999")
+    msg.author = fake.user
+    msg.guild = type("G", (), {"id": "guild-1"})()
+    msg.channel = fake.get_channel("999")
+
+    user = FakeUser(id="100", name="alice", display_name="Alice")
+    reaction = FakeReaction(emoji="👍", message=msg)
+    try:
+        await fake.fire("on_reaction_add", reaction, user)
+        assert handle.published == []
+    finally:
+        await ep.stop()
+
+
+@pytest.mark.asyncio
+async def test_on_reaction_add_publishes_when_channel_in_allowlist(
+    monkeypatch, tmp_path
+):
+    """Reaction in an allowlisted guild channel still publishes — green
+    path complement to the red-test above, and confirms the existing
+    ``user_display_name`` payload shape is preserved.
+    """
+    import json
+
+    access = tmp_path / "access.json"
+    access.write_text(
+        json.dumps({"dmPolicy": "open", "channels": {"200": {}}}),
+        encoding="utf-8",
+    )
+    ep, handle, fake = await _start_endpoint(monkeypatch, access_path=str(access))
+    fake.add_channel(FakeChannel(id="200"))
+    msg = FakeMessage(id="m-in", channel_id="200")
+    msg.author = fake.user
+    msg.guild = type("G", (), {"id": "guild-1"})()
+    msg.channel = fake.get_channel("200")
+
+    user = FakeUser(id="100", name="alice", display_name="Alice")
+    reaction = FakeReaction(emoji="👍", message=msg)
+    try:
+        await fake.fire("on_reaction_add", reaction, user)
+        assert len(handle.published) == 1
+        env = handle.published[0]
+        assert env.payload.type == "discord.reaction_add"
+        assert env.payload.data["channel_id"] == "200"
+        assert env.payload.data["user_id"] == "100"
+        assert env.payload.data["user_display_name"] == "Alice"
+    finally:
+        await ep.stop()
+
+
+@pytest.mark.asyncio
+async def test_on_reaction_add_dm_follows_dm_policy_deny(monkeypatch, tmp_path):
+    """``dmPolicy: "deny"`` must drop DM reactions, mirroring the
+    on_message handler's existing DM-deny behaviour. Reactions in DMs
+    have a real ``user`` so they can ride the standard ``gate_message``
+    DM branch.
+    """
+    import json
+
+    access = tmp_path / "access.json"
+    access.write_text(json.dumps({"dmPolicy": "deny"}), encoding="utf-8")
+    ep, handle, fake = await _start_endpoint(monkeypatch, access_path=str(access))
+    fake.add_channel(FakeChannel(id="dm"))
+    msg = FakeMessage(id="m-dm", channel_id="dm")
+    msg.author = fake.user
+    msg.guild = None  # DM
+    msg.channel = fake.get_channel("dm")
+
+    user = FakeUser(id="100", name="alice", display_name="Alice")
+    reaction = FakeReaction(emoji="🔥", message=msg)
+    try:
+        await fake.fire("on_reaction_add", reaction, user)
+        assert handle.published == []
+    finally:
+        await ep.stop()
+
+
 # Engagement-event listeners (poll votes, message edits/deletes). Wired
 # against discord.py's *raw* dispatch points so the agent gets notified
 # even after the underlying message has been evicted from the client's
@@ -626,6 +734,151 @@ async def test_on_raw_message_delete_publishes_event_envelope(monkeypatch):
         assert env.payload.type == "discord.message_delete"
         assert env.payload.data["message_id"] == "100"
         assert env.payload.data["guild_id"] == ""
+    finally:
+        await ep.stop()
+
+
+# --- foreman#170: edit/delete must respect the channel allowlist + dm_policy.
+
+
+@pytest.mark.asyncio
+async def test_on_raw_message_edit_dropped_when_channel_not_in_allowlist(
+    monkeypatch, tmp_path
+):
+    """Raw message-edit in a non-allowlisted guild channel must be dropped.
+
+    This is the 2026-06-10 #pepper-chat live observation reduced to a
+    test: a Wren bot with ``channels: {"200": {}}`` must NOT receive a
+    ``discord.message_edit`` envelope for an edit in channel ``999``.
+    """
+    import json
+
+    access = tmp_path / "access.json"
+    access.write_text(
+        json.dumps({"dmPolicy": "open", "channels": {"200": {}}}),
+        encoding="utf-8",
+    )
+    ep, handle, fake = await _start_endpoint(monkeypatch, access_path=str(access))
+    raw = FakeRawMessageUpdate(message_id=100, channel_id=999, guild_id=300)
+    try:
+        await fake.fire("on_raw_message_edit", raw)
+        assert handle.published == []
+    finally:
+        await ep.stop()
+
+
+@pytest.mark.asyncio
+async def test_on_raw_message_delete_dropped_when_channel_not_in_allowlist(
+    monkeypatch, tmp_path
+):
+    """Raw message-delete in a non-allowlisted guild channel must be dropped."""
+    import json
+
+    access = tmp_path / "access.json"
+    access.write_text(
+        json.dumps({"dmPolicy": "open", "channels": {"200": {}}}),
+        encoding="utf-8",
+    )
+    ep, handle, fake = await _start_endpoint(monkeypatch, access_path=str(access))
+    raw = FakeRawMessageDelete(message_id=100, channel_id=999, guild_id=300)
+    try:
+        await fake.fire("on_raw_message_delete", raw)
+        assert handle.published == []
+    finally:
+        await ep.stop()
+
+
+@pytest.mark.asyncio
+async def test_on_raw_message_edit_publishes_when_channel_in_allowlist(
+    monkeypatch, tmp_path
+):
+    """Raw message-edit in an allowlisted guild channel still publishes."""
+    import json
+
+    access = tmp_path / "access.json"
+    access.write_text(
+        json.dumps({"dmPolicy": "open", "channels": {"200": {}}}),
+        encoding="utf-8",
+    )
+    ep, handle, fake = await _start_endpoint(monkeypatch, access_path=str(access))
+    raw = FakeRawMessageUpdate(message_id=100, channel_id=200, guild_id=300)
+    try:
+        await fake.fire("on_raw_message_edit", raw)
+        assert len(handle.published) == 1
+        env = handle.published[0]
+        assert env.payload.type == "discord.message_edit"
+        assert env.payload.data["channel_id"] == "200"
+        assert env.payload.data["guild_id"] == "300"
+    finally:
+        await ep.stop()
+
+
+@pytest.mark.asyncio
+async def test_on_raw_message_delete_publishes_when_channel_in_allowlist(
+    monkeypatch, tmp_path
+):
+    """Raw message-delete in an allowlisted guild channel still publishes."""
+    import json
+
+    access = tmp_path / "access.json"
+    access.write_text(
+        json.dumps({"dmPolicy": "open", "channels": {"200": {}}}),
+        encoding="utf-8",
+    )
+    ep, handle, fake = await _start_endpoint(monkeypatch, access_path=str(access))
+    raw = FakeRawMessageDelete(message_id=100, channel_id=200, guild_id=300)
+    try:
+        await fake.fire("on_raw_message_delete", raw)
+        assert len(handle.published) == 1
+        env = handle.published[0]
+        assert env.payload.type == "discord.message_delete"
+        assert env.payload.data["channel_id"] == "200"
+    finally:
+        await ep.stop()
+
+
+@pytest.mark.asyncio
+async def test_on_raw_message_edit_dm_follows_dm_policy_deny(
+    monkeypatch, tmp_path
+):
+    """``dmPolicy: "deny"`` must drop DM message-edit lifecycle events."""
+    import json
+
+    access = tmp_path / "access.json"
+    access.write_text(json.dumps({"dmPolicy": "deny"}), encoding="utf-8")
+    ep, handle, fake = await _start_endpoint(monkeypatch, access_path=str(access))
+    raw = FakeRawMessageUpdate(message_id=100, channel_id=200, guild_id=None)
+    try:
+        await fake.fire("on_raw_message_edit", raw)
+        assert handle.published == []
+    finally:
+        await ep.stop()
+
+
+@pytest.mark.asyncio
+async def test_on_raw_message_edit_dm_dropped_when_dm_policy_allowlist(
+    monkeypatch, tmp_path
+):
+    """``dmPolicy: "allowlist"`` drops raw lifecycle edits even when
+    ``allowFrom`` is non-empty: ``RawMessageUpdateEvent`` carries no
+    author, so the helper falls back to a sentinel ``author_id=""`` that
+    cannot satisfy any allowlist entry. The conservative outcome is the
+    intended behaviour — a DM lifecycle event with no resolvable author
+    has no way to prove it satisfies the allowlist, so it's dropped.
+    Documents the sentinel-author contract for the edit/delete path.
+    """
+    import json
+
+    access = tmp_path / "access.json"
+    access.write_text(
+        json.dumps({"dmPolicy": "allowlist", "allowFrom": ["100"]}),
+        encoding="utf-8",
+    )
+    ep, handle, fake = await _start_endpoint(monkeypatch, access_path=str(access))
+    raw = FakeRawMessageUpdate(message_id=100, channel_id=200, guild_id=None)
+    try:
+        await fake.fire("on_raw_message_edit", raw)
+        assert handle.published == []
     finally:
         await ep.stop()
 
