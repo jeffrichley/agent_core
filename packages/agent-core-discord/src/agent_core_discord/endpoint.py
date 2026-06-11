@@ -496,13 +496,18 @@ class DiscordEndpoint:
             #    rather than @client.event so a future rename of the inner
             #    function can't silently mis-route the event.
             self._add_listener(self._make_on_message_handler(), "on_message")
-            self._add_listener(self._make_on_reaction_add_handler(), "on_reaction_add")
             # Engagement events — wire the *raw* dispatch points so we
             # always fire, even when the underlying message has been
             # evicted from the client's message cache (the common case
-            # for long-running agents). Caught on testbot 2026-05-05
-            # Phase 6 verification: a vote on a bot-posted poll never
-            # reached the agent because no listener was wired here.
+            # for long-running agents). This applies to reactions
+            # (#171), poll votes (testbot 2026-05-05 Phase 6
+            # verification: a vote on a bot-posted poll never reached
+            # the agent because no listener was wired here), and
+            # message edits/deletes — all share the cache-miss failure
+            # mode.
+            self._add_listener(
+                self._make_on_raw_reaction_add_handler(), "on_raw_reaction_add"
+            )
             self._add_listener(
                 self._make_on_raw_poll_vote_handler("discord.poll_vote_add"),
                 "on_raw_poll_vote_add",
@@ -1135,26 +1140,70 @@ class DiscordEndpoint:
 
         return on_message
 
-    def _make_on_reaction_add_handler(self):
-        async def on_reaction_add(reaction: Any, user: Any) -> None:
-            # 1. Drop the bot's own reactions.
-            if user == self._client.user or user.bot:
+    def _make_on_raw_reaction_add_handler(self):
+        """Build a handler for ``on_raw_reaction_add``.
+
+        We deliberately wire the *raw* dispatch point (not the cached
+        ``on_reaction_add``) so reactions fire regardless of whether
+        the underlying message is in discord.py's internal message
+        cache. The cached variant misses reactions on bot-sent DMs
+        because the bot's outbound DM messages are not auto-cached
+        (issue #171, verified live 2026-06-10). Same pattern as
+        ``_make_on_raw_poll_vote_handler`` and
+        ``_make_on_raw_message_lifecycle_handler`` below.
+        """
+
+        async def on_raw_reaction_add(raw: Any) -> None:
+            # 1. Drop the bot's own reactions by ID. Raw events carry
+            # only ``user_id`` (no User object), so we compare against
+            # ``client.user.id`` instead of the ``user == self._client.user``
+            # equality check the cached handler used. Same pattern as
+            # ``_make_on_raw_poll_vote_handler``.
+            self_user = self._client.user if self._client else None
+            self_id = (
+                getattr(self_user, "id", None)
+                if self_user is not None
+                else None
+            )
+            if self_id is not None and str(getattr(raw, "user_id", "")) == str(self_id):
                 return
 
-            # 2. Drop the ack emoji (the bot's own 👀, even if user reacts with same).
+            # 2. Drop other bots opportunistically via the client's user
+            # cache. No HTTP ``fetch_user`` — that would add a round-trip
+            # per reaction. If the reactor isn't in the local cache, we
+            # publish; the access gate's ``allowed_bot_ids`` (PR #158 /
+            # agent_core#143) is the structural place for bot filtering.
+            # Parity with ``_make_on_raw_poll_vote_handler``.
+            if self._client is not None:
+                cached_user = self._client.get_user(int(raw.user_id))
+                if cached_user is not None and getattr(cached_user, "bot", False):
+                    return
+
+            # 3. Drop the ack emoji. ``str(raw.emoji)`` returns the
+            # canonical form for both unicode and custom emoji
+            # (``discord.PartialEmoji.__str__``).
             ack_emoji = self._access.ack_reaction
-            if ack_emoji and str(reaction.emoji) == ack_emoji:
+            if ack_emoji and str(raw.emoji) == ack_emoji:
                 return
 
-            # 3. Build the Event envelope.
-            message = reaction.message
+            # 4. Resolve the reactor's display name with the sticky
+            # local cache. First miss → HTTP fetch_user; subsequent
+            # reactions from same user → cache hit. Same helper used
+            # by the poll-vote handler.
+            user_display_name = await self._resolve_user_display_name(
+                int(raw.user_id)
+            )
+
+            # 5. Build the Event envelope. Payload shape preserved
+            # exactly from the previous cached handler so downstream
+            # consumers don't see a schema change.
             data: dict[str, Any] = {
-                "emoji": str(reaction.emoji),
-                "channel_id": str(message.channel.id),
-                "message_id": str(message.id),
-                "guild_id": str(message.guild.id) if message.guild else "",
-                "user_id": str(user.id),
-                "user_display_name": getattr(user, "display_name", "") or "",
+                "emoji": str(raw.emoji),
+                "channel_id": str(raw.channel_id),
+                "message_id": str(raw.message_id),
+                "guild_id": str(raw.guild_id) if raw.guild_id else "",
+                "user_id": str(raw.user_id),
+                "user_display_name": user_display_name,
             }
             env = Envelope(
                 id=uuid.uuid4().hex,
@@ -1168,7 +1217,7 @@ class DiscordEndpoint:
             await self._handle.publish(env)
             self._record_inbound(env)
 
-        return on_reaction_add
+        return on_raw_reaction_add
 
     async def _resolve_user_display_name(self, user_id: int) -> str:
         """Resolve a Discord user's display name with sticky cache.

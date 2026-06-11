@@ -277,33 +277,22 @@ async def test_on_message_dm_inbound_is_marked(monkeypatch):
         await ep.stop()
 
 
-class FakeReaction:
-    def __init__(self, *, emoji: str, message: FakeMessage):
-        self.emoji = emoji
-        self.message = message
-
-
 @pytest.mark.asyncio
-async def test_on_reaction_add_publishes_event_envelope(monkeypatch):
+async def test_on_raw_reaction_add_publishes_event_envelope(monkeypatch):
     ep, handle, fake = await _start_endpoint(monkeypatch)
-    fake.add_channel(FakeChannel(id="200"))
-    bot_msg = FakeMessage(id="bot-msg-1", channel_id="200", content="hello from bot")
-    bot_msg.author = fake.user
-    bot_msg.guild = type("G", (), {"id": "guild-1"})()
-    bot_msg.channel = fake.get_channel("200")
-    fake._channels["200"]._messages["bot-msg-1"] = bot_msg
-
-    user = FakeUser(id="100", name="alice", display_name="Alice")
-    reaction = FakeReaction(emoji="👍", message=bot_msg)
+    fake.add_user(FakeUser(id="100", name="alice", display_name="Alice"))
+    raw = FakeRawReaction(
+        message_id=1, channel_id=200, user_id=100, guild_id=300, emoji="👍"
+    )
     try:
-        await fake.fire("on_reaction_add", reaction, user)
+        await fake.fire("on_raw_reaction_add", raw)
         assert len(handle.published) == 1
         env = handle.published[0]
         assert env.kind == "Event"
         assert isinstance(env.payload, EventPayload)
         assert env.payload.type == "discord.reaction_add"
         assert env.payload.data["emoji"] == "👍"
-        assert env.payload.data["message_id"] == "bot-msg-1"
+        assert env.payload.data["message_id"] == "1"
         assert env.payload.data["channel_id"] == "200"
         assert env.payload.data["user_id"] == "100"
         assert env.payload.data["user_display_name"] == "Alice"
@@ -312,76 +301,117 @@ async def test_on_reaction_add_publishes_event_envelope(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_on_reaction_add_drops_self_reactions(monkeypatch):
+async def test_on_raw_reaction_add_drops_self_reactions(monkeypatch):
     ep, handle, fake = await _start_endpoint(monkeypatch)
-    fake.add_channel(FakeChannel(id="200"))
-    bot_msg = FakeMessage(id="bm", channel_id="200")
-    bot_msg.author = fake.user
-    bot_msg.guild = type("G", (), {"id": "g"})()
-    bot_msg.channel = fake.get_channel("200")
-
-    reaction = FakeReaction(emoji="👍", message=bot_msg)
-    # The reaction is from the bot itself.
+    # The handler compares ``str(raw.user_id) == str(client.user.id)``.
+    # Override the fake bot user to a numeric id so the raw event's int
+    # ``user_id`` lines up cleanly with discord.py's real semantics.
+    fake.user = FakeUser(id="42", name="testbot", bot=True)
+    raw = FakeRawReaction(
+        message_id=1, channel_id=200, user_id=42, guild_id=300, emoji="👍"
+    )
     try:
-        await fake.fire("on_reaction_add", reaction, fake.user)
+        await fake.fire("on_raw_reaction_add", raw)
         assert handle.published == []
     finally:
         await ep.stop()
 
 
 @pytest.mark.asyncio
-async def test_on_reaction_add_drops_other_bots(monkeypatch):
+async def test_on_raw_reaction_add_drops_other_bots(monkeypatch):
     ep, handle, fake = await _start_endpoint(monkeypatch)
-    fake.add_channel(FakeChannel(id="200"))
-    msg = FakeMessage(id="m", channel_id="200")
-    msg.author = fake.user
-    msg.guild = type("G", (), {"id": "g"})()
-    msg.channel = fake.get_channel("200")
-
-    other_bot = FakeUser(id="999", name="other-bot", bot=True)
-    reaction = FakeReaction(emoji="👍", message=msg)
+    # Seed an other-bot into client.get_user cache so the cache-only
+    # bot-filter has something to find. Cache miss → publish (parity
+    # with _make_on_raw_poll_vote_handler).
+    fake.add_user(FakeUser(id="999", name="other-bot", bot=True))
+    raw = FakeRawReaction(
+        message_id=1, channel_id=200, user_id=999, guild_id=300, emoji="👍"
+    )
     try:
-        await fake.fire("on_reaction_add", reaction, other_bot)
+        await fake.fire("on_raw_reaction_add", raw)
         assert handle.published == []
     finally:
         await ep.stop()
 
 
 @pytest.mark.asyncio
-async def test_on_reaction_add_drops_ack_emoji(monkeypatch):
+async def test_on_raw_reaction_add_drops_ack_emoji(monkeypatch):
     """The bot's own 👀 ack reaction should never bounce back as an event."""
     ep, handle, fake = await _start_endpoint(monkeypatch)
-    fake.add_channel(FakeChannel(id="200"))
-    msg = FakeMessage(id="m", channel_id="200")
-    msg.author = fake.user
-    msg.guild = type("G", (), {"id": "g"})()
-    msg.channel = fake.get_channel("200")
-
-    user = FakeUser(id="100")
-    reaction = FakeReaction(emoji="👀", message=msg)  # the ack emoji
+    raw = FakeRawReaction(
+        message_id=1, channel_id=200, user_id=100, guild_id=300, emoji="👀"
+    )
     try:
-        await fake.fire("on_reaction_add", reaction, user)
+        await fake.fire("on_raw_reaction_add", raw)
         assert handle.published == []
     finally:
         await ep.stop()
 
 
 @pytest.mark.asyncio
-async def test_on_reaction_add_dm_context(monkeypatch):
+async def test_on_raw_reaction_add_dm_context(monkeypatch):
+    """DM reactions have ``guild_id=None`` on the raw event; the envelope
+    normalizes that to ``""``. This is the canonical regression pin for
+    the live-verified bug (issue #171, 2026-06-10): DM reactions on
+    bot-sent messages must reach the bus."""
     ep, handle, fake = await _start_endpoint(monkeypatch)
-    fake.add_channel(FakeChannel(id="dm"))
-    msg = FakeMessage(id="m", channel_id="dm")
-    msg.author = fake.user
-    msg.guild = None  # DM
-    msg.channel = fake.get_channel("dm")
-
-    user = FakeUser(id="100", name="alice", display_name="Alice")
-    reaction = FakeReaction(emoji="🔥", message=msg)
+    raw = FakeRawReaction(
+        message_id=1, channel_id=12345, user_id=100, guild_id=None, emoji="🔥"
+    )
     try:
-        await fake.fire("on_reaction_add", reaction, user)
+        await fake.fire("on_raw_reaction_add", raw)
         env = handle.published[0]
         assert env.payload.data["guild_id"] == ""
-        assert env.payload.data["channel_id"] == "dm"
+        assert env.payload.data["channel_id"] == "12345"
+    finally:
+        await ep.stop()
+
+
+@pytest.mark.asyncio
+async def test_on_raw_reaction_add_falls_back_to_fetch_user_on_cache_miss(
+    monkeypatch,
+):
+    """When ``get_user`` misses, the handler falls through to ``fetch_user``
+    (HTTP) via ``_resolve_user_display_name`` — parity with the
+    poll-vote handler. Without this fallback, every DM-reactor whose user
+    isn't recently cached would get an empty display name."""
+    ep, handle, fake = await _start_endpoint(monkeypatch)
+    fake.add_remote_user(FakeUser(id="100", name="alice", display_name="Alice"))
+    raw = FakeRawReaction(
+        message_id=1, channel_id=2, user_id=100, guild_id=3, emoji="👍"
+    )
+    try:
+        await fake.fire("on_raw_reaction_add", raw)
+        env = handle.published[0]
+        assert env.payload.data["user_id"] == "100"
+        assert env.payload.data["user_display_name"] == "Alice"
+        assert fake.fetch_user_call_count == 1
+    finally:
+        await ep.stop()
+
+
+@pytest.mark.asyncio
+async def test_on_raw_reaction_add_dm_bot_message_live_shape(monkeypatch):
+    """Pin the exact live-verified repro from issue #171 (2026-06-10
+    11:45 ET, bot ``discord-wren``, DM channel ``1508863457762480289``).
+    Any future change that reverts the listener to the cached
+    ``on_reaction_add`` dispatch point fails this test."""
+    ep, handle, fake = await _start_endpoint(monkeypatch)
+    raw = FakeRawReaction(
+        message_id=12345,
+        channel_id=1508863457762480289,
+        user_id=42,
+        guild_id=None,
+        emoji="🔥",
+    )
+    try:
+        await fake.fire("on_raw_reaction_add", raw)
+        assert len(handle.published) == 1
+        env = handle.published[0]
+        assert env.payload.type == "discord.reaction_add"
+        assert env.payload.data["guild_id"] == ""
+        assert env.payload.data["channel_id"] == "1508863457762480289"
+        assert env.payload.data["emoji"] == "🔥"
     finally:
         await ep.stop()
 
@@ -440,6 +470,32 @@ class FakeRawMessageUpdate:
         self.message_id = message_id
         self.channel_id = channel_id
         self.guild_id = guild_id
+
+
+class FakeRawReaction:
+    """Mirrors ``discord.RawReactionActionEvent`` shape.
+
+    Attributes match real discord.py: only IDs + emoji, no resolved
+    Message or User. ``guild_id`` is ``Optional[int]`` (None for DMs).
+    ``emoji`` is the canonical-string form used by discord.py's
+    ``str(PartialEmoji)`` (unicode char for unicode, ``"<:name:id>"``
+    for custom emoji).
+    """
+
+    def __init__(
+        self,
+        *,
+        message_id: int,
+        channel_id: int,
+        user_id: int,
+        guild_id: int | None,
+        emoji: str,
+    ) -> None:
+        self.message_id = message_id
+        self.channel_id = channel_id
+        self.user_id = user_id
+        self.guild_id = guild_id
+        self.emoji = emoji
 
 
 @pytest.mark.asyncio

@@ -167,11 +167,14 @@ async def test_handlers_registered_via_add_listener(monkeypatch):
     try:
         # All listeners should be registered under their event names.
         assert "on_message" in fake._handlers
-        assert "on_reaction_add" in fake._handlers
         assert "on_ready" in fake._handlers
         # Engagement listeners — wired against raw dispatch points so
         # they fire even after the underlying message has been evicted
-        # from the client's message cache.
+        # from the client's message cache. Reactions joined this set in
+        # #171 (DM reactions never reach the cached on_reaction_add
+        # dispatch point); poll votes and message edits/deletes were
+        # already wired this way.
+        assert "on_raw_reaction_add" in fake._handlers
         assert "on_raw_poll_vote_add" in fake._handlers
         assert "on_raw_poll_vote_remove" in fake._handlers
         assert "on_raw_message_edit" in fake._handlers
