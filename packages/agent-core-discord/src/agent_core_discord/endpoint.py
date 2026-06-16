@@ -1146,8 +1146,29 @@ class DiscordEndpoint:
             if ack_emoji and str(reaction.emoji) == ack_emoji:
                 return
 
-            # 3. Build the Event envelope.
+            # 3. Run the access gate. Same gate as on_message — a
+            # reaction in a non-allowlisted channel must be dropped
+            # exactly like a message would be. Issue #180; live verified
+            # 2026-06-16 (Wren received a reaction Event from
+            # #pepper-chat, a channel outside its allowlist).
             message = reaction.message
+            is_dm = message.guild is None
+            ctx = InboundContext(
+                is_dm=is_dm,
+                author_id=str(user.id),
+                channel_id=str(message.channel.id),
+                is_bot=bool(getattr(user, "bot", False)),
+            )
+            if not gate_message(self._access, ctx):
+                log.debug(
+                    "discord(%s): gate denied reaction_add from %s in channel %s",
+                    self.name,
+                    user.id,
+                    message.channel.id,
+                )
+                return
+
+            # 4. Build the Event envelope.
             data: dict[str, Any] = {
                 "emoji": str(reaction.emoji),
                 "channel_id": str(message.channel.id),

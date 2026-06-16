@@ -386,6 +386,93 @@ async def test_on_reaction_add_dm_context(monkeypatch):
         await ep.stop()
 
 
+@pytest.mark.asyncio
+async def test_on_reaction_add_dropped_when_gate_denies_channel(monkeypatch, tmp_path):
+    """Channel-allowlist gate must apply to reactions, not just messages
+    (issue #180). Live repro: Wren received a reaction Event for
+    #pepper-chat on 2026-06-16 because the gate ran for on_message
+    but not for on_reaction_add."""
+    import json
+
+    access = tmp_path / "access.json"
+    access.write_text(
+        json.dumps({"dmPolicy": "open", "channels": {"200": {}}}),
+        encoding="utf-8",
+    )
+    ep, handle, fake = await _start_endpoint(monkeypatch, access_path=str(access))
+    fake.add_channel(FakeChannel(id="200"))
+    fake.add_channel(FakeChannel(id="999"))
+    msg = FakeMessage(id="m-out", channel_id="999")
+    msg.author = fake.user
+    msg.guild = type("G", (), {"id": "guild-1"})()
+    msg.channel = fake.get_channel("999")
+    user = FakeUser(id="100", name="alice", display_name="Alice")
+    reaction = FakeReaction(emoji="👍", message=msg)
+    try:
+        await fake.fire("on_reaction_add", reaction, user)
+        assert handle.published == []
+    finally:
+        await ep.stop()
+
+
+@pytest.mark.asyncio
+async def test_on_reaction_add_publishes_when_channel_in_allowlist(
+    monkeypatch, tmp_path
+):
+    """Positive companion to the gate-deny test (#180): with the same
+    channel-allowlist access config, a reaction in an allowlisted channel
+    publishes exactly one Event envelope. Without this companion the
+    gate-deny test could pass for the wrong reason (e.g., a typo that
+    short-circuits all reactions)."""
+    import json
+
+    access = tmp_path / "access.json"
+    access.write_text(
+        json.dumps({"dmPolicy": "open", "channels": {"200": {}}}),
+        encoding="utf-8",
+    )
+    ep, handle, fake = await _start_endpoint(monkeypatch, access_path=str(access))
+    fake.add_channel(FakeChannel(id="200"))
+    fake.add_channel(FakeChannel(id="999"))
+    msg = FakeMessage(id="m-in", channel_id="200")
+    msg.author = fake.user
+    msg.guild = type("G", (), {"id": "guild-1"})()
+    msg.channel = fake.get_channel("200")
+    user = FakeUser(id="100", name="alice", display_name="Alice")
+    reaction = FakeReaction(emoji="👍", message=msg)
+    try:
+        await fake.fire("on_reaction_add", reaction, user)
+        assert len(handle.published) == 1
+        env = handle.published[0]
+        assert env.payload.data["channel_id"] == "200"
+    finally:
+        await ep.stop()
+
+
+@pytest.mark.asyncio
+async def test_on_reaction_add_dm_follows_dm_policy_deny(monkeypatch, tmp_path):
+    """The gate's DM-policy branch must apply to reactions, not just
+    messages (#180). A future refactor that only consults ``channels``
+    (skipping ``dm_policy``) must fail this test."""
+    import json
+
+    access = tmp_path / "access.json"
+    access.write_text(json.dumps({"dmPolicy": "deny"}), encoding="utf-8")
+    ep, handle, fake = await _start_endpoint(monkeypatch, access_path=str(access))
+    fake.add_channel(FakeChannel(id="dm"))
+    msg = FakeMessage(id="m-dm", channel_id="dm")
+    msg.author = fake.user
+    msg.guild = None  # DM
+    msg.channel = fake.get_channel("dm")
+    user = FakeUser(id="100", name="alice", display_name="Alice")
+    reaction = FakeReaction(emoji="👍", message=msg)
+    try:
+        await fake.fire("on_reaction_add", reaction, user)
+        assert handle.published == []
+    finally:
+        await ep.stop()
+
+
 # Engagement-event listeners (poll votes, message edits/deletes). Wired
 # against discord.py's *raw* dispatch points so the agent gets notified
 # even after the underlying message has been evicted from the client's
