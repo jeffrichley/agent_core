@@ -88,6 +88,43 @@ pipelines:
         key: value
 ```
 
+## Running Tests
+
+`pytest` defaults include **always-on coverage measurement** for the whole
+codebase (line + branch, gated at 85% combined), plus **random test order**.
+This makes a single one-off test invocation slow (2–3 min) because coverage
+instruments every file, not just the ones touched by your test.
+
+**When to use which invocation:**
+
+| Goal | Command |
+|---|---|
+| Quick local debug of one test | `uv run pytest --no-cov -x packages/<pkg>/tests/test_x.py::test_name` |
+| Re-run with a specific random seed (reproducing a failure) | `uv run pytest --no-cov --randomly-seed=<N>` |
+| Disable random order entirely | `uv run pytest -p no:randomly --no-cov` |
+| Full pre-commit gate (matches CI) | `just check` |
+| Just the suite with coverage report visible | `uv run pytest --cov=packages --cov-branch --cov-report=term-missing` |
+
+**Rules of thumb:**
+- Iterating on a single test? Always pass `--no-cov`. Coverage adds 100×
+  overhead for a one-test run.
+- Before committing? Run `just check` — that's the gate CI runs.
+- Test failed and you suspect order-dependence? Pytest prints the random
+  seed at the top of every run; rerun with `--randomly-seed=<seed>` to
+  reproduce, then `-p no:randomly` to isolate.
+- Hit a flaky timing assertion? Use the `Clock` seam in
+  `agent_core.clock` (`FakeClock` in tests, `SystemClock` in production).
+  Never assert against `datetime.now()` wall-clock jitter.
+
+## CI Gates
+
+- **Project coverage floor: 85% combined** (line + branch). Trips if a
+  large chunk of test code is deleted or skipped.
+- **Patch coverage floor: 80%** on PR diffs only (via `diff-cover`).
+  Trips if your PR adds untested code paths.
+- Both run only on Linux in CI (one OS is enough; coverage.xml is
+  OS-agnostic). Windows CI runs the test suite but not the coverage gate.
+
 ## Conventions
 
 - Python 3.12+, managed by uv
