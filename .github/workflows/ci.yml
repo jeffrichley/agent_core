@@ -59,5 +59,7 @@ jobs:
       - run: uv python install 3.12
       # --package agent-core intentionally excludes agent-core-voice/qwen-tts (no Torch in CI)
       - run: uv sync --locked --package agent-core
-      # Scoped to packages/core/tests — the only location of slow-marked tests today
-      - run: uv run --no-sync pytest packages/core/tests -m slow -v
+      # Scoped to packages/core/tests — the only location of slow-marked tests today.
+      # --no-cov disables coverage for this subset run; the project-wide coverage
+      # floor is enforced by the `check` job above, which runs the full suite.
+      - run: uv run --no-sync pytest packages/core/tests -m slow -v --no-cov
