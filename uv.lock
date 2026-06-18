@@ -1,5 +1,5 @@
 version = 1
-revision = 3
+revision = 2
 requires-python = ">=3.12"
 resolution-markers = [
     "python_full_version >= '3.15' and sys_platform == 'win32' and extra != 'extra-16-agent-core-voice-cpu' and extra == 'extra-16-agent-core-voice-cu130'",
@@ -72,6 +72,7 @@ dev = [
     { name = "mypy", specifier = ">=1.11" },
     { name = "pytest", specifier = ">=8.0" },
     { name = "pytest-asyncio", specifier = ">=0.23" },
+    { name = "pytest-randomly", specifier = ">=3.15" },
     { name = "ruff", specifier = ">=0.14" },
     { name = "types-psutil", specifier = ">=7.0.0.20251001" },
     { name = "types-pyyaml", specifier = ">=6.0" },
@@ -88,9 +89,9 @@ dependencies = [
     { name = "psutil" },
     { name = "pyyaml" },
     { name = "safetensors" },
-    { name = "torch", version = "2.12.0", source = { registry = "https://download.pytorch.org/whl/cpu" }, marker = "(python_full_version < '3.15' and sys_platform == 'darwin' and extra == 'extra-16-agent-core-voice-cpu') or (python_full_version >= '3.15' and extra == 'extra-16-agent-core-voice-cpu' and extra == 'extra-16-agent-core-voice-cu130') or (sys_platform != 'darwin' and extra == 'extra-16-agent-core-voice-cpu' and extra == 'extra-16-agent-core-voice-cu130')" },
+    { name = "torch", version = "2.12.0", source = { registry = "https://download.pytorch.org/whl/cpu" }, marker = "(sys_platform == 'darwin' and extra == 'extra-16-agent-core-voice-cpu') or (extra == 'extra-16-agent-core-voice-cpu' and extra == 'extra-16-agent-core-voice-cu130')" },
     { name = "torch", version = "2.12.0", source = { registry = "https://pypi.org/simple" }, marker = "(extra == 'extra-16-agent-core-voice-cpu' and extra == 'extra-16-agent-core-voice-cu130') or (extra != 'extra-16-agent-core-voice-cpu' and extra != 'extra-16-agent-core-voice-cu130')" },
-    { name = "torch", version = "2.12.0+cpu", source = { registry = "https://download.pytorch.org/whl/cpu" }, marker = "(python_full_version >= '3.15' and extra == 'extra-16-agent-core-voice-cpu') or (python_full_version < '3.15' and extra == 'extra-16-agent-core-voice-cpu' and extra == 'extra-16-agent-core-voice-cu130') or (sys_platform != 'darwin' and extra == 'extra-16-agent-core-voice-cpu')" },
+    { name = "torch", version = "2.12.0+cpu", source = { registry = "https://download.pytorch.org/whl/cpu" }, marker = "(sys_platform != 'darwin' and extra == 'extra-16-agent-core-voice-cpu') or (extra == 'extra-16-agent-core-voice-cpu' and extra == 'extra-16-agent-core-voice-cu130')" },
     { name = "torch", version = "2.12.0+cu130", source = { registry = "https://download.pytorch.org/whl/cu130" }, marker = "extra == 'extra-16-agent-core-voice-cu130'" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/4a/8e/ac2a9566747a93f8be36ee08532eb0160558b07630a081a6056a9f89bf1d/accelerate-1.12.0.tar.gz", hash = "sha256:70988c352feb481887077d2ab845125024b2a137a5090d6d7a32b57d03a45df6", size = 398399, upload-time = "2025-11-21T11:27:46.973Z" }
@@ -320,10 +321,10 @@ dependencies = [
 
 [package.optional-dependencies]
 cpu = [
-    { name = "torch", version = "2.12.0", source = { registry = "https://download.pytorch.org/whl/cpu" }, marker = "(python_full_version < '3.15' and sys_platform == 'darwin' and extra == 'extra-16-agent-core-voice-cpu') or (python_full_version >= '3.15' and extra == 'extra-16-agent-core-voice-cpu' and extra == 'extra-16-agent-core-voice-cu130') or (sys_platform != 'darwin' and extra == 'extra-16-agent-core-voice-cpu' and extra == 'extra-16-agent-core-voice-cu130')" },
-    { name = "torch", version = "2.12.0+cpu", source = { registry = "https://download.pytorch.org/whl/cpu" }, marker = "(python_full_version >= '3.15' and extra == 'extra-16-agent-core-voice-cpu') or (python_full_version < '3.15' and extra == 'extra-16-agent-core-voice-cpu' and extra == 'extra-16-agent-core-voice-cu130') or (sys_platform != 'darwin' and extra == 'extra-16-agent-core-voice-cpu')" },
-    { name = "torchaudio", version = "2.11.0", source = { registry = "https://download.pytorch.org/whl/cpu" }, marker = "(python_full_version < '3.15' and sys_platform == 'darwin' and extra == 'extra-16-agent-core-voice-cpu') or (python_full_version >= '3.15' and extra == 'extra-16-agent-core-voice-cpu' and extra == 'extra-16-agent-core-voice-cu130') or (sys_platform != 'darwin' and extra == 'extra-16-agent-core-voice-cpu' and extra == 'extra-16-agent-core-voice-cu130')" },
-    { name = "torchaudio", version = "2.11.0+cpu", source = { registry = "https://download.pytorch.org/whl/cpu" }, marker = "(python_full_version >= '3.15' and extra == 'extra-16-agent-core-voice-cpu') or (python_full_version < '3.15' and extra == 'extra-16-agent-core-voice-cpu' and extra == 'extra-16-agent-core-voice-cu130') or (sys_platform != 'darwin' and extra == 'extra-16-agent-core-voice-cpu')" },
+    { name = "torch", version = "2.12.0", source = { registry = "https://download.pytorch.org/whl/cpu" }, marker = "(sys_platform == 'darwin' and extra == 'extra-16-agent-core-voice-cpu') or (extra == 'extra-16-agent-core-voice-cpu' and extra == 'extra-16-agent-core-voice-cu130')" },
+    { name = "torch", version = "2.12.0+cpu", source = { registry = "https://download.pytorch.org/whl/cpu" }, marker = "(sys_platform != 'darwin' and extra == 'extra-16-agent-core-voice-cpu') or (extra == 'extra-16-agent-core-voice-cpu' and extra == 'extra-16-agent-core-voice-cu130')" },
+    { name = "torchaudio", version = "2.11.0", source = { registry = "https://download.pytorch.org/whl/cpu" }, marker = "(sys_platform == 'darwin' and extra == 'extra-16-agent-core-voice-cpu') or (extra == 'extra-16-agent-core-voice-cpu' and extra == 'extra-16-agent-core-voice-cu130')" },
+    { name = "torchaudio", version = "2.11.0+cpu", source = { registry = "https://download.pytorch.org/whl/cpu" }, marker = "(sys_platform != 'darwin' and extra == 'extra-16-agent-core-voice-cpu') or (extra == 'extra-16-agent-core-voice-cpu' and extra == 'extra-16-agent-core-voice-cu130')" },
 ]
 cu130 = [
     { name = "torch", version = "2.12.0+cu130", source = { registry = "https://download.pytorch.org/whl/cu130" } },
@@ -1034,7 +1035,7 @@ name = "cuda-bindings"
 version = "13.2.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "cuda-pathfinder", marker = "(sys_platform != 'emscripten' and sys_platform != 'win32' and extra != 'extra-16-agent-core-voice-cpu') or (extra == 'extra-16-agent-core-voice-cpu' and extra == 'extra-16-agent-core-voice-cu130')" },
+    { name = "cuda-pathfinder", marker = "sys_platform != 'emscripten' and sys_platform != 'win32'" },
 ]
 wheels = [
     { url = "https://files.pythonhosted.org/packages/52/c8/b2589d68acf7e3d63e2be330b84bc25712e97ed799affbca7edd7eae25d6/cuda_bindings-13.2.0-cp312-cp312-manylinux_2_24_aarch64.manylinux_2_28_aarch64.whl", hash = "sha256:e865447abfb83d6a98ad5130ed3c70b1fc295ae3eeee39fd07b4ddb0671b6788", size = 5722404, upload-time = "2026-03-11T00:12:44.041Z" },
@@ -1069,34 +1070,34 @@ wheels = [
 
 [package.optional-dependencies]
 cudart = [
-    { name = "nvidia-cuda-runtime", marker = "(sys_platform == 'linux' and extra != 'extra-16-agent-core-voice-cpu') or (extra == 'extra-16-agent-core-voice-cpu' and extra == 'extra-16-agent-core-voice-cu130')" },
+    { name = "nvidia-cuda-runtime", marker = "sys_platform == 'linux'" },
 ]
 cufft = [
-    { name = "nvidia-cufft", marker = "(sys_platform == 'linux' and extra != 'extra-16-agent-core-voice-cpu') or (extra == 'extra-16-agent-core-voice-cpu' and extra == 'extra-16-agent-core-voice-cu130')" },
+    { name = "nvidia-cufft", marker = "sys_platform == 'linux'" },
 ]
 cufile = [
-    { name = "nvidia-cufile", marker = "(sys_platform == 'linux' and extra != 'extra-16-agent-core-voice-cpu') or (extra == 'extra-16-agent-core-voice-cpu' and extra == 'extra-16-agent-core-voice-cu130')" },
+    { name = "nvidia-cufile", marker = "sys_platform == 'linux'" },
 ]
 cupti = [
-    { name = "nvidia-cuda-cupti", marker = "(sys_platform == 'linux' and extra != 'extra-16-agent-core-voice-cpu') or (extra == 'extra-16-agent-core-voice-cpu' and extra == 'extra-16-agent-core-voice-cu130')" },
+    { name = "nvidia-cuda-cupti", marker = "sys_platform == 'linux'" },
 ]
 curand = [
-    { name = "nvidia-curand", marker = "(sys_platform == 'linux' and extra != 'extra-16-agent-core-voice-cpu') or (extra == 'extra-16-agent-core-voice-cpu' and extra == 'extra-16-agent-core-voice-cu130')" },
+    { name = "nvidia-curand", marker = "sys_platform == 'linux'" },
 ]
 cusolver = [
-    { name = "nvidia-cusolver", marker = "(sys_platform == 'linux' and extra != 'extra-16-agent-core-voice-cpu') or (extra == 'extra-16-agent-core-voice-cpu' and extra == 'extra-16-agent-core-voice-cu130')" },
+    { name = "nvidia-cusolver", marker = "sys_platform == 'linux'" },
 ]
 cusparse = [
-    { name = "nvidia-cusparse", marker = "(sys_platform == 'linux' and extra != 'extra-16-agent-core-voice-cpu') or (extra == 'extra-16-agent-core-voice-cpu' and extra == 'extra-16-agent-core-voice-cu130')" },
+    { name = "nvidia-cusparse", marker = "sys_platform == 'linux'" },
 ]
 nvjitlink = [
-    { name = "nvidia-nvjitlink", marker = "(sys_platform == 'linux' and extra != 'extra-16-agent-core-voice-cpu') or (extra == 'extra-16-agent-core-voice-cpu' and extra == 'extra-16-agent-core-voice-cu130')" },
+    { name = "nvidia-nvjitlink", marker = "sys_platform == 'linux'" },
 ]
 nvrtc = [
-    { name = "nvidia-cuda-nvrtc", marker = "(sys_platform == 'linux' and extra != 'extra-16-agent-core-voice-cpu') or (extra == 'extra-16-agent-core-voice-cpu' and extra == 'extra-16-agent-core-voice-cu130')" },
+    { name = "nvidia-cuda-nvrtc", marker = "sys_platform == 'linux'" },
 ]
 nvtx = [
-    { name = "nvidia-nvtx", marker = "(sys_platform == 'linux' and extra != 'extra-16-agent-core-voice-cpu') or (extra == 'extra-16-agent-core-voice-cpu' and extra == 'extra-16-agent-core-voice-cu130')" },
+    { name = "nvidia-nvtx", marker = "sys_platform == 'linux'" },
 ]
 
 [[package]]
@@ -2557,7 +2558,7 @@ name = "nvidia-cublas"
 version = "13.1.1.3"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "nvidia-cuda-nvrtc", marker = "(sys_platform != 'emscripten' and sys_platform != 'win32' and extra != 'extra-16-agent-core-voice-cpu') or (extra == 'extra-16-agent-core-voice-cpu' and extra == 'extra-16-agent-core-voice-cu130')" },
+    { name = "nvidia-cuda-nvrtc", marker = "sys_platform != 'emscripten' and sys_platform != 'win32'" },
 ]
 wheels = [
     { url = "https://files.pythonhosted.org/packages/a7/a1/0bd24ee8c8d03adac032fd2909426a00c88f8c57961b1277ded97f91119f/nvidia_cublas-13.1.1.3-py3-none-manylinux_2_27_aarch64.whl", hash = "sha256:b7a210458267ac818974c53038fbec2e969d5c99f305ab15c72522fa9f001dd5", size = 542848918, upload-time = "2026-04-08T18:46:22.985Z" },
@@ -2600,7 +2601,7 @@ name = "nvidia-cudnn-cu13"
 version = "9.20.0.48"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "nvidia-cublas", marker = "(sys_platform != 'emscripten' and sys_platform != 'win32' and extra != 'extra-16-agent-core-voice-cpu') or (extra == 'extra-16-agent-core-voice-cpu' and extra == 'extra-16-agent-core-voice-cu130')" },
+    { name = "nvidia-cublas", marker = "sys_platform != 'emscripten' and sys_platform != 'win32'" },
 ]
 wheels = [
     { url = "https://files.pythonhosted.org/packages/56/c5/83384d846b2fd17c44bd499b36c75a45ed4f095fbbb2252294e89cea5c5c/nvidia_cudnn_cu13-9.20.0.48-py3-none-manylinux_2_27_aarch64.whl", hash = "sha256:e31454ae00094b0c55319d9d15b6fa2fc50a9e1c0f5c8c80fb75258234e731e1", size = 444574296, upload-time = "2026-03-09T19:28:27.751Z" },
@@ -2613,7 +2614,7 @@ name = "nvidia-cufft"
 version = "12.0.0.61"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "nvidia-nvjitlink", marker = "(sys_platform != 'emscripten' and sys_platform != 'win32' and extra != 'extra-16-agent-core-voice-cpu') or (extra == 'extra-16-agent-core-voice-cpu' and extra == 'extra-16-agent-core-voice-cu130')" },
+    { name = "nvidia-nvjitlink", marker = "sys_platform != 'emscripten' and sys_platform != 'win32'" },
 ]
 wheels = [
     { url = "https://files.pythonhosted.org/packages/8b/ae/f417a75c0259e85c1d2f83ca4e960289a5f814ed0cea74d18c353d3e989d/nvidia_cufft-12.0.0.61-py3-none-manylinux2014_aarch64.manylinux_2_17_aarch64.whl", hash = "sha256:2708c852ef8cd89d1d2068bdbece0aa188813a0c934db3779b9b1faa8442e5f5", size = 214053554, upload-time = "2025-09-04T08:31:38.196Z" },
@@ -2645,9 +2646,9 @@ name = "nvidia-cusolver"
 version = "12.0.4.66"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "nvidia-cublas", marker = "(sys_platform != 'emscripten' and sys_platform != 'win32' and extra != 'extra-16-agent-core-voice-cpu') or (extra == 'extra-16-agent-core-voice-cpu' and extra == 'extra-16-agent-core-voice-cu130')" },
-    { name = "nvidia-cusparse", marker = "(sys_platform != 'emscripten' and sys_platform != 'win32' and extra != 'extra-16-agent-core-voice-cpu') or (extra == 'extra-16-agent-core-voice-cpu' and extra == 'extra-16-agent-core-voice-cu130')" },
-    { name = "nvidia-nvjitlink", marker = "(sys_platform != 'emscripten' and sys_platform != 'win32' and extra != 'extra-16-agent-core-voice-cpu') or (extra == 'extra-16-agent-core-voice-cpu' and extra == 'extra-16-agent-core-voice-cu130')" },
+    { name = "nvidia-cublas", marker = "sys_platform != 'emscripten' and sys_platform != 'win32'" },
+    { name = "nvidia-cusparse", marker = "sys_platform != 'emscripten' and sys_platform != 'win32'" },
+    { name = "nvidia-nvjitlink", marker = "sys_platform != 'emscripten' and sys_platform != 'win32'" },
 ]
 wheels = [
     { url = "https://files.pythonhosted.org/packages/c8/c3/b30c9e935fc01e3da443ec0116ed1b2a009bb867f5324d3f2d7e533e776b/nvidia_cusolver-12.0.4.66-py3-none-manylinux_2_27_aarch64.whl", hash = "sha256:02c2457eaa9e39de20f880f4bd8820e6a1cfb9f9a34f820eb12a155aa5bc92d2", size = 223467760, upload-time = "2025-09-04T08:33:04.222Z" },
@@ -2660,7 +2661,7 @@ name = "nvidia-cusparse"
 version = "12.6.3.3"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "nvidia-nvjitlink", marker = "(sys_platform != 'emscripten' and sys_platform != 'win32' and extra != 'extra-16-agent-core-voice-cpu') or (extra == 'extra-16-agent-core-voice-cpu' and extra == 'extra-16-agent-core-voice-cu130')" },
+    { name = "nvidia-nvjitlink", marker = "sys_platform != 'emscripten' and sys_platform != 'win32'" },
 ]
 wheels = [
     { url = "https://files.pythonhosted.org/packages/f8/94/5c26f33738ae35276672f12615a64bd008ed5be6d1ebcb23579285d960a9/nvidia_cusparse-12.6.3.3-py3-none-manylinux2014_aarch64.manylinux_2_17_aarch64.whl", hash = "sha256:80bcc4662f23f1054ee334a15c72b8940402975e0eab63178fc7e670aa59472c", size = 162155568, upload-time = "2025-09-04T08:33:42.864Z" },
@@ -3432,6 +3433,18 @@ wheels = [
 ]
 
 [[package]]
+name = "pytest-randomly"
+version = "4.1.0"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "pytest" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/27/b3/36192dacc0f470ac2cc516f73e01739c9a48a8224f76beada4f85e1c8a89/pytest_randomly-4.1.0.tar.gz", hash = "sha256:47f1d9746c3bc3efabd53ae1ebfb8bb385cf3d4df4b505b6d58d9c97a3dfe70f", size = 14302, upload-time = "2026-04-20T13:01:51.831Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/9a/db/2df9a1fca597a273f957a559c20c2d95d629928384507b2afa43ba6909d1/pytest_randomly-4.1.0-py3-none-any.whl", hash = "sha256:f55e89e53367b090c0c053697d7f9d77595543d0e0516c93978b50c0f6b252f9", size = 8353, upload-time = "2026-04-20T13:01:50.382Z" },
+]
+
+[[package]]
 name = "python-dateutil"
 version = "2.9.0.post0"
 source = { registry = "https://pypi.org/simple" }
@@ -3565,9 +3578,9 @@ dependencies = [
     { name = "onnxruntime" },
     { name = "soundfile" },
     { name = "sox" },
-    { name = "torchaudio", version = "2.11.0", source = { registry = "https://download.pytorch.org/whl/cpu" }, marker = "(python_full_version < '3.15' and sys_platform == 'darwin' and extra == 'extra-16-agent-core-voice-cpu') or (python_full_version >= '3.15' and extra == 'extra-16-agent-core-voice-cpu' and extra == 'extra-16-agent-core-voice-cu130') or (sys_platform != 'darwin' and extra == 'extra-16-agent-core-voice-cpu' and extra == 'extra-16-agent-core-voice-cu130')" },
+    { name = "torchaudio", version = "2.11.0", source = { registry = "https://download.pytorch.org/whl/cpu" }, marker = "(sys_platform == 'darwin' and extra == 'extra-16-agent-core-voice-cpu') or (extra == 'extra-16-agent-core-voice-cpu' and extra == 'extra-16-agent-core-voice-cu130')" },
     { name = "torchaudio", version = "2.11.0", source = { registry = "https://pypi.org/simple" }, marker = "(extra == 'extra-16-agent-core-voice-cpu' and extra == 'extra-16-agent-core-voice-cu130') or (extra != 'extra-16-agent-core-voice-cpu' and extra != 'extra-16-agent-core-voice-cu130')" },
-    { name = "torchaudio", version = "2.11.0+cpu", source = { registry = "https://download.pytorch.org/whl/cpu" }, marker = "(python_full_version >= '3.15' and extra == 'extra-16-agent-core-voice-cpu') or (python_full_version < '3.15' and extra == 'extra-16-agent-core-voice-cpu' and extra == 'extra-16-agent-core-voice-cu130') or (sys_platform != 'darwin' and extra == 'extra-16-agent-core-voice-cpu')" },
+    { name = "torchaudio", version = "2.11.0+cpu", source = { registry = "https://download.pytorch.org/whl/cpu" }, marker = "(sys_platform != 'darwin' and extra == 'extra-16-agent-core-voice-cpu') or (extra == 'extra-16-agent-core-voice-cpu' and extra == 'extra-16-agent-core-voice-cu130')" },
     { name = "torchaudio", version = "2.11.0+cu130", source = { registry = "https://download.pytorch.org/whl/cu130" }, marker = "extra == 'extra-16-agent-core-voice-cu130'" },
     { name = "transformers" },
 ]
@@ -4275,18 +4288,19 @@ name = "torch"
 version = "2.12.0"
 source = { registry = "https://download.pytorch.org/whl/cpu" }
 resolution-markers = [
+    "python_full_version >= '3.15' and sys_platform == 'darwin'",
     "python_full_version == '3.14.*' and sys_platform == 'darwin'",
     "python_full_version == '3.13.*' and sys_platform == 'darwin'",
     "python_full_version < '3.13' and sys_platform == 'darwin'",
 ]
 dependencies = [
-    { name = "filelock", marker = "(python_full_version < '3.15' and sys_platform == 'darwin' and extra == 'extra-16-agent-core-voice-cpu') or (python_full_version >= '3.15' and extra == 'extra-16-agent-core-voice-cpu' and extra == 'extra-16-agent-core-voice-cu130') or (sys_platform != 'darwin' and extra == 'extra-16-agent-core-voice-cpu' and extra == 'extra-16-agent-core-voice-cu130')" },
-    { name = "fsspec", marker = "(python_full_version < '3.15' and sys_platform == 'darwin' and extra == 'extra-16-agent-core-voice-cpu') or (python_full_version >= '3.15' and extra == 'extra-16-agent-core-voice-cpu' and extra == 'extra-16-agent-core-voice-cu130') or (sys_platform != 'darwin' and extra == 'extra-16-agent-core-voice-cpu' and extra == 'extra-16-agent-core-voice-cu130')" },
-    { name = "jinja2", marker = "(python_full_version < '3.15' and sys_platform == 'darwin' and extra == 'extra-16-agent-core-voice-cpu') or (python_full_version >= '3.15' and extra == 'extra-16-agent-core-voice-cpu' and extra == 'extra-16-agent-core-voice-cu130') or (sys_platform != 'darwin' and extra == 'extra-16-agent-core-voice-cpu' and extra == 'extra-16-agent-core-voice-cu130')" },
-    { name = "networkx", marker = "(python_full_version < '3.15' and sys_platform == 'darwin' and extra == 'extra-16-agent-core-voice-cpu') or (python_full_version >= '3.15' and extra == 'extra-16-agent-core-voice-cpu' and extra == 'extra-16-agent-core-voice-cu130') or (sys_platform != 'darwin' and extra == 'extra-16-agent-core-voice-cpu' and extra == 'extra-16-agent-core-voice-cu130')" },
-    { name = "setuptools", marker = "(python_full_version < '3.15' and sys_platform == 'darwin' and extra == 'extra-16-agent-core-voice-cpu') or (python_full_version >= '3.15' and extra == 'extra-16-agent-core-voice-cpu' and extra == 'extra-16-agent-core-voice-cu130') or (sys_platform != 'darwin' and extra == 'extra-16-agent-core-voice-cpu' and extra == 'extra-16-agent-core-voice-cu130')" },
-    { name = "sympy", marker = "(python_full_version < '3.15' and sys_platform == 'darwin' and extra == 'extra-16-agent-core-voice-cpu') or (python_full_version >= '3.15' and extra == 'extra-16-agent-core-voice-cpu' and extra == 'extra-16-agent-core-voice-cu130') or (sys_platform != 'darwin' and extra == 'extra-16-agent-core-voice-cpu' and extra == 'extra-16-agent-core-voice-cu130')" },
-    { name = "typing-extensions", marker = "(python_full_version < '3.15' and sys_platform == 'darwin' and extra == 'extra-16-agent-core-voice-cpu') or (python_full_version >= '3.15' and extra == 'extra-16-agent-core-voice-cpu' and extra == 'extra-16-agent-core-voice-cu130') or (sys_platform != 'darwin' and extra == 'extra-16-agent-core-voice-cpu' and extra == 'extra-16-agent-core-voice-cu130')" },
+    { name = "filelock", marker = "(sys_platform == 'darwin' and extra == 'extra-16-agent-core-voice-cpu') or (extra == 'extra-16-agent-core-voice-cpu' and extra == 'extra-16-agent-core-voice-cu130')" },
+    { name = "fsspec", marker = "(sys_platform == 'darwin' and extra == 'extra-16-agent-core-voice-cpu') or (extra == 'extra-16-agent-core-voice-cpu' and extra == 'extra-16-agent-core-voice-cu130')" },
+    { name = "jinja2", marker = "(sys_platform == 'darwin' and extra == 'extra-16-agent-core-voice-cpu') or (extra == 'extra-16-agent-core-voice-cpu' and extra == 'extra-16-agent-core-voice-cu130')" },
+    { name = "networkx", marker = "(sys_platform == 'darwin' and extra == 'extra-16-agent-core-voice-cpu') or (extra == 'extra-16-agent-core-voice-cpu' and extra == 'extra-16-agent-core-voice-cu130')" },
+    { name = "setuptools", marker = "(sys_platform == 'darwin' and extra == 'extra-16-agent-core-voice-cpu') or (extra == 'extra-16-agent-core-voice-cpu' and extra == 'extra-16-agent-core-voice-cu130')" },
+    { name = "sympy", marker = "(sys_platform == 'darwin' and extra == 'extra-16-agent-core-voice-cpu') or (extra == 'extra-16-agent-core-voice-cpu' and extra == 'extra-16-agent-core-voice-cu130')" },
+    { name = "typing-extensions", marker = "(sys_platform == 'darwin' and extra == 'extra-16-agent-core-voice-cpu') or (extra == 'extra-16-agent-core-voice-cpu' and extra == 'extra-16-agent-core-voice-cu130')" },
 ]
 wheels = [
     { url = "https://download-r2.pytorch.org/whl/cpu/torch-2.12.0-cp312-cp312-macosx_14_0_arm64.whl", hash = "sha256:b41339df93d491435e790ff8bcbae1c0ce777175889bfd1281d119862793e6a2", upload-time = "2026-05-12T16:20:12Z" },
@@ -4362,7 +4376,6 @@ resolution-markers = [
     "python_full_version >= '3.15' and sys_platform == 'win32'",
     "python_full_version >= '3.15' and sys_platform == 'emscripten'",
     "python_full_version >= '3.15' and sys_platform != 'darwin' and sys_platform != 'emscripten' and sys_platform != 'win32'",
-    "python_full_version >= '3.15' and sys_platform == 'darwin'",
     "python_full_version == '3.14.*' and sys_platform == 'win32'",
     "python_full_version == '3.14.*' and sys_platform == 'emscripten'",
     "python_full_version == '3.14.*' and sys_platform != 'darwin' and sys_platform != 'emscripten' and sys_platform != 'win32'",
@@ -4374,13 +4387,13 @@ resolution-markers = [
     "python_full_version < '3.13' and sys_platform != 'darwin' and sys_platform != 'emscripten' and sys_platform != 'win32'",
 ]
 dependencies = [
-    { name = "filelock", marker = "(python_full_version >= '3.15' and extra == 'extra-16-agent-core-voice-cpu') or (python_full_version < '3.15' and extra == 'extra-16-agent-core-voice-cpu' and extra == 'extra-16-agent-core-voice-cu130') or (sys_platform != 'darwin' and extra == 'extra-16-agent-core-voice-cpu')" },
-    { name = "fsspec", marker = "(python_full_version >= '3.15' and extra == 'extra-16-agent-core-voice-cpu') or (python_full_version < '3.15' and extra == 'extra-16-agent-core-voice-cpu' and extra == 'extra-16-agent-core-voice-cu130') or (sys_platform != 'darwin' and extra == 'extra-16-agent-core-voice-cpu')" },
-    { name = "jinja2", marker = "(python_full_version >= '3.15' and extra == 'extra-16-agent-core-voice-cpu') or (python_full_version < '3.15' and extra == 'extra-16-agent-core-voice-cpu' and extra == 'extra-16-agent-core-voice-cu130') or (sys_platform != 'darwin' and extra == 'extra-16-agent-core-voice-cpu')" },
-    { name = "networkx", marker = "(python_full_version >= '3.15' and extra == 'extra-16-agent-core-voice-cpu') or (python_full_version < '3.15' and extra == 'extra-16-agent-core-voice-cpu' and extra == 'extra-16-agent-core-voice-cu130') or (sys_platform != 'darwin' and extra == 'extra-16-agent-core-voice-cpu')" },
-    { name = "setuptools", marker = "(python_full_version >= '3.15' and extra == 'extra-16-agent-core-voice-cpu') or (python_full_version < '3.15' and extra == 'extra-16-agent-core-voice-cpu' and extra == 'extra-16-agent-core-voice-cu130') or (sys_platform != 'darwin' and extra == 'extra-16-agent-core-voice-cpu')" },
-    { name = "sympy", marker = "(python_full_version >= '3.15' and extra == 'extra-16-agent-core-voice-cpu') or (python_full_version < '3.15' and extra == 'extra-16-agent-core-voice-cpu' and extra == 'extra-16-agent-core-voice-cu130') or (sys_platform != 'darwin' and extra == 'extra-16-agent-core-voice-cpu')" },
-    { name = "typing-extensions", marker = "(python_full_version >= '3.15' and extra == 'extra-16-agent-core-voice-cpu') or (python_full_version < '3.15' and extra == 'extra-16-agent-core-voice-cpu' and extra == 'extra-16-agent-core-voice-cu130') or (sys_platform != 'darwin' and extra == 'extra-16-agent-core-voice-cpu')" },
+    { name = "filelock", marker = "(sys_platform != 'darwin' and extra == 'extra-16-agent-core-voice-cpu') or (extra == 'extra-16-agent-core-voice-cpu' and extra == 'extra-16-agent-core-voice-cu130')" },
+    { name = "fsspec", marker = "(sys_platform != 'darwin' and extra == 'extra-16-agent-core-voice-cpu') or (extra == 'extra-16-agent-core-voice-cpu' and extra == 'extra-16-agent-core-voice-cu130')" },
+    { name = "jinja2", marker = "(sys_platform != 'darwin' and extra == 'extra-16-agent-core-voice-cpu') or (extra == 'extra-16-agent-core-voice-cpu' and extra == 'extra-16-agent-core-voice-cu130')" },
+    { name = "networkx", marker = "(sys_platform != 'darwin' and extra == 'extra-16-agent-core-voice-cpu') or (extra == 'extra-16-agent-core-voice-cpu' and extra == 'extra-16-agent-core-voice-cu130')" },
+    { name = "setuptools", marker = "(sys_platform != 'darwin' and extra == 'extra-16-agent-core-voice-cpu') or (extra == 'extra-16-agent-core-voice-cpu' and extra == 'extra-16-agent-core-voice-cu130')" },
+    { name = "sympy", marker = "(sys_platform != 'darwin' and extra == 'extra-16-agent-core-voice-cpu') or (extra == 'extra-16-agent-core-voice-cpu' and extra == 'extra-16-agent-core-voice-cu130')" },
+    { name = "typing-extensions", marker = "(sys_platform != 'darwin' and extra == 'extra-16-agent-core-voice-cpu') or (extra == 'extra-16-agent-core-voice-cpu' and extra == 'extra-16-agent-core-voice-cu130')" },
 ]
 wheels = [
     { url = "https://download-r2.pytorch.org/whl/cpu/torch-2.12.0%2Bcpu-cp312-cp312-linux_s390x.whl", hash = "sha256:b9d0e8eed0af9321ffb12b75f4aca371b071254f12cf75875d5a8e7cc8f52b51", upload-time = "2026-05-12T23:16:33Z" },
@@ -4465,6 +4478,7 @@ name = "torchaudio"
 version = "2.11.0"
 source = { registry = "https://download.pytorch.org/whl/cpu" }
 resolution-markers = [
+    "python_full_version >= '3.15' and sys_platform == 'darwin'",
     "python_full_version == '3.14.*' and sys_platform == 'darwin'",
     "python_full_version == '3.13.*' and sys_platform == 'darwin'",
     "python_full_version < '3.13' and sys_platform == 'darwin'",
@@ -4526,7 +4540,6 @@ resolution-markers = [
     "python_full_version >= '3.15' and sys_platform == 'win32'",
     "python_full_version >= '3.15' and sys_platform == 'emscripten'",
     "python_full_version >= '3.15' and sys_platform != 'darwin' and sys_platform != 'emscripten' and sys_platform != 'win32'",
-    "python_full_version >= '3.15' and sys_platform == 'darwin'",
     "python_full_version == '3.14.*' and sys_platform == 'win32'",
     "python_full_version == '3.14.*' and sys_platform == 'emscripten'",
     "python_full_version == '3.14.*' and sys_platform != 'darwin' and sys_platform != 'emscripten' and sys_platform != 'win32'",
