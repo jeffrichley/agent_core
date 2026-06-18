@@ -16,13 +16,16 @@ that each patched one handler. See issue
 ## Acceptance criteria
 
 - `DiscordEndpoint._gate_inbound(*, event_kind: str, channel_id: int | str,
-  author_id: int | str | None = None, is_dm: bool = False) -> bool` method
-  exists on `DiscordEndpoint` in
+  author_id: int | str | None = None, is_dm: bool = False,
+  is_bot: bool = False) -> bool` method exists on `DiscordEndpoint` in
   `packages/agent-core-discord/src/agent_core_discord/endpoint.py`. It
   returns `True` when the event should reach the bus, `False` when the
-  caller must drop it. Internally it constructs an `InboundContext` (with
-  `is_bot=False` — bot-side filtering is the per-handler caller's job, see
-  Approach) and delegates the actual policy check to the existing
+  caller must drop it. Internally it constructs an `InboundContext`
+  threading the caller's `is_bot` flag (defaulting to `False`) so the
+  `allowed_bot_ids` branch in `gate_message` (access.py:116) keeps
+  working for the `on_message` call site — see Approach for why this is
+  a keyword-only parameter with a `False` default rather than required.
+  Delegates the actual policy check to the existing
   `gate_message(self._access, ctx)` in
   `packages/agent-core-discord/src/agent_core_discord/access.py:91`. The
   method docstring states the contract verbatim:
@@ -201,19 +204,27 @@ otherwise doesn't import it) or force the gate to accept a heterogeneous
 union of shapes. Keyword-only primitives are simpler and let
 `_gate_inbound` own the `InboundContext` construction internally.
 
-**Why `is_bot` is NOT a parameter of `_gate_inbound`.** Bot-side
-filtering is an author-shaped concern that needs access to the
+**Why `is_bot` IS a parameter of `_gate_inbound` (with a `False` default).**
+Bot-self filtering is an author-shaped concern that needs access to the
 discord.py object (`message.author.bot`, `user.bot`, the raw event's
 local-cache lookup pattern from `_make_on_raw_poll_vote_handler`
 lines 1221-1225). Per-handler bot-self drops happen BEFORE the gate
-runs (matching today's `on_message` ordering at endpoint.py:1006-1007).
-The gate is policy-shaped (channel allowlist + dm_policy) and is
-purposely **not** the place for "is this user a bot?". This keeps
-`allowed_bot_ids` semantics intact: a per-handler factory that wants
-to honour `allowed_bot_ids` (currently only `on_message` does, via the
-gate's `is_bot` branch at access.py:116) keeps its own InboundContext
-construction; other handlers default `is_bot=False` in the gate's
-internal context because they've already dropped bots upstream.
+runs (matching today's `on_message` ordering at endpoint.py:1006-1007),
+so by the time `_gate_inbound` is called, non-message handlers have
+already discarded bots upstream and pass the default `is_bot=False`.
+The `on_message` handler is the exception: its existing `gate_message`
+call threads the real `is_bot` flag through to the `allowed_bot_ids`
+branch in `access.py:116`, which is the regression guard PR #158 /
+2026-06-07 added (and which the
+`test_on_message_allows_bots_in_allowed_bot_ids` test at
+test_endpoint_inbound.py:97 pins). To preserve that semantics WITHOUT
+making the on_message call site reach around the gate, `_gate_inbound`
+accepts `is_bot` as an optional keyword-only parameter with a `False`
+default. The on_message factory passes its locally-computed flag
+through; reaction / lifecycle / poll-vote factories accept the default
+because they've already filtered bots author-side. The default keeps
+the non-message call sites terse and forces a caller to opt in if
+they ever need bot-aware policy — which today they don't.
 
   This also addresses an inconsistency the issue calls out: edits and
   deletes don't have a bot-self filter today (and don't get one in this
@@ -276,20 +287,26 @@ the package's `towncrier.toml`.
        channel_id: int | str,
        author_id: int | str | None = None,
        is_dm: bool = False,
+       is_bot: bool = False,
    ) -> bool:
        """Return True if the event should be routed to the bus.
 
        Centralized for every on_* event handler. New handlers added in
        the future automatically inherit the gate — there is no path to
-       forget it. Delegates to `gate_message` in `access.py`; bot-side
-       filtering is the caller's job (the gate's internal
-       `InboundContext` always passes `is_bot=False`).
+       forget it. Delegates to `gate_message` in `access.py`. Bot-self
+       filtering is the caller's job (per-handler author-side drops
+       happen before this method is called); the `is_bot` keyword is
+       threaded into the gate's internal `InboundContext` so callers
+       that need bot-aware policy (currently only `_make_on_message_handler`
+       via the `allowed_bot_ids` branch at access.py:116) can opt in.
+       Non-message handlers should accept the `False` default because
+       they've already discarded bot events upstream.
        """
        ctx = InboundContext(
            is_dm=is_dm,
            author_id=str(author_id) if author_id is not None else "",
            channel_id=str(channel_id),
-           is_bot=False,
+           is_bot=is_bot,
        )
        if not gate_message(self._access, ctx):
            log.debug(
@@ -308,62 +325,40 @@ the package's `towncrier.toml`.
 
    ```python
    is_dm = message.guild is None
+   is_bot = bool(getattr(message.author, "bot", False))
    if not self._gate_inbound(
        event_kind="message",
        channel_id=message.channel.id,
        author_id=message.author.id,
        is_dm=is_dm,
+       is_bot=is_bot,
    ):
        return
-
-   # Pipe is_bot into the published metadata (downstream consumers
-   # still need it — the gate doesn't).
-   is_bot = bool(getattr(message.author, "bot", False))
    ```
 
-   `is_bot` is still computed locally because endpoint.py:1102 reads it
-   into `metadata["discord"]["is_bot"]`. The InboundContext that today
-   threads `is_bot` into the gate (endpoint.py:1015-1020) collapses
-   into the `_gate_inbound` call above.
+   `is_bot` is computed locally (and threaded through to the gate)
+   because endpoint.py:1102 also reads it into
+   `metadata["discord"]["is_bot"]` for downstream consumers, AND
+   because the gate's underlying `gate_message` routes through the
+   `allowed_bot_ids` branch at access.py:116 when `is_bot=True`. The
+   InboundContext that today threads `is_bot` into the gate
+   (endpoint.py:1015-1020) collapses into the `_gate_inbound` call
+   above; the policy outcome is identical.
 
-   **`allowed_bot_ids` regression note.** Today the gate calls
-   `gate_message` with the real `is_bot`, which routes through the
-   bot-allowlist branch at access.py:116. Moving to
-   `_gate_inbound(is_bot=False)` would silently re-introduce the
-   2026-06-07 bug from PR #158 (bots-from-allowlist would be admitted
-   without ever consulting the allowlist). To preserve current
-   behaviour, `_make_on_message_handler` retains its own
-   `InboundContext + gate_message` call for the bot case AND uses
-   `_gate_inbound` for the human case — OR more cleanly, the
-   `_gate_inbound` method accepts an optional `is_bot` keyword that
-   defaults to `False` and the message handler passes it through.
-   The spec adopts the second form. Update the method signature:
-
-   ```python
-   def _gate_inbound(
-       self,
-       *,
-       event_kind: str,
-       channel_id: int | str,
-       author_id: int | str | None = None,
-       is_dm: bool = False,
-       is_bot: bool = False,
-   ) -> bool:
-       ...
-       ctx = InboundContext(
-           is_dm=is_dm,
-           author_id=str(author_id) if author_id is not None else "",
-           channel_id=str(channel_id),
-           is_bot=is_bot,
-       )
-       ...
-   ```
-
-   And the on_message call site passes `is_bot=is_bot`. The reaction /
-   lifecycle / poll-vote sites do NOT pass `is_bot` (default `False`),
-   matching their pre-existing per-handler bot drops. The
+   **`allowed_bot_ids` regression note.** This is exactly why
+   `_gate_inbound`'s signature in Sub-request #1 carries `is_bot` as
+   a keyword-only parameter rather than hardcoding `False` internally.
+   Moving the on_message call site to `_gate_inbound(is_bot=False)`
+   (or omitting the kwarg and accepting the default) would silently
+   re-introduce the 2026-06-07 bug from PR #158:
+   bots-from-`allowed_bot_ids` would be admitted without ever
+   consulting the allowlist. The
    `test_on_message_allows_bots_in_allowed_bot_ids` test at
-   test_endpoint_inbound.py:97 verifies this path stays alive.
+   test_endpoint_inbound.py:97 pins this path; passing `is_bot=is_bot`
+   here keeps it green. The reaction / lifecycle / poll-vote call
+   sites legitimately omit the `is_bot` kwarg (accepting the `False`
+   default) because their per-handler author-side filter has already
+   dropped bot events upstream.
 
 3. Rename `_make_on_reaction_add_handler` →
    `_make_on_raw_reaction_add_handler`. Rewrite the inner coroutine to
