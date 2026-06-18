@@ -345,6 +345,35 @@ the package's `towncrier.toml`.
    (endpoint.py:1015-1020) collapses into the `_gate_inbound` call
    above; the policy outcome is identical.
 
+   **REQUIRED follow-up edit at endpoint.py:1102.** Deleting the
+   `ctx = InboundContext(...)` block at endpoint.py:1015-1020 leaves
+   a dangling reference to `ctx.is_bot` in the `metadata` dict at
+   endpoint.py:1102 (it populates `metadata["discord"]["is_bot"]`
+   from the about-to-be-removed local). Update line 1102 from
+   `"is_bot": ctx.is_bot,` to `"is_bot": is_bot,` so the metadata
+   dict reads the new local variable bound at the top of the new
+   shape above. Without this edit the handler raises `NameError` at
+   the first inbound message. Surrounding context for pattern
+   match:
+
+   ```python
+   metadata: dict[str, Any] = {
+       "discord": {
+           "channel_id": str(message.channel.id),
+           "message_id": str(message.id),
+           "guild_id": str(message.guild.id) if message.guild else "",
+           "author_id": str(message.author.id),
+           "author_display_name": getattr(message.author, "display_name", "") or "",
+           "is_dm": is_dm,
+           # is_bot piped through so downstream beings can tell "this
+           # is from another agent-core being" vs "this is from Jeff"
+           # without inspecting bot id maps. Pairs with the
+           # allowed_bot_ids gate (agent_core#143).
+           "is_bot": is_bot,  # was ctx.is_bot — ctx no longer exists.
+       },
+   }
+   ```
+
    **`allowed_bot_ids` regression note.** This is exactly why
    `_gate_inbound`'s signature in Sub-request #1 carries `is_bot` as
    a keyword-only parameter rather than hardcoding `False` internally.
@@ -491,8 +520,41 @@ the package's `towncrier.toml`.
      so the handler's `client.get_user(raw.user_id)` synchronous
      lookup finds the bot flag. This matches the pattern documented
      in `_resolve_user_display_name` (endpoint.py:1196-1199).
+   - **Seed the test user via `fake.add_user(...)` for the publish-
+     shape tests.** The cached `on_reaction_add` listener received
+     the `user` object directly as a fire argument and could read
+     `user.display_name` synchronously. The raw handler instead
+     resolves display name via
+     `self._resolve_user_display_name(int(raw.user_id))`, which calls
+     `client.get_user(raw.user_id)` first and only falls through to
+     async `client.fetch_user(...)` on a miss. `FakeDiscordClient.get_user`
+     (fakes.py:403-405) returns `None` for unseeded ids and
+     `fetch_user` (fakes.py:410-424) raises `LookupError` when the
+     user wasn't also added via `add_remote_user`, which the handler
+     swallows and substitutes `""` for the display name. Concretely:
+       - In `test_on_reaction_add_publishes_event_envelope`
+         (line 287), add
+         `fake.add_user(FakeUser(id="100", name="alice", display_name="Alice"))`
+         AFTER the existing `fake.add_channel(...)` line and BEFORE
+         the `fake.fire(...)` call. This keeps the existing
+         `env.payload.data["user_display_name"] == "Alice"`
+         assertion green via the synchronous cache hit.
+       - In `test_on_reaction_add_dm_context` (line 370), do the
+         same — its assertions don't check `user_display_name`
+         today but the seeding keeps the handler path noise-free
+         (no spurious `fetch_user` LookupError + warning log per
+         test run).
+   - For `_drops_self_reactions`, `_drops_ack_emoji`: no extra
+     seeding required — the author-side drop short-circuits before
+     `_resolve_user_display_name` ever runs.
    - The envelope-shape assertions stay the same (kind=Event, type
      `discord.reaction_add`, six-field payload data).
+
+   The same seeding rule applies to the NEW
+   `test_on_raw_reaction_add_publishes_when_channel_in_allowlist`
+   in sub-request #9 below: include
+   `fake.add_user(FakeUser(id="100", name="alice", display_name="Alice"))`
+   so the publish assertion sees `"Alice"`, not `""`.
 
 9. Add the new regression tests in `test_endpoint_inbound.py` after
    the rewritten reaction tests:
