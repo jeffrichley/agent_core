@@ -33,9 +33,16 @@ jobs:
       - uses: extractions/setup-just@53165ef7e734c5c07cb06b3c8e7b647c5aa16db3  # v4
       - run: uv sync --locked --all-packages
       - run: just check
+      # Patch-coverage gate: fail PRs whose diff drops below 80% covered.
+      # Runs only on PRs (push-to-main has no meaningful base to diff) and
+      # only on Linux (the coverage.xml shape is identical across OSes so
+      # one OS is enough; saves Windows runner time).
+      - name: diff-cover patch-level gate
+        if: github.event_name == 'pull_request' && matrix.os == 'ubuntu-latest'
+        run: uv run diff-cover coverage.xml --compare-branch=origin/${{ github.base_ref }} --fail-under=80
       - run: uv cache prune --ci
 
-  integration:
+  slow-tests-windows:
     runs-on: windows-latest
     timeout-minutes: 20
     steps:
@@ -52,5 +59,7 @@ jobs:
       - run: uv python install 3.12
       # --package agent-core intentionally excludes agent-core-voice/qwen-tts (no Torch in CI)
       - run: uv sync --locked --package agent-core
-      # Scoped to packages/core/tests — the only location of slow-marked tests today
-      - run: uv run --no-sync pytest packages/core/tests -m slow -v
+      # Scoped to packages/core/tests — the only location of slow-marked tests today.
+      # --no-cov disables coverage for this subset run; the project-wide coverage
+      # floor is enforced by the `check` job above, which runs the full suite.
+      - run: uv run --no-sync pytest packages/core/tests -m slow -v --no-cov

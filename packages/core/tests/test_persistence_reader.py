@@ -7,6 +7,8 @@ from pathlib import Path
 
 import pytest
 import pytest_asyncio
+from hypothesis import given
+from hypothesis import strategies as st
 
 from agent_core.bus.envelope import Envelope, TextMessagePayload
 from agent_core.bus.persistence import Persistence
@@ -273,6 +275,65 @@ class TestComputeLatencyPercentiles:
         result = compute_latency_percentiles(samples, ())
         # Assert - No percentiles requested -> empty mapping.
         assert result == {}
+
+
+class TestComputeLatencyPercentilesProperties:
+    """Property-based tests via hypothesis. Hand-written tests pin specific
+    cases; property tests catch edge cases nobody thought of (off-by-one at
+    percentile boundaries, duplicate samples, very large or very small
+    values, samples already in any order, etc.).
+    """
+
+    @given(
+        samples=st.lists(
+            st.floats(min_value=0.0, max_value=1e9, allow_nan=False, allow_infinity=False),
+            min_size=1,
+            max_size=200,
+        )
+    )
+    def test_percentiles_are_sorted_by_rank(self, samples: list[float]) -> None:
+        # Arrange + Act
+        result = compute_latency_percentiles(samples, (50, 95, 99))
+        # Assert - p50 <= p95 <= p99 must hold for every non-degenerate input.
+        assert result["p50"] <= result["p95"] <= result["p99"]
+
+    @given(
+        samples=st.lists(
+            st.floats(min_value=0.0, max_value=1e9, allow_nan=False, allow_infinity=False),
+            min_size=1,
+            max_size=200,
+        )
+    )
+    def test_percentiles_bounded_by_samples(self, samples: list[float]) -> None:
+        # Arrange
+        sample_min = int(round(min(samples)))
+        sample_max = int(round(max(samples)))
+        # Act
+        result = compute_latency_percentiles(samples, (50, 95, 99))
+        # Assert - Every percentile must lie within [min, max] of the samples.
+        # Banker's rounding can push a value one unit past the rounded
+        # min/max for very-close samples, so widen by 1 to keep the
+        # property robust against that arithmetic detail.
+        for k, v in result.items():
+            assert sample_min - 1 <= v <= sample_max + 1, (
+                f"{k}={v} outside [{sample_min}, {sample_max}]"
+            )
+
+    @given(
+        samples=st.lists(
+            st.floats(min_value=0.0, max_value=1e9, allow_nan=False, allow_infinity=False),
+            min_size=1,
+            max_size=200,
+        )
+    )
+    def test_percentiles_order_independent(self, samples: list[float]) -> None:
+        # Arrange - Same data, two different orders.
+        reversed_samples = list(reversed(samples))
+        # Act
+        forward = compute_latency_percentiles(samples, (50, 95, 99))
+        backward = compute_latency_percentiles(reversed_samples, (50, 95, 99))
+        # Assert - Function sorts internally; input order must not affect output.
+        assert forward == backward
 
 
 @pytest.mark.asyncio

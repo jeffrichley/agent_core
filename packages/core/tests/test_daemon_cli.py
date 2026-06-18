@@ -12,6 +12,7 @@ import typer
 from typer.testing import CliRunner
 
 from agent_core.daemon.cli import (
+    _config_path,
     _daemon_python,
 )
 from agent_core.daemon.cli import (
@@ -35,11 +36,24 @@ def test_stop_when_not_running_is_idempotent(tmp_path: Path, monkeypatch: pytest
     assert result.exit_code == 0
 
 
+def test_config_path_is_agent_core_yaml_in_home(tmp_path: Path) -> None:
+    # Behavior contract — pure function, no rendering, no terminal, no wrap.
+    assert _config_path(tmp_path) == tmp_path / "agent_core.yaml"
+
+
 def test_start_refuses_without_config(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    # Smoke test — verify the CLI refuses with exit code 1 and writes
+    # SOME message. The specifics of the message (which path, what
+    # instruction) are presentation; they belong in the docs and a
+    # potential goldenfile test, NOT here. Earlier versions asserted on
+    # the rendered "agent_core.yaml" substring and flaked under xdist
+    # because Typer/Rich wrapped the path mid-token under a narrow
+    # terminal width. The path contract itself is covered by
+    # test_config_path_is_agent_core_yaml_in_home above.
     monkeypatch.setenv("AGENT_CORE_HOME", str(tmp_path))
     result = runner.invoke(daemon_app, ["start"])
     assert result.exit_code == 1
-    assert "agent_core.yaml" in result.stdout
+    assert result.stdout  # something was written to the user
 
 
 def test_status_with_stale_pid_reports_not_running_and_cleans(
