@@ -91,15 +91,18 @@ pipelines:
 ## Running Tests
 
 `pytest` defaults include **always-on coverage measurement** for the whole
-codebase (line + branch, gated at 85% combined), plus **random test order**.
-This makes a single one-off test invocation slow (2–3 min) because coverage
-instruments every file, not just the ones touched by your test.
+codebase (line + branch, gated at 85% combined), **random test order**,
+and **parallel execution** (`-n auto --dist=loadscope`). Full suite runs in
+~45s parallel vs ~120s sequential.
+
+Tests are grouped by module (`loadscope`) so fixtures and port-bound
+integration tests don't race across workers.
 
 **When to use which invocation:**
 
 | Goal | Command |
 |---|---|
-| Quick local debug of one test | `uv run pytest --no-cov -x packages/<pkg>/tests/test_x.py::test_name` |
+| Quick local debug of one test | `uv run pytest --no-cov -n0 -x packages/<pkg>/tests/test_x.py::test_name` |
 | Re-run with a specific random seed (reproducing a failure) | `uv run pytest --no-cov --randomly-seed=<N>` |
 | Disable random order entirely | `uv run pytest -p no:randomly --no-cov` |
 | Full pre-commit gate (matches CI) | `just check` |

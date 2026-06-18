@@ -38,6 +38,7 @@ dev = [
     "pytest-cov>=5.0",
     "pytest-clarity>=1.0",
     "pytest-timeout>=2.3",
+    "pytest-xdist>=3.6",
     "diff-cover>=9.0",
     "looptime>=0.7",
     "freezegun>=1.5",
@@ -104,7 +105,7 @@ testpaths = [
     "packages/agent-core-busproxy/tests",
 ]
 asyncio_mode = "auto"
-addopts = "--import-mode=importlib -m 'not slow' --cov=packages --cov-branch --cov-report=term --cov-report=xml --cov-fail-under=85"
+addopts = "--import-mode=importlib -m 'not slow' --cov=packages --cov-branch --cov-report=term --cov-report=xml --cov-fail-under=85 -n auto --dist=loadscope"
 # Google's "small test" cap. Anything legitimately slower belongs in the
 # slow-marker lane (which the addopts above filters out by default).
 # Override per-test via @pytest.mark.timeout(N) with a justification.
