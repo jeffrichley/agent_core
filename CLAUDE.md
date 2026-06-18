@@ -115,6 +115,11 @@ instruments every file, not just the ones touched by your test.
 - Hit a flaky timing assertion? Use the `Clock` seam in
   `agent_core.clock` (`FakeClock` in tests, `SystemClock` in production).
   Never assert against `datetime.now()` wall-clock jitter.
+- Default per-test timeout is **60 seconds** (Google's "small test" cap).
+  Tests that legitimately need more should be marked `@pytest.mark.slow`
+  (which moves them to the slow-lane CI job) or override the timeout
+  per-test with `@pytest.mark.timeout(N)` plus a comment explaining why.
+  A hang now dies at 60s with a traceback instead of stalling CI.
 
 ## CI Gates
 
