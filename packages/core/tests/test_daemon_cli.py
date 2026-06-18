@@ -39,7 +39,13 @@ def test_start_refuses_without_config(tmp_path: Path, monkeypatch: pytest.Monkey
     monkeypatch.setenv("AGENT_CORE_HOME", str(tmp_path))
     result = runner.invoke(daemon_app, ["start"])
     assert result.exit_code == 1
-    assert "agent_core.yaml" in result.stdout
+    # Typer/Rich wraps long paths to terminal width, which under xdist can
+    # be narrow enough to split "agent_core.yaml" across a newline boundary
+    # (observed as "agent_c\nore.yaml" in CI). The wrap is a bare newline
+    # with no inserted hyphen, so stripping newlines reassembles the path
+    # exactly. Other whitespace (spaces between words) must be preserved.
+    unwrapped = result.stdout.replace("\n", "")
+    assert "agent_core.yaml" in unwrapped
 
 
 def test_status_with_stale_pid_reports_not_running_and_cleans(
