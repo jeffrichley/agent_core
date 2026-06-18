@@ -10,13 +10,14 @@ from __future__ import annotations
 import json
 import os
 import sys
-from datetime import UTC, datetime
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 
 import aiosqlite
 
 from agent_core.bus.envelope import Envelope
+from agent_core.clock import Clock, SystemClock
 
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS envelopes (
@@ -73,9 +74,10 @@ def _row_to_envelope(row: dict[str, Any]) -> Envelope:
 class Persistence:
     """Async SQLite wrapper for the bus's durable mailbox state."""
 
-    def __init__(self, path: Path):
+    def __init__(self, path: Path, *, clock: Clock | None = None):
         self.path = Path(path)
         self._conn: aiosqlite.Connection | None = None
+        self._clock: Clock = clock or SystemClock()
 
     def _require_conn(self) -> aiosqlite.Connection:
         if self._conn is None:
@@ -175,7 +177,7 @@ class Persistence:
                    last_attempted = ?,
                    in_flight_until = ?
                WHERE id = ?""",
-            (datetime.now(UTC).isoformat(), in_flight_until.isoformat(), id_),
+            (self._clock.now().isoformat(), in_flight_until.isoformat(), id_),
         )
         await conn.commit()
 

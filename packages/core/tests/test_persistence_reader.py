@@ -10,7 +10,8 @@ import pytest_asyncio
 
 from agent_core.bus.envelope import Envelope, TextMessagePayload
 from agent_core.bus.persistence import Persistence
-from agent_core.bus_tail.reader import PersistenceReader
+from agent_core.bus_tail.reader import PersistenceReader, compute_latency_percentiles
+from agent_core.clock import FakeClock
 
 
 def _make_envelope(
@@ -235,25 +236,77 @@ async def test_metrics_ack_latency_null_below_sample_threshold(persistence: Pers
     assert snap["ack_latency_ms"] is None
 
 
+class TestComputeLatencyPercentiles:
+    """Pure-function tests for the percentile math. No DB, no clock."""
+
+    def test_linear_interpolation_at_15_samples(self) -> None:
+        # Arrange - 15 samples spaced 1s apart: 1000, 2000, ..., 15000 ms.
+        samples = [float(i * 1000) for i in range(1, 16)]
+        # Act
+        result = compute_latency_percentiles(samples, (50, 95, 99))
+        # Assert - Linear interpolation against n=15: rank = p/100 * (n-1).
+        # p50: rank=7.0  -> samples[7] = 8000
+        # p95: rank=13.3 -> 14000 + 1000*0.3 = 14300
+        # p99: rank=13.86-> 14000 + 1000*0.86 = 14860
+        assert result == {"p50": 8000, "p95": 14300, "p99": 14860}
+
+    def test_single_sample(self) -> None:
+        # Arrange - Use a whole-number sample to avoid banker's-rounding noise.
+        samples = [1234.0]
+        # Act
+        result = compute_latency_percentiles(samples, (50, 95, 99))
+        # Assert - Every percentile collapses to the single value.
+        assert result == {"p50": 1234, "p95": 1234, "p99": 1234}
+
+    def test_monotonic_ordering(self) -> None:
+        # Arrange - Random-order samples must give the same result as sorted.
+        samples = [5000.0, 1000.0, 3000.0, 2000.0, 4000.0]
+        # Act
+        result = compute_latency_percentiles(samples, (50, 95, 99))
+        # Assert - p50 <= p95 <= p99 invariant must hold.
+        assert result["p50"] <= result["p95"] <= result["p99"]
+
+    def test_empty_pcts_returns_empty_dict(self) -> None:
+        # Arrange
+        samples = [1000.0, 2000.0]
+        # Act
+        result = compute_latency_percentiles(samples, ())
+        # Assert - No percentiles requested -> empty mapping.
+        assert result == {}
+
+
 @pytest.mark.asyncio
 async def test_metrics_ack_latency_percentiles_above_sample_threshold(
-    persistence: Persistence,
+    tmp_path: Path,
 ):
-    # Persistence.mark_in_flight always sets last_attempted=now(); we vary
-    # created_at so each envelope's (last_attempted - created_at) latency
-    # lands in [1s, 15s]. Loop jitter adds a few ms but stays well under
-    # the assertion ceiling.
-    base = datetime.now(UTC)
-    for i in range(15):
-        created = base - timedelta(seconds=i + 1)
-        await persistence.insert(_make_envelope(id_=f"e{i}", created_at=created))
-        await persistence.mark_in_flight(f"e{i}", base + timedelta(seconds=30))
-        await persistence.mark_acked(f"e{i}")
-    reader = PersistenceReader(persistence)
-    snap = await reader.metrics_snapshot()
-    latency = snap["ack_latency_ms"]
-    assert latency is not None
-    assert {"p50", "p95", "p99"}.issubset(latency.keys())
-    # Latencies are approximately 1s..15s plus a few ms of loop jitter.
-    for v in latency.values():
-        assert 0 < v <= 16_000
+    # Arrange - Use FakeClock so mark_in_flight stamps a deterministic
+    # last_attempted. By advancing the clock between insert and
+    # mark_in_flight, the synthetic ack latencies are EXACT. The earlier
+    # version relied on Persistence calling datetime.now() and asserted
+    # "<= 16s with hope," which flaked on slow Windows runners (16.038s).
+    # The percentile math itself is covered by TestComputeLatencyPercentiles
+    # above; here we just verify the insert -> reader -> snapshot wiring
+    # delivers exact synthetic samples through to the same expected output.
+    start = datetime(2026, 1, 1, 12, 0, 0, tzinfo=UTC)
+    clock = FakeClock(start=start)
+    p = Persistence(tmp_path / "bus.sqlite", clock=clock)
+    await p.connect()
+    try:
+        for i in range(15):
+            created = clock.now()
+            await p.insert(_make_envelope(id_=f"e{i}", created_at=created))
+            # Advance the clock so last_attempted = created + (i+1) seconds.
+            clock.advance(i + 1)
+            await p.mark_in_flight(f"e{i}", clock.now() + timedelta(seconds=30))
+            await p.mark_acked(f"e{i}")
+            # Reset clock so the next envelope's created_at is also `start`.
+            # Latencies become {1000, 2000, ..., 15000} ms exactly.
+            clock._now = start
+        # Act
+        reader = PersistenceReader(p, clock=clock)
+        snap = await reader.metrics_snapshot()
+        # Assert - Same expected output as the pure unit test above, proving
+        # the wiring carries exact samples through. No tolerance, no jitter.
+        assert snap["ack_latency_ms"] == {"p50": 8000, "p95": 14300, "p99": 14860}
+    finally:
+        await p.close()

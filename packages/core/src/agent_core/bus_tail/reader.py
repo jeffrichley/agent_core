@@ -8,13 +8,14 @@ queries against the existing envelopes table.
 
 from __future__ import annotations
 
-from datetime import UTC, datetime, timedelta
+from datetime import datetime, timedelta
 from typing import Any, Literal
 
 import aiosqlite
 
 from agent_core.bus.envelope import Envelope
 from agent_core.bus.persistence import Persistence, _row_to_envelope
+from agent_core.clock import Clock, SystemClock
 
 DEFAULT_LIMIT = 50
 MAX_LIMIT = 1000
@@ -26,8 +27,9 @@ DEFAULT_METRICS_WINDOW_HOURS = 24
 class PersistenceReader:
     """Read-only query layer for the audit/tail surface."""
 
-    def __init__(self, persistence: Persistence) -> None:
+    def __init__(self, persistence: Persistence, *, clock: Clock | None = None) -> None:
         self._persistence = persistence
+        self._clock: Clock = clock or SystemClock()
 
     def _conn(self) -> aiosqlite.Connection:
         # Reuse the persistence's existing connection. Assumes connect() ran.
@@ -129,7 +131,7 @@ class PersistenceReader:
     async def metrics_snapshot(
         self, *, window_hours: int = DEFAULT_METRICS_WINDOW_HOURS
     ) -> dict[str, Any]:
-        cutoff = datetime.now(UTC) - timedelta(hours=window_hours)
+        cutoff = self._clock.now() - timedelta(hours=window_hours)
         cutoff_iso = cutoff.isoformat()
         conn = self._conn()
         conn.row_factory = aiosqlite.Row
@@ -186,7 +188,7 @@ class PersistenceReader:
         if len(latencies_ms) < ACK_LATENCY_MIN_SAMPLES:
             ack_latency_ms = None
         else:
-            ack_latency_ms = _percentiles(latencies_ms, (50, 95, 99))
+            ack_latency_ms = compute_latency_percentiles(latencies_ms, (50, 95, 99))
 
         return {
             "window": f"last_{window_hours}h",
@@ -198,8 +200,15 @@ class PersistenceReader:
         }
 
 
-def _percentiles(values: list[float], pcts: tuple[int, ...]) -> dict[str, int]:
-    """Linear-interpolation percentiles, rounded to nearest int ms."""
+def compute_latency_percentiles(
+    values: list[float], pcts: tuple[int, ...]
+) -> dict[str, int]:
+    """Linear-interpolation percentiles, rounded to nearest int ms.
+
+    Pure function — no I/O, no time, no DB. Tested directly so the
+    percentile math has tight assertions that don't depend on runner
+    speed or wall-clock jitter.
+    """
     sorted_values = sorted(values)
     n = len(sorted_values)
     out: dict[str, int] = {}
@@ -216,4 +225,4 @@ def _percentiles(values: list[float], pcts: tuple[int, ...]) -> dict[str, int]:
     return out
 
 
-__all__ = ["PersistenceReader"]
+__all__ = ["PersistenceReader", "compute_latency_percentiles"]
