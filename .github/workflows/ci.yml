@@ -42,7 +42,7 @@ jobs:
         run: uv run diff-cover coverage.xml --compare-branch=origin/${{ github.base_ref }} --fail-under=80
       - run: uv cache prune --ci
 
-  integration:
+  slow-tests-windows:
     runs-on: windows-latest
     timeout-minutes: 20
     steps:
