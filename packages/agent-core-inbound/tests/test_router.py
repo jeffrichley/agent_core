@@ -151,3 +151,49 @@ def test_unknown_connector_raises(tmp_path: Path):
             target_being="wren",
             event=_event(),
         )
+
+
+def test_redelivered_event_is_deduped_and_not_republished(tmp_path: Path):
+    connector = FakeConnector()
+    connector.allow(
+        event_id="evt-redeliver",
+        target_being="wren",
+        tier=Tier.RED,
+        reason="PR review requested on foreman",
+        rule_id="r1",
+    )
+    bus = _FakeBus()
+    router = _router(tmp_path=tmp_path, connector=connector, bus=bus)
+
+    ev = ConnectorEvent(
+        event_id="evt-redeliver",
+        landed_at=_stamp(),
+        raw={"x": 1},
+    )
+
+    router.receive(connector_name="fake", target_being="wren", event=ev)
+    router.receive(connector_name="fake", target_being="wren", event=ev)
+    router.receive(connector_name="fake", target_being="wren", event=ev)
+
+    # First delivery publishes; the next two are dropped by de-dupe.
+    assert len(bus.published) == 1
+    assert len(connector.classify_calls) == 1  # connector not re-called for dupes
+
+
+def test_dedupe_is_scoped_to_target_being(tmp_path: Path):
+    # Same event_id, different target_being → distinct entries. This is
+    # the gmail-fan-out shape (one email reaches both Pepper and Jeff)
+    # so the router cannot collapse them.
+    connector = FakeConnector()
+    connector.allow(event_id="evt-shared", target_being="wren", reason="r")
+    connector.allow(event_id="evt-shared", target_being="pepper", reason="r")
+    bus = _FakeBus()
+    router = _router(tmp_path=tmp_path, connector=connector, bus=bus)
+
+    ev = ConnectorEvent(event_id="evt-shared", landed_at=_stamp(), raw={})
+
+    router.receive(connector_name="fake", target_being="wren", event=ev)
+    router.receive(connector_name="fake", target_being="pepper", event=ev)
+
+    assert len(bus.published) == 2
+    assert {p["to"] for p in bus.published} == {"wren", "pepper"}

@@ -6,9 +6,10 @@ decide urgency (the connector does). It owns: dispatch to the connector,
 de-dupe across redeliveries, rate-limit, publish to the bus, write to
 the audit log.
 
-This task implements receive() + classify routing + bus delivery + audit.
-De-dupe and rate-limit land in tasks 7 and 8.
+This task implements receive() + classify routing + bus delivery + audit
++ bounded-LRU de-dupe. Rate-limit lands in task 8.
 """
+from collections import OrderedDict
 from collections.abc import Callable
 from datetime import UTC, datetime
 
@@ -27,6 +28,13 @@ def _default_clock() -> datetime:
     return datetime.now(UTC)
 
 
+# Cap on the LRU of recently-seen (connector, event_id, target_being)
+# triples. 4096 is generous enough that GitHub's ~5 retry delivery
+# window will never roll out under realistic burst, but small enough
+# that a stuck-source scenario can't grow memory without bound.
+_DEDUPE_CAPACITY: int = 4096
+
+
 class Router:
     """De-dupe + rate-limit + classify + deliver + log.
 
@@ -34,6 +42,11 @@ class Router:
     dispatches to ``connectors[connector_name]`` on each receive(). A
     missing key raises KeyError — this surfaces wiring bugs early
     rather than silently dropping events.
+
+    De-dupe key is ``(connector_name, event_id, target_being)`` and
+    evicts on LRU when the cache fills. A redelivered event hits the
+    cache and is silently dropped — no audit line, because the prior
+    delivery's audit line is the canonical record.
     """
 
     def __init__(
@@ -43,11 +56,14 @@ class Router:
         bus_publish: BusPublish,
         audit: AuditLog,
         clock: Callable[[], datetime] = _default_clock,
+        dedupe_capacity: int = _DEDUPE_CAPACITY,
     ) -> None:
         self._connectors = connectors
         self._bus_publish = bus_publish
         self._audit = audit
         self._clock = clock
+        self._seen: OrderedDict[tuple[str, str, str], None] = OrderedDict()
+        self._dedupe_capacity = dedupe_capacity
 
     def receive(
         self,
@@ -59,6 +75,15 @@ class Router:
         connector = self._connectors.get(connector_name)
         if connector is None:
             raise KeyError(f"unknown connector {connector_name!r}")
+
+        # De-dupe: skip if we've delivered this (connector, event_id,
+        # target_being) recently. Skipped events do NOT write to the
+        # audit log — they are structurally identical to the prior
+        # delivery, which already has its own audit line.
+        dedupe_key = (connector_name, event.event_id, target_being)
+        if dedupe_key in self._seen:
+            self._seen.move_to_end(dedupe_key)
+            return
 
         verdict = connector.classify(event, target_being)
         if isinstance(verdict, Deny):
@@ -95,6 +120,12 @@ class Router:
             },
             urgency=verdict.tier.value,
         )
+
+        # Record successful delivery in the de-dupe cache. Evict the
+        # oldest entry when the cache is full.
+        self._seen[dedupe_key] = None
+        if len(self._seen) > self._dedupe_capacity:
+            self._seen.popitem(last=False)
 
     @staticmethod
     def _extract_rule_id(
