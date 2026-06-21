@@ -25,7 +25,7 @@ def _now() -> datetime:
 
 
 class TestBuiltinKindsConstant:
-    def test_exposes_six_built_in_kinds(self) -> None:
+    def test_exposes_seven_built_in_kinds(self) -> None:
         assert BUILTIN_KINDS == frozenset(
             {
                 "TextMessage",
@@ -34,6 +34,7 @@ class TestBuiltinKindsConstant:
                 "Cancellation",
                 "Progress",
                 "Acknowledgment",
+                "Notification",
             }
         )
 
