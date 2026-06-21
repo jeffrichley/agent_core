@@ -24,6 +24,9 @@ test = [
     "httpx",
 ]
 
+[project.entry-points."agent_core"]
+inbound_aliases = "agent_core_inbound.plugin"
+
 [tool.uv.sources]
 agent-core = { workspace = true }
 
