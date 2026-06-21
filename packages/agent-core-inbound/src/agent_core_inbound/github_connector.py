@@ -10,25 +10,14 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from agent_core_inbound._path import MISSING, resolve_path
 from agent_core_inbound.github_allowance import (
     AllowanceConfig,
     AllowRule,
     load_allowance,
 )
-from agent_core_inbound.github_event import (
-    GitHubEvent,
-    GitHubIssueCommentEvent,
-    GitHubIssuesLabeledEvent,
-    GitHubPullRequestReviewRequestedEvent,
-)
+from agent_core_inbound.github_event import GitHubEvent
 from agent_core_inbound.types import Allow, ConnectorEvent, Deny
-
-# Maps event-type discriminator → policy rule's ``event`` field.
-_EVENT_KEYS: dict[type[GitHubEvent], str] = {
-    GitHubPullRequestReviewRequestedEvent: "pull_request_review_requested",
-    GitHubIssueCommentEvent: "issue_comment",
-    GitHubIssuesLabeledEvent: "issues_labeled",
-}
 
 
 class GitHubConnector:
@@ -76,33 +65,32 @@ class GitHubConnector:
         self._loaded_mtime = current_mtime
 
     def _first_matching_rule(self, event: GitHubEvent) -> AllowRule | None:
-        event_key = _event_key_for(event)
+        event_key = _event_key(event)
         for rule in self._config.allow:
             if rule.event != event_key:
                 continue
             if rule.repo is not None and rule.repo != event.repo_full_name:
                 continue
-            if rule.reviewer is not None:
-                if not isinstance(event, GitHubPullRequestReviewRequestedEvent):
-                    continue
-                if event.requested_reviewer_login != rule.reviewer:
-                    continue
-            if rule.label_name is not None:
-                if not isinstance(event, GitHubIssuesLabeledEvent):
-                    continue
-                if event.label_name != rule.label_name:
-                    continue
-            if rule.body_contains is not None:
-                if not isinstance(event, GitHubIssueCommentEvent):
-                    continue
-                if rule.body_contains not in event.comment_body:
+            if rule.match:
+                all_matched = True
+                for path, expected in rule.match.items():
+                    actual = resolve_path(event.raw, path)
+                    if actual is MISSING or actual != expected:
+                        all_matched = False
+                        break
+                if not all_matched:
                     continue
             return rule
         return None
 
 
-def _event_key_for(event: GitHubEvent) -> str:
-    for type_, key in _EVENT_KEYS.items():
-        if isinstance(event, type_):
-            return key
-    return "unknown"
+def _event_key(event: GitHubEvent) -> str:
+    """Compose the synthetic event key the rules match against.
+
+    For events with an action sub-type (pull_request, issues, etc.):
+    returns ``f"{event_type}_{action}"``. For action-less events
+    (push, ping, create, delete, etc.): returns just ``event_type``.
+    """
+    if event.action:
+        return f"{event.event_type}_{event.action}"
+    return event.event_type
