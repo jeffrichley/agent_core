@@ -22,6 +22,7 @@ agent-core-channel = { workspace = true }
 agent-core-briefs = { workspace = true }
 agent-core-webcam = { workspace = true }
 agent-core-hatchery = { workspace = true }
+agent-core-inbound = { workspace = true }
 agent-core-voice = { workspace = true }
 agent-core-busproxy = { workspace = true }
 qwen-tts = { workspace = true }

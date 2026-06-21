@@ -1,0 +1,31 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "agent-core-inbound"
+version = "0.1.0"
+description = "Inbound notifications router — deny-by-default external-event surface for agent-core beings."
+readme = "README.md"
+requires-python = ">=3.12"
+license = "MIT"
+dependencies = [
+    "agent-core",
+    "pydantic>=2.0",
+    "fastapi>=0.110",
+    "uvicorn>=0.27",
+    "watchdog>=4.0",
+]
+
+[project.optional-dependencies]
+test = [
+    "pytest",
+    "pytest-asyncio",
+    "httpx",
+]
+
+[tool.uv.sources]
+agent-core = { workspace = true }
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/agent_core_inbound"]
