@@ -284,7 +284,6 @@ dev = [
 
 [[package]]
 name = "agent-core-inbound"
-version = "0.1.0"
 source = { editable = "packages/agent-core-inbound" }
 dependencies = [
     { name = "agent-core" },

@@ -15,6 +15,7 @@ from agent_core.bus.envelope import (
     AcknowledgmentPayload,
     CancellationPayload,
     EventPayload,
+    NotificationPayload,
     ProgressPayload,
     TextMessagePayload,
     ToolInvocationPayload,
@@ -57,6 +58,15 @@ def summarize_acknowledgment(p: AcknowledgmentPayload) -> dict[str, Any]:
     return {"of": p.of, "has_note": p.note is not None}
 
 
+def summarize_notification(p: NotificationPayload) -> dict[str, Any]:
+    return {
+        "source": p.source,
+        "reason_length": len(p.reason),
+        "has_poll_discovered_at": p.poll_discovered_at is not None,
+        "body_keys": sorted(p.body.keys()),
+    }
+
+
 SUMMARIZERS: dict[str, Callable[[Any], dict[str, Any]]] = {
     "TextMessage": summarize_text_message,
     "Event": summarize_event,
@@ -64,6 +74,7 @@ SUMMARIZERS: dict[str, Callable[[Any], dict[str, Any]]] = {
     "Cancellation": summarize_cancellation,
     "Progress": summarize_progress,
     "Acknowledgment": summarize_acknowledgment,
+    "Notification": summarize_notification,
 }
 
 
