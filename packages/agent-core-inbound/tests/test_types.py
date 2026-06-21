@@ -2,9 +2,8 @@
 from datetime import UTC, datetime
 
 import pytest
-from pydantic import ValidationError
-
 from agent_core_inbound.types import Allow, ConnectorEvent, Deny, Tier
+from pydantic import ValidationError
 
 
 def _stamp() -> datetime:

@@ -5,13 +5,13 @@ these to decide what envelope to publish (or skip) and what to write
 to the audit log.
 """
 from datetime import datetime
-from enum import Enum
+from enum import StrEnum
 from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field
 
 
-class Tier(str, Enum):
+class Tier(StrEnum):
     """Urgency tier emitted at source by the connector.
 
     Set in the connector's matched policy rule, never inferred by the
