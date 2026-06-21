@@ -226,3 +226,80 @@ reason = "x"
         raw={},
     )
     assert isinstance(conn.classify(event, "pepper"), Deny)
+
+
+def test_label_name_rule_skips_non_issues_labeled_event(tmp_path: Path):
+    # A rule constrained by label_name must NOT match an event that isn't
+    # an IssuesLabeled event. The constraint short-circuits via continue
+    # before any field access, then falls through to Deny.
+    cfg = _write(
+        tmp_path / "g.toml",
+        """
+[[allow]]
+rule_id = "label_constraint"
+event = "issue_comment"
+label_name = "bug"
+tier = "yellow"
+reason = "labeled bug"
+""",
+    )
+    conn = GitHubConnector(config_path=cfg)
+    # An IssueComment event — has no label_name — should be denied even
+    # though rule.event matches "issue_comment".
+    event = GitHubIssueCommentEvent(
+        event_id="gh-label-1",
+        landed_at=_stamp(),
+        repo_full_name="jeffrichley/agent_core",
+        action="created",
+        issue_number=1,
+        comment_body="x",
+        comment_author_login="someone",
+        raw={},
+    )
+    assert isinstance(conn.classify(event, "wren"), Deny)
+
+
+def test_body_contains_rule_skips_non_issue_comment_event(tmp_path: Path):
+    # A rule constrained by body_contains must NOT match an event that
+    # isn't an IssueComment event. Short-circuits via continue, falls
+    # through to Deny.
+    cfg = _write(
+        tmp_path / "g.toml",
+        """
+[[allow]]
+rule_id = "body_constraint"
+event = "pull_request_review_requested"
+body_contains = "@wrenrichley"
+tier = "red"
+reason = "mention in PR"
+""",
+    )
+    conn = GitHubConnector(config_path=cfg)
+    # A PR review event — has no comment_body — should be denied even
+    # though rule.event matches "pull_request_review_requested".
+    event = GitHubPullRequestReviewRequestedEvent(
+        event_id="gh-body-1",
+        landed_at=_stamp(),
+        repo_full_name="jeffrichley/foreman",
+        pr_number=1,
+        requested_reviewer_login="anyone",
+        raw={},
+    )
+    assert isinstance(conn.classify(event, "wren"), Deny)
+
+
+def test_nonexistent_config_path_denies_everything(tmp_path: Path):
+    # If the config file doesn't exist at construction, the connector
+    # uses the empty default config — every classify returns Deny.
+    # Subsequent reloads also short-circuit until the file appears.
+    missing = tmp_path / "does-not-exist.toml"
+    assert not missing.exists()
+    conn = GitHubConnector(config_path=missing)
+    event = GitHubPullRequestReviewRequestedEvent(
+        event_id="gh-missing-1",
+        landed_at=_stamp(),
+        repo_full_name="jeffrichley/foreman",
+        pr_number=1,
+        raw={},
+    )
+    assert isinstance(conn.classify(event, "wren"), Deny)
