@@ -10,6 +10,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from agent_core_inbound._path import MISSING, resolve_path
 from agent_core_inbound.github_allowance import (
     AllowanceConfig,
     AllowRule,
@@ -70,20 +71,14 @@ class GitHubConnector:
                 continue
             if rule.repo is not None and rule.repo != event.repo_full_name:
                 continue
-            if rule.reviewer is not None:
-                if not isinstance(event, GitHubPullRequestReviewRequestedEvent):
-                    continue
-                if event.requested_reviewer_login != rule.reviewer:
-                    continue
-            if rule.label_name is not None:
-                if not isinstance(event, GitHubIssuesLabeledEvent):
-                    continue
-                if event.label_name != rule.label_name:
-                    continue
-            if rule.body_contains is not None:
-                if not isinstance(event, GitHubIssueCommentEvent):
-                    continue
-                if rule.body_contains not in event.comment_body:
+            if rule.match:
+                all_matched = True
+                for path, expected in rule.match.items():
+                    actual = resolve_path(event.raw, path)
+                    if actual is MISSING or actual != expected:
+                        all_matched = False
+                        break
+                if not all_matched:
                     continue
             return rule
         return None
