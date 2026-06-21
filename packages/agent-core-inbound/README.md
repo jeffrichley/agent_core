@@ -30,14 +30,27 @@ FOREMAN_GITHUB_WEBHOOK_SECRET=<paste-here>
 `~/.wren/.config/inbound/github-allowance.toml`:
 
 ```toml
+# Schema-flexible rule shape (v2).  See spec
+# docs/superpowers/specs/2026-06-21-inbound-v2-schema-flexible-events-design.md
+# for the full grammar.
+
 [[allow]]
-rule_id = "pr_review_requested_foreman"
+rule_id = "pr_review_requested_any_project"
 event = "pull_request_review_requested"
-repo = "jeffrichley/foreman"
-reviewer = "wrenrichley"
+match = { "requested_reviewer.login" = "wrenrichley" }
 tier = "red"
-reason = "PR review requested on foreman"
+reason = "PR review requested on me"
+
+[[allow]]
+rule_id = "needs_help_foreman"
+event = "issues_labeled"
+repo = "jeffrichley/foreman"
+match = { "label.name" = "foreman:needs-help" }
+tier = "red"
+reason = "Foreman escalation — needs operator unstick"
 ```
+
+The `reviewer`/`label_name` shortcuts from v1.a still work — they translate to `match` entries automatically. `body_contains` was removed in v2 (raises `ValueError` on load); use exact-equality `match` instead, or wait for v2.1's `match_contains` operator.
 
 The router watches the file's mtime and reloads on every webhook delivery — edit the TOML and the next event picks up the new rules without restarting the daemon.
 
@@ -78,16 +91,16 @@ In the `jeffrichley/foreman` repo settings → Webhooks → Add webhook:
 - **Payload URL:** `https://router.<tailnet>.ts.net/github`
 - **Content type:** `application/json`
 - **Secret:** the same value you stored in `FOREMAN_GITHUB_WEBHOOK_SECRET`
-- **Which events:** `Pull request reviews` (specifically `Pull request review requested`)
+- **Which events:** "Let me select individual events" — check **Workflow runs**, **Pull requests**, **Pull request reviews**, **Issues**, **Issue comments**, **Pushes**, **Releases**, **Statuses**. (Schema-flexible matching means we can add more later via `gh api -X PATCH repos/<repo>/hooks/<id> -f events='[...]'` with no daemon change.)
 
 ### 6. Smoke test
 
 On any PR in `jeffrichley/foreman`, request a review from `@wrenrichley`. Within ~10s:
 
-- `~/.wren/state/inbound-audit.jsonl` gains an `allow` line with `rule_id=pr_review_requested_foreman`.
+- `~/.wren/state/inbound-audit.jsonl` gains an `allow` line with `rule_id=pr_review_requested_any_project`.
 - Wren's bus inbox receives a `Notification` envelope (urgency `red`).
 
-If you instead see a `deny` line, double-check `reviewer = "wrenrichley"` in the allowance TOML against the actual reviewer GitHub login.
+If you instead see a `deny` line, double-check `match = { "requested_reviewer.login" = "wrenrichley" }` in the allowance TOML against the actual reviewer GitHub login.
 
 ### Troubleshooting
 
@@ -96,3 +109,4 @@ If you instead see a `deny` line, double-check `reviewer = "wrenrichley"` in the
 - **Webhook delivers but no bus envelope:** check the audit log first. If `deny` lines appear, the allowance rule isn't matching — verify `event`, `repo`, `reviewer` fields against the actual webhook payload (visible in GitHub's webhook delivery history).
 - **No audit log writes at all:** the endpoint isn't seeing the POST. Confirm Tailscale Funnel is active (`tailscale funnel status`) and the daemon log shows `InboundEndpoint(name=inbound) started on 127.0.0.1:8765`.
 - **Operator missing `X-GitHub-Event` header (e.g. testing with curl):** the handler returns 204 silently for unmodeled event types — exercise the wiring via GitHub's "Recent Deliveries" / "Redeliver" UI which sends the correct headers.
+- **Webhook deliveries land 404 from uvicorn:** the Tailscale Funnel command should be `tailscale funnel <port>` — do NOT use `--set-path=/github`. That flag STRIPS the path prefix before forwarding, leaving uvicorn to see `POST /` (no route). The default mount at `/` is correct because the FastAPI route is at `/github`.
