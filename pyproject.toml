@@ -102,6 +102,7 @@ testpaths = [
     "packages/credentials/tests",
     "packages/agent-core-discord/tests",
     "packages/agent-core-channel/tests",
+    "packages/agent-core-inbound/tests",
     "packages/agent-core-webcam/tests",
     "packages/agent-core-voice/tests",
     "packages/agent-core-busproxy/tests",
