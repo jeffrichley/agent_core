@@ -85,6 +85,8 @@ reason = "PR review requested on foreman"
     pub = published[0]
     assert pub["to"] == "wren"
     assert pub["kind"] == "Notification"
+    assert pub["payload"]["kind"] == "Notification"
+    assert pub["payload"]["source"] == "github"
     assert pub["urgency"] == "red"
     assert pub["payload"]["reason"] == "PR review requested on foreman"
     assert pub["payload"]["body"]["pull_request"]["number"] == 387
@@ -92,8 +94,9 @@ reason = "PR review requested on foreman"
     # Audit log shows the allow line with rule_id.
     lines = audit_path.read_text(encoding="utf-8").splitlines()
     assert len(lines) == 1
-    assert "pr_review_requested_foreman" in lines[0]
-    assert '"verdict":"allow"' in lines[0]
+    entry = json.loads(lines[0])
+    assert entry["verdict"] == "allow"
+    assert entry["rule_id"] == "pr_review_requested_foreman"
 
 
 def test_unmatched_event_denied_with_audit(tmp_path: Path):
@@ -123,4 +126,5 @@ def test_unmatched_event_denied_with_audit(tmp_path: Path):
     assert published == []
     lines = audit_path.read_text(encoding="utf-8").splitlines()
     assert len(lines) == 1
-    assert '"verdict":"deny"' in lines[0]
+    entry = json.loads(lines[0])
+    assert entry["verdict"] == "deny"
