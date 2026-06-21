@@ -6,7 +6,7 @@ Replace `payload.body = event.raw` in `Router.receive()` with a trimmed, per-eve
 
 ## Acceptance criteria
 
-- `Notification` body for a `pull_request.review_requested` event is ≤ 1 KB and contains all of: `rule_id`, `reason`, `tier`, `event_type=pull_request`, `action=review_requested`, `repo`, `html_url` (when present in raw), `landed_at`, `number`, `pull_request.title`, `pull_request.user.login`, `pull_request.head.ref`, `pull_request.base.ref`, `requested_reviewer.login`.
+- `Notification` body for a `pull_request.review_requested` event is ≤ 1 KB and contains all of: `rule_id`, `reason`, `tier`, `event_type=pull_request`, `action=review_requested`, `repo`, `html_url`, `landed_at`, `number`, `pull_request.title`, `pull_request.user.login`, `pull_request.head.ref`, `pull_request.base.ref`, `requested_reviewer.login`.
 - `Notification` body for a `workflow_run.completed` event contains `workflow_run.id`, `workflow_run.name`, `workflow_run.conclusion`, `workflow_run.head_branch`, `workflow_run.html_url`, `workflow_run.event` and is ≤ 1 KB.
 - `Connector` Protocol gains `project(event: ConnectorEvent) -> dict[str, Any]` with a concrete default body returning `dict(event.raw)`. The `@runtime_checkable isinstance()` check continues to pass for `FakeConnector` (which does not implement `project`) because concrete Protocol methods are not part of the structural check.
 - `Router.receive()` calls `project()` via a `getattr` fallback (parallel to the existing `_extract_rule_id` pattern) so connectors without `project` silently fall back to `event.raw`, and `FakeConnector` needs no modification.
@@ -25,7 +25,7 @@ Replace `payload.body = event.raw` in `Router.receive()` with a trimmed, per-eve
 
 **Projected body key format.** The projection table uses dotted paths (e.g., `pull_request.title`, `requested_reviewer.login`). Rather than reconstructing nested dicts, the projection stores the dotted path string as the flat key. This is consistent with the matching engine's convention (operators already read `match = { "pull_request.title" = "..." }` in TOML), keeps the body dict flat and easy to serialize, and avoids a recursive merge helper. Consumers read `body["pull_request.title"]` not `body["pull_request"]["title"]`.
 
-**Universal fields.** `GitHubConnector._universal_fields(event)` returns `event_type`, `action`, `repo` (from `event.repo_full_name`), `landed_at` (ISO-formatted), and optionally `html_url` (from `resolve_path(event.raw, "html_url")`; omitted when MISSING, since many event types don't carry a top-level `html_url`). These form the baseline every projection starts from.
+**Universal fields.** `GitHubConnector._universal_fields(event)` returns `event_type`, `action`, `repo` (from `event.repo_full_name`), `landed_at` (ISO-formatted), and `html_url` extracted from a per-event-type path looked up in `_URL_PATHS`. GitHub webhooks never place a URL at the top-level `html_url` key — the URL lives inside the primary object (e.g., `pull_request.html_url` for `pull_request` events, `workflow_run.html_url` for `workflow_run` events). `_URL_PATHS: dict[str, str]` maps each event_type to the correct dotted path, and `_universal_fields()` calls `resolve_path` with that path to extract the value. For the initial set of seven event types all paths are always present in GitHub's payload, so `html_url` is always populated. `html_url` is omitted only if the event_type is absent from `_URL_PATHS` (not the case for any type in the initial set). These form the baseline every projection starts from.
 
 **Router merges router-scope fields.** `rule_id`, `reason`, and `tier` are Router/verdict-scope concepts unknown to the connector at projection time. The Router merges them into the body dict after calling `project()`. The existing `payload.reason` and `payload.landed_at` fields at the envelope top level are **not removed** (backward compat), but they now also appear inside `payload.body`.
 
@@ -117,6 +117,20 @@ Replace `payload.body = event.raw` in `Router.receive()` with a trimmed, per-eve
    _TRUNCATIONS: dict[str, int] = {
        "comment.body": 200,
    }
+
+   # Maps each event_type to the dotted path of its canonical URL in the raw payload.
+   # GitHub webhooks never place a URL at the top-level "html_url" key — it lives
+   # inside the primary object for each event type. This table lets _universal_fields()
+   # extract the right URL without inspecting the wrong location.
+   _URL_PATHS: dict[str, str] = {
+       "pull_request": "pull_request.html_url",
+       "workflow_run": "workflow_run.html_url",
+       "issues": "issue.html_url",
+       "issue_comment": "issue.html_url",
+       "push": "compare",
+       "release": "release.html_url",
+       "status": "target_url",
+   }
    ```
 
    Add `_universal_fields()` module-level helper (NOT a method; takes the event only):
@@ -130,9 +144,11 @@ Replace `payload.body = event.raw` in `Router.receive()` with a trimmed, per-eve
            "repo": event.repo_full_name,
            "landed_at": event.landed_at.isoformat(),
        }
-       html_url = resolve_path(event.raw, "html_url")
-       if html_url is not MISSING:
-           result["html_url"] = html_url
+       url_path = _URL_PATHS.get(event.event_type)
+       if url_path is not None:
+           url = resolve_path(event.raw, url_path)
+           if url is not MISSING:
+               result["html_url"] = url
        return result
    ```
 
@@ -303,6 +319,8 @@ Replace `payload.body = event.raw` in `Router.receive()` with a trimmed, per-eve
        assert body["action"] == "review_requested"
        assert body["repo"] == "jeffrichley/foreman"
        assert "landed_at" in body
+       # html_url is always present for pull_request — extracted from pull_request.html_url
+       assert body["html_url"] == "https://github.com/jeffrichley/foreman/pull/42"
 
        # Per-event-type fields
        assert body["number"] == 42
@@ -361,7 +379,7 @@ Replace `payload.body = event.raw` in `Router.receive()` with a trimmed, per-eve
 | File | Change |
 |---|---|
 | `packages/agent-core-inbound/src/agent_core_inbound/protocol.py` | Add `from typing import Any`. Add `project(self, event: ConnectorEvent) -> dict[str, Any]` method with concrete default body `return dict(event.raw)`. |
-| `packages/agent-core-inbound/src/agent_core_inbound/github_connector.py` | Add `from typing import Any`. Add `_PROJECTIONS` constant, `_TRUNCATIONS` constant, `_universal_fields()` module-level helper, and `GitHubConnector.project()` method. |
+| `packages/agent-core-inbound/src/agent_core_inbound/github_connector.py` | Add `from typing import Any`. Add `_PROJECTIONS` constant, `_TRUNCATIONS` constant, `_URL_PATHS` constant, `_universal_fields()` module-level helper, and `GitHubConnector.project()` method. |
 | `packages/agent-core-inbound/src/agent_core_inbound/router.py` | Add `from typing import Any`. Add `Router._project_body()` static method. Replace `"body": event.raw` with `body = self._project_body(...)` in `receive()`. |
 | `packages/agent-core-inbound/tests/test_router.py` | Update `test_allow_publishes_notification_envelope` to assert `body["rule_id"]`, `body["tier"]`, `body["reason"]` and the passthrough raw fields. |
 | `packages/agent-core-inbound/tests/test_github_connector.py` | Add new `# --- project() ---` section with 10 tests: one per event_type in `_PROJECTIONS` (7), one for missing-field skip, one for comment.body truncation, one for unknown event_type passthrough. |
