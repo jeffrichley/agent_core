@@ -198,3 +198,23 @@ def test_reviewer_and_label_name_both_translate() -> None:
     }
     assert rule.reviewer is None
     assert rule.label_name is None
+
+
+def test_toml_load_rejects_body_contains(tmp_path) -> None:
+    from pydantic import ValidationError
+    from agent_core_inbound.github_allowance import load_allowance
+
+    p = tmp_path / "rules.toml"
+    p.write_text(
+        """
+        [[allow]]
+        rule_id = "old"
+        event = "issue_comment_created"
+        body_contains = "TRIGGER"
+        tier = "green"
+        reason = "comment trigger"
+        """,
+        encoding="utf-8",
+    )
+    with pytest.raises(ValidationError, match="body_contains.*removed"):
+        load_allowance(p)
