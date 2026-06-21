@@ -75,8 +75,39 @@ class AcknowledgmentPayload(BaseModel):
     note: str | None = None
 
 
+class NotificationPayload(BaseModel):
+    """External-source inbound notification.
+
+    Published by the inbound-notifications router when a per-source
+    connector classifies an event Allow. ``source`` is the connector
+    name ("github", "gmail", "calendar"). ``reason`` is the
+    connector-supplied human-readable justification (audit trail).
+    ``landed_at`` is when the source event happened (e.g., the
+    PR ``updated_at`` for GitHub, the ``Date:`` header for Gmail).
+    ``poll_discovered_at`` is set only for cycle-based connectors
+    (Gmail IMAP IDLE, calendar polls); absent for push sources.
+    ``body`` is the connector-specific payload — the being's
+    inbox-render handler dispatches on ``source`` to format it.
+
+    See docs/superpowers/specs/2026-06-20-inbound-notifications-design.md.
+    """
+
+    kind: Literal["Notification"] = "Notification"
+    source: str = Field(min_length=1)
+    reason: str = Field(min_length=1)
+    landed_at: datetime
+    poll_discovered_at: datetime | None = None
+    body: dict[str, Any] = Field(default_factory=dict)
+
+
 EnvelopePayload = Annotated[
-    TextMessagePayload | EventPayload | ToolInvocationPayload | CancellationPayload | ProgressPayload | AcknowledgmentPayload,
+    TextMessagePayload
+    | EventPayload
+    | ToolInvocationPayload
+    | CancellationPayload
+    | ProgressPayload
+    | AcknowledgmentPayload
+    | NotificationPayload,
     Field(discriminator="kind"),
 ]
 
@@ -90,6 +121,7 @@ BUILTIN_KINDS: frozenset[str] = frozenset({
     "Cancellation",
     "Progress",
     "Acknowledgment",
+    "Notification",
 })
 
 
