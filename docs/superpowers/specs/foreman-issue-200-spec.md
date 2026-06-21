@@ -67,6 +67,7 @@ Replace `payload.body = event.raw` in `Router.receive()` with a trimmed, per-eve
            "pull_request.user.login",
            "pull_request.head.ref",
            "pull_request.base.ref",
+           "pull_request.html_url",
            "requested_reviewer.login",
        ],
        "workflow_run": [
@@ -275,6 +276,7 @@ Replace `payload.body = event.raw` in `Router.receive()` with a trimmed, per-eve
                "user": {"login": "alice"},
                "head": {"ref": "feature/foo"},
                "base": {"ref": "main"},
+               "html_url": "https://github.com/jeffrichley/foreman/pull/42",
            },
            "requested_reviewer": {"login": "wrenrichley"},
            "installation": {"id": 12345, "account": {}},  # big nested — must be absent
@@ -309,6 +311,7 @@ Replace `payload.body = event.raw` in `Router.receive()` with a trimmed, per-eve
        assert body["pull_request.head.ref"] == "feature/foo"
        assert body["pull_request.base.ref"] == "main"
        assert body["requested_reviewer.login"] == "wrenrichley"
+       assert body["pull_request.html_url"] == "https://github.com/jeffrichley/foreman/pull/42"
 
        # Large raw-only fields must NOT appear
        assert "installation" not in body
