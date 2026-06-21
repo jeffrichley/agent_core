@@ -120,15 +120,16 @@ def _rule_matches(rule: AllowRule, event: GitHubEvent) -> bool:
 
 ### Backward compatibility — v1.a TOML shape still works
 
-v1.a allows the convenience fields `reviewer`, `label_name`, `body_contains` directly on the rule. v2 honors these as **syntactic sugar** — a model validator translates them into the corresponding `match` entries:
+v1.a allows the convenience fields `reviewer`, `label_name`, `body_contains` directly on the rule. v2 honors **`reviewer`** and **`label_name`** as syntactic sugar — a model validator translates them into the corresponding `match` entries:
 
 | v1.a shortcut | v2 equivalent |
 |---|---|
 | `reviewer = "wrenrichley"` | `match = { "requested_reviewer.login" = "wrenrichley" }` |
 | `label_name = "foreman:needs-help"` | `match = { "label.name" = "foreman:needs-help" }` |
-| `body_contains = "TRIGGER"` | _Deprecated; substring match cannot be expressed via dotted-key equality. Operators using this rewrite to `match` with exact equality, or we add `match_contains` in v2.1._ |
 
-The `reviewer` and `label_name` shortcuts keep working forever (cheap to maintain, doc them as discouraged). `body_contains` raises a deprecation warning on load and migrates the rule with `match = { "comment.body" = "<value>" }` (exact-equality, which is wrong for most cases) — operators must rewrite if they need substring semantics. v1.a ships zero `body_contains` rules in production, so this is a paper-cut not a real migration.
+The `reviewer` and `label_name` shortcuts keep working forever (cheap to maintain, the most common filters). They're documented as discouraged-in-favor-of-`match` for consistency, but never break.
+
+**`body_contains` is removed.** No production rules use it, and dotted-key exact-equality can't express substring semantics without bolting on a new operator (`match_contains`, regex). Keeping it as a partial-translation backward-compat shim would silently change behavior (`contains` becoming `equals`). v2 raises an explicit `ValueError` on load if any rule has `body_contains`, with a message pointing to v2.1's planned `match_contains` operator.
 
 ### Wren's allowance TOML — migrated rules
 
@@ -189,9 +190,18 @@ reason = "New PR opened — queue for review"
 
 7 rules, all 3 projects covered. Operators can add more (release events, deployment status, dependabot alerts) by editing the file — no code change, no daemon restart (mtime reload).
 
-### Webhook subscription
+### Webhook subscription — curated initial set
 
-Each registered repo's GitHub webhook subscribes to **all events** (single checkbox in GitHub UI; via API: `events: ["*"]`). The connector's deny-by-default behavior drops anything without a matching rule. Subscribing to everything makes adding new rules a zero-touch op on the GitHub side — we never have to revisit the webhook config to enable a new event.
+Each registered repo's GitHub webhook subscribes to a **curated 8-event set** that covers the immediate-use cases plus headroom for adding TOML rules without touching the subscription:
+
+```
+events: ["workflow_run", "pull_request", "pull_request_review",
+        "issues", "issue_comment", "push", "release", "status"]
+```
+
+Skipped: `star`, `watch`, `fork`, `member`, `team_add`, `marketplace_purchase`, `sponsorship`, `discussion*`, `projects_v2*`, `code_scanning_alert`, `dependabot_alert`, `secret_scanning_alert`, `package`, `gollum`, etc. — pure noise for the operator role.
+
+The curated set is **not a hard ceiling.** Adding more event types later is a one-line `gh api -X PATCH repos/<owner>/<repo>/hooks/<id> -f events='[…]'` call. No connector change. The schema-flexible matching engine accepts any event; the subscription just controls what GitHub delivers.
 
 ### Audit log
 
@@ -243,11 +253,11 @@ Unchanged from v1.a. `Notification` envelope still carries `kind, source, reason
 
 The daemon restart is the only operator-visible disruption — same blast radius as v1.a's deploy. Backward compat means existing rules don't break mid-deploy.
 
-## Open questions for Jeff
+## Resolved (2026-06-21 with Jeff)
 
-1. **Naming.** I've called this "v2" of the inbound substrate; technically v1.b and v1.c are reserved for Gmail/Calendar per the original spec. Want this called v2 (substrate refactor), or v1.a-phase-2 (extension)? My vote: v2 is clearer.
-2. **`body_contains` deprecation.** No production rules use it; the cleanest path is to remove it outright and raise on load. Acceptable, or keep the deprecation warning path?
-3. **Webhook subscription to `*`.** Confirms operator intent that any event can flow in; the deny-by-default protects us. Concur?
+1. **Naming.** v2 — substrate-refactor lineage; v1.b/v1.c remain reserved for Gmail/Calendar.
+2. **`body_contains`.** Removed outright; raises `ValueError` on load. v2.1 may revisit with a proper `match_contains` operator.
+3. **Webhook subscription.** Curated 8-event set (see section above), not `*`. Additions via one-line `gh api` calls when new TOML rules need new event types.
 
 ## References
 
