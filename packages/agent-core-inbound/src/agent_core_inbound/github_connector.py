@@ -15,20 +15,8 @@ from agent_core_inbound.github_allowance import (
     AllowRule,
     load_allowance,
 )
-from agent_core_inbound.github_event import (
-    GitHubEvent,
-    GitHubIssueCommentEvent,
-    GitHubIssuesLabeledEvent,
-    GitHubPullRequestReviewRequestedEvent,
-)
+from agent_core_inbound.github_event import GitHubEvent
 from agent_core_inbound.types import Allow, ConnectorEvent, Deny
-
-# Maps event-type discriminator → policy rule's ``event`` field.
-_EVENT_KEYS: dict[type[GitHubEvent], str] = {
-    GitHubPullRequestReviewRequestedEvent: "pull_request_review_requested",
-    GitHubIssueCommentEvent: "issue_comment",
-    GitHubIssuesLabeledEvent: "issues_labeled",
-}
 
 
 class GitHubConnector:
@@ -76,7 +64,7 @@ class GitHubConnector:
         self._loaded_mtime = current_mtime
 
     def _first_matching_rule(self, event: GitHubEvent) -> AllowRule | None:
-        event_key = _event_key_for(event)
+        event_key = _event_key(event)
         for rule in self._config.allow:
             if rule.event != event_key:
                 continue
@@ -101,8 +89,13 @@ class GitHubConnector:
         return None
 
 
-def _event_key_for(event: GitHubEvent) -> str:
-    for type_, key in _EVENT_KEYS.items():
-        if isinstance(event, type_):
-            return key
-    return "unknown"
+def _event_key(event: GitHubEvent) -> str:
+    """Compose the synthetic event key the rules match against.
+
+    For events with an action sub-type (pull_request, issues, etc.):
+    returns ``f"{event_type}_{action}"``. For action-less events
+    (push, ping, create, delete, etc.): returns just ``event_type``.
+    """
+    if event.action:
+        return f"{event.event_type}_{event.action}"
+    return event.event_type

@@ -303,3 +303,35 @@ def test_nonexistent_config_path_denies_everything(tmp_path: Path):
         raw={},
     )
     assert isinstance(conn.classify(event, "wren"), Deny)
+
+
+def test_event_key_composes_event_type_plus_action() -> None:
+    from agent_core_inbound.github_connector import _event_key
+    from agent_core_inbound.github_event import GitHubEvent
+    from datetime import datetime, timezone
+
+    event = GitHubEvent(
+        event_id="abc",
+        landed_at=datetime(2026, 6, 21, 17, 2, 0, tzinfo=timezone.utc),
+        event_type="workflow_run",
+        action="completed",
+        repo_full_name="jeffrichley/foreman",
+        raw={},
+    )
+    assert _event_key(event) == "workflow_run_completed"
+
+
+def test_event_key_drops_underscore_for_actionless_events() -> None:
+    from agent_core_inbound.github_connector import _event_key
+    from agent_core_inbound.github_event import GitHubEvent
+    from datetime import datetime, timezone
+
+    event = GitHubEvent(
+        event_id="ping",
+        landed_at=datetime(2026, 6, 21, 17, 2, 0, tzinfo=timezone.utc),
+        event_type="push",
+        action="",
+        repo_full_name="jeffrichley/foreman",
+        raw={},
+    )
+    assert _event_key(event) == "push"
