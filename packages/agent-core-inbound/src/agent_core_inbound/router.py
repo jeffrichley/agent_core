@@ -47,6 +47,9 @@ class Router:
     evicts on LRU when the cache fills. A redelivered event hits the
     cache and is silently dropped — no audit line, because the prior
     delivery's audit line is the canonical record.
+
+    Note: not thread-safe; intended for single-event-loop or single-threaded callers
+    (asyncio cooperative concurrency is fine; multi-threaded callers must serialize).
     """
 
     def __init__(

@@ -197,3 +197,69 @@ def test_dedupe_is_scoped_to_target_being(tmp_path: Path):
 
     assert len(bus.published) == 2
     assert {p["to"] for p in bus.published} == {"wren", "pepper"}
+
+
+def test_lru_evicts_oldest_when_capacity_exceeded(tmp_path: Path):
+    connector = FakeConnector()
+    for evt_id in ("a", "b", "c"):
+        connector.allow(event_id=evt_id, target_being="wren", reason="r")
+    bus = _FakeBus()
+    audit = AuditLog(path=tmp_path / "audit.jsonl", clock=lambda: _stamp())
+    router = Router(
+        connectors={"fake": connector},
+        bus_publish=bus.publish,
+        audit=audit,
+        clock=lambda: _stamp(),
+        dedupe_capacity=2,
+    )
+    for evt_id in ("a", "b", "c"):
+        router.receive(
+            connector_name="fake",
+            target_being="wren",
+            event=ConnectorEvent(event_id=evt_id, landed_at=_stamp(), raw={}),
+        )
+    # After three deliveries with capacity 2, the cache holds {b, c} and
+    # "a" was evicted. Check the still-cached entry FIRST so we don't
+    # mutate the LRU state before the eviction assertion.
+    #
+    # "b" is still cached — re-delivering "b" should be deduped.
+    router.receive(
+        connector_name="fake",
+        target_being="wren",
+        event=ConnectorEvent(event_id="b", landed_at=_stamp(), raw={}),
+    )
+    assert len(bus.published) == 3
+    # "a" was evicted when "c" landed — re-delivering "a" should publish again.
+    router.receive(
+        connector_name="fake",
+        target_being="wren",
+        event=ConnectorEvent(event_id="a", landed_at=_stamp(), raw={}),
+    )
+    assert len(bus.published) == 4
+
+
+def test_deny_is_not_cached_so_policy_flip_takes_effect(tmp_path: Path):
+    # Verifies Deny verdicts do NOT populate the de-dupe cache, so a
+    # subsequent connector policy edit (Deny -> Allow on the same
+    # event_id) takes effect on the next delivery.
+    connector = FakeConnector()  # nothing configured → first call Denies
+    bus = _FakeBus()
+    router = _router(tmp_path=tmp_path, connector=connector, bus=bus)
+    event = ConnectorEvent(event_id="policy-flip", landed_at=_stamp(), raw={})
+
+    router.receive(connector_name="fake", target_being="wren", event=event)
+    assert bus.published == []  # Denied, not published
+
+    # Operator updates connector policy to allow the event.
+    connector.allow(
+        event_id="policy-flip",
+        target_being="wren",
+        tier=Tier.GREEN,
+        reason="newly allowed",
+        rule_id="r1",
+    )
+
+    # Same event re-arrives. De-dupe must NOT short-circuit the new policy.
+    router.receive(connector_name="fake", target_being="wren", event=event)
+    assert len(bus.published) == 1
+    assert bus.published[0]["urgency"] == "green"
