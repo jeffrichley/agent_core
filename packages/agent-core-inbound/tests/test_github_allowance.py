@@ -106,18 +106,31 @@ tier = "yellow"
         load_allowance(p)
 
 
-def test_body_contains_optional(tmp_path: Path):
-    p = _write(
-        tmp_path / "g.toml",
-        """
-[[allow]]
-rule_id = "mention_in_agent_core"
-event = "issue_comment"
-repo = "jeffrichley/agent_core"
-body_contains = "@wrenrichley"
-tier = "yellow"
-reason = "@-mention in agent_core issue thread"
-""",
+def test_allow_rule_accepts_match_dict() -> None:
+    from agent_core_inbound.github_allowance import AllowRule
+    rule = AllowRule(
+        rule_id="r1",
+        event="workflow_run_completed",
+        match={"workflow_run.conclusion": "failure"},
+        tier="red",
+        reason="CI failed",
     )
-    cfg = load_allowance(p)
-    assert cfg.allow[0].body_contains == "@wrenrichley"
+    assert rule.match == {"workflow_run.conclusion": "failure"}
+
+
+def test_allow_rule_match_defaults_to_none() -> None:
+    from agent_core_inbound.github_allowance import AllowRule
+    rule = AllowRule(rule_id="r1", event="ping", tier="green", reason="webhook ping")
+    assert rule.match is None
+
+
+def test_allow_rule_body_contains_rejected() -> None:
+    from agent_core_inbound.github_allowance import AllowRule
+    with pytest.raises(ValidationError, match="body_contains.*removed"):
+        AllowRule(
+            rule_id="r1",
+            event="issue_comment_created",
+            body_contains="TRIGGER",
+            tier="green",
+            reason="comment trigger",
+        )

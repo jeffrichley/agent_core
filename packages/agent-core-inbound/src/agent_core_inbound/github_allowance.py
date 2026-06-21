@@ -9,6 +9,7 @@ from __future__ import annotations
 import tomllib
 from collections import Counter
 from pathlib import Path
+from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
@@ -28,9 +29,20 @@ class AllowRule(BaseModel):
     repo: str | None = None
     reviewer: str | None = None
     label_name: str | None = None
-    body_contains: str | None = None
+    match: dict[str, Any] | None = None
 
     model_config = ConfigDict(extra="forbid")
+
+    @model_validator(mode="before")
+    @classmethod
+    def _reject_body_contains(cls, data: Any) -> Any:
+        if isinstance(data, dict) and "body_contains" in data:
+            raise ValueError(
+                "AllowRule field 'body_contains' was removed in v2. "
+                "Use `match` with an exact-equality dotted path; substring "
+                "matching is deferred to v2.1 (`match_contains` operator)."
+            )
+        return data
 
 
 class AllowanceConfig(BaseModel):
