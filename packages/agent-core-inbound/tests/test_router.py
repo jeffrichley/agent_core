@@ -323,3 +323,54 @@ def test_rate_limit_default_is_no_limit(tmp_path: Path):
             event=ConnectorEvent(event_id=f"evt-{i}", landed_at=_stamp(), raw={}),
         )
     assert len(bus.published) == 50
+
+
+def test_rate_limit_denial_does_not_poison_dedupe_cache(tmp_path: Path):
+    # Verifies rate-limited events do NOT populate the de-dupe cache,
+    # so a future window-reopening delivers the same event_id.
+    # The router's docstring promises this; a refactor that "unified"
+    # the two deny paths into a single cache-writing block would
+    # silently break it.
+    clock_cell = {"now": datetime(2026, 6, 20, 22, 0, 0, tzinfo=UTC)}
+
+    def clock() -> datetime:
+        return clock_cell["now"]
+
+    connector = FakeConnector()
+    connector.allow(event_id="evt-1", target_being="wren", reason="r")
+    connector.allow(event_id="evt-2", target_being="wren", reason="r")
+    bus = _FakeBus()
+    audit = AuditLog(path=tmp_path / "audit.jsonl", clock=clock)
+    router = Router(
+        connectors={"fake": connector},
+        bus_publish=bus.publish,
+        audit=audit,
+        clock=clock,
+        rate_limits={("fake", "wren"): (1, 60.0)},  # 1 per 60s
+    )
+
+    # evt-1 consumes the only quota slot
+    router.receive(
+        connector_name="fake",
+        target_being="wren",
+        event=ConnectorEvent(event_id="evt-1", landed_at=clock(), raw={}),
+    )
+    assert len(bus.published) == 1
+
+    # evt-2 same window → rate-limited
+    router.receive(
+        connector_name="fake",
+        target_being="wren",
+        event=ConnectorEvent(event_id="evt-2", landed_at=clock(), raw={}),
+    )
+    assert len(bus.published) == 1  # rate-limited, NOT published
+
+    # Advance past the window. evt-2 must publish — proving the rate-
+    # limit denial did NOT add evt-2 to the de-dupe cache.
+    clock_cell["now"] = datetime(2026, 6, 20, 22, 1, 1, tzinfo=UTC)
+    router.receive(
+        connector_name="fake",
+        target_being="wren",
+        event=ConnectorEvent(event_id="evt-2", landed_at=clock(), raw={}),
+    )
+    assert len(bus.published) == 2
