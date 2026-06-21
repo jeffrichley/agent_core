@@ -1,0 +1,123 @@
+"""GitHub allowance TOML schema + loader."""
+from pathlib import Path
+
+import pytest
+from agent_core_inbound.github_allowance import load_allowance
+from agent_core_inbound.types import Tier
+from pydantic import ValidationError
+
+
+def _write(path: Path, content: str) -> Path:
+    path.write_text(content, encoding="utf-8")
+    return path
+
+
+def test_load_empty_allowance(tmp_path: Path):
+    p = _write(tmp_path / "g.toml", "")
+    cfg = load_allowance(p)
+    assert cfg.allow == []
+
+
+def test_load_single_rule(tmp_path: Path):
+    p = _write(
+        tmp_path / "g.toml",
+        """
+[[allow]]
+rule_id = "pr_review_requested_foreman"
+event = "pull_request_review_requested"
+repo = "jeffrichley/foreman"
+reviewer = "wrenrichley"
+tier = "red"
+reason = "PR review requested on foreman"
+""",
+    )
+    cfg = load_allowance(p)
+    assert len(cfg.allow) == 1
+    rule = cfg.allow[0]
+    assert rule.rule_id == "pr_review_requested_foreman"
+    assert rule.event == "pull_request_review_requested"
+    assert rule.repo == "jeffrichley/foreman"
+    assert rule.reviewer == "wrenrichley"
+    assert rule.tier == Tier.RED
+    assert rule.reason == "PR review requested on foreman"
+
+
+def test_load_rejects_unknown_tier(tmp_path: Path):
+    p = _write(
+        tmp_path / "g.toml",
+        """
+[[allow]]
+rule_id = "x"
+event = "issue_comment"
+tier = "purple"
+reason = "x"
+""",
+    )
+    with pytest.raises(ValidationError):
+        load_allowance(p)
+
+
+def test_rule_id_unique_across_rules_enforced(tmp_path: Path):
+    p = _write(
+        tmp_path / "g.toml",
+        """
+[[allow]]
+rule_id = "duplicate"
+event = "issue_comment"
+tier = "yellow"
+reason = "a"
+
+[[allow]]
+rule_id = "duplicate"
+event = "pull_request_review_requested"
+tier = "red"
+reason = "b"
+""",
+    )
+    with pytest.raises(ValidationError, match="duplicate rule_id"):
+        load_allowance(p)
+
+
+def test_rule_id_required(tmp_path: Path):
+    p = _write(
+        tmp_path / "g.toml",
+        """
+[[allow]]
+event = "issue_comment"
+tier = "yellow"
+reason = "x"
+""",
+    )
+    with pytest.raises(ValidationError):
+        load_allowance(p)
+
+
+def test_reason_required(tmp_path: Path):
+    p = _write(
+        tmp_path / "g.toml",
+        """
+[[allow]]
+rule_id = "x"
+event = "issue_comment"
+tier = "yellow"
+""",
+    )
+    with pytest.raises(ValidationError):
+        load_allowance(p)
+
+
+def test_body_contains_optional(tmp_path: Path):
+    p = _write(
+        tmp_path / "g.toml",
+        """
+[[allow]]
+rule_id = "mention_in_agent_core"
+event = "issue_comment"
+repo = "jeffrichley/agent_core"
+body_contains = "@wrenrichley"
+tier = "yellow"
+reason = "@-mention in agent_core issue thread"
+""",
+    )
+    cfg = load_allowance(p)
+    assert cfg.allow[0].body_contains == "@wrenrichley"
