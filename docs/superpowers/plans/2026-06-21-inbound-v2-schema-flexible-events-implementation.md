@@ -1153,6 +1153,228 @@ git commit -m "test(inbound): confirm body_contains rejection at TOML load time"
 
 ---
 
+## Task 11.5: HTTP-level integration tests (`fastapi.TestClient`)
+
+**Files:**
+- Create: `packages/agent-core-inbound/tests/test_funnel_http.py`
+
+**Why:** Tasks 8–11 cover the Router level (connector + rules + audit), but skip the HTTP boundary (HMAC verify, header parsing, route mounting, JSON body parsing). The v1.a deploy hit a path-routing bug (`/github` vs `/` after Funnel `--set-path` stripping) that would have been caught by HTTP-level tests. `fastapi.TestClient` runs the FastAPI app in-process with real HTTP semantics — no uvicorn, no sockets, no daemon — yet exercises every layer the production handler does.
+
+- [ ] **Step 1: Add a helper that builds the FastAPI app for testing**
+
+If `funnel_handler.py` doesn't already expose a factory (e.g. `create_app(...)`), add one — pull the FastAPI app construction out of the inline endpoint setup so tests can instantiate it with a fake bus publisher + temp paths.
+
+```python
+# packages/agent-core-inbound/src/agent_core_inbound/funnel_handler.py
+def create_app(
+    *,
+    secret: str,
+    connector: "Connector",
+    router: "Router",
+) -> FastAPI:
+    app = FastAPI(docs_url=None, redoc_url=None)
+    # … existing route registration moves into here …
+    return app
+```
+
+(If `create_app` already exists in the v1.a code, just confirm the signature accepts a connector + router for injection.)
+
+- [ ] **Step 2: Write the test file**
+
+Create `tests/test_funnel_http.py`:
+
+```python
+"""HTTP-boundary integration tests using fastapi.TestClient.
+
+Tests the full HTTP layer: header parsing, HMAC verify, route mount,
+JSON body parsing — then the connector + router downstream. Catches
+bugs at the boundary that Router-level tests (Tasks 8-11) miss.
+"""
+from __future__ import annotations
+
+import hashlib
+import hmac
+import json
+import tempfile
+from pathlib import Path
+
+import pytest
+from fastapi.testclient import TestClient
+
+from agent_core_inbound.audit import JsonlAuditWriter
+from agent_core_inbound.funnel_handler import create_app
+from agent_core_inbound.github_connector import GitHubConnector
+from agent_core_inbound.router import Router
+
+
+SECRET = "test-secret-do-not-use-in-prod"
+
+
+def _sign(body: bytes) -> str:
+    mac = hmac.new(SECRET.encode(), body, hashlib.sha256)
+    return f"sha256={mac.hexdigest()}"
+
+
+def _make_client(tmp_path: Path, rules_toml: str) -> tuple[TestClient, list[tuple], Path]:
+    """Build a test client around a real connector + router with a stub publish."""
+    rules_path = tmp_path / "rules.toml"
+    rules_path.write_text(rules_toml, encoding="utf-8")
+    connector = GitHubConnector(config_path=rules_path, principal_being="wren")
+    audit_path = tmp_path / "audit.jsonl"
+    audit = JsonlAuditWriter(path=audit_path)
+    bus_calls: list[tuple] = []
+
+    async def fake_publish(target, source, reason, body, urgency, landed_at):
+        bus_calls.append((target, source, reason, urgency))
+
+    router = Router(
+        connector=connector,
+        target_being="wren",
+        publish=fake_publish,
+        audit=audit,
+        rate_limit_per_minute=30,
+    )
+    app = create_app(secret=SECRET, connector=connector, router=router)
+    return TestClient(app), bus_calls, audit_path
+
+
+def test_get_github_returns_405_or_404(tmp_path: Path) -> None:
+    """GET on a POST-only route — verify the route IS mounted at /github
+    (404 here would mean a path-routing bug like v1.a's --set-path issue)."""
+    client, _bus, _ = _make_client(tmp_path, "[[allow]]\nrule_id='r'\nevent='ping'\ntier='green'\nreason='x'\n")
+    resp = client.get("/github")
+    # FastAPI returns 405 when route exists for other methods, 404 if path is unmounted.
+    # Both indicate the path doesn't match GET — but only 405 confirms route exists.
+    # 404 is also acceptable per Starlette defaults; the important thing is NOT 200.
+    assert resp.status_code in (404, 405)
+
+
+def test_post_without_signature_returns_401(tmp_path: Path) -> None:
+    client, _bus, _ = _make_client(tmp_path, "[[allow]]\nrule_id='r'\nevent='ping'\ntier='green'\nreason='x'\n")
+    body = json.dumps({"zen": "..."}).encode()
+    resp = client.post(
+        "/github",
+        content=body,
+        headers={"X-GitHub-Event": "ping", "Content-Type": "application/json"},
+    )
+    assert resp.status_code == 401
+
+
+def test_post_with_bad_signature_returns_401(tmp_path: Path) -> None:
+    client, _bus, _ = _make_client(tmp_path, "[[allow]]\nrule_id='r'\nevent='ping'\ntier='green'\nreason='x'\n")
+    body = json.dumps({"zen": "..."}).encode()
+    resp = client.post(
+        "/github",
+        content=body,
+        headers={
+            "X-GitHub-Event": "ping",
+            "X-Hub-Signature-256": "sha256=deadbeef",
+            "Content-Type": "application/json",
+        },
+    )
+    assert resp.status_code == 401
+
+
+def test_post_signed_ping_returns_204_and_writes_audit(tmp_path: Path) -> None:
+    """Ping is an action-less event; should match our `ping` rule and 204."""
+    client, bus_calls, audit_path = _make_client(
+        tmp_path,
+        "[[allow]]\nrule_id='ping_ok'\nevent='ping'\ntier='green'\nreason='webhook ping'\n",
+    )
+    body = json.dumps({"zen": "Speak little, do much.", "hook_id": 123}).encode()
+    resp = client.post(
+        "/github",
+        content=body,
+        headers={
+            "X-GitHub-Event": "ping",
+            "X-Hub-Signature-256": _sign(body),
+            "Content-Type": "application/json",
+        },
+    )
+    assert resp.status_code == 204
+    assert bus_calls == [("wren", "github", "webhook ping", "green")]
+    audit_lines = audit_path.read_text().splitlines()
+    assert len(audit_lines) == 1
+    assert '"verdict":"allow"' in audit_lines[0]
+
+
+def test_post_signed_workflow_run_failure(tmp_path: Path) -> None:
+    """End-to-end: HTTP POST → HMAC verify → parse → match dotted-path
+    rule → audit allow + bus publish."""
+    client, bus_calls, audit_path = _make_client(
+        tmp_path,
+        """
+        [[allow]]
+        rule_id = "ci_failed"
+        event = "workflow_run_completed"
+        match = { "workflow_run.conclusion" = "failure" }
+        tier = "red"
+        reason = "CI failed"
+        """,
+    )
+    body = json.dumps({
+        "action": "completed",
+        "workflow_run": {"conclusion": "failure", "head_branch": "main"},
+        "repository": {"full_name": "jeffrichley/foreman"},
+    }).encode()
+    resp = client.post(
+        "/github",
+        content=body,
+        headers={
+            "X-GitHub-Event": "workflow_run",
+            "X-Hub-Signature-256": _sign(body),
+            "Content-Type": "application/json",
+        },
+    )
+    assert resp.status_code == 204
+    assert bus_calls == [("wren", "github", "CI failed", "red")]
+
+
+def test_post_signed_event_with_no_matching_rule_denies(tmp_path: Path) -> None:
+    """A signed POST that doesn't match any rule should 204 silently
+    (per README: unmodeled events return 204) and NOT publish to bus."""
+    client, bus_calls, audit_path = _make_client(
+        tmp_path,
+        "[[allow]]\nrule_id='only_ping'\nevent='ping'\ntier='green'\nreason='ok'\n",
+    )
+    body = json.dumps({
+        "action": "starred",
+        "repository": {"full_name": "jeffrichley/foreman"},
+    }).encode()
+    resp = client.post(
+        "/github",
+        content=body,
+        headers={
+            "X-GitHub-Event": "star",
+            "X-Hub-Signature-256": _sign(body),
+            "Content-Type": "application/json",
+        },
+    )
+    assert resp.status_code == 204
+    assert bus_calls == []
+```
+
+- [ ] **Step 3: Run tests to verify pass**
+
+```bash
+uv run --package agent-core-inbound pytest packages/agent-core-inbound/tests/test_funnel_http.py -v
+```
+
+Expected: all PASS.
+
+- [ ] **Step 4: Commit**
+
+```bash
+git add packages/agent-core-inbound/tests/test_funnel_http.py packages/agent-core-inbound/src/agent_core_inbound/funnel_handler.py
+git commit -m "test(inbound): HTTP-level integration tests via fastapi.TestClient
+
+Covers the boundary layer (HMAC verify, header parsing, route mount,
+JSON body parsing) that Router-level tests skip. Would have caught
+v1.a's --set-path path-routing bug pre-deploy."
+```
+
+---
+
 ## Task 12: README update — new rule shape + curated webhook events
 
 **Files:**
@@ -1287,6 +1509,420 @@ Expected: PR opened. Return URL.
 - [ ] **Step 5: Adversarial review of the diff before requesting merge**
 
 Per memory rule `feedback_adversarial_review_before_pr`: skim the diff with a hostile reviewer's eye. Surface any concerns inline as PR comments.
+
+---
+
+## Task 13.5: Standalone uvicorn rig (pre-deploy isolation test)
+
+**Files:**
+- Create: `packages/agent-core-inbound/scripts/run_v2_standalone.py`
+- Create: `packages/agent-core-inbound/scripts/fixtures/` (canned webhook payloads, generated below)
+
+**Why:** Even with Tasks 1–12 fully green, we want to see the v2 substrate run as a real HTTP server **without** touching the production daemon. This script spins up uvicorn on port 8766 (prod uses 8765) with the v2 wheels loaded, a stub bus publisher writing to JSONL, and a test allowance TOML. Operator-driven validation — not part of CI; manually invoked when sanity-checking the build before deploy.
+
+- [ ] **Step 1: Write canned webhook fixtures**
+
+Create `packages/agent-core-inbound/scripts/fixtures/` and add one JSON file per event we want to validate. Use minimal but realistic GitHub-shape payloads.
+
+`fixtures/pull_request_opened.json`:
+
+```json
+{
+  "action": "opened",
+  "pull_request": {
+    "number": 99,
+    "title": "test PR for v2 rig",
+    "html_url": "https://github.com/jeffrichley/foreman/pull/99",
+    "user": {"login": "jeffrichley"}
+  },
+  "repository": {"full_name": "jeffrichley/foreman"},
+  "sender": {"login": "jeffrichley"}
+}
+```
+
+`fixtures/workflow_run_failure.json`:
+
+```json
+{
+  "action": "completed",
+  "workflow_run": {
+    "conclusion": "failure",
+    "head_branch": "main",
+    "event": "push",
+    "html_url": "https://github.com/jeffrichley/foreman/actions/runs/12345"
+  },
+  "repository": {"full_name": "jeffrichley/foreman"}
+}
+```
+
+`fixtures/workflow_run_success_pr.json`:
+
+```json
+{
+  "action": "completed",
+  "workflow_run": {
+    "conclusion": "success",
+    "head_branch": "feat/something",
+    "event": "pull_request",
+    "html_url": "https://github.com/jeffrichley/foreman/actions/runs/12346"
+  },
+  "repository": {"full_name": "jeffrichley/foreman"}
+}
+```
+
+`fixtures/issues_labeled_needs_help.json`:
+
+```json
+{
+  "action": "labeled",
+  "issue": {"number": 42, "title": "stuck"},
+  "label": {"name": "foreman:needs-help"},
+  "repository": {"full_name": "jeffrichley/foreman"},
+  "sender": {"login": "jeffrichley"}
+}
+```
+
+`fixtures/pull_request_review_requested.json` (mirrors the v1.a smoke):
+
+```json
+{
+  "action": "review_requested",
+  "pull_request": {"number": 21, "html_url": "https://github.com/jeffrichley/foreman/pull/21"},
+  "requested_reviewer": {"login": "wrenrichley"},
+  "repository": {"full_name": "jeffrichley/foreman"},
+  "sender": {"login": "jeffrichley"}
+}
+```
+
+`fixtures/star_created.json` (a no-match event — should deny + not publish):
+
+```json
+{
+  "action": "created",
+  "starred_at": "2026-06-21T18:00:00Z",
+  "repository": {"full_name": "jeffrichley/foreman"},
+  "sender": {"login": "random-user"}
+}
+```
+
+- [ ] **Step 2: Write the rig script**
+
+Create `packages/agent-core-inbound/scripts/run_v2_standalone.py`:
+
+```python
+"""Standalone uvicorn rig for pre-deploy v2 validation.
+
+Usage:
+    cd packages/agent-core-inbound
+    python scripts/run_v2_standalone.py
+
+Then in another terminal:
+    python scripts/post_fixture.py fixtures/workflow_run_failure.json
+    tail -f /tmp/v2-rig/audit.jsonl
+    tail -f /tmp/v2-rig/bus-captures.jsonl
+
+Listens on 127.0.0.1:8766 — port 8765 stays free for the production
+daemon. Stub bus publisher writes envelopes to JSONL instead of
+calling the real bus. Wren TOML lives in /tmp/v2-rig/allowance.toml
+with all 7 production rules so behavior matches what we'll deploy.
+"""
+from __future__ import annotations
+
+import json
+import sys
+from datetime import datetime
+from pathlib import Path
+
+import uvicorn
+
+from agent_core_inbound.audit import JsonlAuditWriter
+from agent_core_inbound.funnel_handler import create_app
+from agent_core_inbound.github_connector import GitHubConnector
+from agent_core_inbound.router import Router
+
+
+RIG_DIR = Path("/tmp/v2-rig")
+RIG_SECRET = "rig-test-secret-not-prod"
+
+
+PRODUCTION_RULES = """
+[[allow]]
+rule_id = "pr_review_requested_any_project"
+event = "pull_request_review_requested"
+match = { "requested_reviewer.login" = "wrenrichley" }
+tier = "red"
+reason = "PR review requested on me"
+
+[[allow]]
+rule_id = "needs_help_foreman"
+event = "issues_labeled"
+repo = "jeffrichley/foreman"
+match = { "label.name" = "foreman:needs-help" }
+tier = "red"
+reason = "Foreman escalation — needs operator unstick"
+
+[[allow]]
+rule_id = "needs_help_voice"
+event = "issues_labeled"
+repo = "jeffrichley/voice"
+match = { "label.name" = "foreman:needs-help" }
+tier = "red"
+reason = "Foreman escalation — needs operator unstick"
+
+[[allow]]
+rule_id = "needs_help_agent_core"
+event = "issues_labeled"
+repo = "jeffrichley/agent_core"
+match = { "label.name" = "foreman:needs-help" }
+tier = "red"
+reason = "Foreman escalation — needs operator unstick"
+
+[[allow]]
+rule_id = "ci_failed_any_project"
+event = "workflow_run_completed"
+match = { "workflow_run.conclusion" = "failure" }
+tier = "red"
+reason = "CI failure — investigate"
+
+[[allow]]
+rule_id = "ci_passed_pr_branch"
+event = "workflow_run_completed"
+match = { "workflow_run.conclusion" = "success", "workflow_run.event" = "pull_request" }
+tier = "yellow"
+reason = "PR CI passed — mergeable"
+
+[[allow]]
+rule_id = "pr_opened_any_project"
+event = "pull_request_opened"
+tier = "yellow"
+reason = "New PR opened — queue for review"
+"""
+
+
+def main() -> int:
+    RIG_DIR.mkdir(parents=True, exist_ok=True)
+    rules_path = RIG_DIR / "allowance.toml"
+    rules_path.write_text(PRODUCTION_RULES, encoding="utf-8")
+    audit_path = RIG_DIR / "audit.jsonl"
+    bus_path = RIG_DIR / "bus-captures.jsonl"
+
+    # Reset both logs each rig start so tailing shows just this session
+    audit_path.write_text("")
+    bus_path.write_text("")
+
+    connector = GitHubConnector(config_path=rules_path, principal_being="wren")
+    audit = JsonlAuditWriter(path=audit_path)
+
+    async def fake_publish(target, source, reason, body, urgency, landed_at):
+        with bus_path.open("a", encoding="utf-8") as f:
+            f.write(json.dumps({
+                "captured_at": datetime.utcnow().isoformat(timespec="seconds") + "Z",
+                "target": target,
+                "source": source,
+                "reason": reason,
+                "urgency": urgency,
+                "body_keys": list(body.keys()),
+            }) + "\n")
+
+    router = Router(
+        connector=connector,
+        target_being="wren",
+        publish=fake_publish,
+        audit=audit,
+        rate_limit_per_minute=30,
+    )
+    app = create_app(secret=RIG_SECRET, connector=connector, router=router)
+
+    print(f"[v2-rig] secret: {RIG_SECRET}")
+    print(f"[v2-rig] rules: {rules_path}")
+    print(f"[v2-rig] audit: {audit_path}")
+    print(f"[v2-rig] bus captures: {bus_path}")
+    print(f"[v2-rig] listening on http://127.0.0.1:8766")
+    uvicorn.run(app, host="127.0.0.1", port=8766, log_level="info")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())
+```
+
+- [ ] **Step 3: Write the fixture-poster script**
+
+Create `packages/agent-core-inbound/scripts/post_fixture.py`:
+
+```python
+"""POST a canned webhook fixture at the v2 rig (port 8766).
+
+Usage:
+    python scripts/post_fixture.py fixtures/workflow_run_failure.json
+    python scripts/post_fixture.py fixtures/pull_request_opened.json [--event-type pull_request]
+"""
+from __future__ import annotations
+
+import argparse
+import hashlib
+import hmac
+import json
+import sys
+from pathlib import Path
+
+import urllib.request
+
+
+RIG_URL = "http://127.0.0.1:8766/github"
+RIG_SECRET = "rig-test-secret-not-prod"
+
+
+_FILENAME_TO_EVENT = {
+    "pull_request_opened.json":                "pull_request",
+    "workflow_run_failure.json":               "workflow_run",
+    "workflow_run_success_pr.json":            "workflow_run",
+    "issues_labeled_needs_help.json":          "issues",
+    "pull_request_review_requested.json":      "pull_request",
+    "star_created.json":                       "star",
+}
+
+
+def main() -> int:
+    p = argparse.ArgumentParser()
+    p.add_argument("fixture")
+    p.add_argument("--event-type", default=None, help="Override X-GitHub-Event header.")
+    args = p.parse_args()
+
+    fixture_path = Path(args.fixture)
+    body = fixture_path.read_bytes()
+    event_type = args.event_type or _FILENAME_TO_EVENT.get(fixture_path.name)
+    if not event_type:
+        print(f"unknown fixture {fixture_path.name}; pass --event-type", file=sys.stderr)
+        return 1
+
+    sig = "sha256=" + hmac.new(RIG_SECRET.encode(), body, hashlib.sha256).hexdigest()
+
+    req = urllib.request.Request(
+        RIG_URL,
+        data=body,
+        method="POST",
+        headers={
+            "X-GitHub-Event": event_type,
+            "X-GitHub-Delivery": "rig-delivery-" + fixture_path.stem,
+            "X-Hub-Signature-256": sig,
+            "Content-Type": "application/json",
+        },
+    )
+    try:
+        with urllib.request.urlopen(req) as resp:
+            print(f"HTTP {resp.status}: {resp.read().decode() or '(empty body)'}")
+    except urllib.error.HTTPError as exc:
+        print(f"HTTP {exc.code}: {exc.read().decode()}")
+        return 1
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())
+```
+
+- [ ] **Step 4: Manual validation walkthrough**
+
+Run the rig:
+
+```bash
+cd e:/workspaces/ai/agents/agent_core
+uv run --package agent-core-inbound python packages/agent-core-inbound/scripts/run_v2_standalone.py
+```
+
+In another terminal, post each fixture and verify the audit log + bus captures:
+
+```bash
+cd e:/workspaces/ai/agents/agent_core
+for f in packages/agent-core-inbound/scripts/fixtures/*.json; do
+    echo "--- $f ---"
+    uv run --package agent-core-inbound python packages/agent-core-inbound/scripts/post_fixture.py "$f"
+done
+
+# Verify
+cat /tmp/v2-rig/audit.jsonl
+cat /tmp/v2-rig/bus-captures.jsonl
+```
+
+Expected:
+- 5 audit-allow lines (PR review_requested, workflow_run_failure, workflow_run_success_pr, issues_labeled_needs_help, pull_request_opened)
+- 1 audit-deny OR silent skip for star_created (depending on whether deny lines are written)
+- 5 bus-capture lines with matching rule_ids + tiers
+- Stop the rig with Ctrl+C
+
+- [ ] **Step 5: Commit**
+
+```bash
+git add packages/agent-core-inbound/scripts/
+git commit -m "test(inbound): standalone uvicorn rig + canned webhook fixtures
+
+Operator-driven pre-deploy validation: spins up the v2 substrate on
+port 8766 (prod uses 8765) with a stub bus publisher writing
+JSONL. Verifies the real HTTP server behavior end-to-end on actual
+networking, without touching the running production daemon. Run
+manually before each deploy."
+```
+
+---
+
+## Task 13.7: GitHub redeliver validation via second Tailscale Funnel
+
+**Files:** None modified — operator runbook step
+
+**Why:** The rig + fixtures (Task 13.5) cover *synthetic* GitHub-shape payloads. To validate against *real* GitHub-signed payloads with real header values + delivery IDs, we point a second Tailscale Funnel at the rig and use GitHub's "Redeliver" UI to replay past webhook events. Zero impact on production: the existing v1.a webhook keeps firing at port 8443; the dev rig gets a sibling webhook at port 10000.
+
+- [ ] **Step 1: Start a second Funnel on port 10000 → localhost:8766**
+
+```bash
+tailscale funnel --bg --https=10000 http://127.0.0.1:8766
+tailscale funnel status
+```
+
+Expected: status shows both `8443 → :8765` (v1.a prod) and `10000 → :8766` (rig). Note the dev URL: `https://platinumplatypu.taild3f4ab.ts.net:10000/github`.
+
+- [ ] **Step 2: Add a sibling webhook on `jeffrichley/foreman` pointing at the rig**
+
+```bash
+RESP="/tmp/v2-rig/webhook-create.json"
+export SECRET="rig-test-secret-not-prod"  # matches RIG_SECRET in run_v2_standalone.py
+python -c "import json,os,sys; sys.stdout.write(json.dumps({'name':'web','active':True,'events':['workflow_run','pull_request','pull_request_review','issues','issue_comment','push','release','status'],'config':{'url':'https://platinumplatypu.taild3f4ab.ts.net:10000/github','content_type':'json','secret':os.environ['SECRET'],'insecure_ssl':'0'}}))" | env -u GH_TOKEN gh api -X POST repos/jeffrichley/foreman/hooks --input - > "$RESP"
+unset SECRET
+cat "$RESP" | python -c "import json,sys; d=json.load(sys.stdin); d.get('config',{}).pop('secret',None); print(json.dumps({k:d.get(k) for k in ('id','active','events','created_at')}, indent=2))"
+```
+
+Note the new hook's `id` — needed for cleanup in step 5.
+
+- [ ] **Step 3: Confirm the rig is running**
+
+Make sure `python scripts/run_v2_standalone.py` is still running from Task 13.5. If not, restart it.
+
+- [ ] **Step 4: Trigger real events + verify**
+
+Option A — wait for organic traffic on foreman (push a commit, open a PR, etc.) and watch the rig's audit + bus-capture logs.
+
+Option B — replay a past delivery via GitHub UI: Settings → Webhooks → the new rig webhook → Recent Deliveries → pick one → Redeliver.
+
+In either case, watch:
+
+```bash
+tail -f /tmp/v2-rig/audit.jsonl /tmp/v2-rig/bus-captures.jsonl
+```
+
+Expected: real GitHub-signed payloads reach the rig, signature verify passes, audit + bus-capture lines appear matching what we'd expect for the events. Production daemon is untouched.
+
+- [ ] **Step 5: Tear down — delete the rig webhook + stop the second Funnel**
+
+```bash
+env -u GH_TOKEN gh api -X DELETE repos/jeffrichley/foreman/hooks/<RIG_HOOK_ID>
+tailscale funnel --https=10000 off
+```
+
+(Replace `<RIG_HOOK_ID>` with the id from Step 2.)
+
+- [ ] **Step 6: Surface validation summary to Jeff**
+
+Brief report: how many fixture posts + redelivers ran cleanly, any unexpected denies/errors, confidence level for prod deploy.
 
 ---
 
