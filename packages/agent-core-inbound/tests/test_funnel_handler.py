@@ -7,6 +7,7 @@ handed to Router.receive().
 import hashlib
 import hmac
 import json
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -140,3 +141,32 @@ def test_unhandled_event_type_returns_204(app_and_published):
     )
     assert resp.status_code == 204
     assert published == []
+
+
+def test_github_event_generic_shape_holds_raw() -> None:
+    from agent_core_inbound.github_event import GitHubEvent
+    event = GitHubEvent(
+        event_id="abc123",
+        landed_at=datetime(2026, 6, 21, 17, 2, 0, tzinfo=timezone.utc),
+        event_type="workflow_run",
+        action="completed",
+        repo_full_name="jeffrichley/foreman",
+        raw={"workflow_run": {"conclusion": "failure"}, "repository": {"full_name": "jeffrichley/foreman"}},
+    )
+    assert event.event_type == "workflow_run"
+    assert event.action == "completed"
+    assert event.repo_full_name == "jeffrichley/foreman"
+    assert event.raw["workflow_run"]["conclusion"] == "failure"
+
+
+def test_github_event_action_optional_for_actionless_events() -> None:
+    from agent_core_inbound.github_event import GitHubEvent
+    event = GitHubEvent(
+        event_id="ping123",
+        landed_at=datetime(2026, 6, 21, 17, 2, 0, tzinfo=timezone.utc),
+        event_type="ping",
+        action="",
+        repo_full_name="jeffrichley/foreman",
+        raw={"zen": "..."},
+    )
+    assert event.action == ""
