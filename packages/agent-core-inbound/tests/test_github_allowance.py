@@ -37,7 +37,9 @@ reason = "PR review requested on foreman"
     assert rule.rule_id == "pr_review_requested_foreman"
     assert rule.event == "pull_request_review_requested"
     assert rule.repo == "jeffrichley/foreman"
-    assert rule.reviewer == "wrenrichley"
+    # v2: reviewer shortcut is translated into match dict and nulled.
+    assert rule.reviewer is None
+    assert rule.match == {"requested_reviewer.login": "wrenrichley"}
     assert rule.tier == Tier.RED
     assert rule.reason == "PR review requested on foreman"
 
@@ -134,3 +136,65 @@ def test_allow_rule_body_contains_rejected() -> None:
             tier="green",
             reason="comment trigger",
         )
+
+
+def test_reviewer_shortcut_translates_to_match() -> None:
+    from agent_core_inbound.github_allowance import AllowRule
+    rule = AllowRule(
+        rule_id="r1",
+        event="pull_request_review_requested",
+        reviewer="wrenrichley",
+        tier="red",
+        reason="PR review on me",
+    )
+    assert rule.match == {"requested_reviewer.login": "wrenrichley"}
+    # reviewer field is cleared after translation:
+    assert rule.reviewer is None
+
+
+def test_label_name_shortcut_translates_to_match() -> None:
+    from agent_core_inbound.github_allowance import AllowRule
+    rule = AllowRule(
+        rule_id="r1",
+        event="issues_labeled",
+        label_name="foreman:needs-help",
+        tier="red",
+        reason="needs-help escalation",
+    )
+    assert rule.match == {"label.name": "foreman:needs-help"}
+    assert rule.label_name is None
+
+
+def test_shortcut_and_match_can_coexist() -> None:
+    from agent_core_inbound.github_allowance import AllowRule
+    rule = AllowRule(
+        rule_id="r1",
+        event="pull_request_review_requested",
+        reviewer="wrenrichley",
+        match={"pull_request.draft": False},
+        tier="red",
+        reason="non-draft PR review on me",
+    )
+    # Both entries merge into the final match dict:
+    assert rule.match == {
+        "requested_reviewer.login": "wrenrichley",
+        "pull_request.draft": False,
+    }
+
+
+def test_reviewer_and_label_name_both_translate() -> None:
+    from agent_core_inbound.github_allowance import AllowRule
+    rule = AllowRule(
+        rule_id="r1",
+        event="pull_request_review_requested",
+        reviewer="wrenrichley",
+        label_name="foreman:needs-help",
+        tier="red",
+        reason="both shortcuts on one rule",
+    )
+    assert rule.match == {
+        "requested_reviewer.login": "wrenrichley",
+        "label.name": "foreman:needs-help",
+    }
+    assert rule.reviewer is None
+    assert rule.label_name is None
