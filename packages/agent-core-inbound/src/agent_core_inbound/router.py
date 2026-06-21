@@ -5,11 +5,8 @@ it does NOT hold per-source config (the connector does), it does NOT
 decide urgency (the connector does). It owns: dispatch to the connector,
 de-dupe across redeliveries, rate-limit, publish to the bus, write to
 the audit log.
-
-This task implements receive() + classify routing + bus delivery + audit
-+ bounded-LRU de-dupe. Rate-limit lands in task 8.
 """
-from collections import OrderedDict
+from collections import OrderedDict, deque
 from collections.abc import Callable
 from datetime import UTC, datetime
 
@@ -35,6 +32,30 @@ def _default_clock() -> datetime:
 _DEDUPE_CAPACITY: int = 4096
 
 
+class _TokenBucket:
+    """Sliding-window count: N events allowed per ``window_seconds``.
+
+    Implemented as a deque of event timestamps; on each consume() we
+    drop entries older than the window and check the remaining count.
+    Simple and correct for the ~10s-of-events-per-minute scale we
+    actually care about.
+    """
+
+    def __init__(self, *, capacity: int, window_seconds: float) -> None:
+        self._capacity = capacity
+        self._window = window_seconds
+        self._stamps: deque[datetime] = deque()
+
+    def consume(self, now: datetime) -> bool:
+        cutoff = now.timestamp() - self._window
+        while self._stamps and self._stamps[0].timestamp() < cutoff:
+            self._stamps.popleft()
+        if len(self._stamps) >= self._capacity:
+            return False
+        self._stamps.append(now)
+        return True
+
+
 class Router:
     """De-dupe + rate-limit + classify + deliver + log.
 
@@ -48,6 +69,14 @@ class Router:
     cache and is silently dropped — no audit line, because the prior
     delivery's audit line is the canonical record.
 
+    Rate limiting is per-(connector_name, target_being): pass
+    ``rate_limits={(source, target): (capacity, window_seconds)}`` at
+    construction time to cap how many Allow-classified events per pair
+    can reach the bus inside any sliding window. Over-quota events are
+    written to the audit log as denials (so operators see the throttle
+    firing) but do NOT populate the de-dupe cache — a future window
+    re-opening allows the same event_id through.
+
     Note: not thread-safe; intended for single-event-loop or single-threaded callers
     (asyncio cooperative concurrency is fine; multi-threaded callers must serialize).
     """
@@ -60,6 +89,7 @@ class Router:
         audit: AuditLog,
         clock: Callable[[], datetime] = _default_clock,
         dedupe_capacity: int = _DEDUPE_CAPACITY,
+        rate_limits: dict[tuple[str, str], tuple[int, float]] | None = None,
     ) -> None:
         self._connectors = connectors
         self._bus_publish = bus_publish
@@ -67,6 +97,11 @@ class Router:
         self._clock = clock
         self._seen: OrderedDict[tuple[str, str, str], None] = OrderedDict()
         self._dedupe_capacity = dedupe_capacity
+        self._buckets: dict[tuple[str, str], _TokenBucket] = {}
+        for key, (capacity, window) in (rate_limits or {}).items():
+            self._buckets[key] = _TokenBucket(
+                capacity=capacity, window_seconds=window,
+            )
 
     def receive(
         self,
@@ -97,6 +132,17 @@ class Router:
             return
 
         assert isinstance(verdict, Allow)
+
+        # Rate limit: per-(source, target) token bucket. Over-quota
+        # events count as denials so operators see the throttle fired.
+        bucket = self._buckets.get((connector_name, target_being))
+        if bucket is not None and not bucket.consume(self._clock()):
+            self._audit.record_deny(
+                connector_name=connector.name,
+                target_being=target_being,
+            )
+            return
+
         rule_id = self._extract_rule_id(
             connector=connector,
             event_id=event.event_id,

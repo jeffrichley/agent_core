@@ -263,3 +263,63 @@ def test_deny_is_not_cached_so_policy_flip_takes_effect(tmp_path: Path):
     router.receive(connector_name="fake", target_being="wren", event=event)
     assert len(bus.published) == 1
     assert bus.published[0]["urgency"] == "green"
+
+
+def test_rate_limit_caps_per_source_per_target(tmp_path: Path):
+    # Configure rate limit to 3 events / minute per (source, target).
+    # The 4th allow-classified event is rejected by the rate limiter
+    # and logged as a deny.
+    connector = FakeConnector()
+    for i in range(5):
+        connector.allow(event_id=f"evt-{i}", target_being="wren", reason="r")
+    bus = _FakeBus()
+    audit = AuditLog(path=tmp_path / "audit.jsonl", clock=lambda: _stamp())
+    router = Router(
+        connectors={"fake": connector},
+        bus_publish=bus.publish,
+        audit=audit,
+        clock=lambda: _stamp(),
+        rate_limits={("fake", "wren"): (3, 60.0)},  # 3 per 60s
+    )
+
+    for i in range(5):
+        router.receive(
+            connector_name="fake",
+            target_being="wren",
+            event=ConnectorEvent(event_id=f"evt-{i}", landed_at=_stamp(), raw={}),
+        )
+
+    # Only 3 reached the bus.
+    assert len(bus.published) == 3
+    # The other 2 are recorded as deny in the audit log (rate-limited
+    # events count as denials so the operator sees the throttle is
+    # firing).
+    deny_lines = [
+        ln
+        for ln in (tmp_path / "audit.jsonl").read_text(encoding="utf-8").splitlines()
+        if '"verdict":"deny"' in ln
+    ]
+    assert len(deny_lines) == 2
+
+
+def test_rate_limit_default_is_no_limit(tmp_path: Path):
+    connector = FakeConnector()
+    for i in range(50):
+        connector.allow(event_id=f"evt-{i}", target_being="wren", reason="r")
+    bus = _FakeBus()
+    audit = AuditLog(path=tmp_path / "audit.jsonl", clock=lambda: _stamp())
+    router = Router(
+        connectors={"fake": connector},
+        bus_publish=bus.publish,
+        audit=audit,
+        clock=lambda: _stamp(),
+        # rate_limits omitted → no caps.
+    )
+
+    for i in range(50):
+        router.receive(
+            connector_name="fake",
+            target_being="wren",
+            event=ConnectorEvent(event_id=f"evt-{i}", landed_at=_stamp(), raw={}),
+        )
+    assert len(bus.published) == 50
