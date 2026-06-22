@@ -99,6 +99,11 @@ def _kill(proc: subprocess.Popen) -> None:
         proc.wait(timeout=5)
 
 
+# The two internal readiness budgets (spawn #1 + recovery spawn #2) sum to
+# ~60s worst-case, which would collide with the global 60s pytest-timeout and
+# reintroduce the very flake this test guards against. Give a per-test ceiling
+# with real headroom over the worst-case internal sum + spawn/teardown overhead.
+@pytest.mark.timeout(150)
 @pytest.mark.asyncio
 async def test_session_survives_backend_bounce() -> None:
     port = _free_port()
