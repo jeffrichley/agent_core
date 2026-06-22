@@ -99,6 +99,120 @@ reason = "PR review requested on foreman"
     assert entry["rule_id"] == "pr_review_requested_foreman"
 
 
+def test_router_workflow_run_failure_routes_to_bus(tmp_path: Path):
+    """A workflow_run.completed event with conclusion=failure should
+    match a rule using ``match = { "workflow_run.conclusion" = "failure" }``
+    and produce an Allow + bus envelope.
+
+    Exercises the v2 schema-flexible dotted-path matcher end-to-end
+    through the funnel HTTP app (matches the file's existing TestClient
+    pattern rather than the plan's direct-Router construction).
+    """
+    app, published, audit_path = _build(
+        tmp_path,
+        """
+[[allow]]
+rule_id = "ci_failed"
+event = "workflow_run_completed"
+match = { "workflow_run.conclusion" = "failure" }
+tier = "red"
+reason = "CI failed"
+""",
+    )
+    client = TestClient(app)
+    body = json.dumps({
+        "action": "completed",
+        "workflow_run": {"conclusion": "failure", "head_branch": "main"},
+        "repository": {"full_name": "jeffrichley/foreman"},
+    }).encode("utf-8")
+    resp = client.post(
+        "/github",
+        content=body,
+        headers={
+            "X-GitHub-Event": "workflow_run",
+            "X-GitHub-Delivery": "e2e-wfr-1",
+            "X-Hub-Signature-256": _sign(body),
+            "Content-Type": "application/json",
+        },
+    )
+    assert resp.status_code == 204
+
+    # Bus got one Notification envelope to wren with urgency=red.
+    assert len(published) == 1
+    pub = published[0]
+    assert pub["to"] == "wren"
+    assert pub["kind"] == "Notification"
+    assert pub["payload"]["kind"] == "Notification"
+    assert pub["payload"]["source"] == "github"
+    assert pub["urgency"] == "red"
+    assert pub["payload"]["reason"] == "CI failed"
+    assert pub["payload"]["body"]["workflow_run"]["conclusion"] == "failure"
+
+    # Audit log shows the allow line with rule_id=ci_failed.
+    lines = audit_path.read_text(encoding="utf-8").splitlines()
+    assert len(lines) == 1
+    entry = json.loads(lines[0])
+    assert entry["verdict"] == "allow"
+    assert entry["rule_id"] == "ci_failed"
+
+
+def test_router_pull_request_opened_no_match_field(tmp_path: Path):
+    """A pull_request.opened event matches a rule with only event
+    (no match field, no repo field).
+
+    Verifies the v2 schema-flexible semantics where all fields except
+    ``event`` are optional — a rule with just ``event = "pull_request_opened"``
+    matches any pull_request.opened payload regardless of repo or contents.
+    Adapted to the file's TestClient HTTP pattern rather than the plan's
+    direct-Router construction.
+    """
+    app, published, audit_path = _build(
+        tmp_path,
+        """
+[[allow]]
+rule_id = "pr_opened_any"
+event = "pull_request_opened"
+tier = "yellow"
+reason = "PR opened"
+""",
+    )
+    client = TestClient(app)
+    body = json.dumps({
+        "action": "opened",
+        "pull_request": {"number": 22},
+        "repository": {"full_name": "jeffrichley/foreman"},
+    }).encode("utf-8")
+    resp = client.post(
+        "/github",
+        content=body,
+        headers={
+            "X-GitHub-Event": "pull_request",
+            "X-GitHub-Delivery": "e2e-pr-opened-1",
+            "X-Hub-Signature-256": _sign(body),
+            "Content-Type": "application/json",
+        },
+    )
+    assert resp.status_code == 204
+
+    # Bus got one Notification envelope to wren with urgency=yellow.
+    assert len(published) == 1
+    pub = published[0]
+    assert pub["to"] == "wren"
+    assert pub["kind"] == "Notification"
+    assert pub["payload"]["kind"] == "Notification"
+    assert pub["payload"]["source"] == "github"
+    assert pub["urgency"] == "yellow"
+    assert pub["payload"]["reason"] == "PR opened"
+    assert pub["payload"]["body"]["pull_request"]["number"] == 22
+
+    # Audit log shows the allow line with rule_id=pr_opened_any.
+    lines = audit_path.read_text(encoding="utf-8").splitlines()
+    assert len(lines) == 1
+    entry = json.loads(lines[0])
+    assert entry["verdict"] == "allow"
+    assert entry["rule_id"] == "pr_opened_any"
+
+
 def test_unmatched_event_denied_with_audit(tmp_path: Path):
     app, published, audit_path = _build(
         tmp_path,
