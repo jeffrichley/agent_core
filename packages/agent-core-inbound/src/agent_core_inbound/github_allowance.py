@@ -9,6 +9,7 @@ from __future__ import annotations
 import tomllib
 from collections import Counter
 from pathlib import Path
+from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
@@ -28,9 +29,41 @@ class AllowRule(BaseModel):
     repo: str | None = None
     reviewer: str | None = None
     label_name: str | None = None
-    body_contains: str | None = None
+    match: dict[str, Any] | None = None
 
     model_config = ConfigDict(extra="forbid")
+
+    @model_validator(mode="before")
+    @classmethod
+    def _reject_body_contains(cls, data: Any) -> Any:
+        if isinstance(data, dict) and "body_contains" in data:
+            raise ValueError(
+                "AllowRule field 'body_contains' was removed in v2. "
+                "Use `match` with an exact-equality dotted path; substring "
+                "matching is deferred to v2.1 (`match_contains` operator)."
+            )
+        return data
+
+    @model_validator(mode="after")
+    def _translate_shortcuts(self) -> AllowRule:
+        # object.__setattr__ avoids Pydantic v2's re-validation trigger
+        # that self.x = ... would cause from inside an after-validator.
+        # Merge reviewer / label_name shortcuts into match, then null them.
+        # Existing match entries take precedence on key collision (shouldn't
+        # happen in practice — these are distinct field names).
+        added: dict[str, Any] = {}
+        if self.reviewer is not None:
+            added["requested_reviewer.login"] = self.reviewer
+            object.__setattr__(self, "reviewer", None)
+        if self.label_name is not None:
+            added["label.name"] = self.label_name
+            object.__setattr__(self, "label_name", None)
+        if added:
+            merged = dict(added)
+            if self.match is not None:
+                merged.update(self.match)
+            object.__setattr__(self, "match", merged)
+        return self
 
 
 class AllowanceConfig(BaseModel):
