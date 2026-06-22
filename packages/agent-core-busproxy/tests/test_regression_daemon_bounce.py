@@ -17,6 +17,7 @@ import asyncio
 import socket
 import subprocess
 import sys
+import tempfile
 from pathlib import Path
 
 import pytest
@@ -44,21 +45,47 @@ async def _port_open(port: int) -> bool:
     return True
 
 
-async def _spawn_backend(port: int) -> subprocess.Popen:
-    """Start the disposable backend subprocess and wait until it listens."""
+async def _spawn_backend(port: int, *, script: Path = _BACKEND) -> subprocess.Popen:
+    """Start the disposable backend subprocess and wait until it listens.
+
+    Readiness budget is generous (30s) because cold Python + fastmcp
+    import + bind is slow on a loaded host — e.g. CI under xdist, or this
+    suite running inside a resource-contended container (the foreman
+    daemon's worker check). The old 10s budget passed on a dedicated
+    runner but flaked under contention, where bind routinely took ~8-10s.
+
+    stderr is captured (not discarded) so a genuine startup *failure*
+    surfaces in the raised error instead of a blind "did not become
+    ready" — the original DEVNULL hid the difference between slow-bind
+    and crash-on-start.
+    """
+    stderr = tempfile.TemporaryFile()
     proc = subprocess.Popen(
-        [sys.executable, str(_BACKEND), str(port)],
+        [sys.executable, str(script), str(port)],
         stdout=subprocess.DEVNULL,
-        stderr=subprocess.DEVNULL,
+        stderr=stderr,
     )
-    for _ in range(100):  # ~10s bounded readiness
+
+    def _captured_stderr() -> str:
+        try:
+            stderr.seek(0)
+            return stderr.read().decode("utf-8", "replace").strip() or "<empty>"
+        except Exception:  # pragma: no cover - diagnostic best-effort
+            return "<unavailable>"
+
+    for _ in range(300):  # ~30s bounded readiness (load-tolerant)
         if proc.poll() is not None:
-            raise RuntimeError(f"backend exited early (rc={proc.returncode})")
+            raise RuntimeError(
+                f"backend exited early (rc={proc.returncode}); "
+                f"stderr:\n{_captured_stderr()}"
+            )
         if await _port_open(port):
             return proc
         await asyncio.sleep(0.1)
     proc.kill()
-    raise RuntimeError("backend did not become ready within 10s")
+    raise RuntimeError(
+        f"backend did not become ready within 30s; stderr:\n{_captured_stderr()}"
+    )
 
 
 def _kill(proc: subprocess.Popen) -> None:
@@ -72,6 +99,34 @@ def _kill(proc: subprocess.Popen) -> None:
         proc.wait(timeout=5)
 
 
+@pytest.mark.asyncio
+async def test_spawn_backend_surfaces_crash_with_stderr(tmp_path: Path) -> None:
+    """A crash-on-start must raise with the cause named AND the stderr text.
+
+    This is the diagnostic the DEVNULL -> TemporaryFile change exists to
+    provide: the old code blindly reported "did not become ready" whether the
+    backend was slow or dead. A backend that writes to stderr and exits
+    non-zero should surface both the exit code and that stderr in the error.
+    """
+    crasher = tmp_path / "crasher.py"
+    crasher.write_text(
+        "import sys\n"
+        "sys.stderr.write('boom: backend refused to start\\n')\n"
+        "sys.exit(3)\n"
+    )
+    with pytest.raises(RuntimeError) as excinfo:
+        await _spawn_backend(_free_port(), script=crasher)
+    message = str(excinfo.value)
+    assert "exited early" in message
+    assert "rc=3" in message
+    assert "boom: backend refused to start" in message
+
+
+# The two internal readiness budgets (spawn #1 + recovery spawn #2) sum to
+# ~60s worst-case, which would collide with the global 60s pytest-timeout and
+# reintroduce the very flake this test guards against. Give a per-test ceiling
+# with real headroom over the worst-case internal sum + spawn/teardown overhead.
+@pytest.mark.timeout(150)
 @pytest.mark.asyncio
 async def test_session_survives_backend_bounce() -> None:
     port = _free_port()
@@ -99,7 +154,7 @@ async def test_session_survives_backend_bounce() -> None:
             # bounce with no re-handshake.
             second = await _spawn_backend(port)
             recovered = False
-            for _ in range(40):  # ~20s bounded retry budget
+            for _ in range(60):  # ~30s bounded retry budget (load-tolerant)
                 try:
                     res = await client.call_tool("list_endpoints", {})
                 except Exception:
