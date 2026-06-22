@@ -17,6 +17,7 @@ import asyncio
 import socket
 import subprocess
 import sys
+import tempfile
 from pathlib import Path
 
 import pytest
@@ -45,20 +46,46 @@ async def _port_open(port: int) -> bool:
 
 
 async def _spawn_backend(port: int) -> subprocess.Popen:
-    """Start the disposable backend subprocess and wait until it listens."""
+    """Start the disposable backend subprocess and wait until it listens.
+
+    Readiness budget is generous (30s) because cold Python + fastmcp
+    import + bind is slow on a loaded host — e.g. CI under xdist, or this
+    suite running inside a resource-contended container (the foreman
+    daemon's worker check). The old 10s budget passed on a dedicated
+    runner but flaked under contention, where bind routinely took ~8-10s.
+
+    stderr is captured (not discarded) so a genuine startup *failure*
+    surfaces in the raised error instead of a blind "did not become
+    ready" — the original DEVNULL hid the difference between slow-bind
+    and crash-on-start.
+    """
+    stderr = tempfile.TemporaryFile()
     proc = subprocess.Popen(
         [sys.executable, str(_BACKEND), str(port)],
         stdout=subprocess.DEVNULL,
-        stderr=subprocess.DEVNULL,
+        stderr=stderr,
     )
-    for _ in range(100):  # ~10s bounded readiness
+
+    def _captured_stderr() -> str:
+        try:
+            stderr.seek(0)
+            return stderr.read().decode("utf-8", "replace").strip() or "<empty>"
+        except Exception:  # pragma: no cover - diagnostic best-effort
+            return "<unavailable>"
+
+    for _ in range(300):  # ~30s bounded readiness (load-tolerant)
         if proc.poll() is not None:
-            raise RuntimeError(f"backend exited early (rc={proc.returncode})")
+            raise RuntimeError(
+                f"backend exited early (rc={proc.returncode}); "
+                f"stderr:\n{_captured_stderr()}"
+            )
         if await _port_open(port):
             return proc
         await asyncio.sleep(0.1)
     proc.kill()
-    raise RuntimeError("backend did not become ready within 10s")
+    raise RuntimeError(
+        f"backend did not become ready within 30s; stderr:\n{_captured_stderr()}"
+    )
 
 
 def _kill(proc: subprocess.Popen) -> None:
@@ -99,7 +126,7 @@ async def test_session_survives_backend_bounce() -> None:
             # bounce with no re-handshake.
             second = await _spawn_backend(port)
             recovered = False
-            for _ in range(40):  # ~20s bounded retry budget
+            for _ in range(60):  # ~30s bounded retry budget (load-tolerant)
                 try:
                     res = await client.call_tool("list_endpoints", {})
                 except Exception:
