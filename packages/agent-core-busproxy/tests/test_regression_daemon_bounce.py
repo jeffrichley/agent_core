@@ -45,7 +45,7 @@ async def _port_open(port: int) -> bool:
     return True
 
 
-async def _spawn_backend(port: int) -> subprocess.Popen:
+async def _spawn_backend(port: int, *, script: Path = _BACKEND) -> subprocess.Popen:
     """Start the disposable backend subprocess and wait until it listens.
 
     Readiness budget is generous (30s) because cold Python + fastmcp
@@ -61,7 +61,7 @@ async def _spawn_backend(port: int) -> subprocess.Popen:
     """
     stderr = tempfile.TemporaryFile()
     proc = subprocess.Popen(
-        [sys.executable, str(_BACKEND), str(port)],
+        [sys.executable, str(script), str(port)],
         stdout=subprocess.DEVNULL,
         stderr=stderr,
     )
@@ -97,6 +97,29 @@ def _kill(proc: subprocess.Popen) -> None:
     except subprocess.TimeoutExpired:
         proc.kill()
         proc.wait(timeout=5)
+
+
+@pytest.mark.asyncio
+async def test_spawn_backend_surfaces_crash_with_stderr(tmp_path: Path) -> None:
+    """A crash-on-start must raise with the cause named AND the stderr text.
+
+    This is the diagnostic the DEVNULL -> TemporaryFile change exists to
+    provide: the old code blindly reported "did not become ready" whether the
+    backend was slow or dead. A backend that writes to stderr and exits
+    non-zero should surface both the exit code and that stderr in the error.
+    """
+    crasher = tmp_path / "crasher.py"
+    crasher.write_text(
+        "import sys\n"
+        "sys.stderr.write('boom: backend refused to start\\n')\n"
+        "sys.exit(3)\n"
+    )
+    with pytest.raises(RuntimeError) as excinfo:
+        await _spawn_backend(_free_port(), script=crasher)
+    message = str(excinfo.value)
+    assert "exited early" in message
+    assert "rc=3" in message
+    assert "boom: backend refused to start" in message
 
 
 # The two internal readiness budgets (spawn #1 + recovery spawn #2) sum to
