@@ -71,6 +71,7 @@ async def test_client_surfaces_structured_content_attribute() -> None:
     assert res.structured_content == {"transient": True}
 
 
+@pytest.mark.slow  # real connect to a dead port; see slow marker in pyproject.toml
 @pytest.mark.asyncio
 async def test_dead_backend_raises_on_tool_call() -> None:
     """Calling a tool through a proxy whose backend is unreachable raises.

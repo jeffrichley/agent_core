@@ -48,6 +48,7 @@ def test_classify_unknown_is_genuine() -> None:
     assert classify_backend_error(ValueError("nope")) is Disposition.GENUINE
 
 
+@pytest.mark.slow  # probes a dead port (waits out the connect failure)
 @pytest.mark.asyncio
 async def test_daemon_reachable_true_and_false() -> None:
     srv = socket.socket()
@@ -78,6 +79,7 @@ async def test_transport_error_becomes_transient_result() -> None:
     assert "<redacted>" in result.structured_content["detail"]
 
 
+@pytest.mark.slow  # probes a dead port (waits out the connect failure)
 @pytest.mark.asyncio
 async def test_toolerror_with_daemon_down_becomes_transient() -> None:
     # 65535 unbound => probe says down => AMBIGUOUS resolves to transient.
@@ -132,6 +134,7 @@ def test_classify_not_found_error_is_ambiguous() -> None:
     )
 
 
+@pytest.mark.slow  # probes a dead port (waits out the connect failure)
 @pytest.mark.asyncio
 async def test_not_found_error_with_daemon_down_becomes_transient() -> None:
     mw = TransientErrorMiddleware(daemon_url="http://127.0.0.1:65535")

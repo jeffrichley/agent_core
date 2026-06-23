@@ -26,6 +26,11 @@ from fastmcp import Client
 
 _BACKEND = Path(__file__).parent / "_backend_server.py"
 
+# Both tests spawn real backend subprocesses (cold Python + fastmcp import +
+# socket bind) — slow by nature, so keep them out of the default fast lane.
+# See the `slow` marker definition in pyproject.toml.
+pytestmark = pytest.mark.slow
+
 
 def _free_port() -> int:
     s = socket.socket()
