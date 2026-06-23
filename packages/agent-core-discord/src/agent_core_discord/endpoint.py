@@ -1135,6 +1135,22 @@ class DiscordEndpoint:
 
         return on_message
 
+    def _channel_allowed(self, channel_id: str) -> bool:
+        """Return True if channel_id passes the configured channel allowlist.
+
+        Mirrors the guild-channel branch of ``gate_message()`` in access.py:
+          - Empty ``channels`` dict → allow all (unchanged allow-all default).
+          - Non-empty → allow only if ``channel_id`` is an explicit key.
+
+        Used by meta-event handlers (reaction, message lifecycle, poll vote)
+        that share the same channel gate but do not go through the full
+        ``gate_message()`` path (which also evaluates DM policy, bot-block,
+        and author identity — not applicable to these events).
+        """
+        if not self._access.channels:
+            return True
+        return channel_id in self._access.channels
+
     def _make_on_reaction_add_handler(self):
         async def on_reaction_add(reaction: Any, user: Any) -> None:
             # 1. Drop the bot's own reactions.
@@ -1146,11 +1162,16 @@ class DiscordEndpoint:
             if ack_emoji and str(reaction.emoji) == ack_emoji:
                 return
 
-            # 3. Build the Event envelope.
+            # 3. Channel allowlist gate — same rule as on_message.
             message = reaction.message
+            channel_id_str = str(message.channel.id)
+            if not self._channel_allowed(channel_id_str):
+                return
+
+            # 4. Build the Event envelope.
             data: dict[str, Any] = {
                 "emoji": str(reaction.emoji),
-                "channel_id": str(message.channel.id),
+                "channel_id": channel_id_str,
                 "message_id": str(message.id),
                 "guild_id": str(message.guild.id) if message.guild else "",
                 "user_id": str(user.id),
@@ -1224,6 +1245,10 @@ class DiscordEndpoint:
             if self_id is not None and str(getattr(raw, "user_id", "")) == str(self_id):
                 return
 
+            # Channel allowlist gate — same rule as on_message.
+            if not self._channel_allowed(str(raw.channel_id)):
+                return
+
             # Resolve the voter's display name with a sticky local cache.
             # Parity goal: ``discord.reaction_add`` Events carry
             # ``user_display_name`` for free (discord.py hydrates the
@@ -1269,6 +1294,10 @@ class DiscordEndpoint:
         """
 
         async def on_raw_message_lifecycle(raw: Any) -> None:
+            # Channel allowlist gate — same rule as on_message.
+            if not self._channel_allowed(str(raw.channel_id)):
+                return
+
             data: dict[str, Any] = {
                 "message_id": str(raw.message_id),
                 "channel_id": str(raw.channel_id),

@@ -911,3 +911,150 @@ async def test_inbound_download_error_redacts_signed_cdn_url(monkeypatch, tmp_pa
         assert a0["url"] == signed
     finally:
         await ep.stop()
+
+
+# --- Channel-allowlist gate for meta-event handlers (issue #208) ---
+# Regression guard: reaction/edit/delete/poll-vote events from non-allowlisted
+# channels must be dropped (not published). Observed leaking from #pepper-chat
+# on 2026-06-22/23 despite message content being correctly blocked.
+
+
+@pytest.mark.asyncio
+async def test_on_reaction_add_drops_non_allowlisted_channel(monkeypatch, tmp_path):
+    """Reaction from a guild channel NOT in the channels allowlist is dropped."""
+    import json
+    access = tmp_path / "access.json"
+    access.write_text(json.dumps({"channels": {"200": {}}}), encoding="utf-8")
+    ep, handle, fake = await _start_endpoint(monkeypatch, access_path=str(access))
+    fake.add_channel(FakeChannel(id="999"))  # non-allowlisted
+    msg = FakeMessage(id="m", channel_id="999", content="")
+    msg.author = FakeUser(id="100")
+    msg.guild = type("G", (), {"id": "g"})()
+    msg.channel = fake.get_channel("999")
+    user = FakeUser(id="100")
+    reaction = FakeReaction(emoji="👍", message=msg)
+    try:
+        await fake.fire("on_reaction_add", reaction, user)
+        assert handle.published == []
+    finally:
+        await ep.stop()
+
+
+@pytest.mark.asyncio
+async def test_on_reaction_add_passes_allowlisted_channel(monkeypatch, tmp_path):
+    """Reaction from an allowlisted channel still publishes."""
+    import json
+    access = tmp_path / "access.json"
+    access.write_text(json.dumps({"channels": {"200": {}}}), encoding="utf-8")
+    ep, handle, fake = await _start_endpoint(monkeypatch, access_path=str(access))
+    fake.add_channel(FakeChannel(id="200"))
+    msg = FakeMessage(id="m", channel_id="200", content="")
+    msg.author = FakeUser(id="100")
+    msg.guild = type("G", (), {"id": "g"})()
+    msg.channel = fake.get_channel("200")
+    user = FakeUser(id="100")
+    reaction = FakeReaction(emoji="👍", message=msg)
+    try:
+        await fake.fire("on_reaction_add", reaction, user)
+        assert len(handle.published) == 1
+        assert handle.published[0].payload.type == "discord.reaction_add"
+    finally:
+        await ep.stop()
+
+
+@pytest.mark.asyncio
+async def test_on_raw_message_edit_drops_non_allowlisted_channel(monkeypatch, tmp_path):
+    """message_edit from a non-allowlisted channel is dropped."""
+    import json
+    access = tmp_path / "access.json"
+    access.write_text(json.dumps({"channels": {"200": {}}}), encoding="utf-8")
+    ep, handle, fake = await _start_endpoint(monkeypatch, access_path=str(access))
+    raw = FakeRawMessageUpdate(message_id=1, channel_id=999, guild_id=1000)
+    try:
+        await fake.fire("on_raw_message_edit", raw)
+        assert handle.published == []
+    finally:
+        await ep.stop()
+
+
+@pytest.mark.asyncio
+async def test_on_raw_message_edit_passes_allowlisted_channel(monkeypatch, tmp_path):
+    """message_edit from an allowlisted channel still publishes."""
+    import json
+    access = tmp_path / "access.json"
+    access.write_text(json.dumps({"channels": {"200": {}}}), encoding="utf-8")
+    ep, handle, fake = await _start_endpoint(monkeypatch, access_path=str(access))
+    raw = FakeRawMessageUpdate(message_id=1, channel_id=200, guild_id=1000)
+    try:
+        await fake.fire("on_raw_message_edit", raw)
+        assert len(handle.published) == 1
+        assert handle.published[0].payload.type == "discord.message_edit"
+    finally:
+        await ep.stop()
+
+
+@pytest.mark.asyncio
+async def test_on_raw_message_delete_drops_non_allowlisted_channel(monkeypatch, tmp_path):
+    """message_delete from a non-allowlisted channel is dropped."""
+    import json
+    access = tmp_path / "access.json"
+    access.write_text(json.dumps({"channels": {"200": {}}}), encoding="utf-8")
+    ep, handle, fake = await _start_endpoint(monkeypatch, access_path=str(access))
+    raw = FakeRawMessageDelete(message_id=1, channel_id=999, guild_id=1000)
+    try:
+        await fake.fire("on_raw_message_delete", raw)
+        assert handle.published == []
+    finally:
+        await ep.stop()
+
+
+@pytest.mark.asyncio
+async def test_on_raw_message_delete_passes_allowlisted_channel(monkeypatch, tmp_path):
+    """message_delete from an allowlisted channel still publishes."""
+    import json
+    access = tmp_path / "access.json"
+    access.write_text(json.dumps({"channels": {"200": {}}}), encoding="utf-8")
+    ep, handle, fake = await _start_endpoint(monkeypatch, access_path=str(access))
+    raw = FakeRawMessageDelete(message_id=1, channel_id=200, guild_id=1000)
+    try:
+        await fake.fire("on_raw_message_delete", raw)
+        assert len(handle.published) == 1
+        assert handle.published[0].payload.type == "discord.message_delete"
+    finally:
+        await ep.stop()
+
+
+@pytest.mark.asyncio
+async def test_on_raw_poll_vote_add_drops_non_allowlisted_channel(monkeypatch, tmp_path):
+    """poll_vote_add from a non-allowlisted channel is dropped."""
+    import json
+    access = tmp_path / "access.json"
+    access.write_text(json.dumps({"channels": {"200": {}}}), encoding="utf-8")
+    ep, handle, fake = await _start_endpoint(monkeypatch, access_path=str(access))
+    raw = FakeRawPollVote(
+        message_id=1, channel_id=999, user_id=100, guild_id=1000, answer_id=1
+    )
+    try:
+        await fake.fire("on_raw_poll_vote_add", raw)
+        assert handle.published == []
+    finally:
+        await ep.stop()
+
+
+@pytest.mark.asyncio
+async def test_on_raw_poll_vote_add_passes_allowlisted_channel(monkeypatch, tmp_path):
+    """poll_vote_add from an allowlisted channel still publishes."""
+    import json
+    access = tmp_path / "access.json"
+    access.write_text(json.dumps({"channels": {"200": {}}}), encoding="utf-8")
+    ep, handle, fake = await _start_endpoint(monkeypatch, access_path=str(access))
+    fake.add_user(FakeUser(id="100", name="alice", display_name="Alice"))
+    raw = FakeRawPollVote(
+        message_id=1, channel_id=200, user_id=100, guild_id=1000, answer_id=1
+    )
+    try:
+        await fake.fire("on_raw_poll_vote_add", raw)
+        assert len(handle.published) == 1
+        assert handle.published[0].payload.type == "discord.poll_vote_add"
+    finally:
+        await ep.stop()
