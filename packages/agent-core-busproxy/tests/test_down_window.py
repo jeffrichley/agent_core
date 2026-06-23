@@ -10,6 +10,11 @@ from agent_core_busproxy.proxy import build_busproxy
 from agent_core_busproxy.transient import TRANSIENT_ERROR_CODE
 from fastmcp import Client
 
+# Real connect to a dead port (waits out the connection failure) — slow by
+# nature, so keep it out of the default fast lane. See the `slow` marker
+# definition in pyproject.toml.
+pytestmark = pytest.mark.slow
+
 
 @pytest.mark.asyncio
 async def test_dead_backend_returns_transient_result_fast() -> None:

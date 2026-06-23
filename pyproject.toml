@@ -115,6 +115,15 @@ addopts = "--import-mode=importlib -m 'not slow' --cov=packages --cov-branch --c
 # thread method works on Windows + Linux equally (signal-based does not).
 timeout = 60
 timeout_method = "thread"
+# NOTE: this `markers` list belongs to [tool.pytest.ini_options] — it was
+# previously misfiled under [tool.coverage.run], so pytest never registered
+# these marks (every @pytest.mark.slow emitted PytestUnknownMarkWarning and
+# coverage warned about an unrecognized option). The `-m 'not slow'` filter
+# worked regardless because mark *expressions* don't require registration.
+markers = [
+    "looptime: virtual asyncio clock compaction (looptime plugin; see test docs)",
+    "slow: a test that takes more than ~1s OR does real I/O (subprocess, network, sleep, or heavy crypto like an un-tuned KDF). Google's 'small test' lives in the default lane; anything slower or I/O-bound is excluded from it (addopts: -m 'not slow') and runs in the slow-tests CI job instead. Slow-by-accident tests should be made fast, not marked.",
+]
 
 [tool.coverage.run]
 # Exclude vendored code + generated stubs from coverage measurement.
@@ -122,9 +131,5 @@ omit = [
     "*/vendor/*",
     "*/.venv/*",
     "*/__pycache__/*",
-]
-markers = [
-    "looptime: virtual asyncio clock compaction (looptime plugin; see test docs)",
-    "slow: tests that hit network or take >5s; skipped by default in CI",
 ]
 

@@ -57,9 +57,11 @@ jobs:
       - uses: extractions/setup-just@53165ef7e734c5c07cb06b3c8e7b647c5aa16db3  # v4
       # The slow tests shell out to `uv venv --python 3.12`; ensure a managed CPython exists
       - run: uv python install 3.12
-      # --package agent-core intentionally excludes agent-core-voice/qwen-tts (no Torch in CI)
-      - run: uv sync --locked --package agent-core
-      # Scoped to packages/core/tests — the only location of slow-marked tests today.
+      # --package agent-core (+ agent-core-busproxy) intentionally excludes
+      # agent-core-voice/qwen-tts (no Torch in CI). busproxy is light (fastmcp,
+      # httpx, anyio) and hosts the real-subprocess/dead-port slow tests.
+      - run: uv sync --locked --package agent-core --package agent-core-busproxy
+      # Slow-marked tests live in packages/core/tests and packages/agent-core-busproxy/tests.
       # --no-cov disables coverage for this subset run; the project-wide coverage
       # floor is enforced by the `check` job above, which runs the full suite.
-      - run: uv run --no-sync pytest packages/core/tests -m slow -v --no-cov
+      - run: uv run --no-sync pytest packages/core/tests packages/agent-core-busproxy/tests -m slow -v --no-cov
