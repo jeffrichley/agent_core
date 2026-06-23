@@ -194,16 +194,13 @@ class Router:
     ) -> dict[str, Any]:
         """Build the Notification body dict.
 
-        Calls connector.project(event) when the connector exposes it;
-        falls back to dict(event.raw) for connectors that pre-date the
-        projection interface (e.g. FakeConnector). Merges router-scope
-        fields rule_id, tier, reason so consumers need not cross-reference
-        the audit log.
+        Delegates to connector.project(event) — a required member of the
+        Connector protocol, so every connector supplies one (the base
+        Protocol's concrete default returns dict(event.raw)). Merges
+        router-scope fields rule_id, tier, reason so consumers need not
+        cross-reference the audit log.
         """
-        project_fn = getattr(connector, "project", None)
-        projected: dict[str, Any] = (
-            project_fn(event) if callable(project_fn) else dict(event.raw)
-        )
+        projected: dict[str, Any] = connector.project(event)
         return {
             "rule_id": rule_id,
             "reason": verdict.reason,
