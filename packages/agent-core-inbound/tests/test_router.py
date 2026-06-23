@@ -88,7 +88,7 @@ def test_allow_publishes_notification_envelope(tmp_path: Path):
     assert body["rule_id"] == "pr_review_requested_foreman"
     assert body["tier"] == "red"
     assert body["reason"] == "PR review requested on foreman"
-    # Passthrough raw still present (FakeConnector has no project()).
+    # Passthrough raw still present; FakeConnector.project() returns dict(event.raw).
     assert body["pr_number"] == 387
     assert body["repo"] == "jeffrichley/foreman"
 
