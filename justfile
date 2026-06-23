@@ -46,18 +46,24 @@ typecheck:
 contracts:
     uv run --no-sync lint-imports
 
-# Tests
+# Tests (full suite, coverage + 85% gate — matches CI)
 test:
     uv run --no-sync pytest -q
 
+# Fast inner-loop run: full suite, NO coverage instrumentation.
+# Branch-coverage doubles wall time (~230s -> ~110s) and adds no signal
+# while iterating. The 85% gate still runs in `just check` / CI.
 test-fast:
-    uv run --no-sync pytest {{core-tests}} {{channel-tests}} -q
+    uv run --no-sync pytest --no-cov -q
 
+# Scoped runs for when you're only touching one package. These skip
+# coverage too — running a subset under the whole-repo 85% gate would
+# always fail the gate (the other packages' source goes unexercised).
 test-core:
-    uv run --no-sync pytest {{core-tests}} -q
+    uv run --no-sync pytest {{core-tests}} --no-cov -q
 
 test-channel:
-    uv run --no-sync pytest {{channel-tests}} -q
+    uv run --no-sync pytest {{channel-tests}} --no-cov -q
 
 # Setup
 sync:

@@ -102,6 +102,8 @@ integration tests don't race across workers.
 
 | Goal | Command |
 |---|---|
+| **Fast inner loop — whole suite, no coverage** (~110s vs ~230s) | `just test-fast` |
+| Fast scoped run while editing one package | `just test-core` / `just test-channel` |
 | Quick local debug of one test | `uv run pytest --no-cov -n0 -x packages/<pkg>/tests/test_x.py::test_name` |
 | Re-run with a specific random seed (reproducing a failure) | `uv run pytest --no-cov --randomly-seed=<N>` |
 | Disable random order entirely | `uv run pytest -p no:randomly --no-cov` |
