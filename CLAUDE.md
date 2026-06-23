@@ -120,11 +120,16 @@ integration tests don't race across workers.
 - Hit a flaky timing assertion? Use the `Clock` seam in
   `agent_core.clock` (`FakeClock` in tests, `SystemClock` in production).
   Never assert against `datetime.now()` wall-clock jitter.
-- Default per-test timeout is **60 seconds** (Google's "small test" cap).
-  Tests that legitimately need more should be marked `@pytest.mark.slow`
-  (which moves them to the slow-lane CI job) or override the timeout
-  per-test with `@pytest.mark.timeout(N)` plus a comment explaining why.
-  A hang now dies at 60s with a traceback instead of stalling CI.
+- The **fast lane is "small tests" only** (Google's taxonomy): under ~1s and
+  no real I/O. Mark a test `@pytest.mark.slow` if it exceeds ~1s **or** does
+  real subprocess / network / sleep / heavy-crypto work — that moves it out of
+  the default run (`-m 'not slow'`) and into the dedicated slow-tests CI job.
+  Prefer making a slow-by-accident test fast (e.g. a tuned-down KDF) over
+  marking it; marking is for tests that are slow by nature.
+- A separate **60s per-test timeout** kills hangs (thread method, works on
+  Windows + Linux). Override per-test with `@pytest.mark.timeout(N)` plus a
+  comment explaining why. A hang dies at 60s with a traceback instead of
+  stalling CI.
 
 ## CI Gates
 
