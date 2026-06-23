@@ -111,8 +111,12 @@ integration tests don't race across workers.
 | Just the suite with coverage report visible | `uv run pytest --cov=packages --cov-branch --cov-report=term-missing` |
 
 **Rules of thumb:**
-- Iterating on a single test? Always pass `--no-cov`. Coverage adds 100×
-  overhead for a one-test run.
+- **Default while iterating: `just test-fast`** — the whole suite with no
+  coverage instrumentation (roughly half the wall time). Coverage is the gate's
+  job, not the inner loop's. Reach for `just check` only when you're about to
+  commit. Editing just one package? `just test-core` / `just test-channel`.
+- Iterating on a single test? `uv run pytest --no-cov -n0 -x <path>::<name>` —
+  coverage adds ~100× overhead for a one-test run.
 - Before committing? Run `just check` — that's the gate CI runs.
 - Test failed and you suspect order-dependence? Pytest prints the random
   seed at the top of every run; rerun with `--randomly-seed=<seed>` to
