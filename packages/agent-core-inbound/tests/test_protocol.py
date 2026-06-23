@@ -1,5 +1,6 @@
 """Connector Protocol — structural typing check."""
 from datetime import UTC, datetime
+from typing import Any
 
 from agent_core_inbound.protocol import Connector
 from agent_core_inbound.types import Allow, ConnectorEvent, Deny, Tier
@@ -14,6 +15,9 @@ class _StubConnector:
         if target_being == "wren":
             return Allow(tier=Tier.GREEN, reason="stub allow for wren")
         return Deny()
+
+    def project(self, event: ConnectorEvent) -> dict[str, Any]:
+        return dict(event.raw)
 
 
 def test_stub_satisfies_connector_protocol():

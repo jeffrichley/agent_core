@@ -9,6 +9,7 @@ the audit log.
 from collections import OrderedDict, deque
 from collections.abc import Callable
 from datetime import UTC, datetime
+from typing import Any
 
 from agent_core_inbound.audit import AuditLog
 from agent_core_inbound.protocol import Connector
@@ -155,8 +156,15 @@ class Router:
             rule_id=rule_id,
         )
 
-        # Publish Notification envelope. Body carries the connector-specific
-        # raw payload preserved verbatim.
+        # Publish Notification envelope. Body is a per-event-type projected
+        # dict assembled by _project_body() (trimmed for GitHub events;
+        # raw passthrough for connectors without a project() method).
+        body = self._project_body(
+            connector=connector,
+            event=event,
+            rule_id=rule_id,
+            verdict=verdict,
+        )
         self._bus_publish(
             to=target_being,
             kind="Notification",
@@ -165,7 +173,7 @@ class Router:
                 "source": connector.name,
                 "reason": verdict.reason,
                 "landed_at": event.landed_at.isoformat(),
-                "body": event.raw,
+                "body": body,
             },
             urgency=verdict.tier.value,
         )
@@ -175,6 +183,33 @@ class Router:
         self._seen[dedupe_key] = None
         if len(self._seen) > self._dedupe_capacity:
             self._seen.popitem(last=False)
+
+    @staticmethod
+    def _project_body(
+        *,
+        connector: Connector,
+        event: ConnectorEvent,
+        rule_id: str,
+        verdict: Allow,
+    ) -> dict[str, Any]:
+        """Build the Notification body dict.
+
+        Calls connector.project(event) when the connector exposes it;
+        falls back to dict(event.raw) for connectors that pre-date the
+        projection interface (e.g. FakeConnector). Merges router-scope
+        fields rule_id, tier, reason so consumers need not cross-reference
+        the audit log.
+        """
+        project_fn = getattr(connector, "project", None)
+        projected: dict[str, Any] = (
+            project_fn(event) if callable(project_fn) else dict(event.raw)
+        )
+        return {
+            "rule_id": rule_id,
+            "reason": verdict.reason,
+            "tier": verdict.tier.value,
+            **projected,
+        }
 
     @staticmethod
     def _extract_rule_id(

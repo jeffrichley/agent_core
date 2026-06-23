@@ -9,6 +9,7 @@ needing a multi-being constraint in the TOML rule shape.
 from __future__ import annotations
 
 from pathlib import Path
+from typing import Any
 
 from agent_core_inbound._path import MISSING, resolve_path
 from agent_core_inbound.github_allowance import (
@@ -18,6 +19,98 @@ from agent_core_inbound.github_allowance import (
 )
 from agent_core_inbound.github_event import GitHubEvent
 from agent_core_inbound.types import Allow, ConnectorEvent, Deny
+
+# Dotted paths extracted per event_type on top of the universal fields.
+# Paths use the same resolve_path() resolver as the matching engine.
+# Adding a new event type is a one-line edit here; no TOML or operator
+# action required.
+_PROJECTIONS: dict[str, list[str]] = {
+    "pull_request": [
+        "number",
+        "pull_request.title",
+        "pull_request.user.login",
+        "pull_request.head.ref",
+        "pull_request.base.ref",
+        "pull_request.html_url",
+        "requested_reviewer.login",
+    ],
+    "workflow_run": [
+        "workflow_run.id",
+        "workflow_run.name",
+        "workflow_run.conclusion",
+        "workflow_run.head_branch",
+        "workflow_run.html_url",
+        "workflow_run.event",
+    ],
+    "issues": [
+        "issue.number",
+        "issue.title",
+        "issue.user.login",
+        "label.name",
+    ],
+    "issue_comment": [
+        "issue.number",
+        "issue.title",
+        "comment.user.login",
+        "comment.body",
+    ],
+    "push": [
+        "ref",
+        "before",
+        "after",
+        "head_commit.id",
+        "head_commit.message",
+        "pusher.name",
+    ],
+    "release": [
+        "release.tag_name",
+        "release.name",
+        "release.html_url",
+        "release.prerelease",
+    ],
+    "status": [
+        "state",
+        "context",
+        "description",
+        "target_url",
+        "sha",
+    ],
+}
+
+# String fields whose values are truncated to N characters.
+_TRUNCATIONS: dict[str, int] = {
+    "comment.body": 200,
+}
+
+# Maps each event_type to the dotted path of its canonical URL in the raw payload.
+# GitHub webhooks never place a URL at the top-level "html_url" key — it lives
+# inside the primary object for each event type. This table lets _universal_fields()
+# extract the right URL without inspecting the wrong location.
+_URL_PATHS: dict[str, str] = {
+    "pull_request": "pull_request.html_url",
+    "workflow_run": "workflow_run.html_url",
+    "issues": "issue.html_url",
+    "issue_comment": "issue.html_url",
+    "push": "compare",
+    "release": "release.html_url",
+    "status": "target_url",
+}
+
+
+def _universal_fields(event: GitHubEvent) -> dict[str, Any]:
+    """Fields present in every Notification body regardless of event type."""
+    result: dict[str, Any] = {
+        "event_type": event.event_type,
+        "action": event.action,
+        "repo": event.repo_full_name,
+        "landed_at": event.landed_at.isoformat(),
+    }
+    url_path = _URL_PATHS.get(event.event_type)
+    if url_path is not None:
+        url = resolve_path(event.raw, url_path)
+        if url is not MISSING:
+            result["html_url"] = url
+    return result
 
 
 class GitHubConnector:
@@ -54,6 +147,35 @@ class GitHubConnector:
 
     def rule_id_for(self, *, event_id: str, target_being: str) -> str:
         return self._last_matched_rule_id.get((event_id, target_being), "unknown")
+
+    def project(self, event: ConnectorEvent) -> dict[str, Any]:
+        """Return a trimmed body dict for the Notification envelope.
+
+        Starts from the universal fields (event_type, action, repo,
+        landed_at, html_url), then overlays per-event-type dotted-path
+        fields from _PROJECTIONS. Fields that resolve to MISSING are
+        silently omitted; string fields listed in _TRUNCATIONS are
+        capped at their max length.
+
+        Falls back to dict(event.raw) for event types not in
+        _PROJECTIONS (unknown / future GitHub event types).
+        """
+        if not isinstance(event, GitHubEvent):
+            return dict(event.raw)
+        body: dict[str, Any] = _universal_fields(event)
+        paths = _PROJECTIONS.get(event.event_type)
+        if paths is None:
+            # Unknown event type: passthrough (safe default).
+            return dict(event.raw)
+        for path in paths:
+            value = resolve_path(event.raw, path)
+            if value is MISSING:
+                continue
+            max_len = _TRUNCATIONS.get(path)
+            if max_len is not None and isinstance(value, str):
+                value = value[:max_len]
+            body[path] = value
+        return body
 
     def _reload_if_needed(self) -> None:
         if not self._config_path.exists():

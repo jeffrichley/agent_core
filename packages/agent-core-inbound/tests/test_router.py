@@ -84,7 +84,13 @@ def test_allow_publishes_notification_envelope(tmp_path: Path):
     assert pub["urgency"] == "red"
     assert pub["payload"]["source"] == "fake"
     assert pub["payload"]["reason"] == "PR review requested on foreman"
-    assert pub["payload"]["body"] == {"pr_number": 387, "repo": "jeffrichley/foreman"}
+    body = pub["payload"]["body"]
+    assert body["rule_id"] == "pr_review_requested_foreman"
+    assert body["tier"] == "red"
+    assert body["reason"] == "PR review requested on foreman"
+    # Passthrough raw still present (FakeConnector has no project()).
+    assert body["pr_number"] == 387
+    assert body["repo"] == "jeffrichley/foreman"
 
 
 def test_allow_writes_audit_line(tmp_path: Path):

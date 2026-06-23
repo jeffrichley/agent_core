@@ -333,3 +333,361 @@ def test_event_key_drops_underscore_for_actionless_events() -> None:
         raw={},
     )
     assert _event_key(event) == "push"
+
+
+# ---------------------------------------------------------------------------
+# project() — body projection per event type
+# ---------------------------------------------------------------------------
+
+
+def _make_connector_empty(tmp_path: Path) -> GitHubConnector:
+    """Return a GitHubConnector with an empty (no-rules) config."""
+    p = tmp_path / "empty.toml"
+    p.write_text("", encoding="utf-8")
+    return GitHubConnector(config_path=p, principal_being="wren")
+
+
+def test_project_pull_request_returns_universal_plus_pr_fields(tmp_path: Path) -> None:
+    raw = {
+        "action": "review_requested",
+        "number": 42,
+        "repository": {"full_name": "jeffrichley/foreman"},
+        "pull_request": {
+            "title": "Add feature",
+            "user": {"login": "alice"},
+            "head": {"ref": "feature/foo"},
+            "base": {"ref": "main"},
+            "html_url": "https://github.com/jeffrichley/foreman/pull/42",
+        },
+        "requested_reviewer": {"login": "wrenrichley"},
+        "installation": {"id": 12345, "account": {}},  # big nested — must be absent
+    }
+    event = GitHubEvent(
+        event_id="e1",
+        landed_at=datetime(2026, 6, 21, 10, 0, 0, tzinfo=timezone.utc),
+        event_type="pull_request",
+        action="review_requested",
+        repo_full_name="jeffrichley/foreman",
+        raw=raw,
+    )
+    conn = _make_connector_empty(tmp_path)
+    body = conn.project(event)
+
+    # Universal fields
+    assert body["event_type"] == "pull_request"
+    assert body["action"] == "review_requested"
+    assert body["repo"] == "jeffrichley/foreman"
+    assert "landed_at" in body
+    assert body["html_url"] == "https://github.com/jeffrichley/foreman/pull/42"
+
+    # Per-event-type fields (dotted-path keys)
+    assert body["number"] == 42
+    assert body["pull_request.title"] == "Add feature"
+    assert body["pull_request.user.login"] == "alice"
+    assert body["pull_request.head.ref"] == "feature/foo"
+    assert body["pull_request.base.ref"] == "main"
+    assert body["requested_reviewer.login"] == "wrenrichley"
+    assert body["pull_request.html_url"] == "https://github.com/jeffrichley/foreman/pull/42"
+
+    # Large raw-only fields must NOT appear
+    assert "installation" not in body
+    assert "pull_request" not in body  # the full sub-dict key must not appear
+
+
+def test_project_workflow_run_returns_universal_plus_workflow_fields(tmp_path: Path) -> None:
+    raw = {
+        "action": "completed",
+        "repository": {"full_name": "jeffrichley/foreman"},
+        "workflow_run": {
+            "id": 9876543,
+            "name": "CI",
+            "conclusion": "success",
+            "head_branch": "main",
+            "html_url": "https://github.com/jeffrichley/foreman/actions/runs/9876543",
+            "event": "push",
+            "big_nested_key": {"lots": "of", "data": True},  # decoy
+        },
+        "sender": {"login": "alice", "extra": "lots"},  # decoy
+    }
+    event = GitHubEvent(
+        event_id="e2",
+        landed_at=datetime(2026, 6, 21, 10, 0, 0, tzinfo=timezone.utc),
+        event_type="workflow_run",
+        action="completed",
+        repo_full_name="jeffrichley/foreman",
+        raw=raw,
+    )
+    conn = _make_connector_empty(tmp_path)
+    body = conn.project(event)
+
+    assert body["event_type"] == "workflow_run"
+    assert body["action"] == "completed"
+    assert body["repo"] == "jeffrichley/foreman"
+    assert body["html_url"] == "https://github.com/jeffrichley/foreman/actions/runs/9876543"
+    assert body["workflow_run.id"] == 9876543
+    assert body["workflow_run.name"] == "CI"
+    assert body["workflow_run.conclusion"] == "success"
+    assert body["workflow_run.head_branch"] == "main"
+    assert body["workflow_run.html_url"] == "https://github.com/jeffrichley/foreman/actions/runs/9876543"
+    assert body["workflow_run.event"] == "push"
+
+    # Decoys must be absent
+    assert "sender" not in body
+    assert "workflow_run" not in body
+
+
+def test_project_issues_returns_universal_plus_issue_fields(tmp_path: Path) -> None:
+    raw = {
+        "action": "labeled",
+        "repository": {"full_name": "jeffrichley/foreman"},
+        "issue": {
+            "number": 77,
+            "title": "Bug report",
+            "user": {"login": "bob"},
+            "html_url": "https://github.com/jeffrichley/foreman/issues/77",
+        },
+        "label": {"name": "bug"},
+        "installation": {"id": 99},  # decoy
+    }
+    event = GitHubEvent(
+        event_id="e3",
+        landed_at=datetime(2026, 6, 21, 10, 0, 0, tzinfo=timezone.utc),
+        event_type="issues",
+        action="labeled",
+        repo_full_name="jeffrichley/foreman",
+        raw=raw,
+    )
+    conn = _make_connector_empty(tmp_path)
+    body = conn.project(event)
+
+    assert body["event_type"] == "issues"
+    assert body["html_url"] == "https://github.com/jeffrichley/foreman/issues/77"
+    assert body["issue.number"] == 77
+    assert body["issue.title"] == "Bug report"
+    assert body["issue.user.login"] == "bob"
+    assert body["label.name"] == "bug"
+
+    # Decoy absent
+    assert "installation" not in body
+    assert "issue" not in body
+
+
+def test_project_issue_comment_returns_universal_plus_comment_fields(tmp_path: Path) -> None:
+    raw = {
+        "action": "created",
+        "repository": {"full_name": "jeffrichley/foreman"},
+        "issue": {
+            "number": 7,
+            "title": "A question",
+            "user": {"login": "bob"},
+            "html_url": "https://github.com/jeffrichley/foreman/issues/7",
+        },
+        "comment": {"user": {"login": "alice"}, "body": "Short comment"},
+        "sender": {"login": "alice", "big_blob": "ignore me"},  # decoy
+    }
+    event = GitHubEvent(
+        event_id="e4",
+        landed_at=datetime(2026, 6, 21, 10, 0, 0, tzinfo=timezone.utc),
+        event_type="issue_comment",
+        action="created",
+        repo_full_name="jeffrichley/foreman",
+        raw=raw,
+    )
+    conn = _make_connector_empty(tmp_path)
+    body = conn.project(event)
+
+    assert body["event_type"] == "issue_comment"
+    assert body["html_url"] == "https://github.com/jeffrichley/foreman/issues/7"
+    assert body["issue.number"] == 7
+    assert body["issue.title"] == "A question"
+    assert body["comment.user.login"] == "alice"
+    assert body["comment.body"] == "Short comment"
+
+    # Decoy absent
+    assert "sender" not in body
+    assert "comment" not in body
+
+
+def test_project_push_returns_universal_plus_push_fields(tmp_path: Path) -> None:
+    raw = {
+        "ref": "refs/heads/main",
+        "before": "aaa",
+        "after": "bbb",
+        "repository": {"full_name": "jeffrichley/foreman"},
+        "head_commit": {
+            "id": "bbb",
+            "message": "Fix bug",
+        },
+        "pusher": {"name": "alice"},
+        "compare": "https://github.com/jeffrichley/foreman/compare/aaa...bbb",
+        "commits": [{"id": "bbb", "message": "Fix bug", "big_blob": True}],  # decoy
+    }
+    event = GitHubEvent(
+        event_id="e5",
+        landed_at=datetime(2026, 6, 21, 10, 0, 0, tzinfo=timezone.utc),
+        event_type="push",
+        action="",
+        repo_full_name="jeffrichley/foreman",
+        raw=raw,
+    )
+    conn = _make_connector_empty(tmp_path)
+    body = conn.project(event)
+
+    assert body["event_type"] == "push"
+    assert body["html_url"] == "https://github.com/jeffrichley/foreman/compare/aaa...bbb"
+    assert body["ref"] == "refs/heads/main"
+    assert body["before"] == "aaa"
+    assert body["after"] == "bbb"
+    assert body["head_commit.id"] == "bbb"
+    assert body["head_commit.message"] == "Fix bug"
+    assert body["pusher.name"] == "alice"
+
+    # Decoy absent
+    assert "commits" not in body
+    assert "head_commit" not in body
+
+
+def test_project_release_returns_universal_plus_release_fields(tmp_path: Path) -> None:
+    raw = {
+        "action": "published",
+        "repository": {"full_name": "jeffrichley/foreman"},
+        "release": {
+            "tag_name": "v1.2.3",
+            "name": "Release 1.2.3",
+            "html_url": "https://github.com/jeffrichley/foreman/releases/tag/v1.2.3",
+            "prerelease": False,
+            "body": "# Changelog\n" + "x" * 5000,  # large decoy
+        },
+        "sender": {"login": "alice", "big_blob": True},  # decoy
+    }
+    event = GitHubEvent(
+        event_id="e6",
+        landed_at=datetime(2026, 6, 21, 10, 0, 0, tzinfo=timezone.utc),
+        event_type="release",
+        action="published",
+        repo_full_name="jeffrichley/foreman",
+        raw=raw,
+    )
+    conn = _make_connector_empty(tmp_path)
+    body = conn.project(event)
+
+    assert body["event_type"] == "release"
+    assert body["html_url"] == "https://github.com/jeffrichley/foreman/releases/tag/v1.2.3"
+    assert body["release.tag_name"] == "v1.2.3"
+    assert body["release.name"] == "Release 1.2.3"
+    assert body["release.html_url"] == "https://github.com/jeffrichley/foreman/releases/tag/v1.2.3"
+    assert body["release.prerelease"] is False
+
+    # Large release.body and sender absent
+    assert "sender" not in body
+    assert "release" not in body
+
+
+def test_project_status_returns_universal_plus_status_fields(tmp_path: Path) -> None:
+    raw = {
+        "state": "success",
+        "context": "ci/test",
+        "description": "All checks passed",
+        "target_url": "https://ci.example.com/build/123",
+        "sha": "abc123",
+        "repository": {"full_name": "jeffrichley/foreman"},
+        "commit": {"author": {"name": "alice"}, "big_blob": True},  # decoy
+    }
+    event = GitHubEvent(
+        event_id="e7",
+        landed_at=datetime(2026, 6, 21, 10, 0, 0, tzinfo=timezone.utc),
+        event_type="status",
+        action="",
+        repo_full_name="jeffrichley/foreman",
+        raw=raw,
+    )
+    conn = _make_connector_empty(tmp_path)
+    body = conn.project(event)
+
+    assert body["event_type"] == "status"
+    assert body["html_url"] == "https://ci.example.com/build/123"
+    assert body["state"] == "success"
+    assert body["context"] == "ci/test"
+    assert body["description"] == "All checks passed"
+    assert body["target_url"] == "https://ci.example.com/build/123"
+    assert body["sha"] == "abc123"
+
+    # Decoy absent
+    assert "commit" not in body
+
+
+def test_project_skips_missing_optional_fields(tmp_path: Path) -> None:
+    # pull_request event where requested_reviewer is absent.
+    # The key must not appear in the body at all (not as None).
+    raw = {
+        "action": "opened",
+        "number": 1,
+        "repository": {"full_name": "jeffrichley/foreman"},
+        "pull_request": {
+            "title": "T",
+            "user": {"login": "alice"},
+            "head": {"ref": "feat"},
+            "base": {"ref": "main"},
+            "html_url": "https://github.com/jeffrichley/foreman/pull/1",
+        },
+        # requested_reviewer intentionally absent
+    }
+    event = GitHubEvent(
+        event_id="e-miss",
+        landed_at=datetime(2026, 6, 21, 10, 0, 0, tzinfo=timezone.utc),
+        event_type="pull_request",
+        action="opened",
+        repo_full_name="jeffrichley/foreman",
+        raw=raw,
+    )
+    conn = _make_connector_empty(tmp_path)
+    body = conn.project(event)
+
+    # Requested reviewer is absent from raw — must be absent from body too.
+    assert "requested_reviewer.login" not in body
+    # Other fields must still be present.
+    assert body["pull_request.title"] == "T"
+
+
+def test_project_issue_comment_truncates_comment_body_to_200_chars(tmp_path: Path) -> None:
+    raw = {
+        "action": "created",
+        "repository": {"full_name": "jeffrichley/foreman"},
+        "issue": {
+            "number": 7,
+            "title": "Bug",
+            "user": {"login": "bob"},
+            "html_url": "https://github.com/jeffrichley/foreman/issues/7",
+        },
+        "comment": {"user": {"login": "alice"}, "body": "x" * 500},
+    }
+    event = GitHubEvent(
+        event_id="e-trunc",
+        landed_at=datetime(2026, 6, 21, 10, 0, 0, tzinfo=timezone.utc),
+        event_type="issue_comment",
+        action="created",
+        repo_full_name="jeffrichley/foreman",
+        raw=raw,
+    )
+    conn = _make_connector_empty(tmp_path)
+    body = conn.project(event)
+
+    assert body["comment.body"] == "x" * 200
+    assert len(body["comment.body"]) == 200
+
+
+def test_project_unknown_event_type_falls_back_to_raw(tmp_path: Path) -> None:
+    raw = {"action": "frobbed", "some_big_key": {"nested": "data"}}
+    # event_type="deployment" is not in _PROJECTIONS
+    event = GitHubEvent(
+        event_id="e-unknown",
+        landed_at=datetime(2026, 6, 21, 10, 0, 0, tzinfo=timezone.utc),
+        event_type="deployment",
+        action="frobbed",
+        repo_full_name="jeffrichley/foreman",
+        raw=raw,
+    )
+    conn = _make_connector_empty(tmp_path)
+    body = conn.project(event)
+
+    assert body == dict(event.raw)
