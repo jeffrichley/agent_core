@@ -5,7 +5,7 @@ Gmail messages, calendar events) and applies a TOML-driven policy
 to decide which events reach which being. The router calls
 classify(event, target_being) and acts on the returned Allow|Deny.
 """
-from typing import Protocol, runtime_checkable
+from typing import Any, Protocol, runtime_checkable
 
 from agent_core_inbound.types import Allow, ConnectorEvent, Deny
 
@@ -30,3 +30,13 @@ class Connector(Protocol):
         event: ConnectorEvent,
         target_being: str,
     ) -> Allow | Deny: ...
+
+    def project(self, event: ConnectorEvent) -> dict[str, Any]:
+        """Return the body dict for the Notification envelope.
+
+        Default implementation passes ``event.raw`` through verbatim
+        (backward-compatible for connectors that have not filled in a
+        per-event-type projection yet). ``GitHubConnector`` overrides
+        with a trimmed per-event-type table.
+        """
+        return dict(event.raw)

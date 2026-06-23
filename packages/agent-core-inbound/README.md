@@ -52,6 +52,8 @@ reason = "Foreman escalation — needs operator unstick"
 
 The `reviewer`/`label_name` shortcuts from v1.a still work — they translate to `match` entries automatically. `body_contains` was removed in v2 (raises `ValueError` on load); use exact-equality `match` instead, or wait for v2.1's `match_contains` operator.
 
+**Body projection.** The GitHub connector trims the Notification envelope body to a small per-event-type field set (event type, action, repo, key identifiers). This keeps inline bus payloads under 1 KB and avoids bloating tool results with GitHub metadata Wren never uses. The full raw webhook payload is always recoverable from GitHub's webhook delivery history via `gh api repos/<repo>/hooks/<id>/deliveries/<delivery_id>`.
+
 The router watches the file's mtime and reloads on every webhook delivery — edit the TOML and the next event picks up the new rules without restarting the daemon.
 
 ### 3. Register the endpoint in agent_core.yaml

@@ -1,4 +1,6 @@
 """In-memory connector for Router tests + downstream contract tests."""
+from typing import Any
+
 from agent_core_inbound.protocol import Connector
 from agent_core_inbound.types import Allow, ConnectorEvent, Deny, Tier
 
@@ -46,6 +48,15 @@ class FakeConnector:
 
     def rule_id_for(self, *, event_id: str, target_being: str) -> str:
         return self.rule_ids.get((event_id, target_being), "unknown")
+
+    def project(self, event: ConnectorEvent) -> dict[str, Any]:
+        """Default passthrough — returns event.raw verbatim.
+
+        The real projection logic lives in GitHubConnector. FakeConnector
+        exercises the Router's getattr fallback path, returning raw so tests
+        that don't care about projection continue to see the full payload.
+        """
+        return dict(event.raw)
 
 
 # Static check: FakeConnector satisfies the Connector Protocol.

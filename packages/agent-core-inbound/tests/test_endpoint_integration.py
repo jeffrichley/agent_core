@@ -62,9 +62,11 @@ reason = "PR review requested on foreman"
 """,
     )
     client = TestClient(app)
+    # Real GitHub webhook: "number" is at the top level, not nested in "pull_request".
     body = json.dumps({
         "action": "review_requested",
-        "pull_request": {"number": 387},
+        "number": 387,
+        "pull_request": {"number": 387, "html_url": "https://github.com/jeffrichley/foreman/pull/387"},
         "repository": {"full_name": "jeffrichley/foreman"},
         "requested_reviewer": {"login": "wrenrichley"},
     }).encode("utf-8")
@@ -89,7 +91,11 @@ reason = "PR review requested on foreman"
     assert pub["payload"]["source"] == "github"
     assert pub["urgency"] == "red"
     assert pub["payload"]["reason"] == "PR review requested on foreman"
-    assert pub["payload"]["body"]["pull_request"]["number"] == 387
+    # Body uses per-event-type projection: PR number lives at flat key "number".
+    body = pub["payload"]["body"]
+    assert body["number"] == 387
+    assert body["event_type"] == "pull_request"
+    assert body["rule_id"] == "pr_review_requested_foreman"
 
     # Audit log shows the allow line with rule_id.
     lines = audit_path.read_text(encoding="utf-8").splitlines()
@@ -146,7 +152,10 @@ reason = "CI failed"
     assert pub["payload"]["source"] == "github"
     assert pub["urgency"] == "red"
     assert pub["payload"]["reason"] == "CI failed"
-    assert pub["payload"]["body"]["workflow_run"]["conclusion"] == "failure"
+    # Body uses per-event-type projection: conclusion lives at "workflow_run.conclusion".
+    body = pub["payload"]["body"]
+    assert body["workflow_run.conclusion"] == "failure"
+    assert body["event_type"] == "workflow_run"
 
     # Audit log shows the allow line with rule_id=ci_failed.
     lines = audit_path.read_text(encoding="utf-8").splitlines()
@@ -177,9 +186,11 @@ reason = "PR opened"
 """,
     )
     client = TestClient(app)
+    # Real GitHub webhook: "number" is at the top level, not nested in "pull_request".
     body = json.dumps({
         "action": "opened",
-        "pull_request": {"number": 22},
+        "number": 22,
+        "pull_request": {"number": 22, "html_url": "https://github.com/jeffrichley/foreman/pull/22"},
         "repository": {"full_name": "jeffrichley/foreman"},
     }).encode("utf-8")
     resp = client.post(
@@ -203,7 +214,10 @@ reason = "PR opened"
     assert pub["payload"]["source"] == "github"
     assert pub["urgency"] == "yellow"
     assert pub["payload"]["reason"] == "PR opened"
-    assert pub["payload"]["body"]["pull_request"]["number"] == 22
+    # Body uses per-event-type projection: PR number lives at flat key "number".
+    body = pub["payload"]["body"]
+    assert body["number"] == 22
+    assert body["event_type"] == "pull_request"
 
     # Audit log shows the allow line with rule_id=pr_opened_any.
     lines = audit_path.read_text(encoding="utf-8").splitlines()
