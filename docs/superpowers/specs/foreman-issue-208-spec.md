@@ -67,18 +67,20 @@ return ctx.channel_id in cfg.channels
 
 2. **Gate `_make_on_reaction_add_handler` in `endpoint.py`.**
 
-   In `on_reaction_add`, after step 2 (ack-emoji drop, currently ending with `return`) and before step 3 (building the `data` dict), add:
+   In `on_reaction_add`, after step 2 (ack-emoji drop, currently ending with `return`) and before the `data` dict is constructed, insert the new step 3 block below. **Important:** `message = reaction.message` is currently the first line of the existing step 3 (line 1150). Extract it out of that step and place it as the first line of the new guard block so that `message` is in scope when `message.channel.id` is read:
 
    ```python
    # 3. Channel allowlist gate — same rule as on_message.
+   message = reaction.message          # extracted from former step 3
    channel_id_str = str(message.channel.id)
    if not self._channel_allowed(channel_id_str):
        return
    ```
 
-   Update the subsequent `data` dict to reuse `channel_id_str` instead of re-computing `str(message.channel.id)`:
+   Update the subsequent `data` dict (renumbered to step 4) to reuse `channel_id_str` instead of re-computing `str(message.channel.id)`, and to use the already-assigned `message` variable:
 
    ```python
+   # 4. Build the Event envelope.
    data: dict[str, Any] = {
        "emoji": str(reaction.emoji),
        "channel_id": channel_id_str,
@@ -89,7 +91,7 @@ return ctx.channel_id in cfg.channels
    }
    ```
 
-   Renumber the remaining comment blocks from "3. Build…" to "4. Build…" (single comment update, cosmetic).
+   Renumber all remaining comment blocks that were "3. Build…" / "3. …" to "4. …" (single comment update, cosmetic). Remove the now-redundant `message = reaction.message` line that was previously the first line of what was step 3, since it is now captured in the guard block above.
 
 3. **Gate `_make_on_raw_poll_vote_handler` in `endpoint.py`.**
 
