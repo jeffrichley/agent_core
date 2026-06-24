@@ -259,6 +259,7 @@ class DiscordEndpoint:
         attachment_sweep_seconds: float = 3600.0,
         recent_inbounds_max: int = 5000,
         recent_inbounds_ttl_seconds: float = 3600.0,
+        access_config_reload_interval: float = 5.0,
         _client_factory: Callable[..., Any] | None = None,
     ):
         self.name = name
@@ -320,6 +321,11 @@ class DiscordEndpoint:
         # discipline (#84).
         self._awaiting_reply_ids_timestamps: dict[str, float] = {}
         self._typing_tasks: set[asyncio.Task] = set()
+        self.access_config_reload_interval = access_config_reload_interval
+        self._access_reload_task: asyncio.Task | None = None
+        # Stored as (st_mtime, st_size) so we detect changes even on
+        # filesystems with coarse mtime granularity (e.g. overlay in CI).
+        self._access_config_mtime: tuple[float, int] | None = None
 
     def _add_listener(self, handler: Callable[..., Any], event_name: str) -> None:
         """Register an event handler against the discord.py client.
@@ -480,6 +486,14 @@ class DiscordEndpoint:
 
             # 3. Load access policy (or use permissive defaults).
             self._access = load_access_config(self.access_config_path)
+            # Record initial (mtime, size) so the poll task can detect future changes.
+            # Using size alongside mtime handles filesystems with coarse mtime granularity.
+            if self.access_config_path is not None and self.access_config_path.exists():
+                try:
+                    st = self.access_config_path.stat()
+                    self._access_config_mtime = (st.st_mtime, st.st_size)
+                except OSError:
+                    self._access_config_mtime = None
 
             # 4. Create the Discord client. The factory seam lets tests inject a
             #    fake client without touching discord.py.
@@ -594,6 +608,11 @@ class DiscordEndpoint:
                 self._attachment_sweep_loop(),
                 name=f"discord-endpoint-{self.name}-attach-sweep",
             )
+            if self.access_config_path is not None and self.access_config_reload_interval > 0:
+                self._access_reload_task = asyncio.create_task(
+                    self._access_config_reload_loop(),
+                    name=f"discord-endpoint-{self.name}-access-reload",
+                )
         except BaseException:
             # Only pop if WE own this slot — never evict a sibling that may
             # have raced in.
@@ -609,6 +628,8 @@ class DiscordEndpoint:
                 self._sweep_task.cancel()
             if self._attachment_sweep_task is not None:
                 self._attachment_sweep_task.cancel()
+            if self._access_reload_task is not None:
+                self._access_reload_task.cancel()
             if self._sweep_task is not None:
                 try:
                     await self._sweep_task
@@ -631,6 +652,17 @@ class DiscordEndpoint:
                         self.name,
                     )
                 self._attachment_sweep_task = None
+            if self._access_reload_task is not None:
+                try:
+                    await self._access_reload_task
+                except asyncio.CancelledError:
+                    pass
+                except Exception:
+                    log.exception(
+                        "discord endpoint '%s': access reload task raised during start rollback",
+                        self.name,
+                    )
+                self._access_reload_task = None
             if self._client_task is not None:
                 self._client_task.cancel()
                 try:
@@ -947,6 +979,8 @@ class DiscordEndpoint:
             self._sweep_task.cancel()
         if self._attachment_sweep_task is not None:
             self._attachment_sweep_task.cancel()
+        if self._access_reload_task is not None:
+            self._access_reload_task.cancel()
         if self._sweep_task is not None:
             try:
                 await self._sweep_task
@@ -969,6 +1003,17 @@ class DiscordEndpoint:
                     self.name,
                 )
             self._attachment_sweep_task = None
+        if self._access_reload_task is not None:
+            try:
+                await self._access_reload_task
+            except asyncio.CancelledError:
+                pass
+            except Exception:
+                log.exception(
+                    "discord endpoint '%s': access reload task raised during stop",
+                    self.name,
+                )
+            self._access_reload_task = None
         if self._client_task is not None:
             self._client_task.cancel()
             try:
@@ -1468,6 +1513,49 @@ class DiscordEndpoint:
                     total -= size
                     evicted += 1
         return evicted
+
+    async def _access_config_reload_loop(self) -> None:
+        """Periodic mtime-poll reload of access_config_path. Runs until cancelled by stop().
+
+        Pre-validates JSON before swapping self._access so a partial write does not
+        open the gate to permissive defaults. Keeps the previous config on any read or
+        parse error; retries on the next poll cycle.
+        """
+        try:
+            while True:
+                await asyncio.sleep(self.access_config_reload_interval)
+                if self.access_config_path is None:
+                    continue
+                try:
+                    st = self.access_config_path.stat()
+                    current_mtime = (st.st_mtime, st.st_size)
+                except OSError:
+                    continue
+                if current_mtime == self._access_config_mtime:
+                    continue
+                # File changed (mtime or size differs) — pre-validate before committing
+                try:
+                    raw_text = self.access_config_path.read_text(encoding="utf-8")
+                    json.loads(raw_text)
+                except (OSError, json.JSONDecodeError) as exc:
+                    log.warning(
+                        "discord(%s): access config reload skipped (read/parse error), "
+                        "keeping previous config: %s",
+                        self.name,
+                        exc,
+                    )
+                    continue
+                new_access = load_access_config(self.access_config_path)
+                self._access = new_access
+                self._access_config_mtime = current_mtime
+                log.info(
+                    "discord(%s): access config reloaded (channels=%d, dmPolicy=%s)",
+                    self.name,
+                    len(new_access.channels),
+                    new_access.dm_policy,
+                )
+        except asyncio.CancelledError:
+            raise
 
     async def _attachment_sweep_loop(self) -> None:
         """Periodic attachment retention sweep. Runs until cancelled by stop()."""
