@@ -64,6 +64,7 @@ from agent_core_discord.shape_validator import (
     validate as validate_shape,
 )
 from agent_core_discord.sigil import parse_sigil
+from agent_core_discord.text_sanitize import scrub_surrogates
 
 if TYPE_CHECKING:
     from agent_core.bus.handle import BusHandle
@@ -1061,6 +1062,7 @@ class DiscordEndpoint:
             #    Sigil-prefix urgency: '!' -> red, '?' -> yellow, plain -> green.
             #    The sigil is stripped from the published payload text. See issue #38.
             urgency, text = parse_sigil(message.content or "")
+            text = scrub_surrogates(text)
 
             # Mint the envelope id up front so attachment files can be grouped
             # under <attachments_dir>/<envelope_id>/ and enrichment happens
