@@ -23,7 +23,7 @@ urgency, text = parse_sigil(message.content or "")
 
 The fix is to apply `scrub_surrogates(text)` immediately after this line, before `text` is passed to `TextMessagePayload(text=text)`. This is the single gate through which all Discord message text flows.
 
-**The sanitizer.** Python 3 `str` objects can hold lone surrogate code points (via `surrogatepass` or sliced UTF-16 bytes). The round-trip `s.encode("utf-8", "replace").decode("utf-8")` maps each ill-formed code unit to the UTF-8 byte sequence for U+FFFD (replacement character `�`), then reconstructs a clean str. This is the standard, zero-dependency approach; a regex over D800–DFFF is a valid alternative but adds complexity without benefit.
+**The sanitizer.** Python 3 `str` objects can hold lone surrogate code points (via `surrogatepass` or sliced UTF-16 bytes). The round-trip `s.encode("utf-8", "surrogatepass").decode("utf-8", "replace")` maps each ill-formed code unit to U+FFFD (replacement character `�`): `surrogatepass` on encode writes the WTF-8/CESU-8 byte sequence for the lone surrogate (e.g. `0xED 0xA0 0xBC` for U+D83C), which is invalid UTF-8; `replace` on decode then maps that invalid byte sequence to U+FFFD, reconstructing a clean str. Note: using `errors="replace"` on the *encoding* step instead would substitute ASCII `?` (0x3F), not U+FFFD — only the decode-side `replace` handler emits U+FFFD. This is the standard, zero-dependency approach; a regex over D800–DFFF is a valid alternative but adds complexity without benefit.
 
 **Module placement.** Following the pattern of `chunking.py` (text chunking) and `sigil.py` (sigil parsing), a new file `packages/agent-core-discord/src/agent_core_discord/text_sanitize.py` houses `scrub_surrogates()`. This keeps the utility local to the package that owns the inbound path, avoids premature extraction to core (rule of one), and mirrors the existing fine-grained module decomposition in the Discord package.
 
@@ -43,7 +43,7 @@ The fix is to apply `scrub_surrogates(text)` immediately after this line, before
 
 | File | Change |
 |---|---|
-| `packages/agent-core-discord/src/agent_core_discord/text_sanitize.py` | **Create.** Single public function `scrub_surrogates(s: str) -> str` that replaces lone surrogates with U+FFFD via `s.encode("utf-8", "replace").decode("utf-8")`. |
+| `packages/agent-core-discord/src/agent_core_discord/text_sanitize.py` | **Create.** Single public function `scrub_surrogates(s: str) -> str` that replaces lone surrogates with U+FFFD via `s.encode("utf-8", "surrogatepass").decode("utf-8", "replace")`. |
 | `packages/agent-core-discord/src/agent_core_discord/endpoint.py` | **Modify.** Import `scrub_surrogates` from `.text_sanitize`. In `_make_on_message_handler`, apply it to `text` immediately after the `parse_sigil` call. No other changes to this file. |
 | `packages/agent-core-discord/tests/test_text_sanitize.py` | **Create.** Pure-function unit tests for `scrub_surrogates`: lone high surrogate, lone low surrogate, valid-pair passthrough, the programmatic flag-emoji case, and JSON round-trip assertion. |
 | `packages/agent-core-discord/tests/test_endpoint_inbound.py` | **Modify.** Append one async integration test: `test_on_message_sanitizes_lone_surrogate`. Fires `on_message` with content containing `"\ud800"` and asserts the published `payload.text` is JSON-safe. |
