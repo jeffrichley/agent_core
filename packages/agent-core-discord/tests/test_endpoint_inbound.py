@@ -1058,3 +1058,36 @@ async def test_on_raw_poll_vote_add_passes_allowlisted_channel(monkeypatch, tmp_
         assert handle.published[0].payload.type == "discord.poll_vote_add"
     finally:
         await ep.stop()
+
+
+@pytest.mark.asyncio
+async def test_on_message_sanitizes_lone_surrogate(monkeypatch):
+    """Inbound Discord message content containing a lone UTF-16 surrogate must
+    be delivered as a sanitized envelope whose payload.text is valid JSON and
+    valid UTF-8 — no lone surrogate code units must propagate into the bus.
+
+    Regression guard for issue #211: Pepper's session was bricked when a
+    flag emoji relayed from Discord introduced a lone high surrogate into the
+    conversation transcript, causing every subsequent API request (and
+    /compact) to be rejected with a 400 JSON-parse error.
+    """
+    import json as _json
+
+    ep, handle, fake = await _start_endpoint(monkeypatch)
+    fake.add_channel(FakeChannel(id="200"))
+    # Build a lone high surrogate programmatically (do not paste raw emoji).
+    lone_surrogate = "\ud800"
+    msg = _msg(id="m-surr", channel_id="200", content=f"hello {lone_surrogate} world")
+    msg.channel = fake.get_channel("200")
+    try:
+        await fake.fire("on_message", msg)
+        assert len(handle.published) == 1
+        text = handle.published[0].payload.text
+        # Must not contain any lone surrogate code unit.
+        assert "\ud800" not in text
+        # Must be JSON-serialisable without error.
+        _json.dumps(text)
+        # Must encode to UTF-8 without error.
+        text.encode("utf-8")
+    finally:
+        await ep.stop()
