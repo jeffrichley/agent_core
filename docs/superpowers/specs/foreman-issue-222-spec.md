@@ -40,7 +40,7 @@ The Discord adapter's `deliver()` (line 743 in `packages/agent-core-discord/src/
 
 2. **Update `test_reply_publishes_and_acks_atomically` in `packages/core/tests/test_claude_code_mcp_consume_reply.py` and add a new regression test.**  
    - Line 222: change `{"discord": {"channel_id": "C1", "guild_id": "G1"}}` → `{"discord": {"channel_id": "C1"}}`.
-   - Add `test_reply_strips_discord_inbound_only_keys` that builds an inbound with all five inbound-only keys plus `channel_id` in `metadata.discord`, calls `reply()`, and asserts the outbound `metadata.discord` contains only `channel_id`.
+   - Add `test_reply_strips_discord_inbound_only_keys` that builds an inbound with all five inbound-only keys plus `channel_id` in `metadata.discord` **and a non-discord top-level key** (e.g. `trace_id="T1"`) in `metadata`, calls `reply()`, and asserts (a) the outbound `metadata.discord` contains only `channel_id` and (b) `out.metadata["trace_id"] == "T1"` (i.e. the non-discord key was preserved unchanged). This dual assertion covers both AC 1/2 (inbound-only discord keys are stripped) and AC 3 (the fix does not broaden beyond the `discord` sub-dict).
 
 3. **Change Unrecognized-shape ack urgency from `"yellow"` to `"red"` in `packages/agent-core-discord/src/agent_core_discord/endpoint.py`.**  
    Line 743: `await self._reply(envelope, note, urgency="yellow")` → `urgency="red"`. No other changes to `deliver()`.
