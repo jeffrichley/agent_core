@@ -2553,12 +2553,12 @@ async def test_unrecognized_field_produces_failed_delivery_ack(monkeypatch):
             "validator failed to gate: dispatch reached the Discord client"
         )
 
-        # (b) Yellow Ack with right in_reply_to and the unrecognized field
+        # (b) Red Ack with right in_reply_to and the unrecognized field
         # named in the note.
         acks = [e for e in handle.published if e.kind == "Acknowledgment"]
         assert acks, "no Acknowledgment was published"
         ack = acks[-1]
-        assert ack.urgency == "yellow"
+        assert ack.urgency == "red"
         assert ack.in_reply_to == original_id
         assert "metadata.discord.mystery_field" in ack.payload.note
         assert "discord_send" in ack.payload.note
@@ -2771,7 +2771,7 @@ async def test_multi_field_unrecognized_produces_one_ack_listing_all_fields(
         acks = [e for e in handle.published if e.kind == "Acknowledgment"]
         assert len(acks) == 1
         ack = acks[-1]
-        assert ack.urgency == "yellow"
+        assert ack.urgency == "red"
         assert "metadata.discord.mystery_one" in ack.payload.note
         assert "metadata.discord.mystery_two" in ack.payload.note
     finally:

@@ -49,6 +49,14 @@ if TYPE_CHECKING:
 log = logging.getLogger(__name__)
 _META_KEY_RE = re.compile(r"^[A-Za-z0-9_]+$")
 
+# Inbound-only Discord metadata fields that must be stripped from reply() outbounds.
+# The Discord adapter's outbound validator only accepts channel_id (and a small set
+# of canonical send args); these five fields are receive-side only and fail
+# shape validation on TextMessage, producing a silent-drop Acknowledgment (issue #222).
+_DISCORD_INBOUND_ONLY_KEYS: frozenset[str] = frozenset(
+    {"author_display_name", "author_id", "guild_id", "is_bot", "is_dm"}
+)
+
 # Missing-ack timers and registry TTL must stay bounded (YAML / metadata cannot DoS the loop).
 _MISSING_ACK_DELAY_MAX_SECONDS = 86400.0  # 24 hours
 _OUTBOUND_REGISTRY_TTL_MIN_SECONDS = 1.0
@@ -1058,6 +1066,14 @@ class ClaudeCodeMCPEndpoint:
 
             out_urgency: str = inbound_urgency if urgency == "auto" else urgency
             out_metadata = {**inbound_metadata, **(metadata or {})}
+            discord_meta = out_metadata.get("discord")
+            if isinstance(discord_meta, dict) and (discord_meta.keys() & _DISCORD_INBOUND_ONLY_KEYS):
+                out_metadata = {
+                    **out_metadata,
+                    "discord": {
+                        k: v for k, v in discord_meta.items() if k not in _DISCORD_INBOUND_ONLY_KEYS
+                    },
+                }
 
             env = Envelope(
                 id=uuid.uuid4().hex,

@@ -219,7 +219,7 @@ async def test_reply_publishes_and_acks_atomically() -> None:
         assert out.in_reply_to == "in-1"
         assert out.to == "discord-pepper"
         assert out.kind == "TextMessage"
-        assert out.metadata == {"discord": {"channel_id": "C1", "guild_id": "G1"}}
+        assert out.metadata == {"discord": {"channel_id": "C1"}}
         # urgency default is green (does NOT inherit inbound urgency)
         assert out.urgency == "green"
         assert out.correlation_id == inbound.correlation_id
@@ -519,5 +519,50 @@ async def test_auto_cleared_ack_does_not_populate_recent_inbounds() -> None:
         )
         await ep.deliver(ack)
         assert "ack-x" not in ep._recent_inbounds
+    finally:
+        await ep.stop()
+
+
+@pytest.mark.asyncio
+async def test_reply_strips_discord_inbound_only_keys() -> None:
+    """reply() must strip inbound-only Discord metadata keys (guild_id,
+    author_id, author_display_name, is_bot, is_dm) from the outbound
+    envelope and must NOT disturb non-discord top-level metadata keys."""
+    ep = ClaudeCodeMCPEndpoint(name="agent", mount="/mcp/agent")
+    handle = _RecordingHandle()
+    await ep.start(handle)  # type: ignore[arg-type]
+    try:
+        inbound = _inbound_text(
+            "in-discord",
+            from_="discord-wren",
+            metadata={
+                "discord": {
+                    "channel_id": "C99",
+                    "guild_id": "G1",
+                    "author_id": "A1",
+                    "author_display_name": "Wren",
+                    "is_bot": False,
+                    "is_dm": False,
+                },
+                "trace_id": "T1",
+            },
+        )
+        ep.queue_for_pickup(inbound)
+
+        async with Client(ep._mcp) as client:
+            await client.call_tool(
+                "reply",
+                {
+                    "in_reply_to": "in-discord",
+                    "payload": {"kind": "TextMessage", "text": "pong"},
+                },
+            )
+
+        assert len(handle.published) == 1
+        out = handle.published[0]
+        # (a) Inbound-only Discord keys are stripped; channel_id is preserved.
+        assert out.metadata["discord"] == {"channel_id": "C99"}
+        # (b) Non-discord top-level keys are preserved unchanged.
+        assert out.metadata["trace_id"] == "T1"
     finally:
         await ep.stop()
