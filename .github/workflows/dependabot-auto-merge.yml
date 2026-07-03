@@ -1,0 +1,33 @@
+name: Dependabot auto-merge
+
+# Auto-merges Dependabot PRs that are patch or minor once all required checks
+# pass. Majors are skipped on purpose so a human reviews them.
+#
+# Safety: `gh pr merge --auto` respects branch protection — it only merges once
+# the repo's REQUIRED status checks are green. This repo's ruleset requires the
+# CI checks, so a red build can never auto-merge.
+
+on: pull_request
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  auto-merge:
+    runs-on: ubuntu-latest
+    # Only ever act on Dependabot's own PRs.
+    if: github.actor == 'dependabot[bot]'
+    steps:
+      - name: Fetch Dependabot metadata
+        id: meta
+        uses: dependabot/fetch-metadata@v3
+
+      - name: Enable auto-merge for patch & minor
+        if: >-
+          steps.meta.outputs.update-type == 'version-update:semver-patch' ||
+          steps.meta.outputs.update-type == 'version-update:semver-minor'
+        run: gh pr merge --auto --squash "$PR_URL"
+        env:
+          PR_URL: ${{ github.event.pull_request.html_url }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}

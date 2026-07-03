@@ -740,7 +740,7 @@ class DiscordEndpoint:
                         f"{envelope.kind}. Canonical: "
                         f"{validation.canonical_equivalent}"
                     )
-                await self._reply(envelope, note, urgency="yellow")
+                await self._reply(envelope, note, urgency="red")
                 await self._handle.ack(envelope.id)
                 return
             if isinstance(validation, Recognized) and validation.deprecation_log_line:

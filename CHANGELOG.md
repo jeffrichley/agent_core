@@ -8,6 +8,25 @@ This project uses [*towncrier*](https://towncrier.readthedocs.io/); unreleased c
 
 <!-- towncrier release notes start -->
 
+## [0.7.0](https://github.com/jeffrichley/agent_core/compare/v0.6.1...v0.7.0) (2026-07-02)
+
+
+### Features
+
+* **discord:** hot-reload access_config_path on mtime change ([#217](https://github.com/jeffrichley/agent_core/issues/217)) ([cc55ab8](https://github.com/jeffrichley/agent_core/commit/cc55ab8790720d6af68a0805484e6c4d0b28c516))
+* **discord:** scrub lone UTF-16 surrogates at inbound boundary ([#215](https://github.com/jeffrichley/agent_core/issues/215)) ([80229ec](https://github.com/jeffrichley/agent_core/commit/80229ec57835e3c770b11b7ab2de749a9b36bab5))
+* **inbound:** inbound notifications v1.a — GitHub → Wren via Tailscale Funnel ([#196](https://github.com/jeffrichley/agent_core/issues/196)) ([d180b73](https://github.com/jeffrichley/agent_core/commit/d180b73fe8981bc8cc7add7342800a3a8291d23d))
+* **inbound:** v2 — schema-flexible GitHub event matching ([#199](https://github.com/jeffrichley/agent_core/issues/199)) ([a178628](https://github.com/jeffrichley/agent_core/commit/a1786282dde9cdfd493312468f9a533b9568945d))
+* **inbound:** v2.1 connector-default body projection for Notification envelopes ([#204](https://github.com/jeffrichley/agent_core/issues/204)) ([d29f830](https://github.com/jeffrichley/agent_core/commit/d29f8309b728ae459b5f982e95e7a5b98fa17ea6))
+
+
+### Bug Fixes
+
+* **discord-access:** allowlisted bots must still pass channel filter ([#167](https://github.com/jeffrichley/agent_core/issues/167)) ([4acf307](https://github.com/jeffrichley/agent_core/commit/4acf30763357025e7f8e985eab820b5a7d9a5680)), closes [#165](https://github.com/jeffrichley/agent_core/issues/165)
+* **discord-endpoint:** gate reaction/edit/delete/poll-vote by channel allowlist ([#209](https://github.com/jeffrichley/agent_core/issues/209)) ([a79bd68](https://github.com/jeffrichley/agent_core/commit/a79bd68749b09f8278cf68daee3a4d1ca94440c6))
+* **discord:** gate meta-event handlers on channel allowlist ([#210](https://github.com/jeffrichley/agent_core/issues/210)) ([2ec23c4](https://github.com/jeffrichley/agent_core/commit/2ec23c4a9e32cd214a7f977a23f5ab2c1dc3c89c))
+* **reply:** strip inbound-only Discord metadata keys in reply() and escalate Unrecognized-shape ack urgency ([#224](https://github.com/jeffrichley/agent_core/issues/224)) ([ca550c5](https://github.com/jeffrichley/agent_core/commit/ca550c5691b4a3228d0b57f46bff474cd543b143))
+
 ## [0.6.1](https://github.com/jeffrichley/agent_core/compare/v0.6.0...v0.6.1) (2026-06-07)
 
 
