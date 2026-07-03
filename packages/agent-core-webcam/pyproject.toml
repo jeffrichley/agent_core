@@ -7,7 +7,7 @@ requires-python = ">=3.12"
 dependencies = [
     "agent-core",
     "fastmcp>=2.0",
-    "opencv-python>=4.10",
+    "opencv-python>=5.0.0.93",
     "pluggy>=1.6",
     "pydantic>=2.7",
 ]
