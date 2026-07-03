@@ -8,7 +8,6 @@
   "timezone": "America/New_York",
   "schedule": ["before 6am on monday"],
   "labels": ["dependencies"],
-  "comment": "platformAutomerge:false makes Renovate gate merges on CI itself (it waits for the PR's tests to pass) instead of relying on GitHub branch protection. That lets safe auto-merge work on private repos WITHOUT GitHub Pro.",
   "platformAutomerge": false,
   "packageRules": [
     {
