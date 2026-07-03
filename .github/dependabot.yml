@@ -1,0 +1,33 @@
+# Dependabot: keep Python deps and GitHub Actions up to date.
+# https://docs.github.com/en/code-security/dependabot
+#
+# Grouping: all minor + patch bumps collapse into ONE PR per ecosystem per
+# week, so the queue stays small. Majors are deliberately NOT grouped, so they
+# arrive as their own PR and get human review (a major can break at runtime
+# even when CI is green).
+#
+# The pip ecosystem reads pyproject.toml; after a bump merges, uv.lock is
+# refreshed by CI / `uv lock`.
+version: 2
+updates:
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    commit-message:
+      prefix: "ci"
+    groups:
+      github-actions:
+        # Action bumps are low-risk; group everything including majors.
+        update-types: ["minor", "patch", "major"]
+
+  - package-ecosystem: "pip"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    commit-message:
+      prefix: "build"
+    groups:
+      python-minor-patch:
+        update-types: ["minor", "patch"]
+      # Majors are intentionally left ungrouped -> individual PRs for review.
