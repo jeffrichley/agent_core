@@ -6,7 +6,7 @@ license = "MIT"
 requires-python = ">=3.12"
 dependencies = [
     "agent-core",
-    "fastmcp>=2.0",
+    "fastmcp>=3.4.2",
     "madrigal >= 0.2.0",
     "pluggy>=1.6",
     "soundfile>=0.13",

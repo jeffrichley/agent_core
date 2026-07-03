@@ -9,7 +9,7 @@ dependencies = [
     "fastmcp>=2.0",
     "opencv-python>=5.0.0.93",
     "pluggy>=1.6",
-    "pydantic>=2.7",
+    "pydantic>=2.13.4",
 ]
 
 [project.entry-points."agent_core"]

@@ -6,7 +6,7 @@ license = "MIT"
 requires-python = ">=3.12"
 dependencies = [
     "desktop-notifier>=5.0",
-    "mcp>=1.9.0",
+    "mcp>=1.28.1",
 ]
 
 [project.scripts]
