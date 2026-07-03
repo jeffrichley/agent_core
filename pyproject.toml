@@ -46,7 +46,7 @@ dev = [
     "freezegun>=1.5",
     "ruff>=0.14",
     "mypy>=1.11",
-    "types-PyYAML>=6.0",
+    "types-PyYAML>=6.0.12.20260518",
     "types-psutil>=7.0.0.20251001",
     "import-linter>=2.0",
 ]
