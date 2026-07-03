@@ -6,6 +6,8 @@
 [![Checked with mypy](https://www.mypy-lang.org/static/mypy_badge.svg)](https://mypy-lang.org/)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 [![Python 3.12+](https://img.shields.io/badge/python-3.12+-blue.svg)](https://www.python.org)
+[![Renovate enabled](https://img.shields.io/badge/renovate-enabled-brightgreen.svg)](https://renovatebot.com)
+[![built by agent beings](https://img.shields.io/badge/built%20by-agent%20beings%20%F0%9F%AA%B6-8A2BE2.svg)](#)
 
 Core infrastructure for AI agents. Consolidates memory, knowledge compilation, and shared tooling.
 
