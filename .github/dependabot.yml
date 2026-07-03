@@ -6,8 +6,10 @@
 # arrive as their own PR and get human review (a major can break at runtime
 # even when CI is green).
 #
-# The pip ecosystem reads pyproject.toml; after a bump merges, uv.lock is
-# refreshed by CI / `uv lock`.
+# Uses the `uv` ecosystem (not `pip`): this repo is a uv workspace, so uv.lock
+# is the source of truth. The uv ecosystem bumps pyproject.toml AND uv.lock
+# together, keeping the lockfile consistent (pip bumps pyproject only, which
+# breaks `uv` on lock-consistency checks).
 version: 2
 updates:
   - package-ecosystem: "github-actions"
@@ -21,7 +23,7 @@ updates:
         # Action bumps are low-risk; group everything including majors.
         update-types: ["minor", "patch", "major"]
 
-  - package-ecosystem: "pip"
+  - package-ecosystem: "uv"
     directory: "/"
     schedule:
       interval: "weekly"
