@@ -1,5 +1,12 @@
 # agent_core
 
+[![CI](https://github.com/jeffrichley/agent_core/actions/workflows/ci.yml/badge.svg)](https://github.com/jeffrichley/agent_core/actions/workflows/ci.yml)
+[![codecov](https://codecov.io/gh/jeffrichley/agent_core/branch/main/graph/badge.svg)](https://codecov.io/gh/jeffrichley/agent_core)
+[![Ruff](https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/astral-sh/ruff/main/assets/badge/v2.json)](https://github.com/astral-sh/ruff)
+[![Checked with mypy](https://www.mypy-lang.org/static/mypy_badge.svg)](https://mypy-lang.org/)
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+[![Python 3.12+](https://img.shields.io/badge/python-3.12+-blue.svg)](https://www.python.org)
+
 Core infrastructure for AI agents. Consolidates memory, knowledge compilation, and shared tooling.
 
 ## Setup
