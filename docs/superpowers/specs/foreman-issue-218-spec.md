@@ -6,7 +6,7 @@
 
 ## Acceptance criteria
 
-- A schema-valid-JSON-but-invalid-`AccessConfig` file (e.g. `{"channels": 5}`) written while the loop is running → the loop logs `WARNING`, keeps `self._access` unchanged, does **not** update `self._access_config_mtime` (so it retries next cycle), and the task remains alive. A new test covers all three behaviours.
+- A schema-valid-JSON-but-invalid-`AccessConfig` file (e.g. `{"channels": 5}`) written while the loop is running → the loop logs `WARNING`, keeps `self._access` unchanged, does **not** update `self._access_config_mtime` (so it retries next cycle), the task remains alive, and **recovers on the next valid write**. New tests cover all four behaviours: warning logged, config unchanged, task alive, and recovery.
 - The existing 7 tests in `test_access_reload.py` still pass unchanged.
 - There is **no second filesystem read** between validation and commit: the `AccessConfig` is built from the already-read `raw_text`, not via a second `load_access_config(path)` call.
 - `new_failures_count == 0`; `just check` passes green.
@@ -33,13 +33,13 @@ The `_attachment_sweep_loop` (lines 1560–1573) already uses `except Exception:
 ## Sub-requests (topologically sorted)
 
 1. **Extract `_build_access_config` in `packages/agent-core-discord/src/agent_core_discord/access.py`.**  
-   After line 23 (`_VALID_DM_POLICIES = ...`), add the new private helper. Then collapse `load_access_config` to call it. See "File-level changes" for the exact signatures.
+   After line 24 (`_VALID_DM_POLICIES = ...`), add the new private helper. Then collapse `load_access_config` to call it. See "File-level changes" for the exact signatures.
 
 2. **Update `_access_config_reload_loop` in `packages/agent-core-discord/src/agent_core_discord/endpoint.py`.**  
    Replace lines 1537–1556 (the pre-validate + `load_access_config` call through the closing `)` of the current `log.info` block) with a single-read + `_build_access_config` call inside `except Exception`. Also add `_build_access_config` to the `from agent_core_discord.access import ...` line (line 38).
 
 3. **Add new tests to `packages/agent-core-discord/tests/test_access_reload.py`.**  
-   Two new tests mirroring the existing malformed-JSON split: one that asserts config unchanged + task alive, one that asserts a warning was emitted. See "File-level changes" for exact test code.
+   Three new tests: one that asserts config unchanged + task alive, one that asserts a warning was emitted, and one that asserts the loop recovers (picks up a subsequent valid write) — mirroring the pattern in `test_access_reload_picks_up_added_channel`. See "File-level changes" for exact test code.
 
 ## File-level changes
 
@@ -47,7 +47,7 @@ The `_attachment_sweep_loop` (lines 1560–1573) already uses `except Exception:
 |---|---|
 | `packages/agent-core-discord/src/agent_core_discord/access.py` | **Modify.** Add `_build_access_config(raw, source)` private helper (extracts lines 61–88 of current `load_access_config`). Refactor `load_access_config` to delegate to it. |
 | `packages/agent-core-discord/src/agent_core_discord/endpoint.py` | **Modify.** Add `_build_access_config` to the `access` import. Replace the inner try/except block in `_access_config_reload_loop` (lines 1537–1556) with single-read + `_build_access_config` + `except Exception`. |
-| `packages/agent-core-discord/tests/test_access_reload.py` | **Modify.** Add `test_access_reload_keeps_config_on_schema_invalid_json` and `test_access_reload_warns_on_schema_invalid_json`. |
+| `packages/agent-core-discord/tests/test_access_reload.py` | **Modify.** Add `test_access_reload_keeps_config_on_schema_invalid_json`, `test_access_reload_warns_on_schema_invalid_json`, and `test_access_reload_recovers_after_schema_invalid_json`. |
 
 ### Exact code the Worker should write
 
@@ -130,7 +130,7 @@ from agent_core_discord.access import AccessConfig, InboundContext, _build_acces
                 )
 ```
 
-**`test_access_reload.py` — two new tests (append at end of file):**
+**`test_access_reload.py` — three new tests (append at end of file):**
 
 ```python
 @pytest.mark.asyncio
@@ -162,6 +162,24 @@ async def test_access_reload_warns_on_schema_invalid_json(monkeypatch, tmp_path,
         with caplog.at_level(logging.WARNING):
             await asyncio.sleep(0.05 + 0.1)
         assert any("access config reload" in rec.message for rec in caplog.records)
+    finally:
+        await ep.stop()
+
+
+@pytest.mark.asyncio
+async def test_access_reload_recovers_after_schema_invalid_json(monkeypatch, tmp_path):
+    """Loop recovers and picks up a subsequent valid write after a schema-invalid file."""
+    initial = {"channels": {"100": {}}}
+    ep, p = await _start(monkeypatch, tmp_path, path_json=initial)
+    try:
+        # Write schema-invalid JSON (valid JSON, but channels must be a dict)
+        p.write_text(json.dumps({"channels": 5}), encoding="utf-8")
+        await asyncio.sleep(0.05 + 0.1)
+        # Now write a valid config — loop must NOT have poisoned the mtime on error
+        p.write_text(json.dumps({"channels": {"200": {}}}), encoding="utf-8")
+        await asyncio.sleep(0.05 + 0.1)
+        # Recovery: new channel picked up
+        assert "200" in ep._access.channels
     finally:
         await ep.stop()
 ```
