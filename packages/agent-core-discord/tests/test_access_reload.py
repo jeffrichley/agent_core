@@ -108,3 +108,54 @@ async def test_access_reload_task_cancelled_on_stop(monkeypatch, tmp_path):
     assert ep._access_reload_task is not None
     await ep.stop()
     assert ep._access_reload_task is None
+
+
+@pytest.mark.asyncio
+async def test_access_reload_keeps_config_on_schema_invalid_json(monkeypatch, tmp_path):
+    """Valid JSON but invalid AccessConfig schema keeps previous config and task alive."""
+    initial = {"channels": {"100": {}}}
+    ep, p = await _start(monkeypatch, tmp_path, path_json=initial)
+    try:
+        original_channels = dict(ep._access.channels)
+        # "channels" is an int: valid JSON, invalid for AccessConfig (dict(...) raises TypeError)
+        p.write_text(json.dumps({"channels": 5}), encoding="utf-8")
+        await asyncio.sleep(0.05 + 0.1)
+        # Config unchanged
+        assert ep._access.channels == original_channels
+        # Task still alive — the loop was NOT killed
+        assert ep._access_reload_task is not None
+        assert not ep._access_reload_task.done()
+    finally:
+        await ep.stop()
+
+
+@pytest.mark.asyncio
+async def test_access_reload_warns_on_schema_invalid_json(monkeypatch, tmp_path, caplog):
+    """Valid JSON but invalid AccessConfig schema emits a WARNING log."""
+    initial = {"channels": {"100": {}}}
+    ep, p = await _start(monkeypatch, tmp_path, path_json=initial)
+    try:
+        p.write_text(json.dumps({"channels": 5}), encoding="utf-8")
+        with caplog.at_level(logging.WARNING):
+            await asyncio.sleep(0.05 + 0.1)
+        assert any("access config reload" in rec.message for rec in caplog.records)
+    finally:
+        await ep.stop()
+
+
+@pytest.mark.asyncio
+async def test_access_reload_recovers_after_schema_invalid_json(monkeypatch, tmp_path):
+    """Loop recovers and picks up a subsequent valid write after a schema-invalid file."""
+    initial = {"channels": {"100": {}}}
+    ep, p = await _start(monkeypatch, tmp_path, path_json=initial)
+    try:
+        # Write schema-invalid JSON (valid JSON, but channels must be a dict)
+        p.write_text(json.dumps({"channels": 5}), encoding="utf-8")
+        await asyncio.sleep(0.05 + 0.1)
+        # Now write a valid config — loop must NOT have poisoned the mtime on error
+        p.write_text(json.dumps({"channels": {"200": {}}}), encoding="utf-8")
+        await asyncio.sleep(0.05 + 0.1)
+        # Recovery: new channel picked up
+        assert "200" in ep._access.channels
+    finally:
+        await ep.stop()

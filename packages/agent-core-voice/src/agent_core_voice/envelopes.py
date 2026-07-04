@@ -22,6 +22,8 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator
 _TIMEOUT_S_CAP = 600.0
 _RETAIN_S_CAP = 86400.0
 
+AudioFormat = Literal["wav", "mp3", "ogg"]
+
 
 class SynthesisRequestPayload(BaseModel):
     model_config = ConfigDict(extra="forbid")
@@ -29,6 +31,7 @@ class SynthesisRequestPayload(BaseModel):
     timeout_s: float | None = Field(default=None, gt=0)
     retain_s: float | None = Field(default=None, gt=0)
     options: dict[str, Any] | None = None
+    format: AudioFormat = "wav"
 
     @field_validator("timeout_s")
     @classmethod
@@ -74,6 +77,7 @@ class SynthesisFailedPayload(BaseModel):
 
 
 __all__ = [
+    "AudioFormat",
     "FailureReason",
     "SynthesisFailedPayload",
     "SynthesisReadyPayload",

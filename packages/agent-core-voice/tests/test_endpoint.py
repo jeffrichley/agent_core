@@ -256,6 +256,119 @@ async def test_synthesize_safe_swallows_wav_decode_error(tmp_path: Path, ref_wav
     assert "not prepared" not in msg
 
 
+@pytest.mark.asyncio
+async def test_handle_synthesis_request_ogg_writes_ogg_file(
+    tmp_path: Path, ref_wav: Path
+) -> None:
+    """A SynthesisRequest with format='ogg' results in a .ogg file on disk."""
+    import asyncio
+    import uuid
+
+    from agent_core.bus.envelope import Envelope, EventPayload
+    from agent_core_voice.envelopes import SynthesisReadyPayload, SynthesisRequestPayload
+
+    class _CapturingHandle:
+        def __init__(self) -> None:
+            self.published: list[Any] = []
+
+        async def ack(self, env_id: str) -> None:
+            pass
+
+        async def publish(self, env: Any, to: Any = None) -> None:
+            self.published.append(env)
+
+    ep = VoiceEndpoint.for_test(
+        backend=FakeTTSBackend(),
+        voices={"alice": VoiceInfo(voice_id="alice", ref_wav=ref_wav, ref_text="r")},
+        output_dir=tmp_path / "out",
+        audit_path=tmp_path / "audit.jsonl",
+    )
+    handle = _CapturingHandle()
+    ep._handle = handle  # type: ignore[assignment]
+    ep.register_agent("alice", "alice")
+
+    env_id = str(uuid.uuid4())
+    req_payload = SynthesisRequestPayload(text="hello ogg world", format="ogg")
+    env = Envelope(
+        id=env_id,
+        correlation_id=env_id,
+        to="voice_test",
+        from_="alice",
+        kind="Event",
+        payload=EventPayload(type="SynthesisRequest", data=req_payload.model_dump()),
+        created_at=__import__("datetime").datetime.now(__import__("datetime").timezone.utc),
+    )
+
+    await ep._handle_synthesis_request(env, req_payload)
+
+    # One SynthesisReady envelope published.
+    assert len(handle.published) == 1
+    ready = handle.published[0]
+    assert ready.payload.type == "SynthesisReady"
+
+    ready_payload = SynthesisReadyPayload.model_validate(ready.payload.data)
+    audio_path = Path(ready_payload.wav_path)
+    assert audio_path.exists()
+    assert audio_path.suffix == ".ogg"
+
+
+@pytest.mark.asyncio
+async def test_handle_synthesis_request_transcode_failure_publishes_failed(
+    tmp_path: Path, ref_wav: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A RuntimeError from transcode_audio is caught and publishes SynthesisFailed."""
+    import uuid
+
+    from agent_core.bus.envelope import Envelope, EventPayload
+    from agent_core_voice.envelopes import SynthesisFailedPayload, SynthesisRequestPayload
+
+    monkeypatch.setattr(
+        "agent_core_voice.endpoint.transcode_audio",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(RuntimeError("transcode boom")),
+    )
+
+    class _CapturingHandle:
+        def __init__(self) -> None:
+            self.published: list[Any] = []
+
+        async def ack(self, env_id: str) -> None:
+            pass
+
+        async def publish(self, env: Any, to: Any = None) -> None:
+            self.published.append(env)
+
+    ep = VoiceEndpoint.for_test(
+        backend=FakeTTSBackend(),
+        voices={"alice": VoiceInfo(voice_id="alice", ref_wav=ref_wav, ref_text="r")},
+        output_dir=tmp_path / "out",
+        audit_path=tmp_path / "audit.jsonl",
+    )
+    handle = _CapturingHandle()
+    ep._handle = handle  # type: ignore[assignment]
+    ep.register_agent("alice", "alice")
+
+    env_id = str(uuid.uuid4())
+    req_payload = SynthesisRequestPayload(text="test", format="mp3")
+    env = Envelope(
+        id=env_id,
+        correlation_id=env_id,
+        to="voice_test",
+        from_="alice",
+        kind="Event",
+        payload=EventPayload(type="SynthesisRequest", data=req_payload.model_dump()),
+        created_at=__import__("datetime").datetime.now(__import__("datetime").timezone.utc),
+    )
+
+    await ep._handle_synthesis_request(env, req_payload)
+
+    assert len(handle.published) == 1
+    failed = handle.published[0]
+    assert failed.payload.type == "SynthesisFailed"
+    failed_payload = SynthesisFailedPayload.model_validate(failed.payload.data)
+    assert failed_payload.reason == "INTERNAL_ERROR"
+    assert failed_payload.retryable is False
+
+
 def test_production_wiring_constructs_madrigal_qwen_backend(
     tmp_path: Path, ref_wav: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
