@@ -35,7 +35,7 @@ from agent_core.bus.envelope import (
     TextMessagePayload,
 )
 from agent_core.bus.protocol import EndpointUnavailable
-from agent_core_discord.access import AccessConfig, InboundContext, gate_message, load_access_config
+from agent_core_discord.access import AccessConfig, InboundContext, _build_access_config, gate_message, load_access_config
 from agent_core_discord.args import (
     _CancelScheduledEventArgs,
     _CreatePollArgs,
@@ -1533,19 +1533,20 @@ class DiscordEndpoint:
                     continue
                 if current_mtime == self._access_config_mtime:
                     continue
-                # File changed (mtime or size differs) — pre-validate before committing
+                # File changed — parse once; any error keeps previous config and retries.
                 try:
                     raw_text = self.access_config_path.read_text(encoding="utf-8")
-                    json.loads(raw_text)
-                except (OSError, json.JSONDecodeError) as exc:
+                    new_access = _build_access_config(
+                        json.loads(raw_text), str(self.access_config_path)
+                    )
+                except Exception as exc:
                     log.warning(
-                        "discord(%s): access config reload skipped (read/parse error), "
+                        "discord(%s): access config reload skipped (read/parse/schema error), "
                         "keeping previous config: %s",
                         self.name,
                         exc,
                     )
                     continue
-                new_access = load_access_config(self.access_config_path)
                 self._access = new_access
                 self._access_config_mtime = current_mtime
                 log.info(
