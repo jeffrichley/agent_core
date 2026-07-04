@@ -48,9 +48,9 @@ When an inbound Discord message carries a voice-message (or any audio) attachmen
 
    (a) **Amend the initial attachment-collection loop** (the existing loop that captures `filename`, `url`, `content_type`, `size_bytes` from each `discord.Attachment`) to also capture `"duration_secs": getattr(att, "duration_secs", None)` into each entry dict. This makes the real Discord attachment's `duration_secs` field available to the transcription pass.
 
-   (b) **Add a transcription pass** after the existing `for entry in attachments:` loop that populates `local_path`: for each entry whose `content_type` starts with `"audio/"` and `local_path` is not None, first check the duration gate — if `entry.get("duration_secs")` is not None and exceeds `self.transcribe_max_duration_secs`, set `entry["transcription_error"] = f"audio too long ({entry['duration_secs']:.0f}s)"` and `continue`. Otherwise call `await self._transcribe_audio(Path(entry["local_path"]))` and store the result in `entry["transcription"]` (or `entry["transcription_error"]` on any other exception). Then, collect all `entry["transcription"]` values and append them to `text` before `Envelope(...)` construction.
+   (b) **Add a transcription pass** after the existing `for entry in attachments:` loop that populates `local_path`: first, if `not self.transcribe_voice`, skip the entire transcription pass (do nothing and proceed directly to `Envelope(...)` construction). Otherwise, for each entry whose `content_type` starts with `"audio/"` and `local_path` is not None, first check the duration gate — if `entry.get("duration_secs")` is not None and exceeds `self.transcribe_max_duration_secs`, set `entry["transcription_error"] = f"audio too long ({entry['duration_secs']:.0f}s)"` and `continue`. Otherwise call `await self._transcribe_audio(Path(entry["local_path"]))` and store the result in `entry["transcription"]` (or `entry["transcription_error"]` on any other exception). Then, collect all `entry["transcription"]` values and append them to `text` before `Envelope(...)` construction.
 
-6. **Add `packages/agent-core-discord/tests/test_voice_transcription.py`.** Tests: happy path (transcription in payload.text and metadata), no-faster-whisper fallback, transcription exception → error marker, too-long audio → skip, non-audio attachment unchanged, warm-model reuse (model loaded once across two calls).
+6. **Add `packages/agent-core-discord/tests/test_voice_transcription.py`.** Tests: happy path (transcription in payload.text and metadata), no-faster-whisper fallback, transcription exception → error marker, too-long audio → skip, non-audio attachment unchanged, warm-model reuse (model loaded once across two calls), and `transcribe_voice=False` → audio attachment present, no transcription attempted, `transcription` key absent from attachment metadata.
 
 ## File-level changes
 
@@ -59,7 +59,7 @@ When an inbound Discord message carries a voice-message (or any audio) attachmen
 | `packages/agent-core-discord/src/agent_core_discord/testing/fakes.py` | Add `duration_secs: float \| None = None` to `FakeAttachment.__init__` |
 | `packages/agent-core-discord/pyproject.toml` | Add `[project.optional-dependencies]` with `voice = ["faster-whisper>=1.1"]` |
 | `packages/agent-core-discord/src/agent_core_discord/endpoint.py` | Add 3 init params + `_transcription_model` field; add `_transcribe_audio_sync()` + `_transcribe_audio()`; wire transcription into attachment loop in `_make_on_message_handler` |
-| `packages/agent-core-discord/tests/test_voice_transcription.py` | **New.** 6 test cases covering: happy path, no-faster-whisper, transcription exception, too-long audio, non-audio unchanged, warm-model reuse |
+| `packages/agent-core-discord/tests/test_voice_transcription.py` | **New.** 7 test cases covering: happy path, no-faster-whisper, transcription exception, too-long audio, non-audio unchanged, warm-model reuse, `transcribe_voice=False` |
 
 ## Alternatives considered
 
