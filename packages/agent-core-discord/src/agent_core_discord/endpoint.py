@@ -257,6 +257,9 @@ class DiscordEndpoint:
         attachment_retention_days: int = 30,
         attachment_max_total_bytes: int = 1_073_741_824,
         attachment_sweep_seconds: float = 3600.0,
+        transcribe_voice: bool = True,
+        whisper_model: str = "base",
+        transcribe_max_duration_secs: float = 300.0,
         recent_inbounds_max: int = 5000,
         recent_inbounds_ttl_seconds: float = 3600.0,
         access_config_reload_interval: float = 5.0,
@@ -281,6 +284,15 @@ class DiscordEndpoint:
         self.attachment_retention_days = attachment_retention_days
         self.attachment_max_total_bytes = attachment_max_total_bytes
         self.attachment_sweep_seconds = attachment_sweep_seconds
+        self.transcribe_voice = transcribe_voice
+        self.whisper_model = whisper_model
+        self.transcribe_max_duration_secs = transcribe_max_duration_secs
+        # Lazy-loaded WhisperModel cache. None until the first voice message
+        # arrives. Reused for all subsequent transcriptions (warm-model pattern
+        # mirrors _user_display_name_cache: first-miss-then-hit, instance-scoped).
+        # Not pre-loaded at start() to avoid adding startup latency for endpoints
+        # that never see voice messages.
+        self._transcription_model: Any | None = None
         self._client_factory = _client_factory  # test seam
         self._handle: BusHandle | None = None
         self._client: Any = None
@@ -1100,6 +1112,9 @@ class DiscordEndpoint:
                         "url": att.url,
                         "content_type": getattr(att, "content_type", None) or "unknown",
                         "size_bytes": int(getattr(att, "size", 0)),
+                        # duration_secs is set by Discord on voice messages
+                        # (audio/ogg); None for all other attachment types.
+                        "duration_secs": getattr(att, "duration_secs", None),
                     }
                 )
 
@@ -1133,6 +1148,59 @@ class DiscordEndpoint:
                         entry.get("filename"),
                         safe_reason,
                     )
+
+            # 5c. Transcription pass (best-effort, per audio attachment).
+            #     Runs only when transcribe_voice is True. Mirrors the
+            #     download loop discipline: failures add a marker and let
+            #     delivery continue — never block or drop the message.
+            if self.transcribe_voice:
+                for entry in attachments:
+                    ct = entry.get("content_type", "") or ""
+                    if not ct.startswith("audio/"):
+                        continue
+                    if entry.get("local_path") is None:
+                        continue
+                    # Duration gate: skip transcription for very long audio.
+                    dur = entry.get("duration_secs")
+                    if dur is not None and dur > self.transcribe_max_duration_secs:
+                        entry["transcription_error"] = (
+                            f"audio too long ({entry['duration_secs']:.0f}s)"
+                        )
+                        continue
+                    try:
+                        entry["transcription"] = await self._transcribe_audio(
+                            Path(entry["local_path"])
+                        )
+                    except ImportError:
+                        log.warning(
+                            "discord(%s): faster-whisper not installed; "
+                            "skipping voice transcription for %s",
+                            self.name,
+                            entry.get("filename"),
+                        )
+                        entry["transcription_error"] = "faster-whisper not installed"
+                    except Exception as exc:
+                        safe_msg = _redact_url_qs(f"{type(exc).__name__}: {exc}")
+                        entry["transcription_error"] = safe_msg
+                        log.warning(
+                            "discord(%s): transcription failed for %s — %s",
+                            self.name,
+                            entry.get("filename"),
+                            safe_msg,
+                        )
+
+            # Build voice lines from successful transcriptions and append to text.
+            voice_lines = [
+                entry["transcription"]
+                for entry in attachments
+                if "transcription" in entry
+            ]
+            if voice_lines:
+                voice_block = "\n".join(f"[voice: {t}]" for t in voice_lines)
+                if text:
+                    text = f"{text}\n{voice_block}"
+                else:
+                    text = voice_block
 
             metadata: dict[str, Any] = {
                 "discord": {
@@ -2141,6 +2209,46 @@ class DiscordEndpoint:
 
         task.add_done_callback(_done)
         return {"status": "typing_started", "duration_seconds": seconds}
+
+    def _transcribe_audio_sync(self, path: Path) -> str:
+        """Transcribe an audio file synchronously using ``faster-whisper``.
+
+        Lazy-loads ``WhisperModel`` on the first call and caches it at
+        ``self._transcription_model`` for reuse (warm-model pattern). Runs
+        in a thread via :meth:`_transcribe_audio` so the event loop stays
+        responsive during the 3–5 s inference window.
+
+        Failure modes documented per acceptance criteria:
+
+        - **faster-whisper not installed**: raises ``ImportError("faster-whisper
+          not installed")``. The caller in ``_make_on_message_handler`` catches
+          this and sets ``transcription_error``.
+        - **Poor-quality audio**: best-effort transcription — Whisper returns
+          what it can; no ``transcription_error`` raised.
+        - **Non-English audio**: Whisper auto-detects the language; accuracy
+          degrades for non-English speech but no ``transcription_error`` is
+          raised.
+        """
+        try:
+            from faster_whisper import WhisperModel  # type: ignore
+        except ImportError as exc:
+            raise ImportError("faster-whisper not installed") from exc
+
+        if self._transcription_model is None:
+            # Cold-start: model load takes ~0.5–1 s extra on the first call.
+            self._transcription_model = WhisperModel(self.whisper_model, device="cpu")
+
+        segments, _ = self._transcription_model.transcribe(str(path))
+        return " ".join(seg.text.strip() for seg in segments).strip()
+
+    async def _transcribe_audio(self, path: Path) -> str:
+        """Async wrapper: runs :meth:`_transcribe_audio_sync` in the default executor.
+
+        Keeps the event loop responsive while faster-whisper does CPU-bound
+        inference (~3–5 s for 60 s of audio on a modern CPU with the base model).
+        """
+        loop = asyncio.get_running_loop()
+        return await loop.run_in_executor(None, self._transcribe_audio_sync, path)
 
 
 class _ToolError(Exception):

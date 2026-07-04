@@ -94,9 +94,11 @@ class FakeAttachment:
     """Minimal stand-in for discord.Attachment on a fake message.
 
     Mirrors the real fields the endpoint reads: filename, url,
-    content_type, size. Per the test-fakes-mirror-real-strictly
-    discipline — the inbound path does getattr(att, "content_type") and
-    getattr(att, "size"), so the fake must carry them.
+    content_type, size, duration_secs. Per the test-fakes-mirror-real-strictly
+    discipline — the inbound path does getattr(att, "content_type"),
+    getattr(att, "size"), and getattr(att, "duration_secs", None), so the
+    fake must carry them.  ``duration_secs`` is set by Discord on voice
+    messages (``audio/ogg`` attachments) and is ``None`` for other types.
     """
 
     def __init__(
@@ -106,11 +108,13 @@ class FakeAttachment:
         url: str = "",
         content_type: str | None = None,
         size: int = 0,
+        duration_secs: float | None = None,
     ):
         self.filename = filename
         self.url = url
         self.content_type = content_type
         self.size = size
+        self.duration_secs = duration_secs
 
 
 class FakeMessage:

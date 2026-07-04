@@ -47,6 +47,19 @@ class TestSynthesisRequestPayload:
         )
         assert p.options == {"chunk_strategy": "sentence", "parallel": True, "seed": 7}
 
+    def test_format_default_is_wav(self) -> None:
+        p = SynthesisRequestPayload(text="hello")
+        assert p.format == "wav"
+
+    @pytest.mark.parametrize("fmt", ["wav", "mp3", "ogg"])
+    def test_valid_formats_accepted(self, fmt: str) -> None:
+        p = SynthesisRequestPayload(text="hello", format=fmt)
+        assert p.format == fmt
+
+    def test_invalid_format_raises_validation_error(self) -> None:
+        with pytest.raises(ValidationError):
+            SynthesisRequestPayload(text="hello", format="flac")
+
 
 class TestSynthesisReadyPayload:
     def test_minimal_ready_validates(self) -> None:

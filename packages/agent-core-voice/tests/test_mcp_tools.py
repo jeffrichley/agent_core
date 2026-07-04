@@ -189,3 +189,35 @@ async def test_voice_info_returns_bound_voice_only() -> None:
     assert info["ref_text"] == "r-alice"
     # No other voice ids leak.
     assert "bob" not in json.dumps(info)
+
+
+@pytest.mark.asyncio
+async def test_synthesize_speech_schema_includes_format() -> None:
+    """``format`` must appear as an optional string property in the tool JSON schema."""
+    mcp, _ = _mount()
+    tools = await _tools_by_name(mcp)
+    tool = tools["synthesize_speech"]
+    props = tool.parameters.get("properties", {})
+    assert "format" in props, f"'format' missing from schema properties; saw: {list(props)}"
+
+
+@pytest.mark.asyncio
+async def test_synthesize_speech_format_threads_to_envelope() -> None:
+    """Passing ``format='mp3'`` must appear in the published envelope's SynthesisRequestPayload."""
+    mcp, bus = _mount()
+    tools = await _tools_by_name(mcp)
+    await tools["synthesize_speech"].run({"text": "hi", "format": "mp3"})
+    [env] = bus.published
+    req = SynthesisRequestPayload.model_validate(env.payload.data)
+    assert req.format == "mp3"
+
+
+@pytest.mark.asyncio
+async def test_synthesize_speech_invalid_format_returns_error() -> None:
+    """An unsupported format value is rejected by Pydantic client-side."""
+    mcp, bus = _mount()
+    tools = await _tools_by_name(mcp)
+    result = await tools["synthesize_speech"].run({"text": "hi", "format": "flac"})
+    payload = json.loads(_text_from(result))
+    assert payload["error"] == "invalid_request"
+    assert bus.published == []
