@@ -6,7 +6,7 @@ When an inbound Discord message carries a voice-message (or any audio) attachmen
 
 ## Acceptance criteria
 
-- A Discord voice message (`content_type` starts with `"audio/"`) received by `DiscordEndpoint` is transcribed and delivered with `payload.text` set to `"[voice: <transcription text>]"` (prepended to any existing message text if present).
+- A Discord voice message (`content_type` starts with `"audio/"`) received by `DiscordEndpoint` is transcribed and delivered with `payload.text` set to `"[voice: <transcription text>]"` (appended after any existing message text if present).
 - If a message has typed text **and** a voice attachment, both appear: e.g. `"typed text\n[voice: <transcription>]"`.
 - The original audio file remains accessible at `metadata["attachments"][0]["local_path"]` (unchanged from the existing auto-download path).
 - Each audio attachment's metadata dict gains a `"transcription"` key on success, or `"transcription_error"` on failure. Both keys are never both present.
@@ -43,7 +43,11 @@ When an inbound Discord message carries a voice-message (or any audio) attachmen
 
 4. **Add `_transcribe_audio_sync` and `_transcribe_audio` to `DiscordEndpoint` in `endpoint.py`.** `_transcribe_audio_sync(self, path: Path) -> str` is a pure-sync method that lazy-loads `faster-whisper.WhisperModel`, transcribes `path`, and returns the joined segment text. `_transcribe_audio(self, path: Path) -> str` is an `async` wrapper that calls `run_in_executor(None, self._transcribe_audio_sync, path)`.
 
-5. **Wire transcription into the attachment loop in `_make_on_message_handler` in `endpoint.py`.** After the existing `for entry in attachments:` loop that populates `local_path`, add a second pass: for each entry whose `content_type` starts with `"audio/"` and `local_path` is not None, call `await self._transcribe_audio(Path(entry["local_path"]))` and store the result in `entry["transcription"]` (or `entry["transcription_error"]` on exception). Then, collect all `entry["transcription"]` values and append them to `text` before `Envelope(...)` construction.
+5. **Wire transcription into the attachment loop in `_make_on_message_handler` in `endpoint.py`.** Two changes to this handler:
+
+   (a) **Amend the initial attachment-collection loop** (the existing loop that captures `filename`, `url`, `content_type`, `size_bytes` from each `discord.Attachment`) to also capture `"duration_secs": getattr(att, "duration_secs", None)` into each entry dict. This makes the real Discord attachment's `duration_secs` field available to the transcription pass.
+
+   (b) **Add a transcription pass** after the existing `for entry in attachments:` loop that populates `local_path`: for each entry whose `content_type` starts with `"audio/"` and `local_path` is not None, first check the duration gate — if `entry.get("duration_secs")` is not None and exceeds `self.transcribe_max_duration_secs`, set `entry["transcription_error"] = f"audio too long ({entry['duration_secs']:.0f}s)"` and `continue`. Otherwise call `await self._transcribe_audio(Path(entry["local_path"]))` and store the result in `entry["transcription"]` (or `entry["transcription_error"]` on any other exception). Then, collect all `entry["transcription"]` values and append them to `text` before `Envelope(...)` construction.
 
 6. **Add `packages/agent-core-discord/tests/test_voice_transcription.py`.** Tests: happy path (transcription in payload.text and metadata), no-faster-whisper fallback, transcription exception → error marker, too-long audio → skip, non-audio attachment unchanged, warm-model reuse (model loaded once across two calls).
 
