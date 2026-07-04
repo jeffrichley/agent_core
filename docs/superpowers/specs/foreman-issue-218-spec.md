@@ -36,7 +36,7 @@ The `_attachment_sweep_loop` (lines 1560–1573) already uses `except Exception:
    After line 23 (`_VALID_DM_POLICIES = ...`), add the new private helper. Then collapse `load_access_config` to call it. See "File-level changes" for the exact signatures.
 
 2. **Update `_access_config_reload_loop` in `packages/agent-core-discord/src/agent_core_discord/endpoint.py`.**  
-   Replace lines 1537–1548 (the pre-validate + `load_access_config` call) with a single-read + `_build_access_config` call inside `except Exception`. Also add `_build_access_config` to the `from agent_core_discord.access import ...` line (line 38).
+   Replace lines 1537–1556 (the pre-validate + `load_access_config` call through the closing `)` of the current `log.info` block) with a single-read + `_build_access_config` call inside `except Exception`. Also add `_build_access_config` to the `from agent_core_discord.access import ...` line (line 38).
 
 3. **Add new tests to `packages/agent-core-discord/tests/test_access_reload.py`.**  
    Two new tests mirroring the existing malformed-JSON split: one that asserts config unchanged + task alive, one that asserts a warning was emitted. See "File-level changes" for exact test code.
@@ -46,7 +46,7 @@ The `_attachment_sweep_loop` (lines 1560–1573) already uses `except Exception:
 | File | Change |
 |---|---|
 | `packages/agent-core-discord/src/agent_core_discord/access.py` | **Modify.** Add `_build_access_config(raw, source)` private helper (extracts lines 61–88 of current `load_access_config`). Refactor `load_access_config` to delegate to it. |
-| `packages/agent-core-discord/src/agent_core_discord/endpoint.py` | **Modify.** Add `_build_access_config` to the `access` import. Replace the inner try/except block in `_access_config_reload_loop` (lines 1537–1548) with single-read + `_build_access_config` + `except Exception`. |
+| `packages/agent-core-discord/src/agent_core_discord/endpoint.py` | **Modify.** Add `_build_access_config` to the `access` import. Replace the inner try/except block in `_access_config_reload_loop` (lines 1537–1556) with single-read + `_build_access_config` + `except Exception`. |
 | `packages/agent-core-discord/tests/test_access_reload.py` | **Modify.** Add `test_access_reload_keeps_config_on_schema_invalid_json` and `test_access_reload_warns_on_schema_invalid_json`. |
 
 ### Exact code the Worker should write
@@ -103,7 +103,7 @@ def _build_access_config(raw: dict[str, Any], source: str = "<unknown>") -> Acce
 from agent_core_discord.access import AccessConfig, InboundContext, _build_access_config, gate_message, load_access_config
 ```
 
-**`endpoint.py` — updated inner try/except in `_access_config_reload_loop` (replace lines 1537–1550):**
+**`endpoint.py` — updated inner try/except in `_access_config_reload_loop` (replace lines 1537–1556):**
 
 ```python
                 # File changed — parse once; any error keeps previous config and retries.
