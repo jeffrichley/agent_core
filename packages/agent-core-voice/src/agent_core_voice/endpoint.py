@@ -40,6 +40,7 @@ from typing import TYPE_CHECKING, Any
 import soundfile as sf
 
 from agent_core_voice.audit import AuditEvent, AuditLog
+from agent_core_voice.lifecycle import transcode_audio
 from agent_core_voice.protocol import (
     EmptyTextError,
     GPUOOMError,
@@ -514,19 +515,27 @@ class VoiceEndpoint:
             )
             return
 
+        audio_format = getattr(req, "format", "wav") or "wav"
+
         try:
+            # Measure duration on the original WAV bytes (soundfile reads WAV reliably).
+            duration_s, _sr_from_wav = self._wav_duration(wav_bytes)
+            # Transcode to the requested format (no-op for wav).
+            audio_bytes = await asyncio.to_thread(
+                transcode_audio, wav_bytes, target_format=audio_format
+            )
             wav_path, _sha = await asyncio.to_thread(
                 write_addressed,
-                wav_bytes,
+                audio_bytes,
                 root=self._output_dir,
                 retain_s=retain_s,
+                ext=audio_format,
             )
-            duration_s, _sr_from_wav = self._wav_duration(wav_bytes)
-        except (OSError, RuntimeError) as exc:
+        except (OSError, RuntimeError, ValueError) as exc:
             await self._publish_failed(
                 envelope,
                 reason="INTERNAL_ERROR",
-                message=f"wav write/decode failed: {exc}",
+                message=f"audio write/transcode failed: {exc}",
                 retryable=False,
             )
             return

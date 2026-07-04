@@ -59,9 +59,10 @@ def register_voice_tools(
         name="synthesize_speech",
         description=(
             "Synthesize text in your assigned voice. Returns {request_id, status} "
-            "immediately; the synthesized WAV arrives on your inbox as a "
+            "immediately; the synthesized audio arrives on your inbox as a "
             "SynthesisReady event with `wav_path`. SynthesisFailed arrives on the "
-            "same inbox if synthesis fails."
+            "same inbox if synthesis fails. "
+            "``format`` selects the output container: \"wav\" (default), \"mp3\", or \"ogg\"."
         ),
     )
     async def _synthesize(
@@ -69,6 +70,7 @@ def register_voice_tools(
         timeout_s: float | None = None,
         retain_s: float | None = None,
         options: dict | None = None,
+        format: str = "wav",
     ) -> list[Any]:
         from agent_core.bus.envelope import Envelope, EventPayload
 
@@ -78,6 +80,7 @@ def register_voice_tools(
                 timeout_s=timeout_s,
                 retain_s=retain_s,
                 options=options,
+                format=format,  # type: ignore[arg-type]
             )
         except Exception as exc:  # pydantic ValidationError or anything else
             return [
