@@ -26,6 +26,55 @@ from agent_core.bus.protocol import BusHook, Endpoint
 log = logging.getLogger(__name__)
 
 
+_VALID_JITTER = {"full", "equal", "none"}
+
+
+@dataclass
+class SupervisorConfig:
+    """Tunable knobs for the supervision layer (T3 EndpointSupervisor reads this)."""
+
+    restart_backoff_base_seconds: int = 1
+    restart_backoff_factor: int = 2
+    restart_backoff_cap_seconds: int = 60
+    restart_jitter: str = "full"
+    restarts_before_quarantine: int = 5
+    probe_interval_seconds: int = 300
+    delivery_backoff_base_seconds: int = 2
+    delivery_backoff_factor: int = 2
+    delivery_backoff_cap_seconds: int = 60
+    deliver_failures_before_breaker: int = 5
+
+    def __post_init__(self) -> None:
+        for name in (
+            "restart_backoff_base_seconds",
+            "restart_backoff_cap_seconds",
+            "probe_interval_seconds",
+            "delivery_backoff_base_seconds",
+            "delivery_backoff_cap_seconds",
+        ):
+            value = getattr(self, name)
+            if value <= 0:
+                raise ValueError(f"{name} must be > 0, got {value!r}")
+        for name in ("restart_backoff_factor", "delivery_backoff_factor"):
+            value = getattr(self, name)
+            if value < 1:
+                raise ValueError(f"{name} must be >= 1, got {value!r}")
+        if self.restarts_before_quarantine < 1:
+            raise ValueError(
+                f"restarts_before_quarantine must be >= 1, got {self.restarts_before_quarantine!r}"
+            )
+        if self.deliver_failures_before_breaker < 1:
+            raise ValueError(
+                f"deliver_failures_before_breaker must be >= 1, "
+                f"got {self.deliver_failures_before_breaker!r}"
+            )
+        if self.restart_jitter not in _VALID_JITTER:
+            raise ValueError(
+                f"restart_jitter must be one of {sorted(_VALID_JITTER)!r}, "
+                f"got {self.restart_jitter!r}"
+            )
+
+
 @dataclass
 class BusConfig:
     storage_path: Path
@@ -38,6 +87,7 @@ class BusConfig:
     redelivery_sweep_seconds: int = 10
     acked_retention_days: int = 14
     max_pending_per_endpoint: int = 10_000
+    supervisor: SupervisorConfig = field(default_factory=SupervisorConfig)
 
 
 @dataclass
@@ -126,6 +176,21 @@ class Bus:
             return
         self._store = Persistence(self.config.storage_path)
         await self._store.connect()
+        sup = self.config.supervisor
+        log.info(
+            "supervisor config: restart_backoff=%ds×%d cap=%ds jitter=%s quarantine_after=%d "
+            "probe=%ds delivery_backoff=%ds×%d cap=%ds breaker_after=%d",
+            sup.restart_backoff_base_seconds,
+            sup.restart_backoff_factor,
+            sup.restart_backoff_cap_seconds,
+            sup.restart_jitter,
+            sup.restarts_before_quarantine,
+            sup.probe_interval_seconds,
+            sup.delivery_backoff_base_seconds,
+            sup.delivery_backoff_factor,
+            sup.delivery_backoff_cap_seconds,
+            sup.deliver_failures_before_breaker,
+        )
         started_specs: list[EndpointSpec] = []
         try:
             for spec in self._endpoints_by_name.values():
