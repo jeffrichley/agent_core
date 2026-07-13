@@ -13,7 +13,7 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 import yaml
 
-from agent_core.bus.core import Bus, BusConfig, BusHookSpec, EndpointSpec
+from agent_core.bus.core import Bus, BusConfig, BusHookSpec, EndpointSpec, SupervisorConfig
 from agent_core.bus.http_host import HTTPHost, MCPHostable
 from agent_core.bus.notify_broker import NotificationBroker
 from agent_core.bus.protocol import BusHook, Endpoint
@@ -69,6 +69,19 @@ async def build_bus_from_config(path: Path) -> tuple[Bus, HTTPHost | None]:
 
     bus_cfg_raw = raw.get("bus", {})
     storage_path = Path(bus_cfg_raw.get("storage_path", "~/.agent-core/bus.sqlite")).expanduser()
+    sup_cfg_raw = bus_cfg_raw.get("supervisor", {}) or {}
+    supervisor = SupervisorConfig(
+        restart_backoff_base_seconds=sup_cfg_raw.get("restart_backoff_base_seconds", 1),
+        restart_backoff_factor=sup_cfg_raw.get("restart_backoff_factor", 2),
+        restart_backoff_cap_seconds=sup_cfg_raw.get("restart_backoff_cap_seconds", 60),
+        restart_jitter=sup_cfg_raw.get("restart_jitter", "full"),
+        restarts_before_quarantine=sup_cfg_raw.get("restarts_before_quarantine", 5),
+        probe_interval_seconds=sup_cfg_raw.get("probe_interval_seconds", 300),
+        delivery_backoff_base_seconds=sup_cfg_raw.get("delivery_backoff_base_seconds", 2),
+        delivery_backoff_factor=sup_cfg_raw.get("delivery_backoff_factor", 2),
+        delivery_backoff_cap_seconds=sup_cfg_raw.get("delivery_backoff_cap_seconds", 60),
+        deliver_failures_before_breaker=sup_cfg_raw.get("deliver_failures_before_breaker", 5),
+    )
     cfg = BusConfig(
         storage_path=storage_path,
         redelivery_timeout_seconds=bus_cfg_raw.get("redelivery_timeout_seconds", 300),
@@ -77,6 +90,7 @@ async def build_bus_from_config(path: Path) -> tuple[Bus, HTTPHost | None]:
         redelivery_sweep_seconds=bus_cfg_raw.get("redelivery_sweep_seconds", 10),
         acked_retention_days=bus_cfg_raw.get("acked_retention_days", 14),
         max_pending_per_endpoint=bus_cfg_raw.get("max_pending_per_endpoint", 10_000),
+        supervisor=supervisor,
     )
 
     bus = Bus(cfg)
