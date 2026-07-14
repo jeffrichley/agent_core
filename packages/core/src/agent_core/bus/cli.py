@@ -51,13 +51,15 @@ async def _run_bus(config_path: Path) -> None:
         await http_host.start()
     try:
         await bus.start()
-        endpoint_count = len(bus._endpoints_by_name)
-        host_str = f" + http on :{http_host.port}" if http_host else ""
-        console.print(
-            f"[green]bus running[/green] — {endpoint_count} endpoint(s){host_str}; "
-            "press Ctrl+C to stop."
-        )
 
+        # Install shutdown handlers BEFORE announcing readiness. The
+        # "bus running" line is the barrier that operators (and
+        # test_run_starts_and_stops_on_sigint) wait on before sending SIGINT.
+        # If the handlers were registered *after* that line, a SIGINT landing in
+        # the window between them would hit Python's default handler and
+        # terminate the process with exit code 130 instead of shutting down
+        # cleanly (returncode 0). Registering first makes the readiness line a
+        # true barrier — closing the race for the test and for real Ctrl+C.
         stop_event = asyncio.Event()
 
         def _shutdown(*_):
@@ -69,6 +71,13 @@ async def _run_bus(config_path: Path) -> None:
             loop.add_signal_handler(signal.SIGTERM, _shutdown)
         except NotImplementedError:
             pass  # Windows — SIGINT raises KeyboardInterrupt directly.
+
+        endpoint_count = len(bus._endpoints_by_name)
+        host_str = f" + http on :{http_host.port}" if http_host else ""
+        console.print(
+            f"[green]bus running[/green] — {endpoint_count} endpoint(s){host_str}; "
+            "press Ctrl+C to stop."
+        )
 
         async def _ttl_loop():
             while not stop_event.is_set():
