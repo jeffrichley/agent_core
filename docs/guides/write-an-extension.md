@@ -181,7 +181,6 @@ Post-construction wiring for a specific endpoint instance — called after const
 ```python
 @hookimpl
 def configure_endpoint_instance(
-    self,
     instance,
     endpoint_name: str,
     endpoint_config: dict,
@@ -204,7 +203,6 @@ Cross-endpoint wiring once all endpoints are constructed and registered on the b
 ```python
 @hookimpl
 def wire_endpoints_after_registration(
-    self,
     endpoints: dict,
     raw_endpoint_configs: dict,
     services,
@@ -221,7 +219,7 @@ If your post-construction wiring hook reads `params:` keys that are not construc
 
 ```python
 @hookimpl
-def reserved_endpoint_params(self) -> list[str]:
+def reserved_endpoint_params() -> list[str]:
     return ["my_orchestrator_name"]
 ```
 

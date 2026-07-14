@@ -30,7 +30,7 @@ The runner collects all installed plugins via `importlib.metadata` and calls the
 
 ```python
 @hookimpl
-def register_endpoint_types(self) -> dict[str, type[Endpoint]]:
+def register_endpoint_types() -> dict[str, type[Endpoint]]:
     return {"my_plugin.widget": WidgetEndpoint}
 ```
 
@@ -40,7 +40,7 @@ The returned dict maps a type-id string to an `Endpoint` class. Operators refere
 
 ```python
 @hookimpl
-def register_bus_hook_types(self) -> dict[str, type[BusHook]]:
+def register_bus_hook_types() -> dict[str, type[BusHook]]:
     return {"my_plugin.rate_limit": RateLimitHook}
 ```
 
@@ -50,7 +50,7 @@ Bus hooks intercept envelopes at `pre_publish` or `pre_deliver`. A hook can muta
 
 ```python
 @hookimpl
-def register_envelope_renderers(self) -> dict[str, Any]:
+def register_envelope_renderers() -> dict[str, Any]:
     return {"MyKind": render_my_kind}
 ```
 
@@ -61,7 +61,7 @@ Registering a renderer makes `MyKind` a first-class envelope kind. Envelopes wit
 ```python
 @hookimpl
 def configure_endpoint_instance(
-    self, instance, endpoint_name, endpoint_config, services
+    instance, endpoint_name, endpoint_config, services
 ) -> None:
     if isinstance(instance, MyEndpoint):
         instance.set_broker(services.notify_broker)
@@ -75,7 +75,7 @@ For cross-endpoint wiring (e.g., pairing two endpoints that need references to e
 
 ```python
 @hookimpl
-def register_cli_subapps(self, app: typer.Typer) -> None:
+def register_cli_subapps(app: typer.Typer) -> None:
     from my_package.cli import subapp
     app.add_typer(subapp, name="widget")
 ```
@@ -86,7 +86,7 @@ This extends the top-level `agent-core` CLI without the core package depending o
 
 ```python
 @hookimpl
-def validate_config(self, raw_config: dict) -> None:
+def validate_config(raw_config: dict) -> None:
     if "widget" not in raw_config:
         raise ValueError("my_plugin requires a [widget] config section")
 ```
@@ -97,7 +97,7 @@ Validation hooks run early, before any endpoint is constructed. Raise to block s
 
 ```python
 @hookimpl
-def register_bus_log_projectors(self) -> dict[str, Any]:
+def register_bus_log_projectors() -> dict[str, Any]:
     return {"MyKind": MyKindProjector()}
 ```
 
