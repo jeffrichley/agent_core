@@ -6,12 +6,11 @@ import json
 import pytest
 
 from agent_core.bus.envelope import EventPayload
-from agent_core.bus.runner import build_bus_from_config
 from agent_core.hooks.tools.handoff_writer import HandoffWriter
 
 
 @pytest.mark.asyncio
-async def test_enqueue_hook_to_daemon_end_to_end(tmp_path, monkeypatch):
+async def test_enqueue_hook_to_daemon_end_to_end(tmp_path, monkeypatch, build_bus):
     # Real Claude Code stores transcripts under ``~/.claude/projects/<...>/`` —
     # NOT under any agent vault. Mirror that topology here so the test catches
     # the case where the daemon rejects transcript_path simply for not being
@@ -45,7 +44,7 @@ endpoints:
         encoding="utf-8",
     )
 
-    bus, http_host = await build_bus_from_config(cfg)
+    bus, http_host = await build_bus(cfg)
     assert http_host is not None
     await http_host.start()
     try:

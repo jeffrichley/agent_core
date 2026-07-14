@@ -25,7 +25,7 @@ import pytest
 
 
 @pytest.mark.asyncio
-async def test_push_notification_arrives_on_real_mcp_session(tmp_path):
+async def test_push_notification_arrives_on_real_mcp_session(tmp_path, build_bus):
     """Realistic flow: real bus, real FastMCP HTTP host, real mcp.client connection."""
 
     pytest.importorskip("uvicorn")
@@ -36,7 +36,6 @@ async def test_push_notification_arrives_on_real_mcp_session(tmp_path):
     from pydantic import BaseModel
 
     from agent_core.bus.envelope import TextMessagePayload
-    from agent_core.bus.runner import build_bus_from_config
 
     cfg = tmp_path / "agent_core.yaml"
     cfg.write_text(
@@ -59,7 +58,7 @@ endpoints:
         encoding="utf-8",
     )
 
-    bus, http_host = await build_bus_from_config(cfg)
+    bus, http_host = await build_bus(cfg)
     assert http_host is not None
 
     # Permissive notification model so the client doesn't drop the

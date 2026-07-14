@@ -22,12 +22,12 @@ endpoints: []
 
 
 @pytest.mark.asyncio
-async def test_runner_constructs_writer_when_mcp_audit_block_missing(tmp_path: Path):
+async def test_runner_constructs_writer_when_mcp_audit_block_missing(tmp_path: Path, build_bus):
     cfg = _write_yaml(
         tmp_path / "config.yaml",
         _BASE_YAML.format(storage=(tmp_path / "bus.sqlite").as_posix()),
     )
-    bus, _http = await build_bus_from_config(cfg)
+    bus, _http = await build_bus(cfg)
     # Block missing → defaults; writer is constructed.
     # We can't reach RunnerServices directly post-build, but the writer
     # was passed to BuiltinRuntimePlugin which would have attached it to
@@ -37,12 +37,12 @@ async def test_runner_constructs_writer_when_mcp_audit_block_missing(tmp_path: P
 
 
 @pytest.mark.asyncio
-async def test_runner_constructs_no_writer_when_disabled(tmp_path: Path):
+async def test_runner_constructs_no_writer_when_disabled(tmp_path: Path, build_bus):
     yaml_body = _BASE_YAML.format(storage=(tmp_path / "bus.sqlite").as_posix()) + (
         "mcp_audit:\n  enabled: false\n"
     )
     cfg = _write_yaml(tmp_path / "config.yaml", yaml_body)
-    bus, _http = await build_bus_from_config(cfg)
+    bus, _http = await build_bus(cfg)
     # With one ClaudeCodeMCPEndpoint and audit disabled, no audit dir
     # should appear under ~/.agent-core/bus/mcp-audit. Validated via the
     # integration test in Task 6 — here we just assert build succeeded.
@@ -50,7 +50,7 @@ async def test_runner_constructs_no_writer_when_disabled(tmp_path: Path):
 
 
 @pytest.mark.asyncio
-async def test_runner_uses_configured_log_root_and_timezone(tmp_path: Path):
+async def test_runner_uses_configured_log_root_and_timezone(tmp_path: Path, build_bus):
     custom_root = tmp_path / "custom" / "audit"
     yaml_body = _BASE_YAML.format(storage=(tmp_path / "bus.sqlite").as_posix()) + (
         f"mcp_audit:\n"
@@ -60,7 +60,7 @@ async def test_runner_uses_configured_log_root_and_timezone(tmp_path: Path):
         f"  skip_tools: [\"list_pending\"]\n"
     )
     cfg = _write_yaml(tmp_path / "config.yaml", yaml_body)
-    bus, _http = await build_bus_from_config(cfg)
+    bus, _http = await build_bus(cfg)
     assert bus is not None
     # No endpoints in this config means no writer activation, but the
     # build itself must accept the block. Behavioral verification of

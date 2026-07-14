@@ -41,8 +41,8 @@ def cfg_path(tmp_path: Path) -> Path:
 
 
 class TestRunner:
-    async def test_loads_endpoints(self, cfg_path: Path):
-        bus, _ = await build_bus_from_config(cfg_path)
+    async def test_loads_endpoints(self, cfg_path: Path, build_bus):
+        bus, _ = await build_bus(cfg_path)
         try:
             await bus.start()
             names = {info.name for info in bus._endpoints()}
@@ -100,7 +100,7 @@ class TestRunner:
             await build_bus_from_config(p)
 
     async def test_plugin_can_resolve_endpoint_class(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, build_bus
     ):
         class _PluginEndpoint:
             def __init__(self, *, name: str, **_: Any):
@@ -151,5 +151,5 @@ class TestRunner:
         config = {"endpoints": [{"type": "plugin.stub.Endpoint", "name": "plug", "params": {}}]}
         p = tmp_path / "plugin.yaml"
         p.write_text(yaml.dump(config))
-        bus, _ = await build_bus_from_config(p)
+        bus, _ = await build_bus(p)
         assert "plug" in bus._endpoints_by_name
