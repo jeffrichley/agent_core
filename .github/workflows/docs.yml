@@ -1,0 +1,52 @@
+name: docs
+
+# Build and deploy the MkDocs site to GitHub Pages (gh-pages branch).
+# Runs ONLY on push to main and manual dispatch — never on pull_request, so
+# fork PRs can never trigger a deploy with write permissions (no secret/token
+# exposure). Enable Pages in repo settings to serve from the gh-pages branch.
+on:
+  push:
+    branches: [main]
+    paths:
+      - "mkdocs.yml"
+      - "docs/**"
+      - "packages/*/src/**"
+      - "pyproject.toml"
+      - ".github/workflows/docs.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: docs-deploy
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0  # v7.0.0
+        with:
+          fetch-depth: 0
+      - uses: astral-sh/setup-uv@fac544c07dec837d0ccb6301d7b5580bf5edae39  # v8.2.0
+        with:
+          enable-cache: true
+          python-version: "3.12"
+      - name: Configure git identity for gh-pages commit
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+      # Build in an ISOLATED ephemeral env (--no-project): the docs toolchain
+      # only — no torch, no workspace resolution (which is slow: it re-resolves
+      # the cu130 torch index). mkdocstrings reads package source statically via
+      # griffe (paths configured in mkdocs.yml), so agent_core need not be
+      # installed. The dep set mirrors the `docs` dependency-group in
+      # pyproject.toml (used for local `uv sync --group docs && mkdocs serve`).
+      - name: Build and deploy
+        run: >-
+          uv run --isolated --no-project
+          --with mkdocs-material --with "mkdocstrings[python]"
+          --with mkdocs-llmstxt --with ruff
+          mkdocs gh-deploy --force --strict
