@@ -50,6 +50,13 @@ dev = [
     "types-psutil>=7.0.0.20251001",
     "import-linter>=2.0",
 ]
+# Documentation site toolchain. Kept out of `dev` so CI test jobs stay lean;
+# install in isolation with `uv sync --only-group docs` (no torch/workspace).
+docs = [
+    "mkdocs-material>=9.5",
+    "mkdocstrings[python]>=0.26",
+    "mkdocs-llmstxt>=0.1",
+]
 
 [tool.ruff]
 line-length = 100
