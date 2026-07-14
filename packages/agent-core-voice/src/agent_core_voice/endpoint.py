@@ -438,7 +438,10 @@ class VoiceEndpoint:
             await self._handle.ack(envelope.id)
 
         # Spawn-and-forget — synthesis can take ~60s; the bus must not block.
-        asyncio.create_task(self._handle_synthesis_request(envelope, req))
+        self._handle.spawn(
+            self._handle_synthesis_request(envelope, req),
+            name=f"voice-synthesis-{envelope.id}",
+        )
 
     async def stop(self) -> None:
         self._handle = None
