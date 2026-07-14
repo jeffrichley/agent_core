@@ -268,7 +268,6 @@ async def test_bus_publish_adapter_task_cancelled_on_drain(monkeypatch, tmp_path
     handle = _TrackingHandle()
     ep._handle = handle  # inject directly, bypassing uvicorn start
 
-    from agent_core.bus.envelope import Envelope, NotificationPayload
     ep._bus_publish_adapter(
         to="wren",
         kind="Notification",
@@ -278,6 +277,7 @@ async def test_bus_publish_adapter_task_cancelled_on_drain(monkeypatch, tmp_path
             "urgency": "red",
             "body": {},
             "reason": "test",
+            "landed_at": datetime.now(UTC).isoformat(),
         },
         urgency="red",
     )
@@ -305,26 +305,32 @@ from agent_core_voice.endpoint import VoiceEndpoint
 from agent_core_voice.protocol import VoiceInfo
 from agent_core.bus.envelope import Envelope, EventPayload
 
-class _SlowBackend:
-    """Backend that hangs in synthesize so we can test cancellation."""
+class _StubBackend:
+    """Backend stub — synthesis is bypassed via monkeypatch; no sleep needed."""
     SAMPLE_RATE_HZ = 24000
     SAMPLE_WIDTH_BYTES = 2
     def prepare_voice(self, voice_id, ref_wav, ref_text): ...
-    def synthesize(self, voice_id, text, seed):
-        import time; time.sleep(60)
-    def synthesize_batch(self, voice_id, texts, seed):
-        import time; time.sleep(60); return [], []
+    def synthesize(self, voice_id, text, seed): ...
+    def synthesize_batch(self, voice_id, texts, seed): return [], []
 
 class _TrackingHandle: ...  # as above, with no-op publish() (synthesis posts back later)
 
 @pytest.mark.asyncio
-async def test_synthesis_task_cancelled_on_drain(tmp_path, ref_wav):
+async def test_synthesis_task_cancelled_on_drain(monkeypatch, tmp_path, ref_wav):
     """deliver() spawns a synthesis task; it is cancelled when the bus drains."""
     from agent_core_voice.envelopes import SynthesisRequestPayload
 
+    # Monkeypatch _handle_synthesis_request to a pure-asyncio stub that hangs until
+    # cancelled. This eliminates asyncio.to_thread and any thread-pool involvement,
+    # so cancellation is instantaneous and test teardown completes in <1 ms.
+    async def _hanging_synthesis(self, envelope, req):  # noqa: ARG001
+        await asyncio.sleep(1000)  # resolved by CancelledError when drained
+
+    monkeypatch.setattr(VoiceEndpoint, "_handle_synthesis_request", _hanging_synthesis)
+
     ep = VoiceEndpoint.for_test(
         name="voice",
-        backend=_SlowBackend(),
+        backend=_StubBackend(),
         voices={"alice": VoiceInfo(voice_id="alice", ref_wav=ref_wav, ref_text="r")},
         output_dir=tmp_path / "out",
         audit_path=tmp_path / "audit.jsonl",
