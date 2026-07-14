@@ -55,7 +55,7 @@ from agent_core_discord.args import (
 )
 from agent_core_discord.briefing import build_briefing_embeds
 from agent_core_discord.chunking import smart_chunk_discord
-from agent_core_discord.send_retry import channel_send_with_retries
+from agent_core_discord.send_retry import channel_send_with_retries, is_retryable_discord_send_error
 from agent_core_discord.shape_validator import (
     Recognized,
     Unrecognized,
@@ -780,6 +780,10 @@ class DiscordEndpoint:
             except _ToolError as exc:
                 await self._reply(envelope, f"error: {exc}", urgency="yellow")
             except Exception as exc:
+                if is_retryable_discord_send_error(exc):
+                    raise EndpointUnavailable(
+                        f"discord '{self.name}': transient error: {exc}"
+                    ) from exc
                 log.exception("discord TextMessage delivery raised")
                 await self._reply(envelope, f"error: {exc}", urgency="yellow")
             await self._handle.ack(envelope.id)
@@ -803,6 +807,10 @@ class DiscordEndpoint:
         except _ToolError as exc:
             await self._reply(envelope, f"error: {exc}", urgency="yellow")
         except Exception as exc:
+            if is_retryable_discord_send_error(exc):
+                raise EndpointUnavailable(
+                    f"discord '{self.name}': transient error: {exc}"
+                ) from exc
             log.exception("discord tool '%s' raised", tool)
             await self._reply(envelope, f"error: {exc}", urgency="yellow")
 
@@ -1761,15 +1769,25 @@ class DiscordEndpoint:
                 break
             message_ids.append(str(new_msg.id))
 
-        if last_error is not None and message_ids:
-            # Partial delivery: do not clear inbound ack — the conversation may still
-            # be awaiting a complete reply; callers get message_ids for what landed.
-            return {
-                "status": "partial",
-                "message_ids": message_ids,
-                "error": str(last_error),
-            }
         if last_error is not None:
+            if message_ids:
+                # Partial delivery: some chunks landed before the error.
+                # Return partial regardless of error kind — requeuing the
+                # envelope would duplicate already-delivered chunks.
+                # Do not clear inbound ack — the conversation may still be
+                # awaiting a complete reply; callers get message_ids for
+                # what landed.
+                return {
+                    "status": "partial",
+                    "message_ids": message_ids,
+                    "error": str(last_error),
+                }
+            # No messages delivered yet.  Transient HTTP errors (429, 5xx)
+            # must propagate to deliver() so the bus can convert them to
+            # EndpointUnavailable and requeue.  Wrapping them in _ToolError
+            # would cause deliver() to ack, silently dropping recoverable mail.
+            if is_retryable_discord_send_error(last_error):
+                raise last_error
             raise _ToolError(f"send failed: {last_error}") from last_error
 
         if args.reply_to:
