@@ -150,7 +150,13 @@ async def run_supervisor_tick_once(self, *, now: datetime | None = None) -> None
     await self._supervisor.tick(now)
 ```
 
-Add `from agent_core.bus.supervisor import EndpointSupervisor` to `core.py` imports.
+Add a **local import** of `EndpointSupervisor` inside `Bus.start()` (not at the module level), immediately before constructing the supervisor:
+
+```python
+from agent_core.bus.supervisor import EndpointSupervisor
+```
+
+A top-level import would create a circular dependency: `supervisor.py` already imports `SupervisorConfig` from `core.py` at line 16, so a module-level `from agent_core.bus.supervisor import EndpointSupervisor` in `core.py` would cause `ImportError: cannot import name 'SupervisorConfig' from partially initialized module 'agent_core.bus.core'` at import time. With `from __future__ import annotations` already present in `core.py`, the annotation `self._supervisor: EndpointSupervisor | None = None` is a lazy string at runtime and requires no module-level import.
 
 ### `cli.py` changes
 
@@ -205,7 +211,7 @@ if degraded:
 
 3. **Degrade-proof `Bus.start()`** in `packages/core/src/agent_core/bus/core.py`. Add `self._supervisor: EndpointSupervisor | None = None` to `__init__`. Replace the rollback `try/except` block in `start()` with per-endpoint try/except + `await supervisor.quarantine()` on failure. Always set `_started = True`. Log CRITICAL on zero-started.
 
-4. **Add `_restart_endpoint`, `_on_supervisor_transition`, `run_supervisor_tick_once` to `Bus`** in `core.py`. Update `_make_task_failure_hook` to call `self._supervisor.record_failure(...)`. Add `self._supervisor = None` in `stop()`. Add `EndpointSupervisor` import.
+4. **Add `_restart_endpoint`, `_on_supervisor_transition`, `run_supervisor_tick_once` to `Bus`** in `core.py`. Update `_make_task_failure_hook` to call `self._supervisor.record_failure(...)`. Add `self._supervisor = None` in `stop()`. Do **not** add a top-level `EndpointSupervisor` import — the local import inside `Bus.start()` (SR3) is sufficient; a module-level import would create a circular dependency with `supervisor.py`.
 
 5. **Wire supervisor tick into CLI** in `packages/core/src/agent_core/bus/cli.py`. Add `await bus.run_supervisor_tick_once()` inside `_redelivery_loop`. Add degraded table rendering to `_status`.
 
@@ -221,7 +227,7 @@ if degraded:
 |---|---|
 | `packages/core/src/agent_core/bus/supervisor.py` | Add `on_transition` optional param to `__init__`; add async `quarantine()` method; add `await self._on_transition(...)` calls in `_attempt_restart` (success + threshold) and `_attempt_probe` (success) |
 | `packages/core/src/agent_core/bus/persistence.py` | Add `supervisor_state` DDL to `_SCHEMA`; add `upsert_supervisor_state`, `clear_supervisor_state`, `list_supervisor_degraded` async methods |
-| `packages/core/src/agent_core/bus/core.py` | `Bus.__init__` adds `_supervisor`; `Bus.start()` replaced rollback logic with per-endpoint quarantine-and-continue; add `_restart_endpoint`, `_on_supervisor_transition`, `run_supervisor_tick_once`; update `_make_task_failure_hook`; update `stop()` to null out supervisor; add `EndpointSupervisor` import |
+| `packages/core/src/agent_core/bus/core.py` | `Bus.__init__` adds `_supervisor`; `Bus.start()` replaced rollback logic with per-endpoint quarantine-and-continue (with local `EndpointSupervisor` import at the top of `Bus.start()` — not module-level, to avoid circular import with `supervisor.py`); add `_restart_endpoint`, `_on_supervisor_transition`, `run_supervisor_tick_once`; update `_make_task_failure_hook`; update `stop()` to null out supervisor |
 | `packages/core/src/agent_core/bus/cli.py` | Add `run_supervisor_tick_once()` call inside `_redelivery_loop`; add degraded table in `_status` |
 | `packages/core/tests/bus/test_core_lifecycle.py` | Rename + revise `test_start_partial_failure_rolls_back` → `test_start_partial_failure_quarantines_and_continues` |
 | `packages/core/tests/bus/test_core_degraded_boot.py` | **New file** (see test list below) |
@@ -235,9 +241,9 @@ Fake endpoint helpers:
 
 ```python
 class _OkEndpoint:
-    def __init__(self, name): self.name = name; self.started = False; self.stopped = False
+    def __init__(self, name): self.name = name; self.started = False; self.stopped = False; self.delivered = []
     async def start(self, handle): self.started = True
-    async def deliver(self, env): pass
+    async def deliver(self, env): self.delivered.append(env)
     async def stop(self): self.stopped = True
 
 class _FailOnStartEndpoint:
