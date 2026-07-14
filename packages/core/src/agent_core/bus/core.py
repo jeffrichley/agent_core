@@ -14,6 +14,7 @@ from __future__ import annotations
 import logging
 import random
 import uuid
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -136,12 +137,29 @@ class Bus:
         }
         self._store: Persistence | None = None
         self._started = False
+        self._handles: dict[str, BusHandle] = {}
 
     def _require_store(self) -> Persistence:
         if self._store is None:
             msg = "Bus persistence store is not initialized"
             raise RuntimeError(msg)
         return self._store
+
+    def _make_task_failure_hook(self, endpoint_name: str) -> Callable[[BaseException], None]:
+        """Factory: produces a per-endpoint logging hook.
+
+        T3/T4 replaces the body of this factory with a supervisor call without
+        changing BusHandle.
+        """
+
+        def _hook(exc: BaseException) -> None:
+            log.error(
+                "endpoint %r: background task raised (endpoint may need restart)",
+                endpoint_name,
+                exc_info=exc,
+            )
+
+        return _hook
 
     def register(self, spec: EndpointSpec) -> None:
         if spec.name in self._endpoints_by_name:
@@ -208,7 +226,12 @@ class Bus:
         started_specs: list[EndpointSpec] = []
         try:
             for spec in self._endpoints_by_name.values():
-                handle = BusHandle(self, spec.name)
+                handle = BusHandle(
+                    self,
+                    spec.name,
+                    on_task_failure=self._make_task_failure_hook(spec.name),
+                )
+                self._handles[spec.name] = handle
                 await spec.endpoint.start(handle)
                 started_specs.append(spec)
                 await self.drain_for(spec.name)
@@ -218,6 +241,9 @@ class Bus:
                     await spec.endpoint.stop()
                 except Exception:
                     log.exception("error stopping endpoint %s during failed start", spec.name)
+                rollback_handle = self._handles.get(spec.name)
+                if rollback_handle is not None:
+                    await rollback_handle._drain_tasks()
             await self._store.close()
             self._store = None
             raise
@@ -233,6 +259,9 @@ class Bus:
                 await spec.endpoint.stop()
             except Exception:
                 log.exception("error stopping endpoint %s", spec.name)
+            handle = self._handles.get(spec.name)
+            if handle is not None:
+                await handle._drain_tasks()
         if self._store is not None:
             await self._store.close()
         self._started = False
@@ -302,7 +331,9 @@ class Bus:
                 # Transient failure — backoff-requeue or dead-letter if exhausted.
                 row = await store.row(envelope.id)
                 if row is None:
-                    log.warning("envelope %s not found after mark_in_flight; skipping requeue", envelope.id)
+                    log.warning(
+                        "envelope %s not found after mark_in_flight; skipping requeue", envelope.id
+                    )
                     return
                 attempt = row["delivery_count"]  # already incremented by mark_in_flight
                 if attempt >= self.config.max_delivery_attempts:
