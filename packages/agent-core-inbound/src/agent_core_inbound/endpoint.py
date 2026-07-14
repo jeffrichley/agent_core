@@ -131,7 +131,11 @@ class InboundEndpoint:
     async def deliver(self, envelope: Envelope) -> None:
         """Inbound is push-only — no peer addresses envelopes here.
 
-        Warn + ack so the bus doesn't dead-letter and retry forever.
+        * Before start (_handle is None): raises EndpointUnavailable so the bus
+          requeues the envelope (transient — the endpoint is not yet ready).
+        * After start (_handle is not None): raises RuntimeError so the bus
+          dead-letters the misrouted envelope.  Acking would falsely mark the
+          envelope as "successfully delivered" and leave no DLQ record.
         """
         if self._handle is None:
             from agent_core.bus.protocol import EndpointUnavailable
@@ -139,12 +143,15 @@ class InboundEndpoint:
                 f"inbound endpoint {self.name!r} not started"
             )
         log.warning(
-            "InboundEndpoint(name=%s) received unexpected envelope kind=%s from=%s",
+            "InboundEndpoint(name=%s) received unexpected envelope kind=%s from=%s — dead-lettering",
             self.name,
             envelope.kind,
             envelope.from_,
         )
-        await self._handle.ack(envelope.id)
+        raise RuntimeError(
+            f"inbound endpoint {self.name!r} received unexpected envelope kind={envelope.kind!r} "
+            f"from={envelope.from_!r}; inbound is push-only"
+        )
 
     async def stop(self) -> None:
         """Graceful shutdown — set should_exit and await up to 5s."""
