@@ -368,8 +368,8 @@ No GoF pattern applies. Engineering principle: **SRP** — the existing pure/imp
            password="p",
            _win32service=w32,
        )
-       # lpServiceStartName is arg index 12 of CreateService
-       assert w32.CreateService.call_args.args[12] == r".\jeffr"
+       # lpServiceStartName is arg index 11 of CreateService
+       assert w32.CreateService.call_args.args[11] == r".\jeffr"
 
 
    def test_install_service_bin_path_references_python_and_module() -> None:
@@ -567,7 +567,7 @@ No GoF pattern applies. Engineering principle: **SRP** — the existing pure/imp
            )
    ```
 
-5. **Update `docs/setup/daemon.md`**: Replace the "Auto-start at boot (Windows)" section (lines 228–254) with the following:
+5. **Update `docs/setup/daemon.md`**: Replace the "Auto-start at boot (Windows)" section (lines 226–254) with the following:
 
    ```markdown
    ## Auto-start at boot (Windows) — Windows Service
