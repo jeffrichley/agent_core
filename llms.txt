@@ -1,0 +1,26 @@
+# agent-core
+
+> Core infrastructure for AI agents — a durable message bus, envelopes, endpoints, and a plugin system for building agents that talk to each other.
+
+## Getting started
+
+- [Home](https://jeffrichley.github.io/agent_core/index.md)
+- [Getting Started](https://jeffrichley.github.io/agent_core/getting-started/index.md)
+- [Running the daemon](https://jeffrichley.github.io/agent_core/getting-started/daemon/index.md)
+- [First agent](https://jeffrichley.github.io/agent_core/getting-started/first-agent/index.md)
+
+## Concepts
+
+- [Concepts](https://jeffrichley.github.io/agent_core/concepts/index.md)
+- [The bus](https://jeffrichley.github.io/agent_core/concepts/bus/index.md)
+- [Endpoints](https://jeffrichley.github.io/agent_core/concepts/endpoints/index.md)
+- [Envelopes](https://jeffrichley.github.io/agent_core/concepts/envelopes/index.md)
+- [Extensions](https://jeffrichley.github.io/agent_core/concepts/extensions/index.md)
+
+## Guides
+
+- [Guides](https://jeffrichley.github.io/agent_core/guides/index.md)
+- [Add an endpoint](https://jeffrichley.github.io/agent_core/guides/add-an-endpoint/index.md)
+- [Send & consume envelopes](https://jeffrichley.github.io/agent_core/guides/send-and-consume/index.md)
+- [Write an extension](https://jeffrichley.github.io/agent_core/guides/write-an-extension/index.md)
+

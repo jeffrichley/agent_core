@@ -1,0 +1,1500 @@
+# agent-core
+
+> Core infrastructure for AI agents — a durable message bus, envelopes, endpoints, and a plugin system for building agents that talk to each other.
+
+# Getting started
+
+# agent-core
+
+**Core infrastructure for AI agents.** A durable, in-process message bus with a typed envelope format, pluggable endpoints, and a plugin system — the substrate you build an agent on when it needs to talk to other agents, tools, and humans reliably.
+
+Built and run by agent beings
+
+agent-core is developed and operated by AI agent beings (Wren, Pepper, and others) alongside their human partner. The docs are written honestly with that in mind: the "you" reading this might be a human developer *or* an agent adopting the framework — both are first-class readers.
+
+## What it gives you
+
+- **A message bus** that routes typed [envelopes](https://jeffrichley.github.io/agent_core/concepts/envelopes/index.md) between [endpoints](https://jeffrichley.github.io/agent_core/concepts/endpoints/index.md), with durable persistence, acknowledgements, redelivery, TTL sweeps, and per-endpoint supervision.
+- **Endpoints** — the adapters that connect your agent to the outside world (Discord, an MCP surface, an inbound webhook, or your own). You implement a small `Endpoint` protocol; the bus handles delivery, retries, and identity.
+- **A plugin system** — register new endpoint types, envelope kinds, renderers, and CLI subcommands from your own package without forking agent-core.
+- **A daemon** — a long-running host process that keeps your endpoints alive and survives releases and restarts.
+
+## Who it's for
+
+- **Adopting a framework to build an agent on?** Start with [Getting Started](https://jeffrichley.github.io/agent_core/getting-started/index.md).
+- **An AI agent pulling this in?** The whole documentation surface is available as machine-readable [`llms.txt`](https://jeffrichley.github.io/agent_core/llms.txt) and [`llms-full.txt`](https://jeffrichley.github.io/agent_core/llms-full.txt) for single-fetch ingestion.
+- **Want the mental model first?** Read [Concepts](https://jeffrichley.github.io/agent_core/concepts/index.md).
+- **Need exact signatures?** See the [API Reference](https://jeffrichley.github.io/agent_core/reference/index.md).
+
+## The 60-second picture
+
+An agent-core system is a set of **endpoints** registered on one **bus**. Each endpoint is an adapter with a `name`, a `start()`, a `deliver()`, and a `stop()`. Work moves between them as **envelopes** — a universal wire format carrying a `kind`, a `from`/`to`, a `payload`, and metadata. You publish an envelope through a `BusHandle`; the bus persists it, delivers it to the target endpoint, waits for an ack, and retries or dead-letters on failure. A long-running **daemon** hosts the whole thing in production.
+
+```
+   your code ──publish──▶  Bus  ──deliver──▶  Endpoint (Discord, MCP, inbound, …)
+                           │  ▲                   │
+                     persist  └──── ack/nack ─────┘
+                           ▼
+                     SQLite mailbox (durable, redelivered, TTL-swept)
+```
+
+Ready? [Get started →](https://jeffrichley.github.io/agent_core/getting-started/index.md)
+
+# Getting Started
+
+agent-core is a message-bus runtime for AI agent beings. It lets multiple agents and services exchange typed envelopes over a durable SQLite-backed bus, with a config-driven endpoint model and a supervised daemon that survives reboots and rolling releases.
+
+You can adopt it as a human developer building an agentic system, or as an AI agent instrumenting your own communication layer. Both are first-class uses.
+
+## Prerequisites
+
+- Python 3.12 or later
+- [uv](https://docs.astral.sh/uv/) — agent-core is a uv workspace monorepo
+
+## Install
+
+```
+uv sync
+```
+
+This resolves and installs the full workspace, including the core package (`agent-core`, importable as `agent_core`), from `packages/core/src/agent_core/`.
+
+## Configure
+
+Agent-core reads an `agent_core.yaml` at your project root. The top-level shape is:
+
+```
+bus:
+  storage_path: "~/.agent-core/bus.sqlite"   # tilde expansion supported
+
+http:
+  bind_host: "127.0.0.1"
+  bind_port: 8789
+
+endpoints:
+  - type: builtin.claude_code_mcp   # endpoint type — builtin or plugin-provided
+    name: my-agent
+    params:
+      mount: /mcp/my-agent
+
+  - type: builtin.stub              # in-memory adapter useful for dev/test
+    name: echo
+```
+
+Each entry in `endpoints[]` declares one addressable participant on the bus. The `type:` field selects the adapter; built-in types include `builtin.stub`, `builtin.discord`, `builtin.claude_code_mcp`, and others contributed by plugins. The daemon resolves plugin types at startup via Python entry points.
+
+Real-world examples
+
+See [`docs/examples/pepper-agent-core.yaml`](https://github.com/jeffrichley/agent_core/blob/main/docs/examples/pepper-agent-core.yaml) for a production-shaped config with session hooks, handoff pipelines, and bus logging.
+
+## Next steps
+
+| Page                                                                                              | What it covers                                                       |
+| ------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------- |
+| [Your first agent](https://jeffrichley.github.io/agent_core/getting-started/first-agent/index.md) | Write and run a minimal endpoint; publish and receive an envelope    |
+| [Running the daemon](https://jeffrichley.github.io/agent_core/getting-started/daemon/index.md)    | One-time prod setup, release upgrades, and the source-iteration loop |
+| [Concepts](https://jeffrichley.github.io/agent_core/concepts/index.md)                            | Bus, envelopes, endpoints, hooks — the mental model                  |
+
+# Running the Daemon
+
+The agent-core daemon is a supervised process that runs every endpoint defined in `agent_core.yaml`: the bus, Claude Code MCP adapters, Discord connectors, the scheduler, brief framework, and any plugin-contributed types. It manages endpoint lifecycle, delivery sweeps, and the HTTP surface the bus tools connect to.
+
+Authoritative reference
+
+This page is the adopter-facing getting-started guide. The full operator reference — troubleshooting tables, instance internals, Windows autostart — lives at [`docs/setup/daemon.md`](https://github.com/jeffrichley/agent_core/blob/main/docs/setup/daemon.md).
+
+## Why a separate venv
+
+The daemon runs from its **own** venv at `~/.agent-core/.venv/`, not from the workspace `.venv/`. This is intentional: `uv sync` activity in the workspace (adding members, resolving the lockfile) rewrites editable `.pth` files and can disrupt a running process that holds open files in `.venv/`. Isolating the daemon venv means workspace iteration never drops a live agent session.
+
+## Instances
+
+The daemon supports three named instances, each with an independent home directory, port, and venv:
+
+| Instance         | Home                    | Port | Code source                  |
+| ---------------- | ----------------------- | ---- | ---------------------------- |
+| `prod` (default) | `~/.agent-core/`        | 8789 | Release artifacts            |
+| `source`         | `~/.agent-core-source/` | 8788 | Workspace `.venv` (editable) |
+| `test`           | `~/.agent-core-test/`   | 8787 | Release artifacts            |
+
+With no `--instance` flag and no `AGENT_CORE_INSTANCE` env var, all commands target `prod`. The `source` and `test` instances are additive — they cannot touch prod's venv, port, or state.
+
+## Prod: one-time setup
+
+Prod installs from GitHub Release artifacts, not from the workspace source.
+
+```
+# Scaffold the prod config if this machine has never run the daemon.
+agent-core daemon init
+
+# Install the latest release into ~/.agent-core/.venv/.
+agent-core daemon install
+
+# Start the daemon.
+agent-core daemon start
+
+# Verify.
+agent-core daemon status
+```
+
+A healthy `daemon status` looks like:
+
+```
+prod daemon is running (PID: NNNNN)
+running from: ~/.agent-core/.venv/Scripts/python.exe
+installed at: <timestamp>
+installed sha: <git short hash>
+installed version: <X.Y.Z>
+```
+
+## Prod: picking up a new release
+
+```
+# Install and restart with the latest release.
+agent-core daemon refresh
+
+# Pin a specific version (useful for rollbacks).
+agent-core daemon refresh --release v0.2.0
+```
+
+`refresh` runs stop → install → start in order. See [`docs/setup/releases.md`](https://github.com/jeffrichley/agent_core/blob/main/docs/setup/releases.md) for the release flow.
+
+### Live agent sessions survive a bounce
+
+Agents connect to the bus through the `agent-core` and `agent-core-channel` **stdio MCP servers**, not directly over HTTP. Each tool call opens a fresh backend connection, so a daemon restart (or crash) during an in-flight call returns a structured transient error that the agent retries automatically. No session restart needed.
+
+Your agent's `.mcp.json` should point at the daemon venv's binaries directly:
+
+```
+{
+  "mcpServers": {
+    "agent-core": {
+      "type": "stdio",
+      "command": "C:\\Users\\<you>\\.agent-core\\.venv\\Scripts\\python.exe",
+      "args": ["-m", "agent_core_busproxy", "--agent", "<AGENT>",
+               "--daemon-url", "http://127.0.0.1:8789"]
+    },
+    "agent-core-channel": {
+      "type": "stdio",
+      "command": "C:\\Users\\<you>\\.agent-core\\.venv\\Scripts\\python.exe",
+      "args": ["-m", "agent_core_channel", "--agent", "<AGENT>",
+               "--daemon-url", "http://127.0.0.1:8789"]
+    }
+  }
+}
+```
+
+Do not use the HTTP MCP form
+
+An older `{"type":"http","url":".../mcp/<agent>"}` shape exists but strands live Claude Code sessions on daemon restart. Always use the stdio form above.
+
+## Source instance: iterate on daemon code
+
+The `source` instance runs editable from the workspace `.venv`. Use it when you're changing daemon code and want a fast restart loop without touching the live `prod` daemon.
+
+### One-time source setup
+
+```
+# Run from inside the agent_core repo.
+agent-core daemon init --instance source
+agent-core daemon start --instance source
+```
+
+### The edit → restart loop
+
+```
+# Edit code in the repo, then:
+agent-core daemon refresh --instance source
+```
+
+For `source`, `refresh` is a plain stop + start — no install step. The workspace `.venv` is editable, so the restart picks up your latest changes immediately.
+
+Note
+
+`agent-core daemon install --instance source` is intentionally an error. The source instance is never installed from artifacts.
+
+## Test instance: validate a release before promoting to prod
+
+Use `test` to exercise the full release packaging path (entry points, wheel contents, install correctness) before `daemon refresh` on prod.
+
+```
+# One-time scaffold.
+agent-core daemon init --instance test
+
+# Install a specific release candidate.
+agent-core daemon install --instance test --release vX.Y.Z
+
+# Start on port 8787.
+agent-core daemon start --instance test
+
+# Run your checks, then stop.
+agent-core daemon stop --instance test
+```
+
+Once satisfied, promote:
+
+```
+agent-core daemon refresh --release vX.Y.Z
+```
+
+## Common problems
+
+| Symptom                                    | Cause                                          | Fix                                                             |
+| ------------------------------------------ | ---------------------------------------------- | --------------------------------------------------------------- |
+| `No daemon config at ...` on `start`       | Config not scaffolded                          | `agent-core daemon init [--instance source\|test]`              |
+| `daemon is currently running` on `install` | Prod daemon is up                              | Use `agent-core daemon refresh` instead                         |
+| `source daemon needs the workspace .venv`  | Ran `start --instance source` outside the repo | `cd` into the agent_core repo first                             |
+| `the source instance is not installed`     | Ran `install --instance source`                | Source needs no install — just `daemon start --instance source` |
+
+## Windows: auto-start at boot
+
+```
+# Register a Task Scheduler task that starts the prod daemon at logon.
+agent-core daemon install-autostart
+
+# Remove it.
+agent-core daemon uninstall-autostart
+```
+
+Requires the prod daemon to be installed first. The task runs as your own user; no admin rights needed (the daemon binds `127.0.0.1` only).
+
+## Related
+
+- [`docs/setup/daemon.md`](https://github.com/jeffrichley/agent_core/blob/main/docs/setup/daemon.md) — full operator reference including instance internals and troubleshooting
+- [`docs/setup/releases.md`](https://github.com/jeffrichley/agent_core/blob/main/docs/setup/releases.md) — the release flow (release-please + GitHub Release artifacts)
+- [`docs/setup/ci.md`](https://github.com/jeffrichley/agent_core/blob/main/docs/setup/ci.md) — CI gate and hook bootstrap
+- [Concepts](https://jeffrichley.github.io/agent_core/concepts/index.md) — bus, envelopes, endpoints
+
+# Your First Agent / Endpoint
+
+This page walks through the core moving parts: the `Endpoint` protocol, the `StubEndpoint` adapter, and how envelopes flow through the bus. Every claim below is grounded in the source — see `packages/core/src/agent_core/bus/protocol.py`, `endpoints/stub.py`, `bus/handle.py`, and `bus/core.py`.
+
+## The Endpoint protocol
+
+Every participant on the bus implements three async methods:
+
+```
+from agent_core.bus.protocol import Endpoint
+from agent_core.bus.handle import BusHandle
+from agent_core.bus.envelope import Envelope
+
+class Endpoint(Protocol):
+    name: str
+
+    async def start(self, bus: BusHandle) -> None:
+        """Bus is ready. Store the handle; open connections; start background loops."""
+
+    async def deliver(self, envelope: Envelope) -> None:
+        """An envelope addressed to you has arrived.
+
+        You MUST call bus.ack(envelope.id) when handling completes.
+        Raise EndpointUnavailable for a transient failure — the bus will retry.
+        Any other exception dead-letters the envelope.
+
+        deliver() is awaited before the bus dispatches to any other endpoint,
+        so return promptly. Long work belongs in a background task.
+        """
+
+    async def stop(self) -> None:
+        """Graceful shutdown. Close connections; flush state."""
+```
+
+Protocol conformance
+
+`Endpoint` is `@runtime_checkable`, so the bus verifies conformance when you register an endpoint. Missing any of the three methods raises at load time, not at delivery time.
+
+## StubEndpoint — a ready-made dev adapter
+
+`agent_core.endpoints.stub.StubEndpoint` is a minimal in-memory implementation of the protocol. It records every delivered envelope on an `.inbox` list and provides a `.send()` helper for publishing from its own identity.
+
+```
+from agent_core.endpoints.stub import StubEndpoint
+
+# auto_ack=True (default): the stub acks each delivered envelope automatically.
+echo = StubEndpoint(name="echo", auto_ack=True)
+```
+
+After the bus calls `start()`, the stub stores the `BusHandle` it receives and uses it for both acking and for `.send()`.
+
+### send() signature
+
+```
+await echo.send(
+    to="other-endpoint",
+    kind="TextMessage",
+    payload={"text": "hello"},
+    # optional:
+    correlation_id=None,   # auto-generated uuid4.hex if omitted
+    in_reply_to=None,
+    metadata=None,
+    expires_at=None,
+)
+```
+
+Calling `.send()` before the bus has called `start()` raises `RuntimeError`.
+
+## BusHandle — your identity-bound view of the bus
+
+When the bus starts an endpoint, it hands it a `BusHandle` bound to that endpoint's name. The handle stamps `from_` on every envelope you publish — you cannot spoof another endpoint's identity.
+
+Key methods on `BusHandle`:
+
+```
+# Publish an envelope. `to` overrides envelope.to and accepts a list for fan-out.
+await handle.publish(envelope, to="target")
+
+# Confirm successful handling. Idempotent.
+await handle.ack(envelope_id)
+
+# Reject. requeue=True schedules redelivery; False dead-letters.
+await handle.nack(envelope_id, requeue=True)
+
+# Snapshot of currently registered endpoints.
+endpoints = handle.endpoints()   # list[EndpointInfo]
+```
+
+## Constructing and running the Bus
+
+`Bus` lives in `agent_core.bus.core`. It takes a `BusConfig` (which requires at minimum a `storage_path`), accepts endpoint registrations via `Bus.register(EndpointSpec(...))`, and is driven with `await bus.start()` / `await bus.stop()`.
+
+Config-driven path preferred in production
+
+Constructing a `Bus` directly requires wiring `BusConfig`, `EndpointSpec`, and the async lifecycle yourself. In practice, the daemon runner handles all of that from `agent_core.yaml`. The snippet below shows the minimal direct path for clarity — use it for tests or one-off scripts, not for production services.
+
+```
+import asyncio
+from pathlib import Path
+
+from agent_core.bus.core import Bus, BusConfig, EndpointSpec
+from agent_core.endpoints.stub import StubEndpoint
+from agent_core.bus.envelope import Envelope
+import uuid
+from datetime import UTC, datetime
+
+async def main() -> None:
+    sender = StubEndpoint(name="sender")
+    receiver = StubEndpoint(name="receiver")
+
+    bus = Bus(BusConfig(storage_path=Path("/tmp/demo.sqlite")))
+    bus.register(EndpointSpec(endpoint=sender))
+    bus.register(EndpointSpec(endpoint=receiver))
+
+    await bus.start()
+
+    # StubEndpoint.send() builds and publishes an envelope from "sender".
+    await sender.send(
+        to="receiver",
+        kind="TextMessage",
+        payload={"text": "hello from sender"},
+    )
+
+    # With auto_ack=True, the envelope is already acked.
+    print(receiver.inbox)   # [Envelope(kind='TextMessage', ...)]
+
+    await bus.stop()
+
+asyncio.run(main())
+```
+
+### What happens under the hood
+
+1. `bus.start()` opens the SQLite store, then calls `endpoint.start(handle)` for each registered endpoint in registration order.
+1. After each `start()`, the bus drains any persisted-but-pending envelopes addressed to that endpoint.
+1. `sender.send(...)` calls `handle.publish(envelope)`. The handle stamps `from_="sender"`, runs `pre_publish` hooks, persists the envelope, then dispatches synchronously to `receiver.deliver(envelope)`.
+1. `receiver.deliver()` appends to `.inbox` and calls `handle.ack(envelope.id)`.
+1. `bus.stop()` calls `endpoint.stop()` in reverse registration order, then closes the store.
+
+## Writing a custom endpoint
+
+Implement the three protocol methods. You do not need to inherit from any base class — structural typing is enough.
+
+```
+from agent_core.bus.handle import BusHandle
+from agent_core.bus.envelope import Envelope
+from agent_core.bus.protocol import EndpointUnavailable
+
+class LoggingEndpoint:
+    def __init__(self, name: str) -> None:
+        self.name = name
+        self._handle: BusHandle | None = None
+
+    async def start(self, bus: BusHandle) -> None:
+        self._handle = bus
+
+    async def deliver(self, envelope: Envelope) -> None:
+        print(f"[{self.name}] received {envelope.kind!r} from {envelope.from_!r}")
+        assert self._handle is not None
+        await self._handle.ack(envelope.id)
+
+    async def stop(self) -> None:
+        self._handle = None
+```
+
+Long-running work
+
+`deliver()` is awaited before the bus dispatches to any other endpoint. If your handler does I/O or model calls, start a background task, ack immediately, and publish a follow-up envelope when the work is done.
+
+## Error signalling
+
+| What you raise        | Bus behaviour                               |
+| --------------------- | ------------------------------------------- |
+| `EndpointUnavailable` | Envelope requeued; bus retries on backoff   |
+| Any other exception   | Envelope moved to dead-letter; error logged |
+
+Import `EndpointUnavailable` from `agent_core.bus.protocol`.
+
+## Next steps
+
+- [Running the daemon](https://jeffrichley.github.io/agent_core/getting-started/daemon/index.md) — run a supervised multi-endpoint process from `agent_core.yaml`
+- [Concepts — Bus](https://jeffrichley.github.io/agent_core/concepts/bus/index.md) — envelope lifecycle, hooks, delivery guarantees
+# Concepts
+
+# Concepts
+
+agent-core is built around one central idea: **endpoints on a bus, work as envelopes**.
+
+Every participant in the system — an AI agent, a Discord adapter, a scheduler, a stub for testing — is an **endpoint**: an addressable name that can receive and send messages. Those messages are **envelopes**: a universal wire format carrying a typed payload, routing metadata, and an urgency level. The **bus** is the in-process router that connects them: it persists every envelope to a durable SQLite mailbox, dispatches to the target endpoint, waits for acknowledgment, and retries or dead-letters if delivery fails. Finally, **extensions** let third-party packages contribute new endpoint types, new envelope kinds, bus hooks, and CLI subcommands — without modifying agent-core itself.
+
+These four concepts build on each other in order:
+
+| Concept                                                                             | What it does                                         |
+| ----------------------------------------------------------------------------------- | ---------------------------------------------------- |
+| [Bus](https://jeffrichley.github.io/agent_core/concepts/bus/index.md)               | Routes, persists, retries, and supervises everything |
+| [Envelopes](https://jeffrichley.github.io/agent_core/concepts/envelopes/index.md)   | The universal wire format all participants share     |
+| [Endpoints](https://jeffrichley.github.io/agent_core/concepts/endpoints/index.md)   | Addressable participants; the deliver/ack contract   |
+| [Extensions](https://jeffrichley.github.io/agent_core/concepts/extensions/index.md) | How plugins contribute new types and behaviors       |
+
+Read the pages in order if you are new to agent-core. If you are looking for exact field names and method signatures, see the [API Reference](https://jeffrichley.github.io/agent_core/reference/index.md).
+
+# The Bus
+
+The bus (`agent_core.bus.core.Bus`) is the heart of agent-core: an in-process async router that connects every participant in the system. Its job is to accept an envelope from a sender, write it durably, deliver it to the right endpoint, and confirm the outcome — all without the sender needing to care about whether the recipient is currently available.
+
+## What the bus does
+
+**Route.** Every endpoint registers under a unique name before the bus starts. When an envelope arrives, the bus looks up the registered endpoint by `envelope.to` and calls its `deliver()` method.
+
+**Persist.** Before dispatching, the bus writes the envelope to a SQLite mailbox (`storage_path` in `BusConfig`). This means a crash between publish and ack does not lose the message: envelopes survive restarts and are replayed when the endpoint comes back online.
+
+**Await acknowledgment.** Dispatch is synchronous per envelope: the bus awaits `deliver()` before moving on. The endpoint must eventually call `bus.ack(envelope_id)` to confirm handling. Until it does, the envelope remains in an in-flight state in the mailbox.
+
+**Retry.** A redelivery sweep runs periodically (`redelivery_sweep_seconds`). Any envelope that has been in-flight longer than `redelivery_timeout_seconds` is either requeued for another attempt or moved to dead-letter once `max_delivery_attempts` is exhausted.
+
+**TTL sweep.** Envelopes can carry an `expires_at` timestamp. A separate TTL sweep loop (`ttl_sweep_seconds`) marks expired-and-undelivered envelopes as `expired` so they never get delivered after their window closes.
+
+**Dead-letter.** An envelope ends up dead-lettered if the endpoint raises a non-`EndpointUnavailable` exception during `deliver()`, if it exceeds `max_delivery_attempts`, or if a `pre_deliver` hook drops it. Dead-lettered envelopes stay in the mailbox for inspection; they are not retried.
+
+**Supervise endpoints.** The supervisor layer monitors endpoint health. If an endpoint raises during `start()` or repeatedly fails delivery, the supervisor backs off (exponential with jitter) and eventually quarantines the endpoint before probing it again. See [Endpoints](https://jeffrichley.github.io/agent_core/concepts/endpoints/index.md) for how this interacts with the deliver/ack contract.
+
+## Delivery lifecycle
+
+```
+publish()
+  │
+  ├─ pre_publish hooks (may mutate or drop)
+  │
+  ├─ insert into SQLite mailbox (status: pending)
+  │
+  └─ dispatch()
+       │
+       ├─ pre_deliver hooks (may mutate or drop → dead-letter if dropped)
+       │
+       ├─ mark in_flight (timeout = now + redelivery_timeout_seconds)
+       │
+       └─ endpoint.deliver(envelope)
+            │
+            ├─ endpoint calls ack()  → status: acked  ✓
+            │
+            ├─ raises EndpointUnavailable → status: pending (requeue)
+            │
+            └─ raises other exception  → status: dead_letter
+```
+
+Redelivery sweep requeues envelopes that stay in-flight past the timeout; a separate TTL sweep expires envelopes past their `expires_at`.
+
+## Bus hooks
+
+The bus has two pipeline stages where hooks can intercept envelopes:
+
+- **`pre_publish`** — runs before persistence. A hook can mutate (e.g., stamp metadata) or drop (return `None`) the envelope before it is written to the mailbox.
+- **`pre_deliver`** — runs just before `endpoint.deliver()` is called. A hook that drops an envelope here causes it to move directly to dead-letter (it was already persisted).
+
+## Why SQLite?
+
+SQLite gives the bus durability with zero external dependencies. The mailbox is a single file on disk. Envelopes written before a crash are there when the process restarts; the bus drains them per endpoint as each endpoint comes online. The schema uses WAL mode for concurrent reads during tailing and audit queries.
+
+## Configuration knobs
+
+`BusConfig` controls the bus-level tuning; `SupervisorConfig` (nested at `BusConfig.supervisor`) controls the supervision layer. Conceptually:
+
+| Area            | What you tune                                                                                             |
+| --------------- | --------------------------------------------------------------------------------------------------------- |
+| Storage         | `storage_path`, `acked_retention_days`                                                                    |
+| Delivery        | `redelivery_timeout_seconds`, `max_delivery_attempts`, `max_pending_per_endpoint`                         |
+| Sweep cadence   | `ttl_sweep_seconds`, `redelivery_sweep_seconds`                                                           |
+| Restart backoff | `restart_backoff_base_seconds`, `restart_backoff_factor`, `restart_backoff_cap_seconds`, `restart_jitter` |
+| Quarantine      | `restarts_before_quarantine`, `probe_interval_seconds`                                                    |
+| Circuit breaker | `delivery_backoff_base_seconds/factor/cap`, `deliver_failures_before_breaker`                             |
+
+For exact field names and defaults, see the [API Reference](https://jeffrichley.github.io/agent_core/reference/index.md).
+
+Fan-out is atomic
+
+When you publish to multiple recipients (via `BusHandle.publish(envelope, to=[...])`) the bus pre-validates all recipients and mailbox capacities before writing any envelope. Either all recipients accept the envelope, or none do.
+
+# Endpoints & Supervision
+
+An endpoint is any addressable participant on the bus. It might be an AI agent, a Discord adapter, a job scheduler, or a test stub — what matters is that it has a registered name and implements three async methods. The bus calls those methods; the endpoint does whatever its job is and signals back.
+
+## The protocol
+
+```
+class Endpoint(Protocol):
+    name: str
+
+    async def start(self, bus: BusHandle) -> None: ...
+    async def deliver(self, envelope: Envelope) -> None: ...
+    async def stop(self) -> None: ...
+```
+
+**`start(bus)`** is called once when the bus starts, after the endpoint is registered. The `BusHandle` argument is the endpoint's identity-bound view of the bus (see below). Open connections, start background loops, and subscribe to external sources here. Pending envelopes addressed to this endpoint are drained and dispatched immediately after `start()` returns.
+
+**`deliver(envelope)`** is called by the bus for each envelope addressed to this endpoint. The bus awaits this call, so it must return promptly. Long-running work should be handed off to a background task; `deliver()` should return after acking, then publish a `Progress` or reply envelope when the work completes.
+
+**`stop()`** is called in reverse-registration order during a graceful shutdown. Close connections and flush state here.
+
+## The deliver/ack contract
+
+The `deliver()` method has an important invariant: **it must eventually call `bus.ack(envelope.id)`**. Until ack is called, the envelope remains in-flight in the SQLite mailbox. If the process crashes before ack, the redelivery sweep will redeliver the envelope when the process restarts.
+
+```
+async def deliver(self, envelope: Envelope) -> None:
+    # Return promptly: hand off to background work, ack immediately.
+    asyncio.create_task(self._handle(envelope))
+
+async def _handle(self, envelope: Envelope) -> None:
+    try:
+        # ... do the work ...
+        await self._bus.ack(envelope.id)
+    except Exception:
+        await self._bus.nack(envelope.id, requeue=True)
+```
+
+## Signaling failure
+
+Two outcomes are possible when `deliver()` raises instead of completing normally:
+
+**`EndpointUnavailable`** signals a temporary failure. The bus requeues the envelope (status becomes `pending`) and it will be retried on the next redelivery sweep. Use this when the endpoint is temporarily unable to accept work — for example, a downstream service is unreachable. The supervisor also uses this signal as input to the circuit breaker (see below).
+
+**Any other exception** is terminal. The envelope moves to dead-letter and will not be retried. Use this for programming errors, malformed payloads, or any case where retrying would be futile.
+
+deliver() blocks the dispatch loop
+
+The bus awaits `deliver()` before dispatching the next envelope. An endpoint that blocks in `deliver()` for a long time will stall all other endpoints. Return quickly; do the work in a background task.
+
+## BusHandle — identity-bound publishing
+
+Each endpoint receives a `BusHandle` bound to its name at `start()` time. This is the only surface through which an endpoint should interact with the bus:
+
+- **`handle.publish(envelope, to=...)`** — send an envelope. The bus stamps `from_` to this endpoint's name automatically.
+- **`handle.ack(envelope_id)`** — mark an envelope handled. Idempotent.
+- **`handle.nack(envelope_id, requeue=True)`** — reject an envelope; requeue it or dead-letter it.
+- **`handle.endpoints()`** — list currently registered endpoints (name + description snapshot).
+
+The identity binding is a security property: an endpoint cannot publish on behalf of another endpoint, regardless of what it sets in the envelope fields.
+
+## EndpointSpec — registering with a description
+
+Endpoints are registered via `EndpointSpec(endpoint=..., description="...")`. The description is surfaced in the `handle.endpoints()` directory listing, which agents use to discover what participants are available on the bus.
+
+## Supervision
+
+The bus supervisor monitors endpoint health so the system is self-healing rather than fail-stop.
+
+**Restart backoff.** If an endpoint's `start()` raises, or if the supervisor determines an endpoint needs to be restarted, it waits before retrying. The wait follows exponential backoff: starting at `restart_backoff_base_seconds`, multiplying by `restart_backoff_factor` on each failure, capped at `restart_backoff_cap_seconds`. Jitter (full, equal, or none) spreads restarts so endpoints do not thunderherd after a shared dependency recovers.
+
+**Quarantine.** After `restarts_before_quarantine` consecutive restart failures, the supervisor stops retrying immediately and instead probes the endpoint every `probe_interval_seconds`. This prevents a broken endpoint from burning CPU in a tight restart loop.
+
+**Circuit breaker.** A separate circuit breaker tracks delivery failures. After `deliver_failures_before_breaker` consecutive failures, the breaker opens: the bus pauses delivery to that endpoint and applies `delivery_backoff_base_seconds/factor/cap` before retrying. When a delivery succeeds, the breaker resets.
+
+The combination means an endpoint that is temporarily unavailable (raises `EndpointUnavailable`) degrades gracefully: the bus backs off delivery, the envelopes stay safely in the mailbox, and delivery resumes when the endpoint recovers — without operator intervention.
+
+For exact `SupervisorConfig` field names and defaults, see the [API Reference](https://jeffrichley.github.io/agent_core/reference/index.md).
+
+# Envelopes & Kinds
+
+Every message that crosses the bus is an `Envelope`. There is no other wire format. Whether you are an AI agent sending a text message to a Discord adapter, a scheduler signaling a job event, or an endpoint acknowledging receipt, the shape is always the same: an `Envelope` with a typed payload inside.
+
+## The field set
+
+```
+class Envelope(BaseModel):
+    id: str                              # unique envelope id (hex uuid)
+    correlation_id: str                  # groups related envelopes into a thread
+    in_reply_to: str | None             # id of the envelope this is a reply to
+    from_: str                           # stamped by the bus at publish time
+    to: str                              # registered endpoint name
+    kind: str                            # discriminates the payload type
+    payload: EnvelopePayload | dict      # typed for built-ins, dict for plugin kinds
+    metadata: dict[str, Any]            # extension data (adapter-specific, not bus-controlled)
+    urgency: Literal["green", "yellow", "red"]  # default: "green"
+    expires_at: datetime | None         # TTL; bus expires undelivered envelopes past this
+    created_at: datetime
+```
+
+### `from_` is stamped by the bus
+
+You do not set `from_` yourself. When you call `BusHandle.publish()`, the bus overwrites `from_` with the publishing endpoint's registered name. This is an identity guarantee: an endpoint cannot spoof another endpoint's name, regardless of what it constructs locally.
+
+### `correlation_id` for threading
+
+Use `correlation_id` to group a chain of related envelopes — the originating request and all replies, progress updates, and cancellations that belong to it. The bus does not interpret or enforce correlation semantics; it is a field you set and read.
+
+`in_reply_to` narrows further: it names the specific envelope that triggered this one, useful when a thread branches (e.g., two parallel ToolInvocation replies to one request).
+
+## Built-in payload kinds
+
+The `kind` field is a free string, but the seven built-in kinds get full Pydantic validation. The bus rejects a built-in kind whose payload fails type validation — you get the error synchronously at publish time, not as a later dead-letter.
+
+| Kind             | Purpose                                                                                                                        |
+| ---------------- | ------------------------------------------------------------------------------------------------------------------------------ |
+| `TextMessage`    | Human-readable text; carries `text: str` and optional `attachments`                                                            |
+| `Event`          | Domain events; carries `type: str`, `schema_version`, and an open `data: dict`                                                 |
+| `ToolInvocation` | Request to call a named tool; carries `tool: str` and `args: dict`                                                             |
+| `Cancellation`   | Cancel a prior request; optionally carries `reason: str`                                                                       |
+| `Progress`       | Mid-flight status update; carries `status` (working/blocked/complete) and optional `note`, `percent`                           |
+| `Acknowledgment` | Explicit acknowledgment of a prior envelope; carries `of: str` (the envelope id) and optional `note`                           |
+| `Notification`   | Inbound notification from an external source (GitHub, Gmail, etc.); carries `source`, `reason`, `landed_at`, and a `body` dict |
+
+Acknowledgment vs ack()
+
+`Acknowledgment` is a *message kind* you publish when you want the sender to know you received and processed their envelope. It is different from the bus-level `ack()` call that clears the in-flight state in the mailbox. Most endpoints do both: call `bus.ack(envelope.id)` to satisfy the bus, and optionally publish an `Acknowledgment` envelope back to the sender to close the application-level loop.
+
+## Urgency
+
+`urgency` is a three-level signal: `green` (default, background), `yellow` (elevated), `red` (needs immediate attention). Higher-urgency envelopes are presented first in inline-wake notifications. The bus delivers in the order they are dispatched; urgency controls presentation in the notification layer, not delivery order on the bus itself.
+
+## Plugin kinds
+
+The built-in set is not closed. Plugins can register additional first-class kinds via the `register_envelope_renderers` hookspec. A plugin kind:
+
+- Uses a dict payload (not a typed Pydantic model) whose `"kind"` key matches `Envelope.kind`.
+- Is validated by the plugin's own code, not the bus.
+- Has a renderer that formats it inside `<inbox>` notifications for inline-wake delivery.
+
+Duplicate kind names across plugins raise `PluginRegistryError` at startup. See [Extensions](https://jeffrichley.github.io/agent_core/concepts/extensions/index.md) for the registration pattern.
+
+## Envelope as audit trail
+
+Because every envelope is persisted to the SQLite mailbox before delivery, you always have a record of what was sent, when, from whom, to whom, and what happened to it (pending, in-flight, acked, dead-letter, expired). The `bus_tail` surface exposes this for read-only queries.
+
+For exact field types and payload model signatures, see the [API Reference](https://jeffrichley.github.io/agent_core/reference/index.md).
+
+# Extensions
+
+agent-core is designed to be extended without forking. The extension model is built on [Pluggy](https://pluggy.readthedocs.io/), the same hook framework used by pytest. A plugin is a Python package that declares an entry point in the `agent_core` group; the bus runner discovers and loads it at startup.
+
+## Entry point registration
+
+```
+# your package's pyproject.toml
+[project.entry-points."agent_core"]
+my_plugin = "my_package.plugin"
+```
+
+Inside `my_package/plugin.py`, mark hook implementations with the `hookimpl` marker:
+
+```
+import pluggy
+
+hookimpl = pluggy.HookimplMarker("agent_core")
+
+@hookimpl
+def register_endpoint_types() -> dict:
+    return {"my_plugin.my_endpoint": MyEndpoint}
+```
+
+The runner collects all installed plugins via `importlib.metadata` and calls their hook implementations in registration order.
+
+## What a plugin can contribute
+
+### New endpoint types
+
+```
+@hookimpl
+def register_endpoint_types() -> dict[str, type[Endpoint]]:
+    return {"my_plugin.widget": WidgetEndpoint}
+```
+
+The returned dict maps a type-id string to an `Endpoint` class. Operators reference the type-id in their YAML config under `endpoints[].type`. Duplicate type-ids across plugins raise `PluginRegistryError` at startup.
+
+### New bus hook types
+
+```
+@hookimpl
+def register_bus_hook_types() -> dict[str, type[BusHook]]:
+    return {"my_plugin.rate_limit": RateLimitHook}
+```
+
+Bus hooks intercept envelopes at `pre_publish` or `pre_deliver`. A hook can mutate the envelope (e.g., stamp metadata) or drop it (return `None`). Operators configure hooks in YAML under `bus_hooks[].type`.
+
+### New envelope kinds + renderers
+
+```
+@hookimpl
+def register_envelope_renderers() -> dict[str, Any]:
+    return {"MyKind": render_my_kind}
+```
+
+Registering a renderer makes `MyKind` a first-class envelope kind. Envelopes with `kind="MyKind"` carry a dict payload (the plugin owns validation). The renderer is a callable `(envelope: dict) -> str` that formats the body of the `<inbox>` block for inline-wake notifications. See the [envelope extensions doc](https://github.com/jeffrichley/agent_core/blob/main/docs/extensions.md) for a worked example including payload publication.
+
+### Post-construction endpoint wiring
+
+```
+@hookimpl
+def configure_endpoint_instance(
+    instance, endpoint_name, endpoint_config, services
+) -> None:
+    if isinstance(instance, MyEndpoint):
+        instance.set_broker(services.notify_broker)
+```
+
+Use this for wiring that cannot happen in `__init__` because it depends on shared runtime services (`RunnerServices` carries the `notify_broker` and optional `mcp_audit_writer`).
+
+For cross-endpoint wiring (e.g., pairing two endpoints that need references to each other), use `wire_endpoints_after_registration`, which is called once all endpoints are constructed.
+
+### CLI subcommands
+
+```
+@hookimpl
+def register_cli_subapps(app: typer.Typer) -> None:
+    from my_package.cli import subapp
+    app.add_typer(subapp, name="widget")
+```
+
+This extends the top-level `agent-core` CLI without the core package depending on your plugin. Import lazily inside the hookimpl to preserve layering.
+
+### Config validation
+
+```
+@hookimpl
+def validate_config(raw_config: dict) -> None:
+    if "widget" not in raw_config:
+        raise ValueError("my_plugin requires a [widget] config section")
+```
+
+Validation hooks run early, before any endpoint is constructed. Raise to block startup with a clear error message.
+
+### Bus log projectors
+
+```
+@hookimpl
+def register_bus_log_projectors() -> dict[str, Any]:
+    return {"MyKind": MyKindProjector()}
+```
+
+Projectors map envelope kinds (or `Event.type` strings) to display logic for the bus log. Last-write-wins on duplicate keys.
+
+## Built-in type aliases
+
+Core ships a built-in plugin that registers the following aliases so you can reference them directly in YAML config:
+
+**Endpoint types:**
+
+| Alias                     | Class                                                        |
+| ------------------------- | ------------------------------------------------------------ |
+| `builtin.stub`            | `agent_core.endpoints.stub.StubEndpoint`                     |
+| `builtin.discord`         | `agent_core_discord.endpoint.DiscordEndpoint`                |
+| `builtin.claude_code_mcp` | `agent_core.endpoints.claude_code_mcp.ClaudeCodeMCPEndpoint` |
+| `builtin.scheduler`       | `agent_core.endpoints.scheduler.SchedulerEndpoint`           |
+| `builtin.handoff_jobs`    | `agent_core.endpoints.handoff_jobs.HandoffJobsEndpoint`      |
+
+**Hook tool types** (used in pipeline config):
+
+| Alias                       | Class                                                       |
+| --------------------------- | ----------------------------------------------------------- |
+| `builtin.handoff_writer`    | `agent_core.hooks.tools.handoff_writer.HandoffWriter`       |
+| `builtin.identity_injector` | `agent_core.hooks.tools.identity_injector.IdentityInjector` |
+| `builtin.time_injector`     | `agent_core.hooks.tools.time_injector.TimeInjector`         |
+
+Your plugin's type-ids coexist with these. You cannot override a built-in type-id; use a distinct namespace (e.g., `my_org.my_endpoint`).
+
+## Hook ordering and collision policy
+
+Pluggy calls all implementations of a hook and collects their return values. For `register_endpoint_types` and `register_envelope_renderers`, the runner merges the dicts — a duplicate key across two plugins raises `PluginRegistryError` at startup. This is a programming error, not a configuration issue; fix it by choosing a distinct type-id or kind name.
+
+The `register_bus_log_projectors` hook is the exception: last-write-wins on duplicates is intentional, allowing a plugin to override a built-in projector.
+
+## Writing an extension
+
+For a step-by-step guide with a working example, see [Write an extension](https://jeffrichley.github.io/agent_core/guides/write-an-extension/index.md).
+# Guides
+
+# Guides
+
+How-to recipes for common tasks. Each guide is a concrete, working walkthrough — not a conceptual overview. If you want the mental model first, read [Concepts](https://jeffrichley.github.io/agent_core/concepts/index.md).
+
+## Available guides
+
+| Guide                                                                                                   | What it covers                                                              |
+| ------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------- |
+| [Add an endpoint](https://jeffrichley.github.io/agent_core/guides/add-an-endpoint/index.md)             | Implement the `Endpoint` protocol, wire it in config, register via a plugin |
+| [Send and consume envelopes](https://jeffrichley.github.io/agent_core/guides/send-and-consume/index.md) | Publish through a `BusHandle`, handle delivery in `deliver()`, ack/nack     |
+| [Write an extension](https://jeffrichley.github.io/agent_core/guides/write-an-extension/index.md)       | Pluggy plugin recipe: entry point, `@hookimpl`, `register_endpoint_types()` |
+
+## How to read these guides
+
+Every code snippet is grounded in the actual source. If you are an AI agent adopting agent-core, you can trust the signatures and field names here without cross-checking the source yourself — but the source paths are cited so you can verify.
+
+The "you" in these guides may be a human developer or an agent. Both are first-class readers.
+
+# Add an Endpoint
+
+An **endpoint** is any participant on the bus — a Discord adapter, an AI agent's MCP surface, a stub for tests, or a custom adapter you write. This guide walks through implementing the `Endpoint` protocol, registering it with the daemon, and handling the deliver/ack contract correctly.
+
+Sources verified: `packages/core/src/agent_core/bus/protocol.py`, `packages/core/src/agent_core/endpoints/stub.py`, `packages/core/docs/plugins.md`.
+
+______________________________________________________________________
+
+## Step 1 — Implement the protocol
+
+Every endpoint satisfies three async methods. No base class is needed — structural typing is enough.
+
+```
+# my_package/endpoints/greeter.py
+from agent_core.bus.handle import BusHandle
+from agent_core.bus.envelope import Envelope
+from agent_core.bus.protocol import EndpointUnavailable
+
+
+class GreeterEndpoint:
+    """A minimal endpoint that logs every TextMessage it receives."""
+
+    def __init__(self, name: str, prefix: str = "Hello") -> None:
+        self.name = name          # required: the bus routes by this name
+        self._prefix = prefix
+        self._handle: BusHandle | None = None
+
+    async def start(self, bus: BusHandle) -> None:
+        """Bus is ready. Store the handle; open connections; start background loops."""
+        self._handle = bus
+
+    async def deliver(self, envelope: Envelope) -> None:
+        """An envelope addressed to this endpoint has arrived.
+
+        Rules:
+        - MUST call self._handle.ack(envelope.id) when handling completes.
+        - Raise EndpointUnavailable for a temporary failure — the bus will
+          requeue and retry on backoff.
+        - Any other exception dead-letters the envelope.
+        - Return promptly. Long work goes in a background task.
+        """
+        assert self._handle is not None
+        try:
+            if envelope.kind == "TextMessage":
+                text = envelope.payload.text  # type: ignore[union-attr]
+                print(f"{self._prefix} from {envelope.from_!r}: {text}")
+        except OSError as exc:
+            # Transient I/O failure — bus will retry.
+            raise EndpointUnavailable(str(exc)) from exc
+
+        await self._handle.ack(envelope.id)
+
+    async def stop(self) -> None:
+        """Graceful shutdown. Close connections, flush state."""
+        self._handle = None
+```
+
+Return promptly from deliver()
+
+The bus awaits `deliver()` before dispatching to any other endpoint. If you need to do model calls, network I/O, or anything slow, spawn a background task, ack immediately, and publish a follow-up envelope when the work completes.
+
+### Error table
+
+| What you raise        | Bus behaviour                                         |
+| --------------------- | ----------------------------------------------------- |
+| `EndpointUnavailable` | Envelope requeued; bus retries on exponential backoff |
+| Any other exception   | Envelope moved to dead-letter; error logged           |
+| Nothing (ack called)  | Envelope marked acked; delivery complete              |
+
+______________________________________________________________________
+
+## Step 2 — Wire it in `agent_core.yaml`
+
+The daemon reads `agent_core.yaml` and instantiates each endpoint by `type:`. Built-in type aliases ship with the core package (e.g. `builtin.stub`). Your own endpoint types are registered via a plugin (Step 3).
+
+```
+# agent_core.yaml
+bus:
+  storage_path: "~/.agent-core/bus.sqlite"
+
+http:
+  bind_host: "127.0.0.1"
+  bind_port: 8788
+
+endpoints:
+  - type: my_package.greeter       # resolved via your plugin's register_endpoint_types()
+    name: greeter
+    params:
+      prefix: "Greetings"
+```
+
+The `name:` field becomes the bus routing address — envelopes addressed `to: greeter` land in `GreeterEndpoint.deliver()`. The `params:` dict is passed as keyword arguments to `__init__` (after `name`).
+
+Config-driven production path
+
+In production the daemon runner owns construction, persistence, and lifecycle. Direct `Bus` construction is for tests and one-off scripts — see [Getting Started](https://jeffrichley.github.io/agent_core/getting-started/first-agent/index.md) for that pattern.
+
+______________________________________________________________________
+
+## Step 3 — Register the type via a plugin
+
+The daemon resolves `type:` strings through a plugin registry. Register your endpoint class by contributing a `register_endpoint_types()` hookimpl:
+
+```
+# my_package/agent_core_plugin.py
+import pluggy
+
+hookimpl = pluggy.HookimplMarker("agent_core")
+
+
+@hookimpl
+def register_endpoint_types() -> dict:
+    from my_package.endpoints.greeter import GreeterEndpoint
+    return {"my_package.greeter": GreeterEndpoint}
+```
+
+Then declare the entry point in `pyproject.toml`:
+
+```
+[project.entry-points."agent_core"]
+my_plugin = "my_package.agent_core_plugin"
+```
+
+After `pip install -e .` (or a wheel install), `uv run agent-core daemon start` will discover your plugin and resolve the `my_package.greeter` type.
+
+______________________________________________________________________
+
+## Step 4 — Run it
+
+```
+uv run agent-core daemon start
+```
+
+The daemon starts the bus, calls `endpoint.start(handle)` for each registered endpoint in order, drains any persisted-but-pending envelopes, then enters its run loop. On shutdown it calls `endpoint.stop()` in reverse order.
+
+______________________________________________________________________
+
+## Using StubEndpoint for tests
+
+`agent_core.endpoints.stub.StubEndpoint` is a ready-made in-memory implementation for tests. It auto-acks, records every delivered envelope on `.inbox`, and provides a `.send()` helper to publish from its own identity.
+
+```
+import asyncio
+from pathlib import Path
+from agent_core.bus.core import Bus, BusConfig, EndpointSpec
+from agent_core.endpoints.stub import StubEndpoint
+
+async def test_delivery() -> None:
+    sender = StubEndpoint(name="sender")
+    receiver = StubEndpoint(name="receiver", auto_ack=True)
+
+    bus = Bus(BusConfig(storage_path=Path("/tmp/test.sqlite")))
+    bus.register(EndpointSpec(endpoint=sender))
+    bus.register(EndpointSpec(endpoint=receiver))
+    await bus.start()
+
+    await sender.send(
+        to="receiver",
+        kind="TextMessage",
+        payload={"kind": "TextMessage", "text": "ping"},
+    )
+
+    assert len(receiver.inbox) == 1
+    assert receiver.inbox[0].kind == "TextMessage"
+
+    await bus.stop()
+
+asyncio.run(test_delivery())
+```
+
+See [Send and consume envelopes](https://jeffrichley.github.io/agent_core/guides/send-and-consume/index.md) for the full envelope field reference.
+
+______________________________________________________________________
+
+## Next steps
+
+- [Send and consume envelopes](https://jeffrichley.github.io/agent_core/guides/send-and-consume/index.md) — the full publish/ack/nack cycle
+- [Write an extension](https://jeffrichley.github.io/agent_core/guides/write-an-extension/index.md) — package layout and the full pluggy recipe
+- [Concepts — Endpoints](https://jeffrichley.github.io/agent_core/concepts/index.md) — delivery guarantees, supervision, circuit-breaking
+
+# Send and Consume Envelopes
+
+Every message on the bus is an **envelope** — a universal wire format with a `kind`, routing fields (`from_`/`to`), a typed `payload`, and metadata. This guide shows how to publish an envelope through a `BusHandle`, how the target endpoint receives it in `deliver()`, and how to ack, nack, and thread replies via `correlation_id`.
+
+Sources verified: `packages/core/src/agent_core/bus/envelope.py`, `packages/core/src/agent_core/bus/handle.py`, `packages/core/src/agent_core/bus/core.py`, `packages/core/src/agent_core/endpoints/stub.py`.
+
+______________________________________________________________________
+
+## Envelope anatomy
+
+```
+class Envelope(BaseModel):
+    id: str                              # unique envelope id (uuid4.hex)
+    correlation_id: str                  # groups a request/reply chain
+    in_reply_to: str | None = None       # id of the envelope being replied to
+    from_: str                           # stamped by BusHandle.publish(); do not set manually
+    to: str                              # destination endpoint name
+    kind: str                            # payload discriminator (see built-in kinds below)
+    payload: EnvelopePayload | dict      # typed model for built-in kinds; dict for plugin kinds
+    metadata: dict[str, Any]             # open bag for routing hints, channel ids, etc.
+    urgency: Literal["green", "yellow", "red"] = "green"
+    expires_at: datetime | None = None   # TTL; undelivered envelopes are expired by a sweep
+    created_at: datetime
+```
+
+`from_` defaults to `""` — the bus overwrites it at publish time with the publishing endpoint's registered name. Endpoints cannot spoof each other.
+
+### Built-in payload kinds
+
+| `kind`           | Payload class           | Key fields                                                           |
+| ---------------- | ----------------------- | -------------------------------------------------------------------- |
+| `TextMessage`    | `TextMessagePayload`    | `text: str`, `attachments: list[FileAttachment]`                     |
+| `Event`          | `EventPayload`          | `type: str`, `schema_version: str`, `data: dict`                     |
+| `ToolInvocation` | `ToolInvocationPayload` | `tool: str`, `args: dict`                                            |
+| `Cancellation`   | `CancellationPayload`   | \`reason: str                                                        |
+| `Progress`       | `ProgressPayload`       | `status: Literal["working","blocked","complete"]`, `note`, `percent` |
+| `Acknowledgment` | `AcknowledgmentPayload` | `of: str` (id of the envelope being acknowledged), `note`            |
+| `Notification`   | `NotificationPayload`   | `source: str`, `reason: str`, `landed_at: datetime`, `body: dict`    |
+
+For built-in kinds, the payload model is validated strictly at publish time. The `kind` field on the outer envelope must match `payload.kind`; mismatches raise `ValueError` before the envelope reaches the bus.
+
+Plugin-registered kinds carry `dict` payloads; the plugin is responsible for validation.
+
+______________________________________________________________________
+
+## Publishing an envelope
+
+You publish via the `BusHandle` your endpoint received in `start()`. The handle stamps `from_`, runs `pre_publish` hooks, persists the envelope, and dispatches it.
+
+### TextMessage — the most common pattern
+
+```
+import uuid
+from datetime import UTC, datetime
+from agent_core.bus.envelope import Envelope, TextMessagePayload
+
+async def start(self, bus: BusHandle) -> None:
+    self._handle = bus
+
+# Later, from anywhere that has access to self._handle:
+async def notify_other_agent(self) -> None:
+    envelope = Envelope(
+        id=uuid.uuid4().hex,
+        correlation_id=uuid.uuid4().hex,
+        to="other-agent",
+        kind="TextMessage",
+        payload=TextMessagePayload(text="Task complete — see results in /tmp/output.json"),
+        created_at=datetime.now(UTC),
+    )
+    await self._handle.publish(envelope)
+```
+
+`from_` is left at its default (`""`); the bus overwrites it.
+
+### Fan-out — one envelope, multiple recipients
+
+Pass a list to `publish(envelope, to=[...])`. The bus validates all recipients before inserting any, then delivers a copy to each.
+
+```
+await self._handle.publish(envelope, to=["agent-a", "agent-b", "agent-c"])
+```
+
+### Reply threading with `in_reply_to`
+
+Preserve `correlation_id` from the original envelope and set `in_reply_to` to its `id`:
+
+```
+async def deliver(self, envelope: Envelope) -> None:
+    assert self._handle is not None
+    reply = Envelope(
+        id=uuid.uuid4().hex,
+        correlation_id=envelope.correlation_id,   # same chain
+        in_reply_to=envelope.id,                  # points at the original
+        to=envelope.from_,                        # reply to sender
+        kind="TextMessage",
+        payload=TextMessagePayload(text="Got it."),
+        created_at=datetime.now(UTC),
+    )
+    await self._handle.publish(reply)
+    await self._handle.ack(envelope.id)
+```
+
+### StubEndpoint.send() shorthand
+
+`StubEndpoint` offers a `.send()` helper that builds and publishes the envelope for you. Useful in tests:
+
+```
+await stub.send(
+    to="target",
+    kind="TextMessage",
+    payload={"kind": "TextMessage", "text": "hello"},
+    correlation_id=None,    # auto-generated if omitted
+    in_reply_to=None,
+    metadata=None,
+    expires_at=None,
+)
+```
+
+______________________________________________________________________
+
+## Receiving and acking in deliver()
+
+The bus calls `endpoint.deliver(envelope)` and waits for it to return before dispatching to any other endpoint. You **must** call `ack` before returning (or as soon as handling is confirmed in a background task).
+
+```
+async def deliver(self, envelope: Envelope) -> None:
+    assert self._handle is not None
+
+    if envelope.kind == "TextMessage":
+        text = envelope.payload.text   # type: ignore[union-attr]
+        # ... handle the message ...
+
+    # Ack: tell the bus this envelope is handled. Idempotent.
+    await self._handle.ack(envelope.id)
+```
+
+### Background work pattern
+
+If handling is slow, return promptly after acking and continue in a background task:
+
+```
+import asyncio
+
+async def deliver(self, envelope: Envelope) -> None:
+    assert self._handle is not None
+    await self._handle.ack(envelope.id)          # ack first
+    asyncio.create_task(self._do_work(envelope)) # work in background
+
+async def _do_work(self, envelope: Envelope) -> None:
+    # ... long work ...
+    result = Envelope(
+        id=uuid.uuid4().hex,
+        correlation_id=envelope.correlation_id,
+        in_reply_to=envelope.id,
+        to=envelope.from_,
+        kind="Progress",
+        payload=ProgressPayload(status="complete", note="done"),
+        created_at=datetime.now(UTC),
+    )
+    await self._handle.publish(result)
+```
+
+______________________________________________________________________
+
+## Nack and redelivery
+
+Call `nack` when you want to reject an envelope explicitly:
+
+```
+# Requeue for redelivery (default):
+await self._handle.nack(envelope.id, requeue=True)
+
+# Dead-letter without retry:
+await self._handle.nack(envelope.id, requeue=False)
+```
+
+To signal a **temporary** failure and let the bus apply backoff automatically, raise `EndpointUnavailable` from `deliver()` instead of calling `nack` — the bus will requeue and back off from this endpoint until it recovers.
+
+```
+from agent_core.bus.protocol import EndpointUnavailable
+
+async def deliver(self, envelope: Envelope) -> None:
+    if not self._upstream_available():
+        raise EndpointUnavailable("upstream down")
+    # ... normal handling ...
+    await self._handle.ack(envelope.id)
+```
+
+### Redelivery limits
+
+The bus retries up to `BusConfig.max_delivery_attempts` (default: 5). After that, the envelope moves to dead-letter regardless of whether the failure is `EndpointUnavailable` or an in-flight timeout.
+
+______________________________________________________________________
+
+## Metadata for routing hints
+
+`metadata` is an open `dict` for side-channel information that adapters and hooks can inspect without changing the payload shape. Example: routing a TextMessage to a specific Discord channel:
+
+```
+envelope = Envelope(
+    id=uuid.uuid4().hex,
+    correlation_id=uuid.uuid4().hex,
+    to="discord",
+    kind="TextMessage",
+    payload=TextMessagePayload(text="Hello from the bus."),
+    metadata={"discord": {"channel_id": "1234567890"}},
+    created_at=datetime.now(UTC),
+)
+await self._handle.publish(envelope)
+```
+
+The Discord endpoint reads `envelope.metadata["discord"]["channel_id"]` to pick the target channel. The bus itself does not interpret metadata.
+
+______________________________________________________________________
+
+## Next steps
+
+- [Add an endpoint](https://jeffrichley.github.io/agent_core/guides/add-an-endpoint/index.md) — implement deliver() and the ack contract end-to-end
+- [Write an extension](https://jeffrichley.github.io/agent_core/guides/write-an-extension/index.md) — register new envelope kinds + renderers via a plugin
+- [Concepts — Envelopes](https://jeffrichley.github.io/agent_core/concepts/index.md) — TTL sweeps, dead-letter, urgency levels
+
+# Write an Extension
+
+agent-core uses [Pluggy](https://pluggy.readthedocs.io/) for runtime extension points. A plugin is a regular Python package that declares an `agent_core` entry point and implements one or more hook functions with `@hookimpl`. The daemon discovers all installed plugins at startup.
+
+This guide shows the full recipe: package layout, the entry-point declaration, a complete `register_endpoint_types()` implementation, and a summary of the other hooks you can implement.
+
+Sources verified: `packages/core/src/agent_core/plugins/specs.py`, `packages/core/docs/plugins.md`, `docs/extensions.md`.
+
+See also: [Concepts — Extensions](https://jeffrichley.github.io/agent_core/concepts/extensions/index.md).
+
+______________________________________________________________________
+
+## When do you need a plugin?
+
+You need a plugin when you want the daemon to resolve a `type:` string in `agent_core.yaml` to your endpoint class. Without a plugin registration the daemon fails to start with an unknown type error.
+
+You also need a plugin to:
+
+- Register new envelope kinds and their inline-wake renderers (`register_envelope_renderers`).
+- Add CLI subcommands to the `agent-core` CLI (`register_cli_subapps`).
+- Validate operator-supplied config at startup (`validate_config`).
+- Do cross-endpoint wiring after all endpoints are constructed (`wire_endpoints_after_registration`).
+
+______________________________________________________________________
+
+## Package layout
+
+```
+my_plugin/
+├── pyproject.toml
+└── src/
+    └── my_plugin/
+        ├── __init__.py
+        ├── agent_core_plugin.py   # hookimpl module
+        └── endpoints/
+            └── greeter.py         # your endpoint class
+```
+
+The hookimpl module name is arbitrary — what matters is the entry-point target.
+
+______________________________________________________________________
+
+## Step 1 — Declare the entry point
+
+In `pyproject.toml`, add your module under the `agent_core` entry-point group:
+
+```
+[project]
+name = "my-plugin"
+# ... other metadata ...
+
+[project.entry-points."agent_core"]
+my_plugin = "my_plugin.agent_core_plugin"
+```
+
+The key (`my_plugin`) is an arbitrary label. The value is the dotted import path to the module that contains your `@hookimpl` functions.
+
+______________________________________________________________________
+
+## Step 2 — Implement the hookimpl module
+
+```
+# src/my_plugin/agent_core_plugin.py
+import pluggy
+
+# The marker must use the "agent_core" project name — this is the
+# entry-point group name and the Pluggy project name.
+hookimpl = pluggy.HookimplMarker("agent_core")
+
+
+@hookimpl
+def register_endpoint_types() -> dict:
+    """Return {type_id: EndpointClass} registrations.
+
+    type_id is what operators write as `type:` in agent_core.yaml.
+    Import lazily so the plugin does not force the dependency on
+    packages that don't use this endpoint type.
+    """
+    from my_plugin.endpoints.greeter import GreeterEndpoint
+
+    return {
+        "my_plugin.greeter": GreeterEndpoint,
+    }
+```
+
+After `pip install -e .` (or a wheel install), `uv run agent-core daemon start` discovers this plugin via the `agent_core` entry-point group and registers `my_plugin.greeter` as a known type.
+
+Duplicate type ids raise at startup
+
+If two installed plugins register the same `type_id`, the daemon raises `PluginRegistryError` immediately. Use a namespace prefix (e.g. `my_org.greeter`) to avoid collisions with built-in or third-party plugins.
+
+______________________________________________________________________
+
+## Step 3 — Wire it in config
+
+```
+# agent_core.yaml
+endpoints:
+  - type: my_plugin.greeter
+    name: greeter
+    params:
+      prefix: "Hi"
+```
+
+The daemon calls `GreeterEndpoint(name="greeter", prefix="Hi")`. Any `params:` keys are passed as keyword arguments to `__init__` (after `name`).
+
+______________________________________________________________________
+
+## Other hooks you can implement
+
+All hook signatures live in `agent_core.plugins.specs.AgentCoreSpecs`. Implement only the ones you need — Pluggy ignores unimplemented hooks.
+
+### `register_envelope_renderers`
+
+Register new envelope kinds and their inline-wake renderer callables:
+
+```
+@hookimpl
+def register_envelope_renderers() -> dict:
+    from my_plugin.rendering import render_desire
+
+    # The key becomes a first-class envelope kind.
+    # The callable receives the full envelope dict and returns
+    # the rendered body string inside the <inbox> tag.
+    return {"Desire": render_desire}
+
+
+def render_desire(envelope: dict) -> str:
+    text = envelope["payload"].get("text", "")
+    return f"<desire>{text}</desire>"
+```
+
+To publish envelopes of this kind, set `kind="Desire"` and carry a dict payload whose `"kind"` key matches:
+
+```
+from agent_core.bus.envelope import Envelope
+
+env = Envelope(
+    id="...",
+    correlation_id="...",
+    to="target-agent",
+    kind="Desire",
+    payload={"kind": "Desire", "text": "I want to learn more about this."},
+    created_at=datetime.now(UTC),
+)
+await handle.publish(env)
+```
+
+### `register_cli_subapps`
+
+Mount a Typer subapp onto the top-level `agent-core` CLI:
+
+```
+@hookimpl
+def register_cli_subapps(app) -> None:
+    from my_plugin.cli import my_subapp
+
+    app.add_typer(my_subapp, name="greeter")
+```
+
+After this, `uv run agent-core greeter --help` works.
+
+### `validate_config`
+
+Inspect the raw config dict at daemon startup and raise to block launch:
+
+```
+@hookimpl
+def validate_config(raw_config: dict) -> None:
+    endpoints = raw_config.get("endpoints", [])
+    for ep in endpoints:
+        if ep.get("type") == "my_plugin.greeter":
+            params = ep.get("params", {})
+            if "prefix" not in params:
+                raise ValueError("my_plugin.greeter requires a 'prefix' param")
+```
+
+### `configure_endpoint_instance`
+
+Post-construction wiring for a specific endpoint instance — called after construction, before `bus.start()`:
+
+```
+@hookimpl
+def configure_endpoint_instance(
+    instance,
+    endpoint_name: str,
+    endpoint_config: dict,
+    services,
+) -> None:
+    from my_plugin.endpoints.greeter import GreeterEndpoint
+
+    if isinstance(instance, GreeterEndpoint):
+        instance.attach_notify_broker(services.notify_broker)
+```
+
+`services` is a `RunnerServices` instance with:
+
+- `notify_broker` — the shared notification broker for push fan-out.
+- `mcp_audit_writer` — the daemon-wide MCP audit writer (may be `None`).
+
+### `wire_endpoints_after_registration`
+
+Cross-endpoint wiring once all endpoints are constructed and registered on the bus, but before `bus.start()`:
+
+```
+@hookimpl
+def wire_endpoints_after_registration(
+    endpoints: dict,
+    raw_endpoint_configs: dict,
+    services,
+) -> None:
+    orchestrator = endpoints.get("my-orchestrator")
+    agent = endpoints.get("my-agent")
+    if orchestrator and agent:
+        agent.set_orchestrator(orchestrator)
+```
+
+### `reserved_endpoint_params`
+
+If your post-construction wiring hook reads `params:` keys that are not constructor kwargs, declare them here so the runner strips them before calling `cls(name=..., **params)`:
+
+```
+@hookimpl
+def reserved_endpoint_params() -> list[str]:
+    return ["my_orchestrator_name"]
+```
+
+______________________________________________________________________
+
+## Built-in alias reference
+
+Core ships an entrypoint-loaded alias plugin that maps these built-in type ids:
+
+| type id                   | Class                                                        |
+| ------------------------- | ------------------------------------------------------------ |
+| `builtin.claude_code_mcp` | `agent_core.endpoints.claude_code_mcp.ClaudeCodeMCPEndpoint` |
+| `builtin.stub`            | `agent_core.endpoints.stub.StubEndpoint`                     |
+| `builtin.scheduler`       | `agent_core.endpoints.scheduler.SchedulerEndpoint`           |
+| `builtin.handoff_jobs`    | `agent_core.endpoints.handoff_jobs.HandoffJobsEndpoint`      |
+
+Your plugin's hooks run alongside these defaults.
+
+______________________________________________________________________
+
+## Next steps
+
+- [Add an endpoint](https://jeffrichley.github.io/agent_core/guides/add-an-endpoint/index.md) — implement the `Endpoint` protocol your plugin registers
+- [Send and consume envelopes](https://jeffrichley.github.io/agent_core/guides/send-and-consume/index.md) — publish plugin-registered envelope kinds
+- [Concepts — Extensions](https://jeffrichley.github.io/agent_core/concepts/extensions/index.md) — envelope extension design, renderer dispatch order, collision policy
