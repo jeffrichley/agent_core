@@ -186,3 +186,65 @@ class TestPersistenceCRUD:
         await store.mark_in_flight(env.id, in_flight_until=past)
         results = await store.find_in_flight_timeouts(now=_now())
         assert {e.id for e in results} == {"e1"}
+
+
+class TestBackoffPersistence:
+    async def test_requeue_with_backoff_stores_timestamp(self, store: Persistence):
+        from datetime import timedelta
+
+        env = _envelope("e1")
+        await store.insert(env)
+        future = _now() + timedelta(seconds=30)
+        await store.requeue_with_backoff(env.id, future)
+        row = await store.row(env.id)
+        assert row["state"] == "pending"
+        assert row["in_flight_until"] is None
+        # next_attempt_at must be stored; SQLite returns ISO string or datetime
+        assert row["next_attempt_at"] is not None
+        assert future.isoformat() in (row["next_attempt_at"] or "")
+
+    async def test_list_pending_filters_future_next_attempt_at(self, store: Persistence):
+        from datetime import timedelta
+
+        env = _envelope("e1", to="agent-pepper")
+        await store.insert(env)
+        future = _now() + timedelta(seconds=30)
+        await store.requeue_with_backoff(env.id, future)
+        # now=_now() → future backoff not yet due
+        results = await store.list_pending("agent-pepper", now=_now())
+        assert results == []
+
+    async def test_list_pending_includes_past_next_attempt_at(self, store: Persistence):
+        from datetime import timedelta
+
+        env = _envelope("e1", to="agent-pepper")
+        await store.insert(env)
+        past = _now() - timedelta(seconds=10)
+        await store.requeue_with_backoff(env.id, past)
+        # now=_now() → past backoff is due
+        results = await store.list_pending("agent-pepper", now=_now())
+        assert {e.id for e in results} == {"e1"}
+
+    async def test_list_pending_no_now_returns_all(self, store: Persistence):
+        from datetime import timedelta
+
+        env = _envelope("e1", to="agent-pepper")
+        await store.insert(env)
+        future = _now() + timedelta(hours=1)
+        await store.requeue_with_backoff(env.id, future)
+        # No now kwarg → all pending returned regardless of next_attempt_at
+        results = await store.list_pending("agent-pepper")
+        assert {e.id for e in results} == {"e1"}
+
+    async def test_requeue_clears_next_attempt_at(self, store: Persistence):
+        from datetime import timedelta
+
+        env = _envelope("e1")
+        await store.insert(env)
+        future = _now() + timedelta(seconds=30)
+        # Set a backoff, then plain-requeue (e.g. explicit nack requeue)
+        await store.requeue_with_backoff(env.id, future)
+        await store.requeue(env.id)
+        row = await store.row(env.id)
+        assert row["state"] == "pending"
+        assert row["next_attempt_at"] is None
