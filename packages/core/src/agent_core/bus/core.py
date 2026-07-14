@@ -12,6 +12,7 @@ from deliver() and continue work in a background task.
 from __future__ import annotations
 
 import logging
+import random
 import uuid
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
@@ -22,6 +23,7 @@ from agent_core.bus.envelope import EndpointInfo, Envelope
 from agent_core.bus.handle import BusHandle
 from agent_core.bus.persistence import Persistence
 from agent_core.bus.protocol import BusHook, Endpoint
+from agent_core.clock import Clock, SystemClock
 
 log = logging.getLogger(__name__)
 
@@ -110,11 +112,23 @@ class MailboxFull(Exception):
     """Raised when an endpoint's pending mailbox has reached max_pending_per_endpoint."""
 
 
+def _compute_delivery_backoff(attempt: int, config: SupervisorConfig) -> float:
+    """Full-jitter exponential backoff for message delivery retries.
+
+    attempt: delivery_count after the failed attempt (1-indexed).
+    Returns: seconds to wait before the next delivery attempt.
+    """
+    cap = config.delivery_backoff_cap_seconds
+    raw = config.delivery_backoff_base_seconds * (config.delivery_backoff_factor ** (attempt - 1))
+    return random.uniform(0, min(raw, cap))
+
+
 class Bus:
     """In-process bus router."""
 
-    def __init__(self, config: BusConfig):
+    def __init__(self, config: BusConfig, *, clock: Clock | None = None):
         self.config = config
+        self._clock: Clock = clock or SystemClock()
         self._endpoints_by_name: dict[str, EndpointSpec] = {}
         self._hooks: dict[str, list[BusHookSpec]] = {
             "pre_publish": [],
@@ -174,7 +188,7 @@ class Bus:
     async def start(self) -> None:
         if self._started:
             return
-        self._store = Persistence(self.config.storage_path)
+        self._store = Persistence(self.config.storage_path, clock=self._clock)
         await self._store.connect()
         sup = self.config.supervisor
         log.info(
@@ -285,14 +299,35 @@ class Bus:
             from agent_core.bus.protocol import EndpointUnavailable
 
             if isinstance(exc, EndpointUnavailable):
-                # Temporary failure — return to pending; sweep will retry.
-                await store.requeue(envelope.id)
-                log.info(
-                    "endpoint %s unavailable; envelope %s requeued: %s",
-                    envelope.to,
-                    envelope.id,
-                    exc,
-                )
+                # Transient failure — backoff-requeue or dead-letter if exhausted.
+                row = await store.row(envelope.id)
+                if row is None:
+                    log.warning("envelope %s not found after mark_in_flight; skipping requeue", envelope.id)
+                    return
+                attempt = row["delivery_count"]  # already incremented by mark_in_flight
+                if attempt >= self.config.max_delivery_attempts:
+                    await store.mark_dead_letter(
+                        envelope.id,
+                        reason=f"exceeded {self.config.max_delivery_attempts} delivery attempts (transient)",
+                    )
+                    log.info(
+                        "endpoint %s transient failure; exceeded %d attempts; dead-lettering %s",
+                        envelope.to,
+                        self.config.max_delivery_attempts,
+                        envelope.id,
+                    )
+                else:
+                    backoff_secs = _compute_delivery_backoff(attempt, self.config.supervisor)
+                    next_attempt_at = self._clock.now() + timedelta(seconds=backoff_secs)
+                    await store.requeue_with_backoff(envelope.id, next_attempt_at)
+                    log.info(
+                        "endpoint %s unavailable (attempt %d); envelope %s requeued until %s: %s",
+                        envelope.to,
+                        attempt,
+                        envelope.id,
+                        next_attempt_at.isoformat(),
+                        exc,
+                    )
             else:
                 # Terminal failure — dead-letter.
                 await store.mark_dead_letter(envelope.id, reason=str(exc))
@@ -325,7 +360,11 @@ class Bus:
         return len(expired)
 
     async def run_redelivery_sweep_once(self, *, now: datetime | None = None) -> int:
-        """Find in_flight envelopes whose timeout has lapsed; requeue or dead-letter."""
+        """Find in_flight envelopes whose timeout has lapsed; requeue with backoff or dead-letter.
+
+        Part 1: stale in-flight → requeue_with_backoff (not immediate re-dispatch).
+        Part 2: pending envelopes whose backoff has elapsed → dispatch.
+        """
         if self._store is None:
             return 0
         now = now or datetime.now(UTC)
@@ -342,12 +381,27 @@ class Bus:
                         reason=f"exceeded {self.config.max_delivery_attempts} delivery attempts",
                     )
                 else:
-                    await self._store.requeue(env.id)
-                    await self._dispatch(env)
+                    backoff_secs = _compute_delivery_backoff(
+                        row["delivery_count"], self.config.supervisor
+                    )
+                    next_attempt_at = now + timedelta(seconds=backoff_secs)
+                    await self._store.requeue_with_backoff(env.id, next_attempt_at)
             except Exception:
                 log.exception("redelivery sweep error on envelope %s; skipping", env.id)
                 continue
             moved += 1
+
+        # Part 2: dispatch pending envelopes whose backoff has elapsed.
+        for endpoint_name in self._endpoints_by_name:
+            try:
+                due = await self._store.list_pending(endpoint_name, now=now)
+                for env in due:
+                    await self._dispatch(env)
+            except Exception:
+                log.exception(
+                    "delivery backoff sweep error for endpoint %s; skipping", endpoint_name
+                )
+
         return moved
 
     async def _ack(self, envelope_id: str) -> None:
