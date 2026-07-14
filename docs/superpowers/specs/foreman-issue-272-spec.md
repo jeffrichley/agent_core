@@ -31,7 +31,7 @@ No GoF pattern applies here — this is a straightforward state machine. The rel
 
 ### `EndpointState` dataclass (`supervisor.py`)
 
-`@dataclass` (consistent with `EndpointState` conventions in `core.py`). All fields have defaults so `EndpointState(name="x")` gives an active/closed starting state. The `next_probe_at` field serves double duty:
+`@dataclass` (consistent with `EndpointSpec` / `SupervisorConfig` / `BusConfig` conventions in `core.py`). All fields have defaults so `EndpointState(name="x")` gives an active/closed starting state. The `next_probe_at` field serves double duty:
 - When `status="restarting"`: earliest time to attempt the next restart.
 - When `status="quarantined"`: earliest time to enter HALF_OPEN.
 
@@ -84,7 +84,7 @@ No circular imports: `supervisor.py` imports from `core.py` (SupervisorConfig on
 
 ### Test file (`test_supervisor.py`)
 
-Uses `FakeClock(start=datetime(2026, 1, 1, tzinfo=UTC))` and a simple async fake restart callable that records calls and can be configured to raise. No `tmp_path`, no `Bus`, no SQLite — pure in-memory. `asyncio_mode = "auto"` (root `conftest.py`) means `async def test_*` needs no decorator.
+Uses `FakeClock(start=datetime(2026, 1, 1, tzinfo=UTC))` and a simple async fake restart callable that records calls and can be configured to raise. No `tmp_path`, no `Bus`, no SQLite — pure in-memory. `asyncio_mode = "auto"` (root `pyproject.toml`) means `async def test_*` needs no decorator.
 
 Fake restart callable pattern:
 ```python
@@ -137,7 +137,7 @@ No other files change. `supervisor.py` is a leaf module; nothing in the existing
 - `test_record_failure_from_closed_transitions_to_restarting` — status becomes "restarting", breaker stays "closed", last_error set.
 - `test_record_failure_schedules_restart_at_backoff_from_now` — `next_probe_at` = `clock.now() + backoff(attempt=1)` (with `jitter="none"` for determinism).
 - `test_record_failure_when_restarting_updates_last_error_only` — second `record_failure` call while restarting: `next_probe_at` unchanged.
-- `test_record_failure_when_quarantined_is_noop` — no state change when status="quarantined".
+- `test_record_failure_when_quarantined_updates_last_error_only` — `last_error` is updated when status="quarantined", but `next_probe_at` and `status` are unchanged (no reschedule).
 
 `TestRecordSuccess`:
 - `test_record_success_resets_to_active_closed` — after record_failure, record_success restores all fields.
