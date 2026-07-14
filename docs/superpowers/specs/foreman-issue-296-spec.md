@@ -95,14 +95,15 @@ finally:
     elapsed = _time.monotonic() - t0
     warn_s = self.config.slow_deliver_warn_seconds
     if warn_s > 0 and elapsed >= warn_s:
-        log.warning(
-            "SlowDeliverWarning endpoint=%r envelope_id=%r elapsed_seconds=%.3f threshold=%.1f",
-            envelope.to,
-            envelope.id,
-            elapsed,
-            warn_s,
+        warning = SlowDeliverWarning(
+            endpoint=envelope.to,
+            envelope_id=envelope.id,
+            elapsed_seconds=elapsed,
         )
+        log.warning("%r threshold=%.1fs", warning, warn_s)
 ```
+
+Note: instantiating `SlowDeliverWarning` in the log call is required so that the import is actually used.  A hardcoded format string with no reference to the class would trigger ruff F401 (unused import) and fail `just check`.
 
 The `finally` block runs whether `deliver()` succeeds or raises, giving the watchdog full coverage. The existing exception handling inside `except` is **unchanged**.
 
@@ -179,7 +180,8 @@ async def deliver(self, envelope: Envelope) -> None:
     # ... rest of existing deliver() code unchanged ...
 ```
 
-`EndpointUnavailable` is already imported at the top of `endpoint.py` from `agent_core.bus.protocol`.
+`EndpointUnavailable` is **not** currently imported in `endpoint.py`; sub-request 4 must add
+`from agent_core.bus.protocol import EndpointUnavailable` to the top-level imports of that file.
 
 **`for_test` class method**: No change needed. It passes `backend=...` to `__init__`, which sets `self._backend = backend` (non-None). When `start()` runs, `_backend is not None` skips construction and proceeds directly to voice warming. Tests stay fast.
 
@@ -187,21 +189,29 @@ async def deliver(self, envelope: Envelope) -> None:
 
 1. **`bus/protocol.py`**: Add `SlowDeliverWarning` frozen dataclass (fields: `endpoint: str`, `envelope_id: str`, `elapsed_seconds: float`). Strengthen `Endpoint` docstring with MUST language for `__init__` (cheap) and `deliver()` (prompt, off-thread via `spawn()`). No signature changes.
 
-2. **`bus/core.py`**: Add `import time` (stdlib). Add `SlowDeliverWarning` to the protocol import. Add `slow_deliver_warn_seconds: float = 5.0` field to `BusConfig`. Modify `Bus._dispatch` to wrap `await endpoint.deliver(envelope)` in a `t0 = time.monotonic()` / `try` / `finally: elapsed = time.monotonic() - t0; log.warning("SlowDeliverWarning ...")` pattern when threshold exceeded.
+2. **`bus/core.py`**: Add `import time` (stdlib). Add `SlowDeliverWarning` to the protocol import. Add `slow_deliver_warn_seconds: float = 5.0` field to `BusConfig`. Modify `Bus._dispatch` to wrap `await endpoint.deliver(envelope)` in a `t0 = time.monotonic()` / `try` / `finally` pattern; in the `finally` block, when the threshold is exceeded, instantiate `SlowDeliverWarning(endpoint=envelope.to, envelope_id=envelope.id, elapsed_seconds=elapsed)` and emit it via `log.warning("%r threshold=%.1fs", warning, warn_s)`. The `SlowDeliverWarning` import MUST be referenced via instantiation (not just a hardcoded string) to avoid ruff F401.
 
 3. **`bus/runner.py`**: Add `slow_deliver_warn_seconds=float(bus_cfg_raw.get("slow_deliver_warn_seconds", 5.0))` to `BusConfig(...)` constructor call.
 
-4. **`agent-core-voice/endpoint.py`**: Refactor `VoiceEndpoint.__init__` to store `_model_path`, `_device`, `_attn_implementation`, set `self._backend = backend` (not construct), remove `prepare_voice` loop. Expand `start()` to build backend off-thread and warm voices off-thread. Add `EndpointUnavailable` guard at top of `deliver()`.
+4. **`agent-core-voice/endpoint.py`**: Add `from agent_core.bus.protocol import EndpointUnavailable` to the top-level imports (it is not currently present). Refactor `VoiceEndpoint.__init__` to store `_model_path`, `_device`, `_attn_implementation`, set `self._backend = backend` (not construct), remove `prepare_voice` loop. Expand `start()` to build backend off-thread and warm voices off-thread. Add `EndpointUnavailable` guard at top of `deliver()`.
 
 5. **`packages/core/tests/bus/test_core_dispatch.py`**: Add three watchdog tests:
    - `test_slow_deliver_emits_warning`: endpoint with `asyncio.sleep(0.1)` in `deliver()`, threshold `0.001`; assert `caplog` contains a record with `"SlowDeliverWarning"` in message.
    - `test_fast_deliver_no_warning`: endpoint with immediate `ack` in `deliver()`, threshold `10.0`; assert no `"SlowDeliverWarning"` record.
    - `test_disabled_watchdog_no_warning`: endpoint with `asyncio.sleep(0.1)`, threshold `0.0` (disabled); assert no `"SlowDeliverWarning"` record.
 
-6. **`packages/agent-core-voice/tests/test_endpoint.py`**: Update three tests that currently assert `__init__`-era behaviour:
+6. **`packages/agent-core-voice/tests/test_endpoint.py`**: Update **seven** existing tests — three that tested `__init__`-era construction behaviour, plus four synthesis/dispatch tests that will break because `FakeTTSBackend.synthesize()` raises `VoiceNotPreparedError` for any voice not in `self._prepared`, and `prepare_voice` is now called only in `start()`. Each of these tests must call `await ep.start(_minimal_handle())` (or equivalent) before invoking synthesis or dispatch:
+
+   Tests that tested `__init__`-era construction behaviour (rename + lifecycle fix):
    - `test_init_prepares_every_voice` → rename to `test_start_prepares_every_voice`, add `@pytest.mark.asyncio`, call `await ep.start(_minimal_handle())` before asserting `call_log`.
    - `test_init_missing_ref_wav_raises` → rename to `test_start_missing_ref_wav_raises`, add `@pytest.mark.asyncio`, call `with pytest.raises(FileNotFoundError): await ep.start(_minimal_handle())` (construction itself no longer raises; `prepare_voice` raises in `start()`).
    - `test_production_wiring_constructs_madrigal_qwen_backend` → update to call `await ep.start(_minimal_handle())` before asserting `construct_calls`.
+
+   Synthesis/dispatch tests that will fail after the refactor because voices are no longer prepared at construction time (add `await ep.start(_minimal_handle())` before the synthesis or dispatch call under test):
+   - `test_synthesize_safe_happy_path` — add `await ep.start(_minimal_handle())` before calling `synthesize_safe`; without it, "alice" is not prepared and `synthesize_safe` returns `SynthesisFailed` instead of `SynthesisSuccess`.
+   - `test_synthesize_output_path_layout` — same fix; add `await ep.start(_minimal_handle())` before the synthesis call.
+   - `test_handle_synthesis_request_ogg_writes_ogg_file` — add `await ep.start(_minimal_handle())` before calling `_handle_synthesis_request`; without it, "alice" is not prepared and `SynthesisFailed` is published instead of `SynthesisReady`.
+   - `test_handle_synthesis_request_transcode_failure_publishes_failed` — add `await ep.start(_minimal_handle())` before calling `_handle_synthesis_request`; without it, the failure reason is `VOICE_NOT_PREPARED` instead of `INTERNAL_ERROR` (the monkeypatch on `transcode_audio` is never reached).
 
 7. **`packages/agent-core-voice/tests/test_endpoint.py`**: Add three new tests:
    - `test_init_does_not_construct_backend`: spy-factory for `QwenTTSBackend`; asserts `construct_calls == []` after `VoiceEndpoint(model_path=..., ...)` with no `start()` call.
@@ -217,7 +227,7 @@ async def deliver(self, envelope: Envelope) -> None:
 | `packages/core/src/agent_core/bus/runner.py` | Add `slow_deliver_warn_seconds` kwarg to `BusConfig(...)` from `bus_cfg_raw` |
 | `packages/agent-core-voice/src/agent_core_voice/endpoint.py` | Remove backend construction + `prepare_voice` from `__init__`; store `_model_path/_device/_attn_implementation`; move construction off-thread into `start()`; add `EndpointUnavailable` guard at top of `deliver()` |
 | `packages/core/tests/bus/test_core_dispatch.py` | Add 3 watchdog tests (`slow_deliver_emits_warning`, `fast_deliver_no_warning`, `disabled_watchdog_no_warning`) |
-| `packages/agent-core-voice/tests/test_endpoint.py` | Update 3 existing tests to call `start()` first; add 3 new tests (`init_does_not_construct_backend`, `start_builds_backend_off_thread`, `for_test_backend_skips_construction`) |
+| `packages/agent-core-voice/tests/test_endpoint.py` | Update 7 existing tests to call `start()` first (3 init-era tests + 4 synthesis/dispatch tests); add 3 new tests (`init_does_not_construct_backend`, `start_builds_backend_off_thread`, `for_test_backend_skips_construction`) |
 
 No other files change. `bus/handle.py`, `bus/supervisor.py`, `bus/persistence.py`, and all other endpoint packages are untouched.
 
