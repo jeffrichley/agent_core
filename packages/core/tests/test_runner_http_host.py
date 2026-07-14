@@ -4,12 +4,11 @@ from __future__ import annotations
 
 import pytest
 
-from agent_core.bus.runner import build_bus_from_config
 from agent_core.endpoints.claude_code_mcp import ClaudeCodeMCPEndpoint
 
 
 @pytest.mark.asyncio
-async def test_runner_returns_none_http_host_when_no_mcp_endpoints(tmp_path):
+async def test_runner_returns_none_http_host_when_no_mcp_endpoints(tmp_path, build_bus):
     """If no MCPHostable endpoints are registered, http_host is None."""
     cfg = tmp_path / "agent_core.yaml"
     cfg.write_text(
@@ -22,13 +21,13 @@ endpoints:
 """,
         encoding="utf-8",
     )
-    bus, http_host = await build_bus_from_config(cfg)
+    bus, http_host = await build_bus(cfg)
     assert http_host is None
     assert "stub" in bus._endpoints_by_name
 
 
 @pytest.mark.asyncio
-async def test_runner_constructs_http_host_when_mcp_endpoints_present(tmp_path):
+async def test_runner_constructs_http_host_when_mcp_endpoints_present(tmp_path, build_bus):
     """One ClaudeCodeMCPEndpoint → HTTPHost is built with that mount."""
     cfg = tmp_path / "agent_core.yaml"
     cfg.write_text(
@@ -46,14 +45,14 @@ endpoints:
 """,
         encoding="utf-8",
     )
-    bus, http_host = await build_bus_from_config(cfg)
+    bus, http_host = await build_bus(cfg)
     assert http_host is not None
     assert len(http_host._mounts) == 1
     assert http_host._mounts[0].mount == "/mcp/agent-test"
 
 
 @pytest.mark.asyncio
-async def test_runner_constructs_http_host_with_multiple_mcp_endpoints(tmp_path):
+async def test_runner_constructs_http_host_with_multiple_mcp_endpoints(tmp_path, build_bus):
     """Two CC endpoints → both mounted on the same HTTPHost."""
     cfg = tmp_path / "agent_core.yaml"
     cfg.write_text(
@@ -74,14 +73,14 @@ endpoints:
 """,
         encoding="utf-8",
     )
-    bus, http_host = await build_bus_from_config(cfg)
+    bus, http_host = await build_bus(cfg)
     assert http_host is not None
     mounts = sorted(m.mount for m in http_host._mounts)
     assert mounts == ["/mcp/agent-deb", "/mcp/agent-pepper"]
 
 
 @pytest.mark.asyncio
-async def test_runner_claude_code_mcp_accepts_auto_ack_params(tmp_path):
+async def test_runner_claude_code_mcp_accepts_auto_ack_params(tmp_path, build_bus):
     """Issue #12: YAML params for auto-ack / missing-ack must construct (no BusBootError)."""
     cfg = tmp_path / "agent_core.yaml"
     cfg.write_text(
@@ -103,7 +102,7 @@ endpoints:
 """,
         encoding="utf-8",
     )
-    bus, http_host = await build_bus_from_config(cfg)
+    bus, http_host = await build_bus(cfg)
     assert http_host is not None
     spec = bus._endpoints_by_name["agent-ack"]
     ep = spec.endpoint

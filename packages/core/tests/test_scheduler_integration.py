@@ -21,7 +21,6 @@ from agent_core.bus.envelope import (
     TextMessagePayload,
     ToolInvocationPayload,
 )
-from agent_core.bus.runner import build_bus_from_config
 
 
 def _config_yaml(tmp_path, jobs_yaml: str | None = None) -> str:
@@ -48,7 +47,7 @@ def _config_yaml(tmp_path, jobs_yaml: str | None = None) -> str:
 
 
 @pytest.mark.asyncio
-async def test_seed_job_fires_to_stub(tmp_path):
+async def test_seed_job_fires_to_stub(tmp_path, build_bus):
     """A 1-second interval seed job fires and the stub receives the envelope."""
     jobs_path = tmp_path / "jobs.yaml"
     jobs_path.write_text(
@@ -68,7 +67,7 @@ async def test_seed_job_fires_to_stub(tmp_path):
     cfg = tmp_path / "agent_core.yaml"
     cfg.write_text(_config_yaml(tmp_path, jobs_yaml=str(jobs_path)), encoding="utf-8")
 
-    bus, _ = await build_bus_from_config(cfg)
+    bus, _ = await build_bus(cfg)
     await bus.start()
     try:
         stub = bus._endpoints_by_name["agent-test"].endpoint
@@ -92,12 +91,12 @@ async def test_seed_job_fires_to_stub(tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_dynamic_create_job_via_toolinvocation(tmp_path):
+async def test_dynamic_create_job_via_toolinvocation(tmp_path, build_bus):
     """Stub sends a create_job ToolInvocation; scheduler creates and fires the job."""
     cfg = tmp_path / "agent_core.yaml"
     cfg.write_text(_config_yaml(tmp_path), encoding="utf-8")
 
-    bus, _ = await build_bus_from_config(cfg)
+    bus, _ = await build_bus(cfg)
     await bus.start()
     try:
         stub = bus._endpoints_by_name["agent-test"].endpoint
@@ -147,11 +146,11 @@ async def test_dynamic_create_job_via_toolinvocation(tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_delete_job_stops_fires(tmp_path):
+async def test_delete_job_stops_fires(tmp_path, build_bus):
     cfg = tmp_path / "agent_core.yaml"
     cfg.write_text(_config_yaml(tmp_path), encoding="utf-8")
 
-    bus, _ = await build_bus_from_config(cfg)
+    bus, _ = await build_bus(cfg)
     await bus.start()
     try:
         stub = bus._endpoints_by_name["agent-test"].endpoint

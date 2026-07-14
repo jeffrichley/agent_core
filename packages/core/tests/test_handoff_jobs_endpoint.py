@@ -8,7 +8,6 @@ import httpx
 import pytest
 
 from agent_core.bus.envelope import EventPayload
-from agent_core.bus.runner import build_bus_from_config
 from agent_core.endpoints.handoff_jobs import (
     HandoffJobRequest,
     HandoffJobsEndpoint,
@@ -17,7 +16,7 @@ from agent_core.endpoints.handoff_jobs import (
 
 
 @pytest.mark.asyncio
-async def test_handoff_jobs_endpoint_writes_status_and_publishes_ready(tmp_path, monkeypatch):
+async def test_handoff_jobs_endpoint_writes_status_and_publishes_ready(tmp_path, monkeypatch, build_bus):
     # Real Claude Code transcripts live under ~/.claude/projects, NOT inside
     # any agent vault — mirror that here so tests don't paper over the
     # cross-root validation.
@@ -49,7 +48,7 @@ endpoints:
         encoding="utf-8",
     )
 
-    bus, http_host = await build_bus_from_config(cfg)
+    bus, http_host = await build_bus(cfg)
     assert http_host is not None
     await http_host.start()
     try:
@@ -122,7 +121,7 @@ endpoints:
 
 
 @pytest.mark.asyncio
-async def test_handoff_jobs_endpoint_writes_extractor_output(tmp_path, monkeypatch):
+async def test_handoff_jobs_endpoint_writes_extractor_output(tmp_path, monkeypatch, build_bus):
     vault_root = tmp_path / "vault"
     vault_root.mkdir(parents=True, exist_ok=True)
     transcript_root = tmp_path / "claude_projects"
@@ -152,7 +151,7 @@ endpoints:
         encoding="utf-8",
     )
 
-    bus, http_host = await build_bus_from_config(cfg)
+    bus, http_host = await build_bus(cfg)
     assert http_host is not None
     await http_host.start()
     try:
@@ -196,7 +195,7 @@ endpoints:
 
 
 @pytest.mark.asyncio
-async def test_handoff_jobs_endpoint_rejects_path_outside_vault_root(tmp_path):
+async def test_handoff_jobs_endpoint_rejects_path_outside_vault_root(tmp_path, build_bus):
     vault_root = tmp_path / "vault"
     vault_root.mkdir(parents=True, exist_ok=True)
     transcript_path = vault_root / "transcript.jsonl"
@@ -221,7 +220,7 @@ endpoints:
         encoding="utf-8",
     )
 
-    bus, http_host = await build_bus_from_config(cfg)
+    bus, http_host = await build_bus(cfg)
     assert http_host is not None
     await http_host.start()
     try:
@@ -250,7 +249,7 @@ endpoints:
 
 @pytest.mark.asyncio
 async def test_handoff_publishes_to_mailbox_when_distinct_from_agent_name(
-    tmp_path, monkeypatch
+    tmp_path, monkeypatch, build_bus
 ):
     # Real configs split agent identity (display name like "Pepper" or
     # "testbot") from bus routing (endpoint name like "pepper" or
@@ -287,7 +286,7 @@ endpoints:
         encoding="utf-8",
     )
 
-    bus, http_host = await build_bus_from_config(cfg)
+    bus, http_host = await build_bus(cfg)
     assert http_host is not None
     await http_host.start()
     try:
@@ -356,7 +355,7 @@ endpoints:
 
 @pytest.mark.asyncio
 async def test_handoff_pepper_capital_p_identity_routes_to_lowercase_mailbox(
-    tmp_path, monkeypatch
+    tmp_path, monkeypatch, build_bus
 ):
     # Pepper-shaped regression: real Pepper config has agent_name="Pepper"
     # (capitalized — her display identity, what she calls herself in SOUL.md
@@ -396,7 +395,7 @@ endpoints:
         encoding="utf-8",
     )
 
-    bus, http_host = await build_bus_from_config(cfg)
+    bus, http_host = await build_bus(cfg)
     assert http_host is not None
     await http_host.start()
     try:
@@ -467,7 +466,7 @@ endpoints:
 
 
 @pytest.mark.asyncio
-async def test_handoff_jobs_endpoint_rejects_transcript_outside_transcript_root(tmp_path):
+async def test_handoff_jobs_endpoint_rejects_transcript_outside_transcript_root(tmp_path, build_bus):
     # transcript_path must live under transcript_root (default: ~/.claude/projects/),
     # not vault_root. Caller can override transcript_root explicitly. This test
     # locks in that an explicit transcript_root rejects a transcript that
@@ -499,7 +498,7 @@ endpoints:
         encoding="utf-8",
     )
 
-    bus, http_host = await build_bus_from_config(cfg)
+    bus, http_host = await build_bus(cfg)
     assert http_host is not None
     await http_host.start()
     try:
@@ -575,7 +574,7 @@ async def test_extract_handoff_propagates_exception_on_sdk_failure(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_worker_retries_then_marks_failed(tmp_path, monkeypatch):
+async def test_worker_retries_then_marks_failed(tmp_path, monkeypatch, build_bus):
     vault_root = tmp_path / "vault"
     vault_root.mkdir(parents=True, exist_ok=True)
     transcript_root = tmp_path / "claude_projects"
@@ -612,7 +611,7 @@ endpoints:
         attempts["count"] += 1
         raise RuntimeError("forced extract failure")
 
-    bus, http_host = await build_bus_from_config(cfg)
+    bus, http_host = await build_bus(cfg)
     assert http_host is not None
     await http_host.start()
     try:
@@ -818,7 +817,7 @@ def test_read_transcript_tail_handles_file_with_no_trailing_newline(tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_handoff_worker_uses_tail_for_oversized_transcripts(tmp_path, monkeypatch):
+async def test_handoff_worker_uses_tail_for_oversized_transcripts(tmp_path, monkeypatch, build_bus):
     vault_root = tmp_path / "vault"
     vault_root.mkdir(parents=True, exist_ok=True)
     transcript_root = tmp_path / "claude_projects"
@@ -853,7 +852,7 @@ endpoints:
         encoding="utf-8",
     )
 
-    bus, http_host = await build_bus_from_config(cfg)
+    bus, http_host = await build_bus(cfg)
     assert http_host is not None
     await http_host.start()
     received_lengths: list[int] = []
@@ -944,7 +943,7 @@ def test_capture_subprocess_stderr_falls_back_to_repr_when_no_chain():
 
 
 @pytest.mark.asyncio
-async def test_handoff_worker_marks_failed_when_sdk_raises(tmp_path, monkeypatch):
+async def test_handoff_worker_marks_failed_when_sdk_raises(tmp_path, monkeypatch, build_bus):
     vault_root = tmp_path / "vault"
     vault_root.mkdir(parents=True, exist_ok=True)
     transcript_root = tmp_path / "claude_projects"
@@ -975,7 +974,7 @@ endpoints:
         encoding="utf-8",
     )
 
-    bus, http_host = await build_bus_from_config(cfg)
+    bus, http_host = await build_bus(cfg)
     assert http_host is not None
     await http_host.start()
     try:
@@ -1023,7 +1022,7 @@ endpoints:
 
 
 @pytest.mark.asyncio
-async def test_handoff_worker_does_not_overwrite_handoff_md_when_failed(tmp_path, monkeypatch):
+async def test_handoff_worker_does_not_overwrite_handoff_md_when_failed(tmp_path, monkeypatch, build_bus):
     vault_root = tmp_path / "vault"
     vault_root.mkdir(parents=True, exist_ok=True)
     transcript_root = tmp_path / "claude_projects"
@@ -1057,7 +1056,7 @@ endpoints:
         encoding="utf-8",
     )
 
-    bus, http_host = await build_bus_from_config(cfg)
+    bus, http_host = await build_bus(cfg)
     assert http_host is not None
     await http_host.start()
     try:
@@ -1102,7 +1101,7 @@ endpoints:
 
 
 @pytest.mark.asyncio
-async def test_handoff_worker_truncates_stderr_in_status_error_field(tmp_path, monkeypatch):
+async def test_handoff_worker_truncates_stderr_in_status_error_field(tmp_path, monkeypatch, build_bus):
     vault_root = tmp_path / "vault"
     vault_root.mkdir(parents=True, exist_ok=True)
     transcript_root = tmp_path / "claude_projects"
@@ -1133,7 +1132,7 @@ endpoints:
         encoding="utf-8",
     )
 
-    bus, http_host = await build_bus_from_config(cfg)
+    bus, http_host = await build_bus(cfg)
     assert http_host is not None
     await http_host.start()
     try:
@@ -1184,7 +1183,7 @@ endpoints:
 
 
 @pytest.mark.asyncio
-async def test_handoff_worker_writes_per_job_log_on_sdk_failure(tmp_path, monkeypatch):
+async def test_handoff_worker_writes_per_job_log_on_sdk_failure(tmp_path, monkeypatch, build_bus):
     vault_root = tmp_path / "vault"
     vault_root.mkdir(parents=True, exist_ok=True)
     transcript_root = tmp_path / "claude_projects"
@@ -1216,7 +1215,7 @@ endpoints:
         encoding="utf-8",
     )
 
-    bus, http_host = await build_bus_from_config(cfg)
+    bus, http_host = await build_bus(cfg)
     assert http_host is not None
     await http_host.start()
     try:
@@ -1268,7 +1267,7 @@ endpoints:
 
 
 @pytest.mark.asyncio
-async def test_post_job_dedupes_when_transcript_unchanged(tmp_path, monkeypatch):
+async def test_post_job_dedupes_when_transcript_unchanged(tmp_path, monkeypatch, build_bus):
     vault_root = tmp_path / "vault"
     vault_root.mkdir(parents=True, exist_ok=True)
     transcript_root = tmp_path / "claude_projects"
@@ -1299,7 +1298,7 @@ endpoints:
         encoding="utf-8",
     )
 
-    bus, http_host = await build_bus_from_config(cfg)
+    bus, http_host = await build_bus(cfg)
     assert http_host is not None
     await http_host.start()
     extract_calls = 0
@@ -1356,7 +1355,7 @@ endpoints:
 
 
 @pytest.mark.asyncio
-async def test_post_job_creates_new_job_when_transcript_grows(tmp_path, monkeypatch):
+async def test_post_job_creates_new_job_when_transcript_grows(tmp_path, monkeypatch, build_bus):
     vault_root = tmp_path / "vault"
     vault_root.mkdir(parents=True, exist_ok=True)
     transcript_root = tmp_path / "claude_projects"
@@ -1387,7 +1386,7 @@ endpoints:
         encoding="utf-8",
     )
 
-    bus, http_host = await build_bus_from_config(cfg)
+    bus, http_host = await build_bus(cfg)
     assert http_host is not None
     await http_host.start()
     extract_calls = 0

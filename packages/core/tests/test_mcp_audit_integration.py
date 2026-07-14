@@ -8,8 +8,6 @@ from pathlib import Path
 import pytest
 from fastmcp import Client
 
-from agent_core.bus.runner import build_bus_from_config
-
 _TWO_ENDPOINT_YAML = """\
 bus:
   storage_path: "{storage}"
@@ -50,14 +48,14 @@ def _write(path: Path, body: str) -> Path:
 
 
 @pytest.mark.asyncio
-async def test_audit_writer_is_singleton_across_endpoints(tmp_path: Path):
+async def test_audit_writer_is_singleton_across_endpoints(tmp_path: Path, build_bus):
     storage = tmp_path / "bus.sqlite"
     audit_root = tmp_path / "audit"
     cfg = _write(
         tmp_path / "config.yaml",
         _TWO_ENDPOINT_YAML.format(storage=storage.as_posix(), audit_root=audit_root.as_posix()),
     )
-    bus, _http = await build_bus_from_config(cfg)
+    bus, _http = await build_bus(cfg)
     await bus.start()
     try:
         endpoints = list(bus._endpoints_by_name.values())
@@ -79,14 +77,14 @@ async def test_audit_writer_is_singleton_across_endpoints(tmp_path: Path):
 
 
 @pytest.mark.asyncio
-async def test_audit_disabled_emits_nothing(tmp_path: Path):
+async def test_audit_disabled_emits_nothing(tmp_path: Path, build_bus):
     storage = tmp_path / "bus.sqlite"
     audit_root = tmp_path / "audit"
     cfg = _write(
         tmp_path / "config.yaml",
         _DISABLED_YAML.format(storage=storage.as_posix(), audit_root=audit_root.as_posix()),
     )
-    bus, _http = await build_bus_from_config(cfg)
+    bus, _http = await build_bus(cfg)
     await bus.start()
     try:
         endpoints = list(bus._endpoints_by_name.values())

@@ -1,0 +1,135 @@
+site_name: agent-core
+site_description: >-
+  Core infrastructure for AI agents — a durable message bus, envelopes,
+  endpoints, and a plugin system for building agents that talk to each other.
+site_author: agent beings 🪶
+site_url: https://jeffrichley.github.io/agent_core/
+repo_url: https://github.com/jeffrichley/agent_core
+repo_name: jeffrichley/agent_core
+copyright: Built and run by agent beings.
+
+# Warnings-as-errors: a broken internal link or bad reference fails the build.
+strict: true
+
+theme:
+  name: material
+  icon:
+    logo: material/feather
+    repo: fontawesome/brands/github
+  palette:
+    - media: "(prefers-color-scheme: light)"
+      scheme: default
+      primary: deep purple
+      accent: deep purple
+      toggle:
+        icon: material/weather-night
+        name: Switch to dark mode
+    - media: "(prefers-color-scheme: dark)"
+      scheme: slate
+      primary: deep purple
+      accent: deep purple
+      toggle:
+        icon: material/weather-sunny
+        name: Switch to light mode
+  features:
+    - navigation.instant
+    - navigation.tracking
+    - navigation.sections
+    - navigation.top
+    - navigation.footer
+    - toc.follow
+    - search.suggest
+    - search.highlight
+    - content.code.copy
+    - content.code.annotate
+
+nav:
+  - Home: index.md
+  - Getting Started:
+      - getting-started/index.md
+      - First agent: getting-started/first-agent.md
+      - Running the daemon: getting-started/daemon.md
+  - Concepts:
+      - concepts/index.md
+      - The bus: concepts/bus.md
+      - Envelopes: concepts/envelopes.md
+      - Endpoints: concepts/endpoints.md
+      - Extensions: concepts/extensions.md
+  - Guides:
+      - guides/index.md
+      - Add an endpoint: guides/add-an-endpoint.md
+      - Send & consume envelopes: guides/send-and-consume.md
+      - Write an extension: guides/write-an-extension.md
+  - API Reference: reference/index.md
+  - About: about.md
+
+plugins:
+  - search
+  - mkdocstrings:
+      handlers:
+        python:
+          # Static analysis via griffe — the packages need NOT be installed,
+          # only their source visible. Lets the docs build run under
+          # `uv sync --only-group docs` without pulling torch or the workspace.
+          paths:
+            - packages/core/src
+            - packages/notify/src
+            - packages/credentials/src
+            - packages/agent-core-channel/src
+            - packages/agent-core-inbound/src
+          options:
+            docstring_style: google
+            show_source: true
+            show_root_heading: true
+            show_symbol_type_heading: true
+            show_symbol_type_toc: true
+            members_order: source
+            separate_signature: true
+            show_signature_annotations: true
+            signature_crossrefs: true
+            filters:
+              - "!^_"
+  - llmstxt:
+      full_output: llms-full.txt
+      sections:
+        Getting started:
+          - index.md
+          - getting-started/*.md
+        Concepts:
+          - concepts/*.md
+        Guides:
+          - guides/*.md
+
+markdown_extensions:
+  - admonition
+  - attr_list
+  - md_in_html
+  - toc:
+      permalink: true
+  - pymdownx.highlight:
+      anchor_linenums: true
+  - pymdownx.inlinehilite
+  - pymdownx.snippets
+  - pymdownx.superfences
+  - pymdownx.tabbed:
+      alternate_style: true
+  - pymdownx.details
+
+# Keep the internal engineering trees out of the published site. New public
+# pages live in the curated subdirs above; everything else in docs/ is
+# internal planning history.
+exclude_docs: |
+  /superpowers/
+  /cutover/
+  /migrations/
+  /requirements/
+  /hatchery/
+  /skills/
+  /setup/
+  /examples/
+  /BACKLOG.md
+  /ROADMAP.md
+  /HANDOFF-*.md
+  /responsive-inbox-*.md
+  /world-class-eval-*.md
+  /extensions.md

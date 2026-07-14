@@ -39,6 +39,7 @@ CREATE TABLE IF NOT EXISTS envelopes (
     delivery_count  INTEGER NOT NULL DEFAULT 0,
     last_attempted  TIMESTAMP,
     in_flight_until TIMESTAMP,
+    next_attempt_at TIMESTAMP,
     nack_reason     TEXT
 );
 
@@ -103,6 +104,10 @@ class Persistence:
             await self._conn.execute(
                 "ALTER TABLE envelopes ADD COLUMN urgency TEXT NOT NULL DEFAULT 'green'"
             )
+        if "next_attempt_at" not in cols:
+            await self._conn.execute(
+                "ALTER TABLE envelopes ADD COLUMN next_attempt_at TIMESTAMP"
+            )
         await self._conn.commit()
         if not existed and sys.platform != "win32":
             os.chmod(self.path, 0o600)
@@ -147,17 +152,39 @@ class Persistence:
         r = await self.row(id_)
         return _row_to_envelope(r) if r else None
 
-    async def list_pending(self, endpoint: str) -> list[Envelope]:
+    async def list_pending(self, endpoint: str, *, now: datetime | None = None) -> list[Envelope]:
         conn = self._require_conn()
         conn.row_factory = aiosqlite.Row
-        async with conn.execute(
-            """SELECT * FROM envelopes
-               WHERE to_endpoint = ? AND state = 'pending'
-               ORDER BY created_at ASC""",
-            (endpoint,),
-        ) as cur:
-            rows = await cur.fetchall()
+        if now is None:
+            async with conn.execute(
+                """SELECT * FROM envelopes
+                   WHERE to_endpoint = ? AND state = 'pending'
+                   ORDER BY created_at ASC""",
+                (endpoint,),
+            ) as cur:
+                rows = await cur.fetchall()
+        else:
+            async with conn.execute(
+                """SELECT * FROM envelopes
+                   WHERE to_endpoint = ? AND state = 'pending'
+                     AND (next_attempt_at IS NULL OR next_attempt_at <= ?)
+                   ORDER BY created_at ASC""",
+                (endpoint, now.isoformat()),
+            ) as cur:
+                rows = await cur.fetchall()
         return [_row_to_envelope(dict(r)) for r in rows]
+
+    async def requeue_with_backoff(self, id_: str, next_attempt_at: datetime) -> None:
+        conn = self._require_conn()
+        await conn.execute(
+            """UPDATE envelopes
+               SET state = 'pending',
+                   in_flight_until = NULL,
+                   next_attempt_at = ?
+               WHERE id = ?""",
+            (next_attempt_at.isoformat(), id_),
+        )
+        await conn.commit()
 
     async def count_pending(self, endpoint: str) -> int:
         conn = self._require_conn()
@@ -197,7 +224,7 @@ class Persistence:
     async def requeue(self, id_: str) -> None:
         conn = self._require_conn()
         await conn.execute(
-            "UPDATE envelopes SET state = 'pending', in_flight_until = NULL WHERE id = ?",
+            "UPDATE envelopes SET state = 'pending', in_flight_until = NULL, next_attempt_at = NULL WHERE id = ?",
             (id_,),
         )
         await conn.commit()
@@ -278,6 +305,7 @@ class Persistence:
                SET state = 'pending',
                    delivery_count = 0,
                    in_flight_until = NULL,
+                   next_attempt_at = NULL,
                    nack_reason = NULL
                WHERE id = ? AND state = 'dead_letter'""",
             (id_,),

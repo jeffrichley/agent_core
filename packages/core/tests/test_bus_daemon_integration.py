@@ -18,11 +18,10 @@ import pytest
 from fastmcp import Client
 
 from agent_core.bus.envelope import TextMessagePayload
-from agent_core.bus.runner import build_bus_from_config
 
 
 @pytest.mark.asyncio
-async def test_round_trip_via_real_http(tmp_path):
+async def test_round_trip_via_real_http(tmp_path, build_bus):
     cfg = tmp_path / "agent_core.yaml"
     cfg.write_text(
         f"""
@@ -44,7 +43,7 @@ endpoints:
         encoding="utf-8",
     )
 
-    bus, http_host = await build_bus_from_config(cfg)
+    bus, http_host = await build_bus(cfg)
     assert http_host is not None
     await http_host.start()
     try:
