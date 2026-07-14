@@ -67,7 +67,7 @@ def _base_hook():
 
 class TestRunnerPluginHooks:
     async def test_resolve_endpoint_class_path(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, build_bus
     ):
         Hook = _base_hook()
 
@@ -84,11 +84,11 @@ class TestRunnerPluginHooks:
         config = {"endpoints": [{"type": "plugin.stub.Endpoint", "name": "plug", "params": {}}]}
         p = tmp_path / "plugin-endpoint.yaml"
         p.write_text(yaml.dump(config), encoding="utf-8")
-        bus, _ = await build_bus_from_config(p)
+        bus, _ = await build_bus(p)
         assert "plug" in bus._endpoints_by_name
 
     async def test_endpoint_requires_specific_resolver(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, build_bus
     ):
         Hook = _base_hook()
 
@@ -113,12 +113,12 @@ class TestRunnerPluginHooks:
         config = {"endpoints": [{"type": "plugin.stub.Endpoint", "name": "plug", "params": {}}]}
         p = tmp_path / "plugin-precedence.yaml"
         p.write_text(yaml.dump(config), encoding="utf-8")
-        bus, _ = await build_bus_from_config(p)
+        bus, _ = await build_bus(p)
         spec = bus._endpoints_by_name["plug"]
         assert isinstance(spec.endpoint, _SpecificEndpoint)
 
     async def test_resolve_bus_hook_class_and_configure_called(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, build_bus
     ):
         seen: list[str] = []
         Hook = _base_hook()
@@ -150,7 +150,7 @@ class TestRunnerPluginHooks:
         }
         p = tmp_path / "plugin-bus-hook.yaml"
         p.write_text(yaml.dump(config), encoding="utf-8")
-        await build_bus_from_config(p)
+        bus, _ = await build_bus(p)
         assert seen == ["pre_publish"]
 
     async def test_validate_config_can_reject(
@@ -174,7 +174,7 @@ class TestRunnerPluginHooks:
             await build_bus_from_config(p)
 
     async def test_reserved_endpoint_params_pop_before_construction(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, build_bus
     ):
         """Plugin-declared reserved params don't reach the endpoint __init__.
 
@@ -225,7 +225,7 @@ class TestRunnerPluginHooks:
         }
         p = tmp_path / "reserved-params.yaml"
         p.write_text(yaml.dump(config), encoding="utf-8")
-        bus, _ = await build_bus_from_config(p)
+        bus, _ = await build_bus(p)
         assert "strict" in bus._endpoints_by_name
         assert captured_kwargs == {"allowed_only": "yes"}
 
@@ -256,7 +256,7 @@ class TestPipelinePluginHooks:
 
 
 class TestEntrypointPluginIntegration:
-    async def test_alias_endpoint_resolves_without_monkeypatch(self, tmp_path: Path):
+    async def test_alias_endpoint_resolves_without_monkeypatch(self, tmp_path: Path, build_bus):
         config = {
             "endpoints": [
                 {
@@ -268,7 +268,7 @@ class TestEntrypointPluginIntegration:
         }
         p = tmp_path / "alias-endpoint.yaml"
         p.write_text(yaml.dump(config), encoding="utf-8")
-        bus, _ = await build_bus_from_config(p)
+        bus, _ = await build_bus(p)
         assert "stub-alias" in bus._endpoints_by_name
 
     def test_alias_hook_tool_resolves_without_monkeypatch(self, tmp_path: Path):

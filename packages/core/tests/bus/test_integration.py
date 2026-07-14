@@ -7,7 +7,6 @@ import pytest
 import yaml
 
 from agent_core.bus.envelope import TextMessagePayload
-from agent_core.bus.runner import build_bus_from_config
 
 
 @pytest.fixture
@@ -42,8 +41,8 @@ def cfg_path(tmp_path: Path) -> Path:
 
 
 class TestE2E:
-    async def test_alice_sends_to_bob(self, cfg_path: Path):
-        bus, _ = await build_bus_from_config(cfg_path)
+    async def test_alice_sends_to_bob(self, cfg_path: Path, build_bus):
+        bus, _ = await build_bus(cfg_path)
         await bus.start()
         try:
             alice = bus._endpoints_by_name["alice"].endpoint
@@ -60,9 +59,9 @@ class TestE2E:
         finally:
             await bus.stop()
 
-    async def test_delivered_envelope_persists_to_disk(self, cfg_path: Path):
+    async def test_delivered_envelope_persists_to_disk(self, cfg_path: Path, build_bus):
         # First run: queue an envelope to a (deliberately not-running) recipient.
-        bus1, _ = await build_bus_from_config(cfg_path)
+        bus1, _ = await build_bus(cfg_path)
         await bus1.start()
         try:
             alice = bus1._endpoints_by_name["alice"].endpoint
@@ -91,8 +90,8 @@ class TestE2E:
         finally:
             await store.close()
 
-    async def test_ttl_expires_unrouted_message(self, cfg_path: Path):
-        bus, _ = await build_bus_from_config(cfg_path)
+    async def test_ttl_expires_unrouted_message(self, cfg_path: Path, build_bus):
+        bus, _ = await build_bus(cfg_path)
         await bus.start()
         try:
             import uuid
@@ -116,7 +115,7 @@ class TestE2E:
         finally:
             await bus.stop()
 
-    async def test_pending_envelope_drains_on_restart(self, cfg_path: Path):
+    async def test_pending_envelope_drains_on_restart(self, cfg_path: Path, build_bus):
         """Durable mailbox survives restart: pending envelope is delivered on second boot."""
         import uuid
 
@@ -124,7 +123,7 @@ class TestE2E:
 
         # First boot: seed a pending envelope addressed to bob directly into the
         # store, simulating "bob was unavailable so delivery was queued."
-        bus1, _ = await build_bus_from_config(cfg_path)
+        bus1, _ = await build_bus(cfg_path)
         await bus1.start()
         try:
             env = Envelope(
@@ -145,7 +144,7 @@ class TestE2E:
         # Second boot: a fresh bus from the same config. Bus.start calls
         # drain_for for each registered endpoint, which should pick up the
         # pending envelope and deliver it to bob's fresh inbox.
-        bus2, _ = await build_bus_from_config(cfg_path)
+        bus2, _ = await build_bus(cfg_path)
         await bus2.start()
         try:
             bob = bus2._endpoints_by_name["bob"].endpoint
