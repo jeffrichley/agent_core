@@ -241,8 +241,8 @@ Fake endpoint helpers:
 
 ```python
 class _OkEndpoint:
-    def __init__(self, name): self.name = name; self.started = False; self.stopped = False; self.delivered = []
-    async def start(self, handle): self.started = True
+    def __init__(self, name): self.name = name; self.started = False; self.stopped = False; self.delivered = []; self.start_count = 0
+    async def start(self, handle): self.started = True; self.start_count += 1
     async def deliver(self, env): self.delivered.append(env)
     async def stop(self): self.stopped = True
 
@@ -268,7 +268,7 @@ class _FailOnStartEndpoint:
 
 `TestSupervisorWiring`:
 - `test_task_failure_feeds_supervisor` — start bus with `_OkEndpoint`; endpoint's handle spawns a task that raises; `await asyncio.sleep(0)` to let callback fire; `bus._supervisor.state("ok").status == "restarting"`.
-- `test_supervisor_tick_restarts_restarting_endpoint` — drive a `_FailOnStartEndpoint` to restarting via task failure hook (or direct `record_failure`); advance `FakeClock` past restart backoff; call `await bus.run_supervisor_tick_once(now=clock.now())`; endpoint's `_start_count == 2` (restart attempted).
+- `test_supervisor_tick_restarts_restarting_endpoint` — **Path A (restarting circuit-breaker path)**: start the bus with an `_OkEndpoint` (its `start_count` is 1 after `bus.start()`; status "active"). Call `bus._supervisor.record_failure("ok", "err")` directly to transition it to `"restarting"` and schedule the first restart at `now + restart_backoff_base_seconds`. Advance `FakeClock` by at least `restart_backoff_base_seconds` (≥ 1 s). Call `await bus.run_supervisor_tick_once(now=clock.now())`; `_attempt_restart` fires, `_restart_endpoint` calls `endpoint.start()` a second time; assert `endpoint.start_count == 2`.
 - `test_restart_success_returns_to_active` — same but endpoint succeeds on restart; `supervisor.state("ok").status == "active"`.
 - `test_restart_drains_pending_mail` — insert a pending envelope for the endpoint before restart; after successful restart, envelope is dispatched (check `_OkEndpoint.delivered`).
 - `test_recovered_event_persisted` — after recovery, `bus._store.list_supervisor_degraded()` returns empty.
