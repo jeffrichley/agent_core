@@ -209,4 +209,4 @@ class InboundEndpoint:
             urgency=urgency,
             created_at=datetime.now(UTC),
         )
-        asyncio.create_task(self._handle.publish(envelope))
+        self._handle.spawn(self._handle.publish(envelope), name="inbound-bus-publish")

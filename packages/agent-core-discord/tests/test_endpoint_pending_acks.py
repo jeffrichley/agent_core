@@ -23,6 +23,11 @@ class _Recording:
     def endpoints(self) -> list[EndpointInfo]:
         return []
 
+    def spawn(self, coro, *, name=None):
+        import asyncio
+
+        return asyncio.create_task(coro, name=name)
+
 
 async def _make_endpoint(
     monkeypatch,

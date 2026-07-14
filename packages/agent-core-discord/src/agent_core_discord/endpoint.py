@@ -1251,7 +1251,7 @@ class DiscordEndpoint:
                 self._inbound_envelope_discord.pop(env.id, None)
                 raise
             self._record_inbound(env)
-            asyncio.create_task(
+            self._handle.spawn(
                 self._typing_while_pending(message.channel, mid),
                 name=f"discord-{self.name}-typing-{mid}",
             )
@@ -1465,7 +1465,7 @@ class DiscordEndpoint:
             old_id, (old_emoji, old_ch, _ts) = self._pending_acks.popitem(last=False)
             self._awaiting_reply_ids.discard(old_id)
             self._awaiting_reply_ids_timestamps.pop(old_id, None)
-            asyncio.create_task(
+            self._handle.spawn(
                 self._remote_remove_ack(old_id, old_emoji, old_ch),
                 name=f"discord-endpoint-{self.name}-evict-ack",
             )
@@ -1508,7 +1508,7 @@ class DiscordEndpoint:
             self._pending_acks.pop(head_id)
             self._awaiting_reply_ids.discard(head_id)
             self._awaiting_reply_ids_timestamps.pop(head_id, None)
-            asyncio.create_task(
+            self._handle.spawn(
                 self._remote_remove_ack(head_id, emoji, channel_id),
                 name=f"discord-endpoint-{self.name}-ttl-ack",
             )
