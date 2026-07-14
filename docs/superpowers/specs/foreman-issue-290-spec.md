@@ -182,7 +182,7 @@ The rest of the rollback block (`await self._store.close()`, `self._store = None
 
 Add `import asyncio` at the top. Add class `TestBusHandleSpawn` reusing the existing `_RecordingBus` fake.
 
-Key test correctness note: `asyncio.Task.add_done_callback` schedules callbacks via `loop.call_soon`. This means the callback fires in a future event loop iteration, not synchronously when the task completes. Using `await asyncio.gather(task, return_exceptions=True)` causes the event loop to process the task step first and then our `_task_done` callback (registered before `gather`'s internal callback, so it fires first), allowing `gather` to resolve only after our callback has run. This ordering is reliable because Python's `asyncio.Future.__schedule_callbacks` iterates callbacks in registration order.
+Key test correctness note: `asyncio.Task.add_done_callback` schedules callbacks via `loop.call_soon`. `await asyncio.gather(task, return_exceptions=True)` causes the event loop to process the task step first and then our `_task_done` callback (registered before `gather`'s internal callback, so it fires first), allowing `gather` to resolve only after our callback has run. This ordering is reliable because Python's `asyncio.Future.__schedule_callbacks` iterates callbacks in registration order.
 
 ```python
 import asyncio
