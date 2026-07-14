@@ -1,0 +1,245 @@
+# Spec: offload boundary — move VoiceEndpoint construction off-loop and add slow-deliver watchdog (issue #296)
+
+## Goal
+
+Fix the one active construction-time blocking defect (`VoiceEndpoint.__init__` builds `QwenTTSBackend` on the event loop) and add a slow-`deliver()` watchdog to the dispatch path. The architecture is approved at `docs/superpowers/specs/2026-07-14-offload-boundary-design.md`; this spec translates it into a concrete, file-level implementation plan for the Worker. See issue #296.
+
+## Acceptance criteria
+
+- `VoiceEndpoint.__init__` MUST NOT construct `QwenTTSBackend` or call `prepare_voice`. A spy-factory test asserts neither is called until `start()`.
+- `VoiceEndpoint.start()` builds the backend off the event loop via `asyncio.to_thread(QwenTTSBackend, ...)` and warms voices the same way; a concurrent coroutine makes measurable progress during a blocking constructor, proving the loop is not stalled.
+- `VoiceEndpoint.deliver()` raises `EndpointUnavailable` when `_backend is None` (before `start()` completes).
+- `VoiceEndpoint.for_test(backend=fake, ...)` sets `_backend` at construction, so `start()` skips backend construction (but still warms voices); no model is loaded.
+- `Bus._dispatch` times every `await endpoint.deliver()` call; when elapsed exceeds `BusConfig.slow_deliver_warn_seconds` (default 5.0, `> 0` = enabled, `<= 0` = disabled), a `WARNING`-level log line beginning with `"SlowDeliverWarning"` is emitted containing the endpoint name, envelope id, and elapsed seconds.
+- Fast `deliver()` (completes under threshold) emits no `SlowDeliverWarning` log.
+- `slow_deliver_warn_seconds <= 0` disables the watchdog entirely (no log, even for slow endpoints).
+- `BusConfig.slow_deliver_warn_seconds` is read from the YAML key `bus.slow_deliver_warn_seconds` in the runner.
+- `SlowDeliverWarning` is exported from `bus/protocol.py` as a frozen dataclass with fields `endpoint: str`, `envelope_id: str`, `elapsed_seconds: float`.
+- `Endpoint.deliver()` docstring upgraded from advisory to **MUST** language matching the approved design.
+- Existing `VoiceEndpoint.deliver()` tests and bus dispatch/ack tests pass unchanged.
+- Three existing `test_endpoint.py` tests that assert `__init__`-era behaviour are updated to call `start()` first (they assert the same property, just after the correct lifecycle point).
+- All new tests pass `just test-fast`; only the off-thread-proof test is marked `@pytest.mark.slow` (it uses `time.sleep` in a thread).
+
+## Approach
+
+No GoF pattern is needed here; this is a straightforward **SRP** migration: construction belongs in `start()` (which is already `async` and awaited at boot), and observability belongs in the dispatch path. Both are mechanical changes.
+
+### ① `bus/protocol.py` — add `SlowDeliverWarning`, strengthen `Endpoint` docstrings
+
+Add a `SlowDeliverWarning` frozen dataclass below `EndpointUnavailable`:
+
+```python
+from dataclasses import dataclass
+
+@dataclass(frozen=True)
+class SlowDeliverWarning:
+    """Emitted (via structured log) when deliver() exceeds slow_deliver_warn_seconds.
+
+    Warn-only — no delivery semantics are altered. Provides observability
+    for Theme E and future T4 escalation.
+    """
+    endpoint: str
+    envelope_id: str
+    elapsed_seconds: float
+```
+
+Strengthen the `Endpoint` protocol docstring to add:
+
+```
+Implementation contract (MUST):
+- ``__init__`` MUST be cheap — no model loads, blocking I/O, or network.
+  Heavy or slow setup belongs in ``start()``, which is async and awaited
+  during boot.
+- ``deliver()`` MUST return promptly. Long work MUST be offloaded to a
+  tracked background task via ``bus.spawn(coro, name=...)``.  Blocking the
+  event loop stalls delivery to every other endpoint; the watchdog in
+  ``Bus._dispatch`` emits ``SlowDeliverWarning`` when the threshold is
+  exceeded.
+```
+
+Add `SlowDeliverWarning` to `bus/protocol.py`'s `__all__` (or the module-level import list in `bus/__init__.py` if one exists — check first).
+
+### ② `bus/core.py` — add watchdog config field + timing in `_dispatch`
+
+**Add to imports:**
+```python
+import time
+```
+
+**Add to `bus/protocol.py` import at the top of `core.py`** (line 26 area, already reads `BusHook, Endpoint`):
+```python
+from agent_core.bus.protocol import BusHook, Endpoint, SlowDeliverWarning
+```
+
+**Add field to `BusConfig`:**
+```python
+@dataclass
+class BusConfig:
+    ...
+    # Watchdog: warn when deliver() takes longer than this many seconds.
+    # Non-positive value disables the watchdog entirely.
+    slow_deliver_warn_seconds: float = 5.0
+```
+
+**Modify `Bus._dispatch`** — wrap the `await endpoint.deliver(envelope)` with a timer and `finally` clause (lines 390–433 in the read above):
+
+```python
+import time as _time  # already imported at module level after ① above
+
+t0 = _time.monotonic()
+try:
+    await endpoint.deliver(envelope)
+except Exception as exc:
+    # ... existing EndpointUnavailable / terminal handling (unchanged) ...
+finally:
+    elapsed = _time.monotonic() - t0
+    warn_s = self.config.slow_deliver_warn_seconds
+    if warn_s > 0 and elapsed >= warn_s:
+        log.warning(
+            "SlowDeliverWarning endpoint=%r envelope_id=%r elapsed_seconds=%.3f threshold=%.1f",
+            envelope.to,
+            envelope.id,
+            elapsed,
+            warn_s,
+        )
+```
+
+The `finally` block runs whether `deliver()` succeeds or raises, giving the watchdog full coverage. The existing exception handling inside `except` is **unchanged**.
+
+### ③ `bus/runner.py` — plumb `slow_deliver_warn_seconds` from YAML
+
+In `build_bus_from_config`, where `BusConfig(...)` is constructed (line 85 area), add:
+
+```python
+cfg = BusConfig(
+    storage_path=storage_path,
+    redelivery_timeout_seconds=bus_cfg_raw.get("redelivery_timeout_seconds", 300),
+    ...
+    slow_deliver_warn_seconds=float(bus_cfg_raw.get("slow_deliver_warn_seconds", 5.0)),
+    supervisor=supervisor,
+)
+```
+
+This makes the knob available in YAML under `bus.slow_deliver_warn_seconds`.
+
+### ④ `VoiceEndpoint` — defer construction to `start()`, guard `deliver()`
+
+**`__init__`** changes:
+
+1. Remove the `QwenTTSBackend(...)` construction block (lines 122–128).
+2. Remove the `prepare_voice` warming loop (lines 149–151).
+3. Store production params as instance attributes for lazy use in `start()`:
+   - `self._model_path = model_path`
+   - `self._device = device`
+   - `self._attn_implementation = attn_implementation`
+4. Keep the `ValueError` guard for `backend is None and model_path is None` in `__init__` — fail-fast on misconfiguration stays at construction time.
+5. Set `self._backend: TTSBackend | None = backend` (may be `None` for production path).
+6. Voice normalization (`self._voices`), `self._output_dir.mkdir(...)`, `self._audit` — all stay in `__init__` (unchanged).
+
+After changes, `__init__` ends without ever touching a backend.
+
+**`start(hook)`** changes:
+
+Replace the current stub (`self._handle = bus; log.info(...)`) with:
+
+```python
+async def start(self, bus: BusHandle) -> None:
+    self._handle = bus
+    if self._backend is None:
+        # Production path: build the GPU/CPU backend off the event loop thread.
+        # asyncio.to_thread keeps the loop responsive during the (potentially
+        # multi-second) model load.
+        from madrigal.engine import QwenTTSBackend
+        self._backend = await asyncio.to_thread(
+            QwenTTSBackend,
+            model_path=self._model_path,
+            device=self._device,
+            attn_implementation=self._attn_implementation,
+        )
+    # Warm all configured voices (no-op cost for fake backends; off-thread
+    # for real backends so WAV encoding doesn't block the loop).
+    for voice_id, info in self._voices.items():
+        await asyncio.to_thread(
+            self._backend.prepare_voice, voice_id, Path(info.ref_wav), info.ref_text
+        )
+        log.info("voice %r prepared (ref_wav=%s)", voice_id, info.ref_wav)
+    log.info("VoiceEndpoint(name=%s) started; output_dir=%s", self._name, self._output_dir)
+```
+
+**`deliver()`** — add defensive guard at the very top, before any other logic:
+
+```python
+async def deliver(self, envelope: Envelope) -> None:
+    if self._backend is None:
+        # start() has not yet completed. This should not happen in production
+        # (bus awaits start() before draining mail), but fail safe rather than crash.
+        raise EndpointUnavailable(
+            f"VoiceEndpoint(name={self._name!r}): backend not ready — start() not yet complete"
+        )
+    # ... rest of existing deliver() code unchanged ...
+```
+
+`EndpointUnavailable` is already imported at the top of `endpoint.py` from `agent_core.bus.protocol`.
+
+**`for_test` class method**: No change needed. It passes `backend=...` to `__init__`, which sets `self._backend = backend` (non-None). When `start()` runs, `_backend is not None` skips construction and proceeds directly to voice warming. Tests stay fast.
+
+## Sub-requests (topologically sorted)
+
+1. **`bus/protocol.py`**: Add `SlowDeliverWarning` frozen dataclass (fields: `endpoint: str`, `envelope_id: str`, `elapsed_seconds: float`). Strengthen `Endpoint` docstring with MUST language for `__init__` (cheap) and `deliver()` (prompt, off-thread via `spawn()`). No signature changes.
+
+2. **`bus/core.py`**: Add `import time` (stdlib). Add `SlowDeliverWarning` to the protocol import. Add `slow_deliver_warn_seconds: float = 5.0` field to `BusConfig`. Modify `Bus._dispatch` to wrap `await endpoint.deliver(envelope)` in a `t0 = time.monotonic()` / `try` / `finally: elapsed = time.monotonic() - t0; log.warning("SlowDeliverWarning ...")` pattern when threshold exceeded.
+
+3. **`bus/runner.py`**: Add `slow_deliver_warn_seconds=float(bus_cfg_raw.get("slow_deliver_warn_seconds", 5.0))` to `BusConfig(...)` constructor call.
+
+4. **`agent-core-voice/endpoint.py`**: Refactor `VoiceEndpoint.__init__` to store `_model_path`, `_device`, `_attn_implementation`, set `self._backend = backend` (not construct), remove `prepare_voice` loop. Expand `start()` to build backend off-thread and warm voices off-thread. Add `EndpointUnavailable` guard at top of `deliver()`.
+
+5. **`packages/core/tests/bus/test_core_dispatch.py`**: Add three watchdog tests:
+   - `test_slow_deliver_emits_warning`: endpoint with `asyncio.sleep(0.1)` in `deliver()`, threshold `0.001`; assert `caplog` contains a record with `"SlowDeliverWarning"` in message.
+   - `test_fast_deliver_no_warning`: endpoint with immediate `ack` in `deliver()`, threshold `10.0`; assert no `"SlowDeliverWarning"` record.
+   - `test_disabled_watchdog_no_warning`: endpoint with `asyncio.sleep(0.1)`, threshold `0.0` (disabled); assert no `"SlowDeliverWarning"` record.
+
+6. **`packages/agent-core-voice/tests/test_endpoint.py`**: Update three tests that currently assert `__init__`-era behaviour:
+   - `test_init_prepares_every_voice` → rename to `test_start_prepares_every_voice`, add `@pytest.mark.asyncio`, call `await ep.start(_minimal_handle())` before asserting `call_log`.
+   - `test_init_missing_ref_wav_raises` → rename to `test_start_missing_ref_wav_raises`, add `@pytest.mark.asyncio`, call `with pytest.raises(FileNotFoundError): await ep.start(_minimal_handle())` (construction itself no longer raises; `prepare_voice` raises in `start()`).
+   - `test_production_wiring_constructs_madrigal_qwen_backend` → update to call `await ep.start(_minimal_handle())` before asserting `construct_calls`.
+
+7. **`packages/agent-core-voice/tests/test_endpoint.py`**: Add three new tests:
+   - `test_init_does_not_construct_backend`: spy-factory for `QwenTTSBackend`; asserts `construct_calls == []` after `VoiceEndpoint(model_path=..., ...)` with no `start()` call.
+   - `test_start_builds_backend_off_thread` (`@pytest.mark.slow`): blocking `time.sleep(0.2)` factory, concurrent `asyncio` progress-ticker; asserts progress ticker ran during `start()`, proving loop was not frozen.
+   - `test_for_test_backend_skips_construction`: spy-factory patched onto `madrigal.engine.QwenTTSBackend`; calls `VoiceEndpoint.for_test(backend=stub, ...)` + `await ep.start(handle)`; asserts spy factory was never called.
+
+## File-level changes
+
+| File | Change |
+|---|---|
+| `packages/core/src/agent_core/bus/protocol.py` | Add `SlowDeliverWarning` frozen dataclass; strengthen `Endpoint` docstring with MUST language |
+| `packages/core/src/agent_core/bus/core.py` | Add `import time`; add `SlowDeliverWarning` to protocol import; add `slow_deliver_warn_seconds: float = 5.0` to `BusConfig`; add timing + `log.warning` in `Bus._dispatch` |
+| `packages/core/src/agent_core/bus/runner.py` | Add `slow_deliver_warn_seconds` kwarg to `BusConfig(...)` from `bus_cfg_raw` |
+| `packages/agent-core-voice/src/agent_core_voice/endpoint.py` | Remove backend construction + `prepare_voice` from `__init__`; store `_model_path/_device/_attn_implementation`; move construction off-thread into `start()`; add `EndpointUnavailable` guard at top of `deliver()` |
+| `packages/core/tests/bus/test_core_dispatch.py` | Add 3 watchdog tests (`slow_deliver_emits_warning`, `fast_deliver_no_warning`, `disabled_watchdog_no_warning`) |
+| `packages/agent-core-voice/tests/test_endpoint.py` | Update 3 existing tests to call `start()` first; add 3 new tests (`init_does_not_construct_backend`, `start_builds_backend_off_thread`, `for_test_backend_skips_construction`) |
+
+No other files change. `bus/handle.py`, `bus/supervisor.py`, `bus/persistence.py`, and all other endpoint packages are untouched.
+
+## Alternatives considered
+
+1. **Concurrent per-endpoint dispatch (dispatch fan-out)**: deliver to all endpoints simultaneously rather than serially, so one slow endpoint cannot stall others. Ruled out explicitly in the approved design — it discards the existing serial-ordering + backpressure guarantee, is only justified if the prompt-`deliver()` contract is systematically violated (not the case today), and is explicitly deferred to its own evidence-gated ticket.
+
+2. **Per-`deliver()` timeout + cancel**: wrap `await endpoint.deliver()` with `asyncio.wait_for(timeout=...)` and cancel slow endpoints. Ruled out for the same reason — an architectural change requiring the bus to compensate for contract-violating endpoints, not yet justified by evidence. The watchdog emits the signal; a future ticket acts on it.
+
+3. **Quarantine VoiceEndpoint boot on exception rather than deferring construction**: keep `__init__` building the backend, rely on T4 (#273) quarantine to isolate a crash at boot. Ruled out — quarantine isolates a crash, but the current code freezes the loop *before* any exception; the freeze itself is the defect, not the eventual failure. Off-threading the construction in `start()` fixes the freeze and also makes a failed load T4-quarantinable.
+
+4. **Move `prepare_voice` into `deliver()` lazily**: warm each voice on first synthesis request. Ruled out — breaks the "warm before first request → predictable low first-synthesis latency" property, and complicates the `deliver()` fast-return contract.
+
+## Open questions
+
+None. Every file path and line number referenced above was read directly from the live repo. The approved design resolves all architecture questions.
+
+## Out of scope
+
+- Concurrent per-endpoint dispatch — deferred, evidence-gated.
+- Per-`deliver()` timeout / cancel — deferred, evidence-gated.
+- Re-planning #297 (async redelivery sweep) and #300 (graceful drain) — the design doc says to re-plan both after #296 merges; that is the PM's responsibility.
+- OS-level process supervisor (#265) — separate work.
+- `ack`-vs-`nack` fixes, delivery retry backoff changes — T5/T6 tickets.
+- Env-var override of `slow_deliver_warn_seconds` at runtime — the runner reads YAML; env-based config-provenance is a cross-cutting concern not currently implemented for any `BusConfig` field and should not be invented here.
