@@ -64,7 +64,7 @@ class TestRegistration:
         with pytest.raises(ValueError, match="already registered"):
             bus.register(EndpointSpec(endpoint=_LifecycleSpy("x")))
 
-    async def test_start_partial_failure_rolls_back(self, bus: Bus):
+    async def test_start_partial_failure_quarantines_and_continues(self, bus: Bus):
         class _ExplodingStart:
             name = "boom"
 
@@ -82,9 +82,13 @@ class TestRegistration:
         bus.register(EndpointSpec(endpoint=good))
         bus.register(EndpointSpec(endpoint=bad))
 
-        with pytest.raises(RuntimeError, match="kaboom"):
-            await bus.start()
+        # Degraded boot: no exception raised; bus starts with what it can
+        await bus.start()
 
-        assert good.started is True
-        assert good.stopped is True  # rollback called stop on the already-started one
-        assert bus._started is False
+        assert bus._started is True
+        assert good.stopped is False  # good endpoint was NOT rolled back
+        assert bus._supervisor is not None
+        assert bus._supervisor.state("boom") is not None
+        assert bus._supervisor.state("boom").status == "quarantined"  # type: ignore[union-attr]
+        assert bus._supervisor.state("good") is not None
+        assert bus._supervisor.state("good").status == "active"  # type: ignore[union-attr]

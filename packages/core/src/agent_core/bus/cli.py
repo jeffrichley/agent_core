@@ -103,6 +103,10 @@ async def _run_bus(config_path: Path) -> None:
                 except Exception:
                     log.exception("redelivery sweep failed")
                 try:
+                    await bus.run_supervisor_tick_once()
+                except Exception:
+                    log.exception("supervisor tick failed")
+                try:
                     await asyncio.wait_for(
                         stop_event.wait(), timeout=bus.config.redelivery_sweep_seconds
                     )
@@ -158,6 +162,17 @@ async def _status(config_path: Path) -> None:
         for state, count in rows:
             agg.add_row(state, str(count))
         console.print(agg)
+
+        # Degraded endpoints table (only shown when any exist)
+        degraded = await store.list_supervisor_degraded()
+        if degraded:
+            deg_table = Table(title="Degraded Endpoints")
+            deg_table.add_column("name")
+            deg_table.add_column("last_error")
+            deg_table.add_column("since")
+            for row in degraded:
+                deg_table.add_row(row["name"], row["last_error"] or "", row["updated_at"])
+            console.print(deg_table)
     finally:
         await store.close()
 

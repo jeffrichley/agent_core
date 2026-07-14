@@ -56,6 +56,8 @@ class EndpointSupervisor:
     - ``clock``: ``Clock`` implementation (``FakeClock`` in tests).
     - ``restart_fn``: async callable ``(name: str) -> None`` that restarts the
       named endpoint; raises on failure.
+    - ``on_transition``: optional async callable ``(name, transition, last_error) -> None``
+      fired on quarantine-entry and recovery boundary crossings.
 
     Call ``tick(now)`` from the bus event loop on each iteration to drive due
     restart attempts and quarantine probes.
@@ -66,10 +68,12 @@ class EndpointSupervisor:
         config: SupervisorConfig,
         clock: Clock,
         restart_fn: Callable[[str], Awaitable[None]],
+        on_transition: Callable[[str, str, str | None], Awaitable[None]] | None = None,
     ) -> None:
         self._config = config
         self._clock = clock
         self._restart_fn = restart_fn
+        self._on_transition = on_transition
         self._states: dict[str, EndpointState] = {}
 
     # ------------------------------------------------------------------
@@ -129,6 +133,23 @@ class EndpointSupervisor:
         s.breaker = "closed"
         s.next_probe_at = None
 
+    async def quarantine(self, name: str, error: str = "") -> None:
+        """Directly quarantine ``name``, bypassing the restarting phase.
+
+        Used for boot-time failures where the endpoint is already known-bad
+        and we want to enter the probe cycle immediately. Fires ``on_transition``
+        with ``("quarantined", error)`` if set.
+        """
+        s = self._states[name]
+        s.status = "quarantined"
+        s.breaker = "open"
+        s.last_error = error
+        s.next_probe_at = self._clock.now() + timedelta(
+            seconds=self._config.probe_interval_seconds
+        )
+        if self._on_transition is not None:
+            await self._on_transition(name, "quarantined", error)
+
     # ------------------------------------------------------------------
     # Async tick — the bus loop calls this on each iteration
     # ------------------------------------------------------------------
@@ -154,9 +175,11 @@ class EndpointSupervisor:
     async def _attempt_restart(self, state: EndpointState, now: datetime) -> None:
         """Attempt to restart a restarting endpoint.
 
-        On success: transition to active/closed, reset all counters.
+        On success: transition to active/closed, reset all counters, fire
+        ``on_transition("recovered", None)``.
         On failure: increment ``consecutive_failures``; quarantine if threshold
-        reached, else schedule next retry at the next backoff interval.
+        reached (fires ``on_transition("quarantined", last_error)``), else
+        schedule next retry at the next backoff interval.
         """
         try:
             await self._restart_fn(state.name)
@@ -169,6 +192,8 @@ class EndpointSupervisor:
                 state.next_probe_at = now + timedelta(
                     seconds=self._config.probe_interval_seconds
                 )
+                if self._on_transition is not None:
+                    await self._on_transition(state.name, "quarantined", state.last_error)
             else:
                 delay = _compute_restart_backoff(
                     state.consecutive_failures + 1, self._config
@@ -180,14 +205,18 @@ class EndpointSupervisor:
             state.consecutive_failures = 0
             state.last_error = None
             state.next_probe_at = None
+            if self._on_transition is not None:
+                await self._on_transition(state.name, "recovered", None)
 
     async def _attempt_probe(self, state: EndpointState, now: datetime) -> None:
         """Attempt a probe restart for a quarantined endpoint (HALF_OPEN phase).
 
         Sets ``breaker="half_open"`` before the call (observable by external
-        inspection). On success: transition to active/closed. On failure: return
-        to open/quarantined with a fresh probe timer; ``consecutive_failures`` is
-        NOT incremented (already at threshold).
+        inspection). On success: transition to active/closed, fire
+        ``on_transition("recovered", None)``. On failure: return to
+        open/quarantined with a fresh probe timer; ``consecutive_failures`` is
+        NOT incremented (already at threshold). No ``on_transition`` on failure
+        (status stays quarantined — no boundary crossing).
         """
         state.breaker = "half_open"
         try:
@@ -205,3 +234,5 @@ class EndpointSupervisor:
             state.consecutive_failures = 0
             state.last_error = None
             state.next_probe_at = None
+            if self._on_transition is not None:
+                await self._on_transition(state.name, "recovered", None)
