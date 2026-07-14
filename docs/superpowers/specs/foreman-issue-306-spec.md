@@ -103,7 +103,6 @@ No GoF pattern applies. Engineering principle: **SRP** — the existing pure/imp
 
    if sys.platform == "win32":  # pragma: no cover
        try:
-           import win32event
            import win32service
            import win32serviceutil
 
