@@ -27,14 +27,20 @@ The prior combined spec (`foreman-issue-271-spec.md`) covered API + migration to
 
 ### `BusHandle` changes (`packages/core/src/agent_core/bus/handle.py`)
 
-**New imports** (add to the top of the file, below `from __future__ import annotations`):
+**New imports** — `handle.py` already has `from typing import TYPE_CHECKING` at line 10. Replace that line and add the remaining new imports so the complete import block at the top of the file reads:
 
 ```python
+from __future__ import annotations
+
 import asyncio
 import logging
 from collections.abc import Callable, Coroutine
-from typing import Any
+from typing import TYPE_CHECKING, Any
+
+from agent_core.bus.envelope import EndpointInfo, Envelope
 ```
+
+**Important:** Do NOT add `from typing import Any` as a separate line — merge it with the existing `from typing import TYPE_CHECKING` into the single line `from typing import TYPE_CHECKING, Any`. A split `from typing import` block violates `ruff`'s `I001` isort rule (selected via `"I"` in `[tool.ruff.lint].select`) and `ruff check` will reject the file.
 
 Add module-level logger (after the imports):
 
