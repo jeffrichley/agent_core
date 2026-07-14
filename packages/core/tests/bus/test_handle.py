@@ -1,5 +1,6 @@
 """Tests for BusHandle — the per-endpoint surface to the bus."""
 
+import asyncio
 from datetime import UTC, datetime
 
 from agent_core.bus.envelope import EndpointInfo, Envelope, TextMessagePayload
@@ -108,3 +109,70 @@ class TestBusHandleEndpoints:
         infos.clear()
         # Mutating the returned list must not affect later calls.
         assert len(handle.endpoints()) == 2
+
+
+class TestBusHandleSpawn:
+    async def test_spawn_complete_removes_from_task_set(self):
+        """Completed task is removed from the internal tracked set."""
+        handle = BusHandle(_RecordingBus(), "x")
+
+        async def _noop() -> None:
+            pass
+
+        task = handle.spawn(_noop())
+        await asyncio.gather(task, return_exceptions=True)
+        assert task not in handle._tasks
+
+    async def test_spawn_raise_invokes_failure_hook_exactly_once(self):
+        """Task raising invokes the injected hook exactly once."""
+        failures: list[BaseException] = []
+        handle = BusHandle(_RecordingBus(), "x", on_task_failure=failures.append)
+
+        async def _boom() -> None:
+            raise ValueError("oops")
+
+        task = handle.spawn(_boom())
+        await asyncio.gather(task, return_exceptions=True)
+        assert len(failures) == 1
+        assert isinstance(failures[0], ValueError)
+
+    async def test_spawn_raise_does_not_propagate_to_loop(self):
+        """Exception in a spawned task does NOT bubble to the event loop."""
+        handle = BusHandle(_RecordingBus(), "x", on_task_failure=lambda _: None)
+
+        async def _boom() -> None:
+            raise RuntimeError("contained")
+
+        task = handle.spawn(_boom())
+        await asyncio.gather(task, return_exceptions=True)
+        assert task.done() and not task.cancelled()
+
+    async def test_drain_cancels_task_and_hook_not_fired(self):
+        """CancelledError on shutdown is not treated as a failure."""
+        failures: list[BaseException] = []
+        handle = BusHandle(_RecordingBus(), "x", on_task_failure=failures.append)
+
+        async def _hang() -> None:
+            await asyncio.sleep(1000)
+
+        task = handle.spawn(_hang())
+        await handle._drain_tasks()
+        assert task.cancelled()
+        assert failures == []
+
+    async def test_drain_cancels_all_pending_tasks_and_clears_set(self):
+        """_drain_tasks() cancels every outstanding task and empties the set."""
+        handle = BusHandle(_RecordingBus(), "x")
+        started = asyncio.Event()
+
+        async def _long() -> None:
+            started.set()
+            await asyncio.sleep(1000)
+
+        t1 = handle.spawn(_long())
+        t2 = handle.spawn(_long())
+        await started.wait()
+        await handle._drain_tasks()
+        assert t1.cancelled()
+        assert t2.cancelled()
+        assert len(handle._tasks) == 0
