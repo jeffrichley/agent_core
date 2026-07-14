@@ -16,10 +16,11 @@ unhandled exceptions reach the failure hook. See issue #291 and the design spec 
     (typing-while-pending, LRU-evict-ack removal, TTL-evict-ack removal)
 - Existing endpoint tests still pass with no behavioral change on the happy path.
 - `FakeBusHandle` in `packages/agent-core-discord/src/agent_core_discord/testing/fakes.py`
-  and the inline `_Recording` classes in `test_endpoint_inbound.py` and
-  `test_endpoint_pending_acks.py` each gain a `spawn()` method that delegates to
-  `asyncio.create_task`, so tests that fire `on_message` or call `_track_pending_ack` /
-  `_sweep_pending_acks_once` continue to compile and pass.
+  and the inline `_Recording` classes in `test_endpoint_inbound.py`,
+  `test_endpoint_pending_acks.py`, `test_voice_transcription.py`,
+  `test_endpoint_urgency.py`, and `test_endpoint_outbound.py` each gain a `spawn()` method
+  that delegates to `asyncio.create_task`, so tests that fire `on_message` or call
+  `_track_pending_ack` / `_sweep_pending_acks_once` continue to compile and pass.
 - Three new lifecycle tests (one per migrated site) assert that the spawned task is cancelled
   when the bus drains tasks on stop (i.e., `handle._drain_tasks()` cancels any outstanding task
   spawned at that site).
@@ -165,8 +166,27 @@ def spawn(self, coro, *, name=None):
 Tests call `ep._track_pending_ack(...)` and `ep._sweep_pending_acks_once()` directly, which
 reach lines 1468 and 1511. Add the same `spawn()` method.
 
-No other test files need modification. `test_endpoint_hardening.py` uses `_Recording` but
-only delivers `ToolInvocation` envelopes — those paths never reach any spawn call site.
+**`packages/agent-core-discord/tests/test_voice_transcription.py` — `_Recording`**
+
+Eight calls to `fake.fire("on_message", ...)` reach line 1254. Add the same `spawn()` method.
+
+**`packages/agent-core-discord/tests/test_endpoint_urgency.py` — `_Recording`**
+
+Six calls to `fake.fire("on_message", ...)` reach line 1254. Add the same `spawn()` method.
+
+**`packages/agent-core-discord/tests/test_endpoint_outbound.py` — `_Recording`**
+
+Three calls to `ep._track_pending_ack(...)` reach lines 1468/1511, and one
+`fake.fire("on_message", ...)` reaches line 1254. Add the same `spawn()` method.
+
+The following files with `_Recording` do NOT need modification:
+- `test_endpoint_hardening.py` — only delivers `ToolInvocation` envelopes via `ep.deliver()`,
+  never reaching a spawn call site.
+- `test_endpoint_nack.py` — has a `_Recording` class but fires no `on_message` events and
+  calls no `_track_pending_ack` / `_sweep_pending_acks_once` paths.
+
+`test_awaiting_reply_pair.py` fires `on_message` but uses `FakeBusHandle` (already updated in
+Sub-request 1), not `_Recording`.
 `test_typing_ttl.py` uses `FakeBusHandle` but calls `ep._typing_while_pending()` directly,
 bypassing `on_message`.
 
@@ -420,10 +440,16 @@ async def test_evict_ack_task_cancelled_on_drain(monkeypatch):
    `packages/agent-core-discord/src/agent_core_discord/testing/fakes.py` (line 499, after
    `endpoints()`). Delegates to `asyncio.create_task`.
 
-2. **Add `spawn()` to `_Recording`** in
-   `packages/agent-core-discord/tests/test_endpoint_inbound.py` (line 25) and to `_Recording`
-   in `packages/agent-core-discord/tests/test_endpoint_pending_acks.py` (line 24). Same one-liner
-   as above. No other test files need this.
+2. **Add `spawn()` to `_Recording`** in the following five discord test files (same one-liner
+   as above — delegates to `asyncio.create_task`):
+   - `packages/agent-core-discord/tests/test_endpoint_inbound.py` (line 25, after `endpoints()`)
+   - `packages/agent-core-discord/tests/test_endpoint_pending_acks.py` (line 24, after `endpoints()`)
+   - `packages/agent-core-discord/tests/test_voice_transcription.py` — 8 `on_message` fires reach line 1254
+   - `packages/agent-core-discord/tests/test_endpoint_urgency.py` — 6 `on_message` fires reach line 1254
+   - `packages/agent-core-discord/tests/test_endpoint_outbound.py` — 3 `_track_pending_ack` calls + 1 `on_message` fire reach lines 1254/1468/1511
+
+   `test_endpoint_hardening.py` and `test_endpoint_nack.py` have `_Recording` but do not reach
+   any spawn call site; they do not need modification.
 
 3. **Migrate inbound site** — replace line 212 in
    `packages/agent-core-inbound/src/agent_core_inbound/endpoint.py` with
@@ -452,6 +478,9 @@ async def test_evict_ack_task_cancelled_on_drain(monkeypatch):
 | `packages/agent-core-discord/src/agent_core_discord/testing/fakes.py` | Add `spawn()` to `FakeBusHandle` (one-liner delegating to `asyncio.create_task`) |
 | `packages/agent-core-discord/tests/test_endpoint_inbound.py` | Add `spawn()` to the file-local `_Recording` class |
 | `packages/agent-core-discord/tests/test_endpoint_pending_acks.py` | Add `spawn()` to the file-local `_Recording` class |
+| `packages/agent-core-discord/tests/test_voice_transcription.py` | Add `spawn()` to the file-local `_Recording` class |
+| `packages/agent-core-discord/tests/test_endpoint_urgency.py` | Add `spawn()` to the file-local `_Recording` class |
+| `packages/agent-core-discord/tests/test_endpoint_outbound.py` | Add `spawn()` to the file-local `_Recording` class |
 | `packages/agent-core-inbound/tests/test_inbound_publish_task_lifecycle.py` | New file: one lifecycle test for the inbound publish adapter |
 | `packages/agent-core-voice/tests/test_synthesis_task_lifecycle.py` | New file: one lifecycle test for the synthesis task |
 | `packages/agent-core-discord/tests/test_discord_spawn_lifecycle.py` | New file: two lifecycle tests (typing task + evict-ack task) |
