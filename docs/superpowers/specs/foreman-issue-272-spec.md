@@ -39,7 +39,7 @@ This collapses the "next action time" into one field (matching the struct the is
 
 ### `_compute_restart_backoff` (module-level function, `supervisor.py`)
 
-Mirrors `_compute_delivery_backoff` from T5's design (same formula, same parameter style). `attempt` is 1-indexed:
+`attempt` is 1-indexed:
 
 ```python
 def _compute_restart_backoff(attempt: int, config: SupervisorConfig) -> float:
@@ -62,9 +62,9 @@ Central registry. `__init__` stores `config`, `clock`, `restart_fn`, and `_state
 
 **`tick(now)`** is the sole async entry point. It iterates all states, finds those with `next_probe_at <= now`, and delegates to `_attempt_restart` (for `restarting`) or `_attempt_probe` (for `quarantined`). The iteration is over `list(self._states.values())` to be safe against concurrent modification.
 
-**`_attempt_restart(state, now)`** increments `consecutive_failures` on failure (not before the attempt — a clean first attempt is possible). The quarantine check uses `>=`: with `restarts_before_quarantine=5`, the 5th failed restart (`consecutive_failures == 5`) triggers OPEN. The backoff for the next restart (when < threshold) is `_compute_restart_backoff(state.consecutive_failures + 1, config)` after incrementing — i.e., attempt 2, 3, 4, … for subsequent failures.
+**`_attempt_restart(state, now)`** increments `consecutive_failures` on failure (not before the attempt — a clean first attempt is possible). The quarantine check uses `>=`: with `restarts_before_quarantine=5`, the 5th failed restart (`consecutive_failures == 5`) triggers OPEN. The backoff for the next restart (when < threshold) is `_compute_restart_backoff(state.consecutive_failures + 1, config)` after incrementing.
 
-**`_attempt_probe(state, now)`** sets `breaker="half_open"` immediately (observable mid-tick if `all_states()` is called from another coroutine, though no test requires this). On probe failure, `consecutive_failures` is NOT changed — the endpoint is already quarantined at the threshold and the probe is only a health check.
+**`_attempt_probe(state, now)`** sets `breaker="half_open"` immediately (observable mid-tick). On probe failure, `consecutive_failures` is NOT changed — the endpoint is already quarantined at the threshold and the probe is only a health check.
 
 ### Imports in `supervisor.py`
 
@@ -92,7 +92,7 @@ class FakeRestart:
     def __init__(self, *, fails: int = 0) -> None:
         self.calls: list[str] = []
         self.fails = fails  # raise on first N calls
-    
+
     async def __call__(self, name: str) -> None:
         self.calls.append(name)
         if self.fails > 0:
@@ -113,7 +113,7 @@ class FakeRestart:
 | File | Change |
 |---|---|
 | `packages/core/src/agent_core/bus/supervisor.py` | **New file**: `EndpointState` dataclass; `_compute_restart_backoff` module-level function; `EndpointSupervisor` class with `register`, `record_failure`, `record_success`, `tick`, `_attempt_restart`, `_attempt_probe`, `state`, `all_states` |
-| `packages/core/tests/bus/test_supervisor.py` | **New file**: see test cases below |
+| `packages/core/tests/bus/test_supervisor.py` | **New file**: full state-machine and unit tests (see test cases below) |
 
 No other files change. `supervisor.py` is a leaf module; nothing in the existing bus package imports it yet (T4 will add that import). `core.py` is read-only from this ticket's perspective.
 
