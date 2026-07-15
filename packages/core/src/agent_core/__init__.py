@@ -11,4 +11,9 @@ Modules:
     cli: Typer-based command-line interface.
 """
 
-__version__ = "0.1.0"
+from importlib.metadata import PackageNotFoundError, version
+
+try:
+    __version__: str = version("agent-core")
+except PackageNotFoundError:  # pragma: no cover
+    __version__ = "unknown"
