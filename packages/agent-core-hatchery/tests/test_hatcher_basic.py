@@ -118,3 +118,45 @@ def test_hatch_copies_universal_skills(tmp_path):
     assert (skills / "vault-lint" / "SKILL.md").is_file()
     assert (skills / "vault-lint" / "scripts" / "lint.py").is_file()
     assert (skills / "spawning-subagents" / "SKILL.md").is_file()
+
+
+def test_no_gendered_pronouns_in_rendered_vault(tmp_path):
+    """No she/her pronouns should appear in any rendered file in the vault.
+
+    The hatchery templates were historically gendered (she/her). Issue #81 removes
+    them. This test guards against regression: it greps every text file written by
+    Hatcher.hatch() for the pattern ' she ' / ' her ' (word-bounded, case-insensitive)
+    and fails loudly if any match is found.
+    """
+    import re
+
+    cfg = HatchConfig(
+        being_name="TestBeing",
+        primary_human_name="Tester",
+        vault_root=str(tmp_path),
+        daemon_config_dir=str(tmp_path / ".agent-core"),
+    )
+    Hatcher(cfg).hatch()
+
+    vault = cfg.resolved_vault_root()
+    gendered_pattern = re.compile(r"\b(she|her)\b", re.IGNORECASE)
+    violations: list[str] = []
+
+    for path in sorted(vault.rglob("*")):
+        # Elder letters are authored voice (Pepper uses she/her by choice) — exclude.
+        if "from-elder-beings" in path.parts:
+            continue
+        if not path.is_file():
+            continue
+        try:
+            text = path.read_text(encoding="utf-8")
+        except (UnicodeDecodeError, OSError):
+            continue
+        for lineno, line in enumerate(text.splitlines(), 1):
+            if gendered_pattern.search(line):
+                violations.append(f"{path.relative_to(vault)}:{lineno}: {line.rstrip()}")
+
+    assert violations == [], (
+        "Gendered pronoun(s) found in rendered vault (fix #81):\n"
+        + "\n".join(violations[:20])
+    )

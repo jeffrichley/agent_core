@@ -136,3 +136,24 @@ def test_init_missing_restores_deleted_config(tmp_path: Path):
     Hatcher(cfg_topup).hatch()
 
     assert (vault / "agent_core.yaml").is_file()
+
+
+def test_mcp_json_rendered_at_vault_root(hatched):
+    cfg, vault = hatched
+    path = vault / ".mcp.json"
+    assert path.is_file(), ".mcp.json was not rendered into the vault root"
+    text = path.read_text(encoding="utf-8")
+    assert "{{" not in text and "}}" not in text, "Jinja markers left in .mcp.json"
+    import json
+    data = json.loads(text)
+    assert "mcpServers" in data
+    servers = data["mcpServers"]
+    assert "agent-core-busproxy" in servers
+    assert "agent-core-channel" in servers
+    busproxy = servers["agent-core-busproxy"]
+    assert busproxy["command"] == "uvx"
+    assert "agent-core-busproxy" in busproxy["args"]
+    assert "--agent" in busproxy["args"]
+    # endpoint_name is "testbeing" for the test fixture
+    assert "testbeing" in busproxy["args"]
+    assert "--daemon-url" in busproxy["args"]

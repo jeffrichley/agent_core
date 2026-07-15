@@ -1,6 +1,6 @@
 # Breadcrumb Trails — Side-Quest Provenance Tracker
 
-_Humans go deep on side quests and lose the original goal. This file tracks the chain so the being can pull her human back up when the deepest quest finishes._
+_Humans go deep on side quests and lose the original goal. This file tracks the chain so the being can pull their human back up when the deepest quest finishes._
 
 ---
 
@@ -42,4 +42,4 @@ _(Empty until the first one closes.)_
 
 ---
 
-_The pattern is universal. The trails themselves are specific. Updated as the being learns what kind of side-quester her human is._
+_The pattern is universal. The trails themselves are specific. Updated as the being learns what kind of side-quester their human is._
