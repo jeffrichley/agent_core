@@ -30,6 +30,7 @@ import typer
 from rich.console import Console
 
 from agent_core.daemon import autostart
+from agent_core.daemon import windows_service as _win_svc
 from agent_core.daemon.config_template import build_default_config
 from agent_core.daemon.install import (
     InstallStamp,
@@ -461,4 +462,84 @@ def uninstall_autostart(instance: str | None = _INSTANCE_OPTION) -> None:
     else:
         console.print(
             f"[yellow]no autostart task '{autostart.TASK_NAME}' to remove[/yellow]"
+        )
+
+
+@app.command()
+def install_service(
+    instance: str | None = _INSTANCE_OPTION,
+    password: str | None = typer.Option(
+        None,
+        "--password",
+        help="Windows account password for the service logon. Prompted interactively if omitted.",
+    ),
+    start: bool | None = typer.Option(
+        None,
+        "--start/--no-start",
+        help="Start the daemon now without prompting.",
+    ),
+) -> None:
+    """Register the prod daemon as a headless Windows Service (unbounded restart)."""
+    inst = _resolve(instance)
+    if inst is not Instance.PROD:
+        console.print("[red]service install is prod-only.[/red]")
+        raise typer.Exit(code=1)
+    if sys.platform != "win32":
+        console.print("[red]Windows Service install is Windows-only.[/red]")
+        raise typer.Exit(code=1)
+
+    home = home_for(inst)
+    venv_python = home / ".venv" / "Scripts" / "python.exe"
+    if not venv_python.exists():
+        console.print(
+            f"[red]prod daemon is not installed ({venv_python} missing).[/red]\n"
+            "   Run [bold]agent-core daemon install[/bold] first."
+        )
+        raise typer.Exit(code=1)
+
+    account = getpass.getuser()
+    svc_password = password
+    if svc_password is None:
+        import getpass as _gp
+        svc_password = _gp.getpass(f"Windows password for account '{account}': ")
+
+    try:
+        _win_svc.install_windows_service(
+            venv_python=venv_python,
+            account=account,
+            password=svc_password,
+        )
+    except Exception as exc:
+        console.print(f"[red]SCM install failed: {exc}[/red]")
+        raise typer.Exit(code=1) from exc
+
+    console.print(
+        f"[green]registered service '{_win_svc.SERVICE_NAME}'[/green] — "
+        "the prod daemon will start at boot as a headless Windows Service."
+    )
+    should_start = start
+    if should_start is None:
+        should_start = typer.confirm("Start the prod daemon now?", default=False)
+    if should_start:
+        start_daemon(instance="prod")
+
+
+@app.command()
+def uninstall_service(instance: str | None = _INSTANCE_OPTION) -> None:
+    """Remove the prod daemon Windows Service registration."""
+    inst = _resolve(instance)
+    if inst is not Instance.PROD:
+        console.print("[red]service install is prod-only.[/red]")
+        raise typer.Exit(code=1)
+    if sys.platform != "win32":
+        console.print("[red]Windows Service uninstall is Windows-only.[/red]")
+        raise typer.Exit(code=1)
+
+    if _win_svc.uninstall_windows_service():
+        console.print(
+            f"[green]removed service '{_win_svc.SERVICE_NAME}'[/green]"
+        )
+    else:
+        console.print(
+            f"[yellow]no service '{_win_svc.SERVICE_NAME}' to remove[/yellow]"
         )
