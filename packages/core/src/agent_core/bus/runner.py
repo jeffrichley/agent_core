@@ -97,6 +97,12 @@ async def build_bus_from_config(path: Path) -> tuple[Bus, HTTPHost | None]:
                 bus_cfg_raw.get("slow_deliver_warn_seconds", 5.0),
             )
         ),
+        watchdog_timeout_seconds=int(
+            os.environ.get(
+                "BUS_WATCHDOG_TIMEOUT_SECONDS",
+                bus_cfg_raw.get("watchdog_timeout_seconds", 90),
+            )
+        ),
         supervisor=supervisor,
     )
 

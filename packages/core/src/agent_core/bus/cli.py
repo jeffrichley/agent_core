@@ -15,6 +15,7 @@ from rich.table import Table
 
 from agent_core.bus.persistence import Persistence
 from agent_core.bus.runner import BusBootError, build_bus_from_config
+from agent_core.bus.watchdog import Watchdog
 
 app = typer.Typer(help="Bus operations: run, status, mailbox, trace, dlq, replay.")
 console = Console()
@@ -49,6 +50,11 @@ async def _run_bus(config_path: Path) -> None:
     bus, http_host = await build_bus_from_config(config_path)
     if http_host is not None:
         await http_host.start()
+    watchdog = Watchdog(  # pragma: no cover
+        bus.config.watchdog_timeout_seconds,
+        heartbeat_path=bus.config.storage_path.parent / "watchdog_heartbeat",
+    )
+    watchdog.start()  # pragma: no cover
     try:
         await bus.start()
 
@@ -87,6 +93,7 @@ async def _run_bus(config_path: Path) -> None:
 
         async def _ttl_loop():
             while not stop_event.is_set():
+                watchdog.heartbeat()  # pragma: no cover
                 try:
                     await bus.run_ttl_sweep_once()
                 except Exception:
@@ -98,6 +105,7 @@ async def _run_bus(config_path: Path) -> None:
 
         async def _redelivery_loop():
             while not stop_event.is_set():
+                watchdog.heartbeat()  # pragma: no cover
                 try:
                     await bus.run_redelivery_sweep_once()
                 except Exception:
@@ -124,6 +132,7 @@ async def _run_bus(config_path: Path) -> None:
             await asyncio.gather(*sweeps, return_exceptions=True)
             await bus.stop()
     finally:
+        watchdog.stop()  # pragma: no cover
         if http_host is not None:
             await http_host.stop()
         console.print("[yellow]bus stopped[/yellow]")
@@ -173,6 +182,21 @@ async def _status(config_path: Path) -> None:
             for row in degraded:
                 deg_table.add_row(row["name"], row["last_error"] or "", row["updated_at"])
             console.print(deg_table)
+
+        # Heartbeat freshness (watchdog_heartbeat file written by _run_bus).
+        heartbeat_path = bus.config.storage_path.parent / "watchdog_heartbeat"
+        if heartbeat_path.exists():
+            try:
+                ts_str = heartbeat_path.read_text(encoding="utf-8").strip()
+                last_beat = datetime.fromisoformat(ts_str)
+                age_s = (datetime.now(UTC) - last_beat).total_seconds()
+                console.print(f"last heartbeat: {age_s:.0f}s ago")
+            except (ValueError, OSError):
+                console.print("last heartbeat: [dim]unreadable[/dim]")
+        else:
+            console.print(
+                "last heartbeat: [dim]no file (bus not running or watchdog disabled)[/dim]"
+            )
     finally:
         await store.close()
 
