@@ -6,7 +6,7 @@ Extend `agent-core daemon install-autostart` / `uninstall-autostart` to support 
 
 ## Acceptance criteria
 
-- `build_systemd_unit(venv_bin, home)` emits a systemd unit string containing `Type=forking`, `PIDFile=<home>/daemon.pid`, `ExecStart`/`ExecStop` pointing to `<venv_bin>/agent-core-daemon`, `Restart=on-failure`, `RestartSec=5`, and `WatchdogSec=60`; validated by an inline golden-string test that runs on Linux CI (no platform skip).
+- `build_systemd_unit(venv_bin, home)` emits a systemd unit string containing `Type=forking`, `PIDFile=<home>/daemon.pid`, `ExecStart`/`ExecStop` pointing to `<venv_bin>/agent-core-daemon`, `Restart=always`, `RestartSec=5`, and `WatchdogSec=60`; validated by an inline golden-string test that runs on Linux CI (no platform skip).
 - `build_launchd_plist(venv_bin, home, label, uid)` emits a valid XML plist; parsed via `plistlib.loads()` in a test that asserts `Label`, `ProgramArguments`, `KeepAlive=True`, `RunAtLoad=True`, `StandardOutPath`, and `StandardErrorPath`; test runs on Linux CI.
 - `install-autostart` on Linux writes the unit to `~/.config/systemd/user/agent-core.service`, calls `systemctl --user daemon-reload` then `systemctl --user enable --now agent-core.service`, and prints a `loginctl enable-linger <user>` advisory; all subprocess calls mocked in CI.
 - `install-autostart` on macOS writes the plist to `~/Library/LaunchAgents/com.jeffrichley.agent-core.daemon.prod.plist`, calls `launchctl bootout gui/<uid>/<label>` (exit code ignored), then `launchctl bootstrap gui/<uid> <plist>`; all subprocess calls mocked.
@@ -63,7 +63,7 @@ def build_systemd_unit(*, venv_bin: Path, home: Path) -> str:
         f"PIDFile={pid_file}\n"
         f"ExecStart={exec_bin} start --instance prod\n"
         f"ExecStop={exec_bin} stop --instance prod\n"
-        "Restart=on-failure\n"
+        "Restart=always\n"
         "RestartSec=5\n"
         "WatchdogSec=60\n"
         "\n"
@@ -395,7 +395,7 @@ def test_build_systemd_unit_golden_string() -> None:
     assert f"PIDFile={home}/daemon.pid" in unit
     assert f"ExecStart={venv_bin}/agent-core-daemon start --instance prod" in unit
     assert f"ExecStop={venv_bin}/agent-core-daemon stop --instance prod" in unit
-    assert "Restart=on-failure" in unit
+    assert "Restart=always" in unit
     assert "RestartSec=5" in unit
     assert "WatchdogSec=60" in unit
     assert "WantedBy=default.target" in unit
@@ -771,7 +771,7 @@ def test_uninstall_autostart_unsupported_platform_exits_1(
 1. **Single `autostart.py` with platform dispatch inside it**: all three platform implementations in one module. Ruled out — the file would exceed 250 lines mixing three implementations and two test files, contradicts the Windows module's narrow-responsibility precedent, and makes per-platform unit tests import the whole combined module.
 2. **Formal ABC/Protocol `AutostartBackend`**: OOP abstraction with `build()`, `install()`, `uninstall()` methods. Ruled out — three concrete platforms, no runtime polymorphism needed, three additional module-level classes for zero benefit over plain module-level functions that already match the `autostart.py` style.
 3. **Invoke bus run directly in unit/plist (bypass `daemon start`)**: units would call `~/.agent-core/.venv/bin/python -m agent_core.cli bus run --config ...` in the foreground, which is the semantically cleanest approach for systemd `Type=simple` and macOS `KeepAlive=true`. Ruled out because the issue explicitly names `agent-core-daemon` as the entry point for units and does not ask for a foreground runner mode; implementing the issue literally first and iterating is lower risk.
-4. **`Restart=always` (as stated in the issue) vs `Restart=on-failure` (spec choice)**: The issue body lists `Restart=always` in the Linux scope bullet. The spec deviates to `Restart=on-failure`. The reason: with `Type=forking`, the monitored PID is the forked bus subprocess. `Restart=always` means systemd re-starts the unit immediately after *any* exit — including a clean `systemctl --user stop`. The operator would be unable to stop the daemon intentionally; every `stop` would be defeated by an immediate restart. `Restart=on-failure` (exit code ≠ 0 only) correctly handles crashes while permitting clean operator-initiated stops. This is an intentional deviation from the issue's stated value and is documented here for operator approval before the Worker ships it.
+4. **`Restart=on-failure` vs `Restart=always` (as required by the issue)**: The issue body lists `Restart=always`; this spec implements `Restart=always` as stated. A technical consideration worth noting for the operator: with `Type=forking`, the monitored PID is the forked bus subprocess. `Restart=always` means systemd re-starts the unit immediately after *any* exit — including a clean `systemctl --user stop`. The operator would be unable to stop the daemon intentionally without first running `systemctl --user disable`; every `stop` would be defeated by an immediate restart. `Restart=on-failure` (exit code ≠ 0 only) would correctly handle crashes while permitting clean operator-initiated stops. **Follow-up recommended:** after the first on-device test, the operator should evaluate whether `Restart=always` creates an unacceptable `stop` UX and, if so, open a follow-up issue to switch to `Restart=on-failure`.
 
 ## Manual smoke-test checklist
 
