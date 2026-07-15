@@ -8,7 +8,7 @@ Design authority: `docs/superpowers/specs/2026-07-14-per-being-config-isolation-
 
 ## Acceptance criteria
 
-- `packages/core/src/agent_core/bus/config.py` exists and exports `BusBootError`, `DaemonConfig`, and the six sub-models. `from agent_core.bus.config import DaemonConfig, BusBootError` has no side effects.
+- `packages/core/src/agent_core/bus/config.py` exists and exports `BusBootError`, `DaemonConfig`, and the seven sub-models (`SupervisorSectionConfig`, `BusSectionConfig`, `HttpConfig`, `HookEntryConfig`, `BusHooksConfig`, `McpAuditConfig`, `EndpointEntryConfig`). `from agent_core.bus.config import DaemonConfig, BusBootError` has no side effects.
 - `DaemonConfig.model_validate({"buus": {}})` raises `pydantic.ValidationError` (typo in top-level key caught by `extra="forbid"`).
 - `DaemonConfig.model_validate({"bus": {"storage_pathh": "x"}})` raises `pydantic.ValidationError` (typo in `bus:` sub-key caught).
 - `DaemonConfig.model_validate({"http": {"bind_portt": 9000}})` raises `pydantic.ValidationError`.
@@ -45,6 +45,8 @@ from agent_core.bus.config import BusBootError  # noqa: F401 (re-export for comp
 | `DaemonConfig` | root — all the above as optional fields with `Field(default_factory=…)` |
 
 `storage_path` remains `str` (not `Path`) because YAML delivers it as a string; the runner already calls `.expanduser()`. `params` fields on `HookEntryConfig` and `EndpointEntryConfig` are `dict[str, Any]` — arbitrary plugin content is allowed *inside* `params`; `extra="forbid"` only blocks unrecognised keys *at the entry struct level* (i.e., extra siblings of `type`/`name`/`params`).
+
+`McpAuditConfig.skip_tools` is typed as `Any` (not `list[Any]`). Pydantic must not reject non-list values here because the runtime isinstance check in `runner.py` (lines 131–135) is the designated guard for this constraint, mirroring the timezone check treatment (see Out of scope). If `skip_tools` were typed as `list[Any]`, Pydantic would raise a `ValidationError` before that guard, changing the error message from `"skip_tools must be a list"` to Pydantic's generic format and breaking `test_runner_raises_bus_boot_error_when_skip_tools_is_not_a_list` (line 77 of `packages/core/tests/test_mcp_audit_runner.py`). Type it as `Any` to keep the existing guard and test intact.
 
 **`plugins/manager.py` change — real `validate_config`:**
 Replace the `return None` body of `BuiltinRuntimePlugin.validate_config` with:
@@ -127,7 +129,7 @@ Same pattern for `configure_bus_hook_instance(hook_config=entry.model_dump())`.
 
 5. **Create `packages/core/tests/bus/test_config.py`** — unit tests for all Pydantic models: valid round-trip, `extra="forbid"` fires at root + every nested level, defaults match runner defaults, `params` dict is unconstrained.
 
-6. **Modify `packages/core/tests/bus/test_runner.py`** — add one async test: unknown top-level key (e.g. `{"buus": {}}` in YAML) causes `build_bus_from_config` to raise `BusBootError`.
+6. **Modify `packages/core/tests/bus/test_runner.py`** — (a) add one async test: unknown top-level key (e.g. `{"buus": {}}` in YAML) causes `build_bus_from_config` to raise `BusBootError`; (b) update `test_endpoint_missing_name_raises` (line 92) and `test_endpoint_missing_type_raises` (line 99) — after the manual field-presence guards are removed per Sub-request 2, `BusBootError` is raised by the hookimpl wrapping Pydantic's `ValidationError`; Pydantic's message contains `"Field required"` but not the old guard strings `"missing required 'name'"` or `"missing required 'type'"`. Change both `match=` arguments to `match="Field required"` (or remove them and rely solely on `pytest.raises(BusBootError)`).
 
 ## File-level changes
 
@@ -156,7 +158,7 @@ Same pattern for `configure_bus_hook_instance(hook_config=entry.model_dump())`.
 
 - **Cα-2** (per-being fragment isolation, degraded-load, Pepper migration to `endpoints.d/`) — depends on this ticket, separate issue.
 - **Cα-3** (`daemon doctor` config-hygiene extension) — depends on this ticket, separate issue.
-- **Semantic validators** — the `ZoneInfo` timezone check and the non-loopback `bind_host` guard in `_validate_http` remain as runtime checks in `runner.py`; adding Pydantic `@field_validator` equivalents is out of scope.
+- **Semantic validators** — the `ZoneInfo` timezone check, the non-loopback `bind_host` guard in `_validate_http`, and the `isinstance(skip_tools, list)` guard (runner.py lines 131–135) all remain as runtime checks in `runner.py`; adding Pydantic `@field_validator` equivalents is out of scope. (The `skip_tools` guard is kept rather than absorbed by schema typing to preserve the `"skip_tools must be a list"` error message and avoid breaking `test_runner_raises_bus_boot_error_when_skip_tools_is_not_a_list`.)
 - **The `pipelines:` key** — this is the Claude Code hook pipeline config (read by `agent_core.hooks.pipeline`), not a daemon-config key. It is never loaded by `build_bus_from_config`; the daemon config and hook-pipeline config are separate files and separate codepaths.
 - **Hatchery schema reuse (Cluster β)** — Cα-1 makes the schema importable; the hatchery integration that uses `DaemonConfig` to generate correct-by-construction configs is a future Cluster β ticket.
 - **Test-file import updates for `BusBootError`** — existing test files that do `from agent_core.bus.runner import BusBootError` continue to work via the re-export in `runner.py`; no test-file import changes are required.
