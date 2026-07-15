@@ -63,38 +63,38 @@ Keep the import inside the method body for now (avoids touching the module-level
 **`bus/runner.py` change — replace `dict.get()` with typed access:**
 After the existing call to `plugin_manager.hook.validate_config(raw_config=raw)` at line 67, add:
 ```python
-cfg = DaemonConfig.model_validate(raw)
+daemon_cfg = DaemonConfig.model_validate(raw)  # named daemon_cfg to avoid collision with cfg = BusConfig(...) at runner.py:86
 ```
-Then replace every subsequent raw-dict access pattern:
+Then replace every subsequent raw-dict access pattern (the variable name is `daemon_cfg` throughout — **do not** use `cfg`, which is already taken by the `BusConfig` object constructed at runner.py:86 and consumed by `bus = Bus(cfg)` at runner.py:109):
 
 | Old (dict.get) | New (typed) |
 |---|---|
-| `raw.get("bus", {})` | `cfg.bus` |
-| `bus_cfg_raw.get("storage_path", "~/.agent-core/bus.sqlite")` | `cfg.bus.storage_path` |
-| `bus_cfg_raw.get("supervisor", {}) or {}` | `cfg.bus.supervisor` |
-| `sup_cfg_raw.get("restart_backoff_base_seconds", 1)` | `cfg.bus.supervisor.restart_backoff_base_seconds` |
-| `bus_cfg_raw.get("redelivery_timeout_seconds", 300)` | `cfg.bus.redelivery_timeout_seconds` |
-| `raw.get("mcp_audit", {}) or {}` | `cfg.mcp_audit` |
-| `audit_cfg.get("enabled", True)` | `cfg.mcp_audit.enabled` |
-| `audit_cfg.get("log_root", "~/.agent-core/bus/mcp-audit")` | `cfg.mcp_audit.log_root` |
-| `audit_cfg.get("timezone", "US/Eastern")` | `cfg.mcp_audit.timezone` |
-| `audit_cfg.get("skip_tools", []) or []` | `cfg.mcp_audit.skip_tools` |
-| `(raw.get("bus_hooks", {}) or {}).get(stage, []) or []` | `getattr(cfg.bus_hooks, stage)` (where `stage ∈ {"pre_publish", "pre_deliver"}`) |
+| `raw.get("bus", {})` | `daemon_cfg.bus` |
+| `bus_cfg_raw.get("storage_path", "~/.agent-core/bus.sqlite")` | `daemon_cfg.bus.storage_path` |
+| `bus_cfg_raw.get("supervisor", {}) or {}` | `daemon_cfg.bus.supervisor` |
+| `sup_cfg_raw.get("restart_backoff_base_seconds", 1)` | `daemon_cfg.bus.supervisor.restart_backoff_base_seconds` |
+| `bus_cfg_raw.get("redelivery_timeout_seconds", 300)` | `daemon_cfg.bus.redelivery_timeout_seconds` |
+| `raw.get("mcp_audit", {}) or {}` | `daemon_cfg.mcp_audit` |
+| `audit_cfg.get("enabled", True)` | `daemon_cfg.mcp_audit.enabled` |
+| `audit_cfg.get("log_root", "~/.agent-core/bus/mcp-audit")` | `daemon_cfg.mcp_audit.log_root` |
+| `audit_cfg.get("timezone", "US/Eastern")` | `daemon_cfg.mcp_audit.timezone` |
+| `audit_cfg.get("skip_tools", []) or []` | `daemon_cfg.mcp_audit.skip_tools` |
+| `(raw.get("bus_hooks", {}) or {}).get(stage, []) or []` | `getattr(daemon_cfg.bus_hooks, stage)` (where `stage ∈ {"pre_publish", "pre_deliver"}`) |
 | `entry["type"]` (in hooks loop) | `entry.type` |
 | `entry.get("params", {})` (in hooks loop) | `entry.params` |
-| `raw.get("http", {})` | `cfg.http` |
-| `http_cfg.get("bind_host", "127.0.0.1")` | `cfg.http.bind_host` |
-| `http_cfg.get("bind_port", 8788)` | `cfg.http.bind_port` |
-| `raw.get("endpoints", []) or []` | `cfg.endpoints` |
+| `raw.get("http", {})` | `daemon_cfg.http` |
+| `http_cfg.get("bind_host", "127.0.0.1")` | `daemon_cfg.http.bind_host` |
+| `http_cfg.get("bind_port", 8788)` | `daemon_cfg.http.bind_port` |
+| `raw.get("endpoints", []) or []` | `daemon_cfg.endpoints` |
 | `entry["type"]` (in endpoints loop) | `entry.type` |
 | `entry["name"]` (in endpoints loop) | `entry.name` |
 | `entry.get("params", {})` (in endpoints loop) | `entry.params` |
 | `entry.get("description", "")` | `entry.description` |
 
-The env-var overrides for `slow_deliver_warn_seconds` and `watchdog_timeout_seconds` remain in the runner after accessing `cfg.bus.*`:
+The env-var overrides for `slow_deliver_warn_seconds` and `watchdog_timeout_seconds` remain in the runner after accessing `daemon_cfg.bus.*`:
 ```python
-slow_deliver_warn_seconds=float(os.environ.get("BUS_SLOW_DELIVER_WARN_SECONDS", cfg.bus.slow_deliver_warn_seconds)),
-watchdog_timeout_seconds=int(os.environ.get("BUS_WATCHDOG_TIMEOUT_SECONDS", cfg.bus.watchdog_timeout_seconds)),
+slow_deliver_warn_seconds=float(os.environ.get("BUS_SLOW_DELIVER_WARN_SECONDS", daemon_cfg.bus.slow_deliver_warn_seconds)),
+watchdog_timeout_seconds=int(os.environ.get("BUS_WATCHDOG_TIMEOUT_SECONDS", daemon_cfg.bus.watchdog_timeout_seconds)),
 ```
 
 **Manual entry-field guards that become redundant** once Pydantic parses the endpoints/hooks lists: the `if "type" not in entry` / `if "name" not in entry` checks at runner.py lines 184–186 are now enforced by the schema (both fields are required on `EndpointEntryConfig`). Similarly the `if "type" not in entry` check for hook entries (line 151) is enforced by `HookEntryConfig`. Remove these guards and their associated `BusBootError` raises — the Pydantic parse at line 67 will have already caught them. Keep the subsequent runtime guards (`endpoint_type not in endpoint_types`, etc.) because those are semantic checks beyond the schema.
@@ -103,7 +103,7 @@ watchdog_timeout_seconds=int(os.environ.get("BUS_WATCHDOG_TIMEOUT_SECONDS", cfg.
 ```python
 # building raw_endpoint_configs for cross-endpoint wiring
 raw_endpoint_configs: dict[str, dict[str, Any]] = {
-    entry.name: entry.model_dump() for entry in cfg.endpoints
+    entry.name: entry.model_dump() for entry in daemon_cfg.endpoints
 }
 # and for configure_endpoint_instance:
 plugin_manager.hook.configure_endpoint_instance(
@@ -121,7 +121,7 @@ Same pattern for `configure_bus_hook_instance(hook_config=entry.model_dump())`.
 
 1. **Create `packages/core/src/agent_core/bus/config.py`** — define `BusBootError`, `SupervisorSectionConfig`, `BusSectionConfig`, `HttpConfig`, `HookEntryConfig`, `BusHooksConfig`, `McpAuditConfig`, `EndpointEntryConfig`, `DaemonConfig`. All models use `model_config = ConfigDict(extra="forbid")`. Defaults match the current `runner.py` inline defaults exactly.
 
-2. **Modify `packages/core/src/agent_core/bus/runner.py`** — add `from agent_core.bus.config import BusBootError, DaemonConfig` and a bare re-export comment; remove the local `class BusBootError` definition; update `_validate_http` to accept `HttpConfig`; parse `cfg = DaemonConfig.model_validate(raw)` after the `validate_config` hookspec call; replace all raw-dict access with typed access per the table above; remove the redundant manual type/name guards on entry iteration; use `.model_dump()` when passing entries to plugin hookspecs.
+2. **Modify `packages/core/src/agent_core/bus/runner.py`** — add `from agent_core.bus.config import BusBootError, DaemonConfig` and a bare re-export comment; remove the local `class BusBootError` definition; update `_validate_http` to accept `HttpConfig`; parse `daemon_cfg = DaemonConfig.model_validate(raw)` after the `validate_config` hookspec call (use `daemon_cfg`, **not** `cfg`, because `cfg` is already taken by `BusConfig` at runner.py:86); replace all raw-dict access with typed `daemon_cfg.*` access per the table above; remove the redundant manual type/name guards on entry iteration; use `.model_dump()` when passing entries to plugin hookspecs.
 
 3. **Modify `packages/core/src/agent_core/plugins/manager.py`** — implement real `BuiltinRuntimePlugin.validate_config` body (lazy import + `DaemonConfig.model_validate` + `BusBootError` re-raise pattern).
 
