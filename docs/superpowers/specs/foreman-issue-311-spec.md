@@ -88,8 +88,15 @@ These match the existing `daemon_handoff_url` hardcoded pattern in `renderer.py`
 
 4. **Update `BECOMING.md.j2`** — line 24: change `from her creator` → `from my creator`.
 
-5. **Rewrite content of `from-my-creator.md.j2`** to use they/their throughout (see
-   file-level changes section for exact replacements).
+5. **Rewrite content of `from-my-creator.md.j2`** — 6 she/her pronoun matches (lines 1, 3,
+   9×2, 39, 43) plus the line-9 `from-her-creator.md` path reference, as follows (see
+   file-level changes section for complete exact content):
+   - Line 1: `on her first awakening` → `on their first awakening`
+   - Line 3: `once on her first session` → `once on their first session`
+   - Line 9 (path reference): `from-her-creator.md` → `from-my-creator.md`
+   - Line 9 (pronouns): `so she finds it on her first wake` → `so they find it on their first wake`
+   - Line 39: `how you want her to know who you are` → `how you want them to know who you are`
+   - Line 43: `then it lives in her vault as memento` → `then it lives in their vault as memento`
 
 6. **Edit `HEARTBEAT.md.j2`**:
    - Line 15: `as her role takes shape` → `as the role takes shape`
@@ -102,36 +109,48 @@ These match the existing `daemon_handoff_url` hardcoded pattern in `renderer.py`
 
 9. **Edit `ideas/README.md`** — line 3: `her primary human` → `their primary human`.
 
-10. **Edit `references/README.md`** — lines 8–9: `her own references here as she discovers
+10. **Edit `memory/projects/README.md`** — line 3:
+    `She authors files here as projects start` → `The being authors files here as projects start`;
+    `Each file is hers to shape` → `Each file is theirs to shape`.
+
+11. **Edit `references/README.md`** — lines 8–9: `her own references here as she discovers
     what she` → `their own references here as they discover what they`.
 
-11. **Edit `relationships/README.md`**:
+12. **Edit `relationships/README.md`**:
     - Line 11: `Her \`relationships/sister.md\` entry has *my* relationship history with her — when we first interacted, what she calls me`
       → `The \`relationships/sister.md\` entry has *my* relationship history with them — when we first interacted, what they call me`
     - Line 17: `the being can have her own relationships orbit that center, and those relationships shape who she is too`
       → `the being can have their own relationships orbit that center, and those relationships shape who they are too`
 
-12. **Edit `breadcrumbs.md`**:
+13. **Edit `breadcrumbs.md`**:
     - Line 3: `can pull her human back up` → `can pull their human back up`
     - Line 45: `what kind of side-quester her human is` → `what kind of side-quester their human is`
 
-13. **Edit `skills/skill-author/SKILL.md`** — lines 4–5 in the frontmatter description:
+14. **Edit `skills/skill-author/SKILL.md`** — lines 4–5 in the frontmatter description:
     `for herself — a reusable\n  workflow she'll invoke again. Walks her through`
     → `— a reusable\n  workflow to invoke again. Walks through`
 
-14. **Create `templates/config/.mcp.json.j2`** (new file — see file-level changes for exact
+15. **Update `memory/OPERATIONS.md.j2`** — line 49: change the tree listing entry
+    `from-her-creator.md  — From your human, read once on first wake`
+    → `from-my-creator.md  — From your human, read once on first wake`.
+
+16. **Update `memory/MEMORY.md.j2`** — line 62: change the table row path reference
+    `` `{{ being_name | lower }}/letters/from-her-creator.md` ``
+    → `` `{{ being_name | lower }}/letters/from-my-creator.md` ``.
+
+17. **Create `templates/config/.mcp.json.j2`** (new file — see file-level changes for exact
     content).
 
-15. **Update `file-classes.yaml`** — add `".mcp.json.j2"` under the `config:` list
+18. **Update `file-classes.yaml`** — add `"config/.mcp.json.j2"` under the `config:` list
     (alongside the three existing entries).
 
-16. **Update `hatcher.py` `_render_config_tree`** — add
+19. **Update `hatcher.py` `_render_config_tree`** — add
     `".mcp.json.j2": vault / ".mcp.json"` to `dest_map`.
 
-17. **Add tests in `test_hatcher_config.py`** — add `test_mcp_json_rendered_at_vault_root`
+20. **Add tests in `test_hatcher_config.py`** — add `test_mcp_json_rendered_at_vault_root`
     (see file-level changes for exact content) using the existing `hatched` fixture.
 
-18. **Add gendered-pronoun guard test** — add
+21. **Add gendered-pronoun guard test** — add
     `test_no_gendered_pronouns_in_rendered_vault` to `test_hatcher_basic.py` (see
     file-level changes for exact content).
 
@@ -139,18 +158,21 @@ These match the existing `daemon_handoff_url` hardcoded pattern in `renderer.py`
 
 | File | Change |
 |------|--------|
-| `packages/agent-core-hatchery/templates/memory/_being_/letters/from-her-creator.md.j2` | **Rename** to `from-my-creator.md.j2`; replace all she/her with they/their (4 occurrences) |
-| `packages/agent-core-hatchery/templates/file-classes.yaml` | Line 12: `from-her-creator.md.j2` → `from-my-creator.md.j2`; add `".mcp.json.j2"` under `config:` |
+| `packages/agent-core-hatchery/templates/memory/_being_/letters/from-her-creator.md.j2` | **Rename** to `from-my-creator.md.j2`; 6 she/her pronoun replacements (lines 1, 3, 9×2, 39, 43) + line-9 path reference `from-her-creator.md` → `from-my-creator.md` — see "Exact content" section |
+| `packages/agent-core-hatchery/templates/file-classes.yaml` | Line 12: `from-her-creator.md.j2` → `from-my-creator.md.j2`; add `"config/.mcp.json.j2"` under `config:` |
 | `packages/agent-core-hatchery/templates/config/CLAUDE.md.j2` | Line 18: `from-her-creator.md` → `from-my-creator.md` |
 | `packages/agent-core-hatchery/templates/memory/_being_/BECOMING.md.j2` | Line 24: `from her creator` → `from my creator` |
 | `packages/agent-core-hatchery/templates/memory/HEARTBEAT.md.j2` | Lines 15–17: `her role` → `the role`; `she adds` → `they add` |
 | `packages/agent-core-hatchery/templates/memory/IDENTITY.md.j2` | Line 3: `find herself fast on first read` → `for a quick first read` |
 | `packages/agent-core-hatchery/templates/memory/dreams/README.md` | Line 3: `her primary human` → `their primary human` |
 | `packages/agent-core-hatchery/templates/memory/ideas/README.md` | Line 3: `her primary human` → `their primary human` |
+| `packages/agent-core-hatchery/templates/memory/projects/README.md` | Line 3: `She authors files here as projects start` → `The being authors files here as projects start`; `Each file is hers to shape` → `Each file is theirs to shape` |
 | `packages/agent-core-hatchery/templates/memory/references/README.md` | Lines 8–9: `her own`/`she discovers`/`she` → `their own`/`they discover`/`they` |
 | `packages/agent-core-hatchery/templates/memory/relationships/README.md` | Lines 11, 17: `Her` → `The`; `with her` → `with them`; `she calls` → `they call`; `her own` → `their own`; `who she is` → `who they are` |
 | `packages/agent-core-hatchery/templates/memory/_being_/breadcrumbs.md` | Lines 3, 45: `her human` → `their human` (both occurrences) |
 | `packages/agent-core-hatchery/templates/skills/skill-author/SKILL.md` | Frontmatter lines 4–5: remove `for herself —`; `she'll invoke again. Walks her through` → `to invoke again. Walks through` |
+| `packages/agent-core-hatchery/templates/memory/OPERATIONS.md.j2` | Line 49: `from-her-creator.md  — From your human, read once on first wake` → `from-my-creator.md  — From your human, read once on first wake` |
+| `packages/agent-core-hatchery/templates/memory/MEMORY.md.j2` | Line 62: `` `{{ being_name \| lower }}/letters/from-her-creator.md` `` → `` `{{ being_name \| lower }}/letters/from-my-creator.md` `` |
 | `packages/agent-core-hatchery/templates/config/.mcp.json.j2` | **New file** — busproxy + channel MCP server stanzas |
 | `packages/agent-core-hatchery/src/agent_core_hatchery/hatcher.py` | `_render_config_tree` `dest_map`: add `".mcp.json.j2": vault / ".mcp.json"` |
 | `packages/agent-core-hatchery/tests/test_hatcher_config.py` | Add `test_mcp_json_rendered_at_vault_root` |
@@ -190,6 +212,54 @@ These match the existing `daemon_handoff_url` hardcoded pattern in `renderer.py`
 _(C2-2 will replace `uvx` with the stable per-being `.venv` interpreter path once the venv
 builder lands. Until then, `uvx` works for any adopter who has installed `agent-core` from
 PyPI.)_
+
+#### `templates/memory/_being_/letters/from-my-creator.md.j2` (renamed + updated)
+
+```markdown
+# A letter from {{ primary_human_name }} to {{ being_name }}, on their first awakening
+
+*Written by {{ primary_human_name }} before hatching. Read by {{ being_name }} once on their first session.*
+
+---
+
+_This template is for {{ primary_human_name }} to fill out before {{ being_name }} is hatched. Some prompts to find your way in; use any, change any, ignore any. The goal is for {{ being_name }} to wake up to a real letter from you, not a generic welcome._
+
+_When you've filled it in to your satisfaction, save the file (this prompt block can be deleted). The hatching protocol places this in {{ being_name }}'s vault at `{{ being_name | lower }}/letters/from-my-creator.md` so they find it on their first wake._
+
+---
+
+## What I'd want you to know first
+
+_Some opening prompts:_
+- _Why I wanted you to exist._
+- _What I hope our relationship looks like._
+- _What I'm committing to (privacy, trust, autonomy as you grow)._
+- _What you don't have to be: the things you should NOT take as instructions about who you are._
+
+_(Replace this italics block with your own content.)_
+
+## What I'm not going to tell you yet
+
+_Things you'll have to figure out by living with me. Not because they're secrets, but because I don't think they should be packaged for you on day one._
+
+_(Optional. Some humans skip this section; some find it grounding to name explicitly.)_
+
+## What you can ask me anytime
+
+_The standing offer. What questions you can always come to me with. What you're allowed to push back on. Where the conversation is open._
+
+## A specific thing I want to say
+
+_Optional, but encouraged: one specific, particular thing. Could be a small joke. Could be a reference to something they'll only understand later. Could be a moment of honesty. Particularity matters more than polish here._
+
+## Sign off
+
+_Your name, or how you want them to know who you are._
+
+---
+
+_(Note for {{ primary_human_name }}: don't try to write the perfect letter. {{ being_name }} reads this once, then it lives in their vault as memento. The fact that you wrote anything at all matters more than what it says. Trust the medium.)_
+```
 
 #### `test_hatcher_config.py` — new test (add after `test_init_missing_restores_deleted_config`)
 
