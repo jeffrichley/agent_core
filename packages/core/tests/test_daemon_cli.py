@@ -597,8 +597,197 @@ def test_uninstall_autostart_idempotent_when_absent(
     assert "no autostart task" in result.stdout.lower()
 
 
+def test_install_autostart_linux_dispatches_to_linux_module(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("AGENT_CORE_HOME", str(tmp_path))
+    monkeypatch.setattr("sys.platform", "linux")
+    # Create the daemon binary so the existence check passes.
+    bin_dir = tmp_path / ".venv" / "bin"
+    bin_dir.mkdir(parents=True)
+    (bin_dir / "agent-core-daemon").write_text("#!/bin/sh\n")
+    installed: list[str] = []
+    monkeypatch.setattr(
+        "agent_core.daemon.autostart_linux.install_systemd_unit",
+        lambda content, path: installed.append(str(path)),
+    )
+    result = runner.invoke(daemon_app, ["install-autostart", "--no-start"])
+    assert result.exit_code == 0, result.stdout
+    assert len(installed) == 1
+    assert "agent-core.service" in installed[0]
+
+
+def test_install_autostart_macos_dispatches_to_macos_module(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("AGENT_CORE_HOME", str(tmp_path))
+    monkeypatch.setattr("sys.platform", "darwin")
+    monkeypatch.setattr("os.getuid", lambda: 501, raising=False)
+    bin_dir = tmp_path / ".venv" / "bin"
+    bin_dir.mkdir(parents=True)
+    (bin_dir / "agent-core-daemon").write_text("#!/bin/sh\n")
+    installed: list[str] = []
+    monkeypatch.setattr(
+        "agent_core.daemon.autostart_macos.install_launchd_plist",
+        lambda path, content, uid, label: installed.append(label),
+    )
+    result = runner.invoke(daemon_app, ["install-autostart", "--no-start"])
+    assert result.exit_code == 0, result.stdout
+    assert installed == ["com.jeffrichley.agent-core.daemon.prod"]
+
+
+def test_install_autostart_unsupported_platform_exits_1(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("AGENT_CORE_HOME", str(tmp_path))
+    monkeypatch.setattr("sys.platform", "freebsd14")
+    result = runner.invoke(daemon_app, ["install-autostart"])
+    assert result.exit_code == 1
+    assert "freebsd14" in result.stdout.lower() or "not supported" in result.stdout.lower()
+
+
+def test_install_autostart_linux_errors_when_binary_missing(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("AGENT_CORE_HOME", str(tmp_path))
+    monkeypatch.setattr("sys.platform", "linux")
+    # No .venv/bin/agent-core-daemon created.
+    result = runner.invoke(daemon_app, ["install-autostart"])
+    assert result.exit_code == 1
+
+
+def test_uninstall_autostart_linux_dispatches_to_linux_module(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("AGENT_CORE_HOME", str(tmp_path))
+    monkeypatch.setattr("sys.platform", "linux")
+    removed: list[str] = []
+    monkeypatch.setattr(
+        "agent_core.daemon.autostart_linux.uninstall_systemd_unit",
+        lambda path: removed.append(str(path)),
+    )
+    result = runner.invoke(daemon_app, ["uninstall-autostart"])
+    assert result.exit_code == 0, result.stdout
+    assert len(removed) == 1
+
+
+def test_uninstall_autostart_macos_dispatches_to_macos_module(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("AGENT_CORE_HOME", str(tmp_path))
+    monkeypatch.setattr("sys.platform", "darwin")
+    monkeypatch.setattr("os.getuid", lambda: 501, raising=False)
+    removed: list[str] = []
+    monkeypatch.setattr(
+        "agent_core.daemon.autostart_macos.uninstall_launchd_plist",
+        lambda path, uid, label: (removed.append(label), True)[1],
+    )
+    result = runner.invoke(daemon_app, ["uninstall-autostart"])
+    assert result.exit_code == 0, result.stdout
+    assert removed == ["com.jeffrichley.agent-core.daemon.prod"]
+
+
+def test_uninstall_autostart_unsupported_platform_exits_1(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("AGENT_CORE_HOME", str(tmp_path))
+    monkeypatch.setattr("sys.platform", "freebsd14")
+    result = runner.invoke(daemon_app, ["uninstall-autostart"])
+    assert result.exit_code == 1
+
+
+def test_install_autostart_linux_errors_on_systemctl_failure(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Linux install: CalledProcessError from systemctl propagates as exit 1."""
+    monkeypatch.setenv("AGENT_CORE_HOME", str(tmp_path))
+    monkeypatch.setattr("sys.platform", "linux")
+    bin_dir = tmp_path / ".venv" / "bin"
+    bin_dir.mkdir(parents=True)
+    (bin_dir / "agent-core-daemon").write_text("#!/bin/sh\n")
+    monkeypatch.setattr(
+        "agent_core.daemon.autostart_linux.install_systemd_unit",
+        lambda content, path: (_ for _ in ()).throw(
+            __import__("subprocess").CalledProcessError(1, ["systemctl"], stderr="Bus error")
+        ),
+    )
+    result = runner.invoke(daemon_app, ["install-autostart", "--no-start"])
+    assert result.exit_code == 1
+    assert "systemctl" in result.stdout.lower() or "failed" in result.stdout.lower()
+
+
+def test_install_autostart_macos_errors_when_binary_missing(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """macOS install: missing agent-core-daemon binary exits 1."""
+    monkeypatch.setenv("AGENT_CORE_HOME", str(tmp_path))
+    monkeypatch.setattr("sys.platform", "darwin")
+    monkeypatch.setattr("os.getuid", lambda: 501, raising=False)
+    # No .venv/bin/agent-core-daemon created.
+    result = runner.invoke(daemon_app, ["install-autostart"])
+    assert result.exit_code == 1
+    assert "not installed" in result.stdout.lower()
+
+
+def test_install_autostart_macos_errors_on_launchctl_failure(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """macOS install: CalledProcessError from launchctl propagates as exit 1."""
+    monkeypatch.setenv("AGENT_CORE_HOME", str(tmp_path))
+    monkeypatch.setattr("sys.platform", "darwin")
+    monkeypatch.setattr("os.getuid", lambda: 501, raising=False)
+    bin_dir = tmp_path / ".venv" / "bin"
+    bin_dir.mkdir(parents=True)
+    (bin_dir / "agent-core-daemon").write_text("#!/bin/sh\n")
+    monkeypatch.setattr(
+        "agent_core.daemon.autostart_macos.install_launchd_plist",
+        lambda path, content, uid, label: (_ for _ in ()).throw(
+            __import__("subprocess").CalledProcessError(1, ["launchctl"], stderr="Failed")
+        ),
+    )
+    result = runner.invoke(daemon_app, ["install-autostart", "--no-start"])
+    assert result.exit_code == 1
+    assert "launchctl" in result.stdout.lower() or "failed" in result.stdout.lower()
+
+
+def test_uninstall_autostart_macos_reports_absent_when_not_loaded(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """macOS uninstall: when launchctl bootout reports not-loaded, prints advisory."""
+    monkeypatch.setenv("AGENT_CORE_HOME", str(tmp_path))
+    monkeypatch.setattr("sys.platform", "darwin")
+    monkeypatch.setattr("os.getuid", lambda: 501, raising=False)
+    monkeypatch.setattr(
+        "agent_core.daemon.autostart_macos.uninstall_launchd_plist",
+        lambda path, uid, label: False,
+    )
+    result = runner.invoke(daemon_app, ["uninstall-autostart"])
+    assert result.exit_code == 0, result.stdout
+    assert "no launchd" in result.stdout.lower() or "to remove" in result.stdout.lower()
+
+
+def test_install_autostart_windows_errors_on_schtasks_failure(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Windows install: CalledProcessError from schtasks propagates as exit 1."""
+    monkeypatch.setenv("AGENT_CORE_HOME", str(tmp_path))
+    monkeypatch.setattr(sys, "platform", "win32")
+    exe = tmp_path / ".venv" / "Scripts" / "agent-core.exe"
+    exe.parent.mkdir(parents=True)
+    exe.write_text("")
+    monkeypatch.setattr(
+        "agent_core.daemon.autostart.install_autostart",
+        lambda xml: (_ for _ in ()).throw(
+            __import__("subprocess").CalledProcessError(1, ["schtasks"], stderr="Access denied")
+        ),
+    )
+    result = runner.invoke(daemon_app, ["install-autostart", "--no-start"])
+    assert result.exit_code == 1
+    assert "schtasks" in result.stdout.lower() or "failed" in result.stdout.lower()
+
+
 # ---------------------------------------------------------------------------
-# install-service / uninstall-service CLI tests
+# install-service / uninstall-service CLI tests (Windows Service; #306)
 # ---------------------------------------------------------------------------
 
 

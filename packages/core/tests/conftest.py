@@ -15,9 +15,11 @@ closed — inside the test's own event loop.
 
 from __future__ import annotations
 
+import sys
 from collections.abc import AsyncIterator, Awaitable, Callable
 from pathlib import Path
 
+import pytest
 import pytest_asyncio
 
 from agent_core.bus.core import Bus
@@ -25,6 +27,30 @@ from agent_core.bus.http_host import HTTPHost
 from agent_core.bus.runner import build_bus_from_config
 
 BusFactory = Callable[[Path], Awaitable[tuple[Bus, HTTPHost | None]]]
+
+
+def pytest_collection_modifyitems(
+    config: pytest.Config, items: list[pytest.Item]
+) -> None:
+    """Skip ``looptime``-marked tests on Windows.
+
+    ``looptime`` fakes the asyncio clock by replacing the event loop's
+    ``select``. The Windows ``ProactorEventLoop`` (pytest-asyncio's default on
+    win32) is IOCP-based rather than selector-based, so a ``looptime`` test
+    wedges the loop and hangs until ``pytest-timeout`` aborts the whole run — a
+    non-deterministic windows-latest failure. These tests exercise
+    platform-independent ack timing and are fully covered on the Linux/macOS CI
+    legs.
+    """
+    if sys.platform != "win32":
+        return
+    skip_win = pytest.mark.skip(
+        reason="looptime is incompatible with the Windows ProactorEventLoop; "
+        "covered on Linux/macOS CI"
+    )
+    for item in items:
+        if item.get_closest_marker("looptime") is not None:
+            item.add_marker(skip_win)
 
 
 @pytest_asyncio.fixture

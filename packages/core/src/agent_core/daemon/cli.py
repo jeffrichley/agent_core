@@ -398,7 +398,7 @@ def install_autostart(
         help="Start the daemon now without prompting (for non-interactive use).",
     ),
 ) -> None:
-    """Register the prod daemon to auto-start at logon (Windows Task Scheduler)."""
+    """Register the prod daemon to auto-start at logon (systemd/launchd/Task Scheduler)."""
     inst = _resolve(instance)
     if inst is not Instance.PROD:
         console.print(
@@ -406,36 +406,103 @@ def install_autostart(
             "by hand from the workspace."
         )
         raise typer.Exit(code=1)
-    if sys.platform != "win32":
-        console.print("[red]autostart is Windows-only.[/red]")
-        raise typer.Exit(code=1)
 
     home = home_for(inst)
-    exe = home / ".venv" / "Scripts" / "agent-core.exe"
-    if not exe.exists():
+
+    if sys.platform == "linux":
+        from agent_core.daemon import autostart_linux
+
+        venv_bin = home / ".venv" / "bin"
+        daemon_bin = venv_bin / "agent-core-daemon"
+        if not daemon_bin.exists():
+            console.print(
+                f"[red]prod daemon is not installed ({daemon_bin} missing).[/red]\n"
+                "   Run [bold]agent-core daemon install[/bold] first."
+            )
+            raise typer.Exit(code=1)
+
+        unit_path = Path.home() / ".config" / "systemd" / "user" / autostart_linux.UNIT_NAME
+        unit_content = autostart_linux.build_systemd_unit(venv_bin=venv_bin, home=home)
+        try:
+            autostart_linux.install_systemd_unit(unit_content, unit_path)
+        except subprocess.CalledProcessError as exc:
+            console.print(f"[red]systemctl failed (exit {exc.returncode}).[/red]")
+            if exc.stderr:
+                console.print(exc.stderr.rstrip())
+            raise typer.Exit(code=1) from exc
+
         console.print(
-            f"[red]prod daemon is not installed ({exe} missing).[/red]\n"
-            "   Run [bold]agent-core daemon install[/bold] first."
+            f"[green]registered systemd user unit '{autostart_linux.UNIT_NAME}'[/green] — "
+            "the prod daemon will start at every login."
         )
+        console.print(
+            f"[yellow]Advisory: run 'loginctl enable-linger {getpass.getuser()}' to start "
+            "the daemon at boot without being logged in.[/yellow]"
+        )
+
+    elif sys.platform == "darwin":
+        import os as _os
+
+        from agent_core.daemon import autostart_macos
+
+        venv_bin = home / ".venv" / "bin"
+        daemon_bin = venv_bin / "agent-core-daemon"
+        if not daemon_bin.exists():
+            console.print(
+                f"[red]prod daemon is not installed ({daemon_bin} missing).[/red]\n"
+                "   Run [bold]agent-core daemon install[/bold] first."
+            )
+            raise typer.Exit(code=1)
+
+        label = autostart_macos.LABEL
+        uid = _os.getuid()
+        plist_path = Path.home() / "Library" / "LaunchAgents" / f"{label}.plist"
+        plist_content = autostart_macos.build_launchd_plist(
+            venv_bin=venv_bin, home=home, label=label, uid=uid
+        )
+        try:
+            autostart_macos.install_launchd_plist(plist_path, plist_content, uid=uid, label=label)
+        except subprocess.CalledProcessError as exc:
+            console.print(f"[red]launchctl failed (exit {exc.returncode}).[/red]")
+            if exc.stderr:
+                console.print(exc.stderr.rstrip())
+            raise typer.Exit(code=1) from exc
+
+        console.print(
+            f"[green]registered launchd LaunchAgent '{label}'[/green] — "
+            "the prod daemon will start at every login."
+        )
+
+    elif sys.platform == "win32":
+        exe = home / ".venv" / "Scripts" / "agent-core.exe"
+        if not exe.exists():
+            console.print(
+                f"[red]prod daemon is not installed ({exe} missing).[/red]\n"
+                "   Run [bold]agent-core daemon install[/bold] first."
+            )
+            raise typer.Exit(code=1)
+
+        # getpass.getuser() resolves the username cross-platform from env vars
+        # (USER / USERNAME / ...) without os.getlogin(), which fails on headless
+        # hosts.
+        account = getpass.getuser()
+        xml = autostart.build_autostart_task(agent_core_exe=exe, account=account)
+        try:
+            autostart.install_autostart(xml)
+        except subprocess.CalledProcessError as exc:
+            console.print(f"[red]schtasks failed (exit {exc.returncode}).[/red]")
+            if exc.stderr:
+                console.print(exc.stderr.rstrip())
+            raise typer.Exit(code=1) from exc
+
+        console.print(
+            f"[green]registered autostart task '{autostart.TASK_NAME}'[/green] — "
+            "the prod daemon will start at every logon."
+        )
+
+    else:
+        console.print(f"[red]autostart is not supported on {sys.platform}.[/red]")
         raise typer.Exit(code=1)
-
-    # getpass.getuser() resolves the username cross-platform from env vars
-    # (USER / USERNAME / ...) without os.getlogin(), which fails on headless
-    # hosts.
-    account = getpass.getuser()
-    xml = autostart.build_autostart_task(agent_core_exe=exe, account=account)
-    try:
-        autostart.install_autostart(xml)
-    except subprocess.CalledProcessError as exc:
-        console.print(f"[red]schtasks failed (exit {exc.returncode}).[/red]")
-        if exc.stderr:
-            console.print(exc.stderr.rstrip())
-        raise typer.Exit(code=1) from exc
-
-    console.print(
-        f"[green]registered autostart task '{autostart.TASK_NAME}'[/green] — "
-        "the prod daemon will start at every logon."
-    )
 
     should_start = start
     if should_start is None:
@@ -446,23 +513,48 @@ def install_autostart(
 
 @app.command()
 def uninstall_autostart(instance: str | None = _INSTANCE_OPTION) -> None:
-    """Remove the prod daemon auto-start task (Windows Task Scheduler)."""
+    """Remove the prod daemon auto-start task/unit/plist."""
     inst = _resolve(instance)
     if inst is not Instance.PROD:
         console.print("[red]autostart is prod-only.[/red]")
         raise typer.Exit(code=1)
-    if sys.platform != "win32":
-        console.print("[red]autostart is Windows-only.[/red]")
-        raise typer.Exit(code=1)
 
-    if autostart.uninstall_autostart():
+    if sys.platform == "linux":
+        from agent_core.daemon import autostart_linux
+
+        unit_path = Path.home() / ".config" / "systemd" / "user" / autostart_linux.UNIT_NAME
+        autostart_linux.uninstall_systemd_unit(unit_path)
         console.print(
-            f"[green]removed autostart task '{autostart.TASK_NAME}'[/green]"
+            f"[green]removed systemd user unit '{autostart_linux.UNIT_NAME}'[/green]"
         )
+
+    elif sys.platform == "darwin":
+        import os as _os
+
+        from agent_core.daemon import autostart_macos
+
+        label = autostart_macos.LABEL
+        uid = _os.getuid()
+        plist_path = Path.home() / "Library" / "LaunchAgents" / f"{label}.plist"
+        removed = autostart_macos.uninstall_launchd_plist(plist_path, uid=uid, label=label)
+        if removed:
+            console.print(f"[green]removed launchd LaunchAgent '{label}'[/green]")
+        else:
+            console.print(f"[yellow]no launchd LaunchAgent '{label}' to remove[/yellow]")
+
+    elif sys.platform == "win32":
+        if autostart.uninstall_autostart():
+            console.print(
+                f"[green]removed autostart task '{autostart.TASK_NAME}'[/green]"
+            )
+        else:
+            console.print(
+                f"[yellow]no autostart task '{autostart.TASK_NAME}' to remove[/yellow]"
+            )
+
     else:
-        console.print(
-            f"[yellow]no autostart task '{autostart.TASK_NAME}' to remove[/yellow]"
-        )
+        console.print(f"[red]autostart is not supported on {sys.platform}.[/red]")
+        raise typer.Exit(code=1)
 
 
 @app.command()
