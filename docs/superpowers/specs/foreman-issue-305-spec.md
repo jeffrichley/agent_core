@@ -327,8 +327,6 @@ def uninstall_autostart(instance: str | None = _INSTANCE_OPTION) -> None:
         console.print("[red]autostart is prod-only.[/red]")
         raise typer.Exit(code=1)
 
-    home = home_for(inst)
-
     if sys.platform == "linux":
         from agent_core.daemon import autostart_linux
 
