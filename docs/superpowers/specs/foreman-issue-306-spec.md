@@ -29,7 +29,7 @@ Parent epic: #262 · Theme B (#265) · B-3 of 3.
 
 No GoF pattern applies. Engineering principle: **SRP** — the existing pure/impure split convention (mirrors `autostart.py`). `windows_service.py` follows the same structure: platform-agnostic pure functions at the top, Windows-only impure wrappers below with lazy `import win32service`.
 
-**Service wrapper**: `pywin32` (`win32service`, `win32serviceutil`, `win32event`) — already transitively in `uv.lock`; adding it as an explicit conditional dependency makes the requirement unambiguous. WinSW ruled out (see Alternatives).
+**Service wrapper**: `pywin32` (`win32service`, `win32serviceutil`) — already transitively in `uv.lock`; adding it as an explicit conditional dependency makes the requirement unambiguous. WinSW ruled out (see Alternatives).
 
 **Failure actions**: The Windows SCM accepts up to three failure actions; the last action repeats indefinitely when exceeded. Setting all three to `SC_ACTION_RESTART` with 0 ms delay and `ResetPeriod = 0xFFFFFFFF` (INFINITE) gives unbounded immediate restart — exactly what B-1's watchdog self-terminate requires.
 
