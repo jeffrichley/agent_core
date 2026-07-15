@@ -784,3 +784,142 @@ def test_install_autostart_windows_errors_on_schtasks_failure(
     result = runner.invoke(daemon_app, ["install-autostart", "--no-start"])
     assert result.exit_code == 1
     assert "schtasks" in result.stdout.lower() or "failed" in result.stdout.lower()
+
+
+# ---------------------------------------------------------------------------
+# install-service / uninstall-service CLI tests (Windows Service; #306)
+# ---------------------------------------------------------------------------
+
+
+def test_install_service_source_instance_errors(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """install-service against the source instance must fail with a prod-only message."""
+    monkeypatch.setenv("AGENT_CORE_HOME", str(tmp_path))
+    result = runner.invoke(daemon_app, ["install-service", "--instance", "source"])
+    assert result.exit_code == 1
+    assert "prod-only" in result.stdout.lower()
+
+
+def test_install_service_errors_when_prod_venv_python_missing(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """install-service must refuse if the prod venv python.exe is absent."""
+    monkeypatch.setenv("AGENT_CORE_HOME", str(tmp_path))
+    monkeypatch.setattr(sys, "platform", "win32")
+    result = runner.invoke(daemon_app, ["install-service", "--no-start", "--password", "pw"])
+    assert result.exit_code == 1
+    assert "not installed" in result.stdout.lower()
+
+
+def test_install_service_registers_and_skips_start_with_no_start_flag(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("AGENT_CORE_HOME", str(tmp_path))
+    monkeypatch.setattr(sys, "platform", "win32")
+    # Create the prod venv python so the existence check passes.
+    venv_python = tmp_path / ".venv" / "Scripts" / "python.exe"
+    venv_python.parent.mkdir(parents=True)
+    venv_python.write_text("")
+
+    installed: list[str] = []
+
+    def fake_install_svc(**kwargs: object) -> None:
+        installed.append("installed")
+
+    started: list[str] = []
+
+    def fake_start(instance: str | None = None) -> None:
+        started.append("start")
+
+    monkeypatch.setattr("agent_core.daemon.cli._win_svc.install_windows_service", fake_install_svc)
+    monkeypatch.setattr("agent_core.daemon.cli.start_daemon", fake_start)
+
+    result = runner.invoke(
+        daemon_app, ["install-service", "--no-start", "--password", "pw"]
+    )
+    assert result.exit_code == 0, result.stdout
+    assert len(installed) == 1  # service registered
+    assert started == []  # --no-start skipped the daemon start
+
+
+def test_install_service_starts_with_start_flag(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("AGENT_CORE_HOME", str(tmp_path))
+    monkeypatch.setattr(sys, "platform", "win32")
+    venv_python = tmp_path / ".venv" / "Scripts" / "python.exe"
+    venv_python.parent.mkdir(parents=True)
+    venv_python.write_text("")
+
+    monkeypatch.setattr(
+        "agent_core.daemon.cli._win_svc.install_windows_service", lambda **kw: None
+    )
+    started: list[str] = []
+    monkeypatch.setattr(
+        "agent_core.daemon.cli.start_daemon",
+        lambda instance=None: started.append("start"),
+    )
+
+    result = runner.invoke(
+        daemon_app, ["install-service", "--start", "--password", "pw"]
+    )
+    assert result.exit_code == 0, result.stdout
+    assert started == ["start"]
+
+
+def test_install_service_reports_scm_failure(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """install-service catches SCM errors and exits non-zero."""
+    monkeypatch.setenv("AGENT_CORE_HOME", str(tmp_path))
+    monkeypatch.setattr(sys, "platform", "win32")
+    venv_python = tmp_path / ".venv" / "Scripts" / "python.exe"
+    venv_python.parent.mkdir(parents=True)
+    venv_python.write_text("")
+
+    def failing_install(**kwargs: object) -> None:
+        raise RuntimeError("SCM denied")
+
+    monkeypatch.setattr("agent_core.daemon.cli._win_svc.install_windows_service", failing_install)
+
+    result = runner.invoke(
+        daemon_app, ["install-service", "--no-start", "--password", "pw"]
+    )
+    assert result.exit_code == 1
+    assert "scm" in result.stdout.lower() or "failed" in result.stdout.lower()
+
+
+def test_uninstall_service_reports_removed(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("AGENT_CORE_HOME", str(tmp_path))
+    monkeypatch.setattr(sys, "platform", "win32")
+    monkeypatch.setattr(
+        "agent_core.daemon.cli._win_svc.uninstall_windows_service", lambda: True
+    )
+    result = runner.invoke(daemon_app, ["uninstall-service"])
+    assert result.exit_code == 0
+    assert "removed" in result.stdout.lower()
+
+
+def test_uninstall_service_idempotent_when_absent(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("AGENT_CORE_HOME", str(tmp_path))
+    monkeypatch.setattr(sys, "platform", "win32")
+    monkeypatch.setattr(
+        "agent_core.daemon.cli._win_svc.uninstall_windows_service", lambda: False
+    )
+    result = runner.invoke(daemon_app, ["uninstall-service"])
+    assert result.exit_code == 0  # not an error
+    assert "no service" in result.stdout.lower()
+
+
+def test_uninstall_service_source_instance_errors(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("AGENT_CORE_HOME", str(tmp_path))
+    result = runner.invoke(daemon_app, ["uninstall-service", "--instance", "source"])
+    assert result.exit_code == 1
+    assert "prod-only" in result.stdout.lower()

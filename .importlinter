@@ -3,6 +3,7 @@ root_packages =
     agent_core
     agent_core_notify
     agent_core_credentials
+include_external_packages = True
 
 [importlinter:contract:bus-core-self-contained]
 name = bus core does not depend on other agent-core packages
@@ -16,3 +17,15 @@ forbidden_modules =
     agent_core.bus_hooks
     agent_core.skills
     agent_core_notify
+
+[importlinter:contract:pywin32-isolated]
+name = pywin32 is imported only via the agent_core.daemon._win32 boundary
+type = forbidden
+source_modules =
+    agent_core
+forbidden_modules =
+    win32service
+    win32serviceutil
+ignore_imports =
+    agent_core.daemon._win32 -> win32service
+    agent_core.daemon._win32 -> win32serviceutil
