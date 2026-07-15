@@ -1,4 +1,8 @@
 #!/bin/sh
-# Pre-push quality gate: run the same fast gate CI runs.
-# Emergency bypass (use sparingly): git push --no-verify
+# Pre-push quality gate: the full `just check` — lint, types, contracts,
+# deterministic-coverage tests (whole-repo 85% floor) + patch coverage (80% of
+# changed lines). Coverage runs single-threaded so the number is stable (no flaky
+# xdist dips), and both coverage checks run here so a worker catches under-tested
+# code before it pushes. Humans can iterate with `just check-fast` (parallel, no
+# coverage). Emergency bypass (use sparingly): git push --no-verify
 exec just check

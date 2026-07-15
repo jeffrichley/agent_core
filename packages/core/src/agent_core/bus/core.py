@@ -13,18 +13,22 @@ from __future__ import annotations
 
 import logging
 import random
+import time
 import uuid
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
-from typing import Literal
+from typing import TYPE_CHECKING, Literal
 
 from agent_core.bus.envelope import EndpointInfo, Envelope
 from agent_core.bus.handle import BusHandle
 from agent_core.bus.persistence import Persistence
-from agent_core.bus.protocol import BusHook, Endpoint
+from agent_core.bus.protocol import BusHook, Endpoint, SlowDeliverWarning
 from agent_core.clock import Clock, SystemClock
+
+if TYPE_CHECKING:
+    from agent_core.bus.supervisor import EndpointSupervisor
 
 log = logging.getLogger(__name__)
 
@@ -91,6 +95,9 @@ class BusConfig:
     acked_retention_days: int = 14
     max_pending_per_endpoint: int = 10_000
     supervisor: SupervisorConfig = field(default_factory=SupervisorConfig)
+    # Watchdog: warn when deliver() takes longer than this many seconds.
+    # Non-positive value disables the watchdog entirely.
+    slow_deliver_warn_seconds: float = 5.0
 
 
 @dataclass
@@ -138,6 +145,7 @@ class Bus:
         self._store: Persistence | None = None
         self._started = False
         self._handles: dict[str, BusHandle] = {}
+        self._supervisor: EndpointSupervisor | None = None
 
     def _require_store(self) -> Persistence:
         if self._store is None:
@@ -146,11 +154,7 @@ class Bus:
         return self._store
 
     def _make_task_failure_hook(self, endpoint_name: str) -> Callable[[BaseException], None]:
-        """Factory: produces a per-endpoint logging hook.
-
-        T3/T4 replaces the body of this factory with a supervisor call without
-        changing BusHandle.
-        """
+        """Factory: produces a per-endpoint logging hook that also feeds the supervisor."""
 
         def _hook(exc: BaseException) -> None:
             log.error(
@@ -158,6 +162,8 @@ class Bus:
                 endpoint_name,
                 exc_info=exc,
             )
+            if self._supervisor is not None:
+                self._supervisor.record_failure(endpoint_name, str(exc))
 
         return _hook
 
@@ -206,6 +212,8 @@ class Bus:
     async def start(self) -> None:
         if self._started:
             return
+        from agent_core.bus.supervisor import EndpointSupervisor
+
         self._store = Persistence(self.config.storage_path, clock=self._clock)
         await self._store.connect()
         sup = self.config.supervisor
@@ -223,30 +231,34 @@ class Bus:
             sup.delivery_backoff_cap_seconds,
             sup.deliver_failures_before_breaker,
         )
-        started_specs: list[EndpointSpec] = []
-        try:
-            for spec in self._endpoints_by_name.values():
-                handle = BusHandle(
-                    self,
-                    spec.name,
-                    on_task_failure=self._make_task_failure_hook(spec.name),
-                )
-                self._handles[spec.name] = handle
+        self._supervisor = EndpointSupervisor(
+            config=self.config.supervisor,
+            clock=self._clock,
+            restart_fn=self._restart_endpoint,
+            on_transition=self._on_supervisor_transition,
+        )
+        started_count = 0
+        for spec in self._endpoints_by_name.values():
+            self._supervisor.register(spec.name)
+            handle = BusHandle(
+                self,
+                spec.name,
+                on_task_failure=self._make_task_failure_hook(spec.name),
+            )
+            self._handles[spec.name] = handle
+            try:
                 await spec.endpoint.start(handle)
-                started_specs.append(spec)
                 await self.drain_for(spec.name)
-        except Exception:
-            for spec in reversed(started_specs):
-                try:
-                    await spec.endpoint.stop()
-                except Exception:
-                    log.exception("error stopping endpoint %s during failed start", spec.name)
-                rollback_handle = self._handles.get(spec.name)
-                if rollback_handle is not None:
-                    await rollback_handle._drain_tasks()
-            await self._store.close()
-            self._store = None
-            raise
+                started_count += 1
+            except Exception as exc:
+                log.error("endpoint %r failed to start; quarantining: %s", spec.name, exc)
+                await self._supervisor.quarantine(spec.name, str(exc))
+
+        if started_count == 0 and self._endpoints_by_name:
+            log.critical(
+                "all %d endpoint(s) failed to start; bus is running degraded-empty",
+                len(self._endpoints_by_name),
+            )
         self._started = True
 
     async def stop(self) -> None:
@@ -265,8 +277,64 @@ class Bus:
         if self._store is not None:
             await self._store.close()
         self._started = False
+        self._supervisor = None
 
+    # ------------------------------------------------------------------
+    # Supervisor integration
+    # ------------------------------------------------------------------
+
+    async def _restart_endpoint(self, name: str) -> None:
+        """Restart callable injected into EndpointSupervisor.
+
+        Called by the supervisor's tick loop when a restart or probe is due.
+        Raises on failure so the supervisor can record the attempt.
+        """
+        spec = self._endpoints_by_name[name]
+        handle = self._handles.get(name)
+        # Invariant: handle is always created before the endpoint's start() call
+        # in Bus.start(), so it is always present for registered endpoints.
+        if handle is None:
+            raise RuntimeError(f"No handle for endpoint '{name}' — bus may not be started")
+        try:
+            await spec.endpoint.stop()
+        except Exception:
+            log.exception("error stopping endpoint %s during supervisor restart", name)
+        await handle._drain_tasks()
+        await spec.endpoint.start(handle)  # raises on failure → supervisor catches
+        await self.drain_for(name)
+
+    async def _on_supervisor_transition(
+        self, name: str, transition: str, last_error: str | None
+    ) -> None:
+        """Transition callback injected into EndpointSupervisor.
+
+        Persists quarantine/recovery state to the supervisor_state table so
+        ``bus status`` can surface it. Fires on quarantine-entry and recovery.
+        """
+        if transition == "quarantined":
+            log.warning("endpoint %r quarantined; last error: %s", name, last_error or "(none)")
+            if self._store is not None:
+                await self._store.upsert_supervisor_state(name, last_error)
+        elif transition == "recovered":
+            log.info("endpoint %r recovered", name)
+            if self._store is not None:
+                await self._store.clear_supervisor_state(name)
+
+    async def run_supervisor_tick_once(self, *, now: datetime | None = None) -> None:
+        """Drive one supervisor tick (due restarts and probes).
+
+        Called from the CLI redelivery loop alongside the envelope redelivery
+        sweep. No-op if the supervisor has not been created yet (bus not started).
+        """
+        if self._supervisor is None:
+            return
+        now = now or self._clock.now()
+        await self._supervisor.tick(now)
+
+    # ------------------------------------------------------------------
     # BusHandle-facing surface — _ack / _nack implemented in Task 9
+    # ------------------------------------------------------------------
+
     async def _enqueue(self, envelope: Envelope, to: str | list[str] | None = None) -> None:
         # `from_` was already stamped by BusHandle.publish before we got here,
         # so hooks see authenticated provenance.
@@ -322,6 +390,7 @@ class Bus:
         )
         store = self._require_store()
         await store.mark_in_flight(envelope.id, in_flight_until)
+        t0 = time.monotonic()
         try:
             await endpoint.deliver(envelope)
         except Exception as exc:
@@ -367,6 +436,16 @@ class Bus:
                     envelope.to,
                     envelope.id,
                 )
+        finally:
+            elapsed = time.monotonic() - t0
+            warn_s = self.config.slow_deliver_warn_seconds
+            if warn_s > 0 and elapsed >= warn_s:
+                warning = SlowDeliverWarning(
+                    endpoint=envelope.to,
+                    envelope_id=envelope.id,
+                    elapsed_seconds=elapsed,
+                )
+                log.warning("%r threshold=%.1fs", warning, warn_s)
 
     async def drain_for(self, endpoint_name: str) -> None:
         """Drain persisted-but-pending envelopes addressed to this endpoint.

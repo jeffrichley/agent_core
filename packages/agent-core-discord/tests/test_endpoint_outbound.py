@@ -54,6 +54,11 @@ class _Recording:
     def endpoints(self) -> list[EndpointInfo]:
         return []
 
+    def spawn(self, coro, *, name=None):
+        import asyncio
+
+        return asyncio.create_task(coro, name=name)
+
 
 class _HTTP429Like(Exception):
     """Minimal duck-typed stand-in for discord.HTTPException on rate limit."""

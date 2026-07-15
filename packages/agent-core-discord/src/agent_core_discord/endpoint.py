@@ -445,10 +445,17 @@ class DiscordEndpoint:
                 while message_id in self._awaiting_reply_ids:
                     # TTL safety net (#84): orphan entries (no explicit cleanup
                     # fired, agent dismissed without reply, cache miss) evict
-                    # after _TYPING_TTL_SECONDS. Missing-timestamp self-heals
-                    # via `get(mid, 0)` → huge delta → immediate eviction.
-                    ts = self._awaiting_reply_ids_timestamps.get(message_id, 0)
-                    if time.monotonic() - ts > self._TYPING_TTL_SECONDS:
+                    # after _TYPING_TTL_SECONDS. A missing timestamp means the
+                    # entry is an orphan → evict immediately.
+                    #
+                    # Detect "missing" with an explicit `is None`, NOT `get(mid, 0)`
+                    # + `monotonic() - 0 > TTL`: time.monotonic()'s epoch is
+                    # arbitrary (~boot), so on a freshly-booted host monotonic()
+                    # can be < TTL and `monotonic() - 0 > TTL` is False — wedging
+                    # the orphan in the set forever (a host-uptime-dependent hang,
+                    # surfaced on fresh CI runners).
+                    ts = self._awaiting_reply_ids_timestamps.get(message_id)
+                    if ts is None or time.monotonic() - ts > self._TYPING_TTL_SECONDS:
                         self._awaiting_reply_ids.discard(message_id)
                         self._awaiting_reply_ids_timestamps.pop(message_id, None)
                         break
@@ -1251,7 +1258,7 @@ class DiscordEndpoint:
                 self._inbound_envelope_discord.pop(env.id, None)
                 raise
             self._record_inbound(env)
-            asyncio.create_task(
+            self._handle.spawn(
                 self._typing_while_pending(message.channel, mid),
                 name=f"discord-{self.name}-typing-{mid}",
             )
@@ -1465,7 +1472,7 @@ class DiscordEndpoint:
             old_id, (old_emoji, old_ch, _ts) = self._pending_acks.popitem(last=False)
             self._awaiting_reply_ids.discard(old_id)
             self._awaiting_reply_ids_timestamps.pop(old_id, None)
-            asyncio.create_task(
+            self._handle.spawn(
                 self._remote_remove_ack(old_id, old_emoji, old_ch),
                 name=f"discord-endpoint-{self.name}-evict-ack",
             )
@@ -1508,7 +1515,7 @@ class DiscordEndpoint:
             self._pending_acks.pop(head_id)
             self._awaiting_reply_ids.discard(head_id)
             self._awaiting_reply_ids_timestamps.pop(head_id, None)
-            asyncio.create_task(
+            self._handle.spawn(
                 self._remote_remove_ack(head_id, emoji, channel_id),
                 name=f"discord-endpoint-{self.name}-ttl-ack",
             )

@@ -500,3 +500,8 @@ class FakeBusHandle:
     async def nack(self, *a, **kw): ...
     def endpoints(self):
         return []
+
+    def spawn(self, coro, *, name=None):
+        import asyncio
+
+        return asyncio.create_task(coro, name=name)

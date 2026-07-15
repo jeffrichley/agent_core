@@ -115,7 +115,12 @@ testpaths = [
     "packages/agent-core-busproxy/tests",
 ]
 asyncio_mode = "auto"
-addopts = "--import-mode=importlib -m 'not slow' --cov=packages --cov-branch --cov-report=term --cov-report=xml --cov-fail-under=85 -n auto --dist=loadscope"
+# --cov-fail-under=75: whole-repo floor on SOURCE-only coverage (test dirs are
+# omitted — see [tool.coverage.run]). Source is ~80% in the fast lane (slow
+# real-I/O tests are deselected here and cover more), so 75 is a stable backstop
+# with headroom; the diff-cover patch gate (80% of changed lines) does the real
+# per-change enforcement. Was 85 when test files inflated the measured total.
+addopts = "--import-mode=importlib -m 'not slow' --cov=packages --cov-branch --cov-report=term --cov-report=xml --cov-fail-under=75 -n auto --dist=loadscope"
 # Google's "small test" cap. Anything legitimately slower belongs in the
 # slow-marker lane (which the addopts above filters out by default).
 # Override per-test via @pytest.mark.timeout(N) with a justification.
@@ -134,9 +139,15 @@ markers = [
 
 [tool.coverage.run]
 # Exclude vendored code + generated stubs from coverage measurement.
+# Test files are NOT measured: coverage should reflect how well *source* is
+# exercised, not whether test code ran. Measuring test dirs also broke the
+# patch-coverage (diff-cover) gate — a slow-marked test that the default lane
+# skips showed as "uncovered", failing PRs whose *source* was well-tested
+# (agent_core#296).
 omit = [
     "*/vendor/*",
     "*/.venv/*",
     "*/__pycache__/*",
+    "*/tests/*",
 ]
 

@@ -20,6 +20,12 @@ from agent_core.bus.envelope import Envelope
 from agent_core.clock import Clock, SystemClock
 
 _SCHEMA = """
+CREATE TABLE IF NOT EXISTS supervisor_state (
+    name        TEXT PRIMARY KEY,
+    last_error  TEXT,
+    updated_at  TEXT NOT NULL
+);
+
 CREATE TABLE IF NOT EXISTS envelopes (
     id              TEXT PRIMARY KEY,
     correlation_id  TEXT NOT NULL,
@@ -312,3 +318,40 @@ class Persistence:
         )
         await conn.commit()
         return cur.rowcount == 1
+
+    # ------------------------------------------------------------------
+    # Supervisor state persistence
+    # ------------------------------------------------------------------
+
+    async def upsert_supervisor_state(self, name: str, last_error: str | None) -> None:
+        """Insert or replace the supervisor state row for ``name``.
+
+        Only quarantined endpoints have rows; rows are deleted on recovery
+        via ``clear_supervisor_state``.
+        """
+        conn = self._require_conn()
+        await conn.execute(
+            "INSERT OR REPLACE INTO supervisor_state (name, last_error, updated_at) VALUES (?, ?, ?)",
+            (name, last_error, self._clock.now().isoformat()),
+        )
+        await conn.commit()
+
+    async def clear_supervisor_state(self, name: str) -> None:
+        """Delete the supervisor state row for ``name`` (called on recovery)."""
+        conn = self._require_conn()
+        await conn.execute("DELETE FROM supervisor_state WHERE name = ?", (name,))
+        await conn.commit()
+
+    async def list_supervisor_degraded(self) -> list[dict[str, Any]]:
+        """Return all supervisor_state rows ordered by updated_at ascending.
+
+        Each dict has keys ``name``, ``last_error``, ``updated_at``.
+        Only quarantined (degraded) endpoints have rows.
+        """
+        conn = self._require_conn()
+        conn.row_factory = aiosqlite.Row
+        async with conn.execute(
+            "SELECT * FROM supervisor_state ORDER BY updated_at ASC"
+        ) as cur:
+            rows = await cur.fetchall()
+        return [dict(r) for r in rows]
