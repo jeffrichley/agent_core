@@ -600,7 +600,7 @@ No GoF pattern applies. Engineering principle: **SRP** — the existing pure/imp
    After `install-service` and a reboot (or after manually starting the
    service via `sc start AgentCoreProdDaemon` / Services snap-in):
 
-   - [ ] `agent-core daemon status` shows `prod daemon is running`.
+   - [ ] `sc query AgentCoreProdDaemon` shows `STATE: RUNNING` (SCM-native confirmation that the service is active).
    - [ ] Task Manager → Details tab: no `agent-core.exe` console window visible
          under the user's session processes.
    - [ ] Services snap-in: `AgentCoreProdDaemon` shows `Status: Running`,
