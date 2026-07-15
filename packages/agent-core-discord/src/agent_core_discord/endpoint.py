@@ -445,10 +445,17 @@ class DiscordEndpoint:
                 while message_id in self._awaiting_reply_ids:
                     # TTL safety net (#84): orphan entries (no explicit cleanup
                     # fired, agent dismissed without reply, cache miss) evict
-                    # after _TYPING_TTL_SECONDS. Missing-timestamp self-heals
-                    # via `get(mid, 0)` → huge delta → immediate eviction.
-                    ts = self._awaiting_reply_ids_timestamps.get(message_id, 0)
-                    if time.monotonic() - ts > self._TYPING_TTL_SECONDS:
+                    # after _TYPING_TTL_SECONDS. A missing timestamp means the
+                    # entry is an orphan → evict immediately.
+                    #
+                    # Detect "missing" with an explicit `is None`, NOT `get(mid, 0)`
+                    # + `monotonic() - 0 > TTL`: time.monotonic()'s epoch is
+                    # arbitrary (~boot), so on a freshly-booted host monotonic()
+                    # can be < TTL and `monotonic() - 0 > TTL` is False — wedging
+                    # the orphan in the set forever (a host-uptime-dependent hang,
+                    # surfaced on fresh CI runners).
+                    ts = self._awaiting_reply_ids_timestamps.get(message_id)
+                    if ts is None or time.monotonic() - ts > self._TYPING_TTL_SECONDS:
                         self._awaiting_reply_ids.discard(message_id)
                         self._awaiting_reply_ids_timestamps.pop(message_id, None)
                         break
