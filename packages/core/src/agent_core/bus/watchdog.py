@@ -29,6 +29,7 @@ from __future__ import annotations
 import logging
 import os
 import socket
+import sys
 import threading
 from collections.abc import Callable
 from datetime import datetime
@@ -48,6 +49,10 @@ def _sd_notify_watchdog() -> None:
     """
     notify_socket = os.environ.get("NOTIFY_SOCKET")
     if not notify_socket:
+        return
+    if sys.platform == "win32":
+        # Unix-domain sockets (socket.AF_UNIX) do not exist on Windows, and
+        # NOTIFY_SOCKET is a systemd (Linux) mechanism — nothing to notify.
         return
     try:
         with socket.socket(socket.AF_UNIX, socket.SOCK_DGRAM) as sock:

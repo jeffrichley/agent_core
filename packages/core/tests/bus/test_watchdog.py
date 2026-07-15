@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import logging
 import socket
+import sys
 import threading
 import time
 from datetime import UTC, datetime
@@ -141,6 +142,10 @@ class TestSdNotifyWatchdog:
         monkeypatch.delenv("NOTIFY_SOCKET", raising=False)
         _sd_notify_watchdog()  # must not raise
 
+    @pytest.mark.skipif(
+        sys.platform == "win32",
+        reason="AF_UNIX / systemd NOTIFY_SOCKET is Unix-only; the helper is a no-op on Windows",
+    )
     def test_sends_watchdog_notification_to_real_socket(self, tmp_path, monkeypatch) -> None:
         """Happy-path: NOTIFY_SOCKET is a valid DGRAM socket → WATCHDOG=1 is delivered."""
         sock_path = str(tmp_path / "notify.sock")
