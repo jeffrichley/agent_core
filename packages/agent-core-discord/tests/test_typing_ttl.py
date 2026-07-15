@@ -39,8 +39,10 @@ async def test_typing_evicts_after_ttl_when_no_cleanup_fires(monkeypatch):
     ep._awaiting_reply_ids_timestamps["m-old"] = time.monotonic() - 100.0
     try:
         task = asyncio.create_task(ep._typing_while_pending(ch, "m-old"))
-        await asyncio.sleep(0.3)
-        assert task.done()
+        # Deterministic: wait for the loop to evict + exit, rather than sleeping a
+        # fixed wall-clock guess (which flakes under load). Times out (and fails)
+        # if the loop genuinely hangs.
+        await asyncio.wait_for(task, timeout=2.0)
         assert "m-old" not in ep._awaiting_reply_ids
         assert "m-old" not in ep._awaiting_reply_ids_timestamps
     finally:
@@ -80,8 +82,10 @@ async def test_typing_evicts_immediately_on_missing_timestamp_self_heal(monkeypa
     # Deliberately do NOT set _awaiting_reply_ids_timestamps["m-slipped"].
     try:
         task = asyncio.create_task(ep._typing_while_pending(ch, "m-slipped"))
-        await asyncio.sleep(0.3)
-        assert task.done()
+        # Deterministic: wait for eviction + loop exit rather than sleeping a
+        # fixed guess (this test flaked under load — #332's single-threaded gate
+        # surfaced it). Times out (and fails) if eviction never happens.
+        await asyncio.wait_for(task, timeout=2.0)
         assert "m-slipped" not in ep._awaiting_reply_ids
     finally:
         await ep.stop()
