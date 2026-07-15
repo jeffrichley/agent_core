@@ -1,8 +1,8 @@
 ---
 name: skill-author
 description: |
-  Use when the being needs to create a new skill for herself — a reusable
-  workflow she'll invoke again. Walks her through the four-part shape
+  Use when the being needs to create a new skill — a reusable
+  workflow to invoke again. Walks through the four-part shape
   (frontmatter, instructions, references, scripts), generates the skill
   files in <vault>/.claude/skills/<new-skill>/, validates the result.
 when_to_use: |

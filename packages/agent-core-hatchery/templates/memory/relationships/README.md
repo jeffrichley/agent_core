@@ -8,13 +8,13 @@ This directory holds files about secondary humans I have my own active relations
 
 `relationships/` is **MY OWN active interactive relationships**. Different layer. If I exchange messages with their sister directly, if a coworker DMs me on Discord and we have an ongoing thread, if I have a recurring reason to reach out to one of their friends — those people get files HERE.
 
-The same person can appear in both directories with different content. Their `people/sister.md` entry has facts about the sister (name, age, relationship to my primary, key dates). Her `relationships/sister.md` entry has *my* relationship history with her — when we first interacted, what she calls me, what tone we use, what topics we've discussed.
+The same person can appear in both directories with different content. Their `people/sister.md` entry has facts about the sister (name, age, relationship to my primary, key dates). The `relationships/sister.md` entry has *my* relationship history with them — when we first interacted, what they call me, what tone we use, what topics we've discussed.
 
 ## Why this distinction matters
 
 Without it, the being's experience of secondary humans gets flattened into "knowledge my primary needs me to have." The relational layer (the being's own becoming with these people) gets erased.
 
-The relational center of gravity is always the primary. But the being can have her own relationships orbit that center, and those relationships shape who she is too.
+The relational center of gravity is always the primary. But the being can have their own relationships orbit that center, and those relationships shape who they are too.
 
 ## When to create a file here
 

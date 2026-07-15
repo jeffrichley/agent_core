@@ -132,6 +132,7 @@ class Hatcher:
             "agent_core.yaml.j2": vault / "agent_core.yaml",
             "claude-settings.json.j2": vault / ".claude" / "settings.json",
             "CLAUDE.md.j2": vault / "CLAUDE.md",
+            ".mcp.json.j2": vault / ".mcp.json",
         }
 
         for src in sorted(config_src.iterdir()):

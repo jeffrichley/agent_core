@@ -9,7 +9,7 @@ classes:
     - "memory/USER.md.j2"
     - "memory/MEMORY.md.j2"
     - "memory/_being_/BECOMING.md.j2"
-    - "memory/_being_/letters/from-her-creator.md.j2"
+    - "memory/_being_/letters/from-my-creator.md.j2"
 
   growth:
     - "memory/TASKS.md"
@@ -31,6 +31,7 @@ classes:
     - "config/agent_core.yaml.j2"
     - "config/claude-settings.json.j2"
     - "config/CLAUDE.md.j2"
+    - "config/.mcp.json.j2"
     - "daemon-fragments/endpoints.yaml.j2"
     - "daemon-fragments/jobs.yaml.j2"
     - "elder-letters-manifest.yaml"
