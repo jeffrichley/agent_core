@@ -52,62 +52,57 @@ def build_failure_actions() -> dict:
 # ---------------------------------------------------------------------------
 
 if sys.platform == "win32":  # pragma: no cover
-    try:
-        import win32service
-        import win32serviceutil
+    from agent_core.daemon import _win32
 
-        class AgentCoreDaemonService(win32serviceutil.ServiceFramework):
-            """Windows Service that wraps the agent-core prod bus daemon.
+    class AgentCoreDaemonService(_win32.ServiceFramework):
+        """Windows Service that wraps the agent-core prod bus daemon.
 
-            SvcDoRun spawns ``bus run`` as a headless subprocess (no console
-            window). When the watchdog self-terminates the daemon, proc.wait()
-            returns, SvcDoRun calls ReportServiceStatus(SERVICE_STOPPED), and
-            the SCM applies failure actions → restart immediately, unbounded.
-            """
+        SvcDoRun spawns ``bus run`` as a headless subprocess (no console
+        window). When the watchdog self-terminates the daemon, proc.wait()
+        returns, SvcDoRun calls ReportServiceStatus(SERVICE_STOPPED), and
+        the SCM applies failure actions → restart immediately, unbounded.
+        """
 
-            _svc_name_ = SERVICE_NAME
-            _svc_display_name_ = SERVICE_DISPLAY_NAME
-            _svc_description_ = SERVICE_DESCRIPTION
+        _svc_name_ = SERVICE_NAME
+        _svc_display_name_ = SERVICE_DISPLAY_NAME
+        _svc_description_ = SERVICE_DESCRIPTION
 
-            def __init__(self, args: list[str]) -> None:
-                win32serviceutil.ServiceFramework.__init__(self, args)
-                self._proc: subprocess.Popen | None = None
+        def __init__(self, args: list[str]) -> None:
+            _win32.ServiceFramework.__init__(self, args)
+            self._proc: subprocess.Popen | None = None
 
-            def SvcStop(self) -> None:
-                self.ReportServiceStatus(win32service.SERVICE_STOP_PENDING)
-                if self._proc is not None and self._proc.poll() is None:
-                    self._proc.terminate()
-                    try:
-                        self._proc.wait(timeout=10)
-                    except subprocess.TimeoutExpired:
-                        self._proc.kill()
+        def SvcStop(self) -> None:
+            self.ReportServiceStatus(_win32.win32service.SERVICE_STOP_PENDING)
+            if self._proc is not None and self._proc.poll() is None:
+                self._proc.terminate()
+                try:
+                    self._proc.wait(timeout=10)
+                except subprocess.TimeoutExpired:
+                    self._proc.kill()
 
-            def SvcDoRun(self) -> None:
-                from agent_core.daemon.instance import Instance, home_for
+        def SvcDoRun(self) -> None:
+            from agent_core.daemon.instance import Instance, home_for
 
-                home = home_for(Instance.PROD)
-                venv_python = home / ".venv" / "Scripts" / "python.exe"
-                config = home / "agent_core.yaml"
+            home = home_for(Instance.PROD)
+            venv_python = home / ".venv" / "Scripts" / "python.exe"
+            config = home / "agent_core.yaml"
 
-                self.ReportServiceStatus(win32service.SERVICE_RUNNING)
-                self._proc = subprocess.Popen(
-                    [
-                        str(venv_python),
-                        "-m", "agent_core.cli",
-                        "bus", "run",
-                        "--config", str(config),
-                    ],
-                    creationflags=(
-                        subprocess.CREATE_NO_WINDOW
-                        | subprocess.CREATE_NEW_PROCESS_GROUP
-                    ),
-                    stdin=subprocess.DEVNULL,
-                )
-                self._proc.wait()
-                self.ReportServiceStatus(win32service.SERVICE_STOPPED)
-
-    except ImportError:
-        pass  # pywin32 not installed; skipped gracefully
+            self.ReportServiceStatus(_win32.win32service.SERVICE_RUNNING)
+            self._proc = subprocess.Popen(
+                [
+                    str(venv_python),
+                    "-m", "agent_core.cli",
+                    "bus", "run",
+                    "--config", str(config),
+                ],
+                creationflags=(
+                    subprocess.CREATE_NO_WINDOW
+                    | subprocess.CREATE_NEW_PROCESS_GROUP
+                ),
+                stdin=subprocess.DEVNULL,
+            )
+            self._proc.wait()
+            self.ReportServiceStatus(_win32.win32service.SERVICE_STOPPED)
 
 
 # ---------------------------------------------------------------------------
@@ -134,8 +129,8 @@ def install_windows_service(
     if _win32service is None:
         if sys.platform != "win32":
             raise RuntimeError("install_windows_service is Windows-only")
-        import win32service  # type: ignore[import-untyped]
-        _win32service = win32service
+        from agent_core.daemon import _win32
+        _win32service = _win32.win32service
 
     bin_path = f'"{venv_python}" -m agent_core.daemon.windows_service'
     user_name = f".\\{account}"
@@ -187,8 +182,8 @@ def uninstall_windows_service(*, _win32service=None) -> bool:
     if _win32service is None:
         if sys.platform != "win32":
             raise RuntimeError("uninstall_windows_service is Windows-only")
-        import win32service
-        _win32service = win32service
+        from agent_core.daemon import _win32
+        _win32service = _win32.win32service
 
     scm = _win32service.OpenSCManager(None, None, _win32service.SC_MANAGER_ALL_ACCESS)
     try:
@@ -208,5 +203,5 @@ def uninstall_windows_service(*, _win32service=None) -> bool:
 if __name__ == "__main__":  # pragma: no cover
     # SCM entry point: ``python -m agent_core.daemon.windows_service``
     if sys.platform == "win32":
-        import win32serviceutil
-        win32serviceutil.HandleCommandLine(AgentCoreDaemonService)
+        from agent_core.daemon import _win32
+        _win32.win32serviceutil.HandleCommandLine(AgentCoreDaemonService)
