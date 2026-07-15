@@ -16,8 +16,17 @@ discord-tests := "packages/agent-core-discord/tests"
 default:
     @just --list
 
-# Composite gate (recommended before push)
+# Full gate — matches CI (postsubmit). Includes the coverage floor via `test`.
 check: lint typecheck contracts test
+
+# Pre-push gate (presubmit): the same checks WITHOUT the coverage floor.
+# Coverage (--cov-fail-under=85, set in pyproject addopts) is enforced in CI,
+# NOT at pre-push. A coverage percentage is a flaky number to block a commit on:
+# it dips whenever a parallel xdist worker hiccups on a real-I/O test, failing an
+# otherwise-green push (and, for foreman roles, Failing the ticket). Presubmit
+# stays fast + deterministic; CI (`just check`) plus the diff-cover gate keep the
+# coverage floor enforced before merge. Used by .githooks/pre-push.
+check-fast: lint typecheck contracts test-fast
 
 # Developer convenience: apply lint auto-fixes + formatter
 fix:
