@@ -6,19 +6,22 @@ Covers:
 - healthy loop never fires (heartbeat before each check_once)
 - non-positive timeout: start() is a no-op, stop() is safe
 - heartbeat() writes ISO timestamp to the heartbeat file
+- _sd_notify_watchdog() sends to NOTIFY_SOCKET and swallows errors
+- start() with positive timeout creates an OS thread; stop() joins and clears it
 - @pytest.mark.slow: thread fires without event-loop involvement (proves off-loop)
 """
 
 from __future__ import annotations
 
 import logging
+import socket
 import threading
 import time
 from datetime import UTC, datetime
 
 import pytest
 
-from agent_core.bus.watchdog import Watchdog
+from agent_core.bus.watchdog import Watchdog, _sd_notify_watchdog
 from agent_core.clock import FakeClock
 
 _START = datetime(2026, 1, 1, tzinfo=UTC)
@@ -114,6 +117,70 @@ class TestWatchdogHeartbeat:
         content = hb_file.read_text(encoding="utf-8").strip()
         # should contain the advanced timestamp, not _START
         assert content != _START.isoformat()
+
+    def test_heartbeat_ignores_oserror_when_path_is_directory(self, tmp_path) -> None:
+        """OSError during file write is silently swallowed (covers watchdog.py:105-106)."""
+        clock = FakeClock(start=_START)
+        # Create hb_path as a *directory* so write_text() raises IsADirectoryError (OSError).
+        hb_dir = tmp_path / "hb"
+        hb_dir.mkdir()
+        wd = Watchdog(60, clock=clock, heartbeat_path=hb_dir)
+        wd.heartbeat()  # must not raise
+
+
+# ---------------------------------------------------------------------------
+# _sd_notify_watchdog() tests
+# ---------------------------------------------------------------------------
+
+
+class TestSdNotifyWatchdog:
+    """Tests for the _sd_notify_watchdog() helper (covers watchdog.py:52-57)."""
+
+    def test_no_op_when_notify_socket_not_set(self, monkeypatch) -> None:
+        """No NOTIFY_SOCKET → function returns silently without touching sockets."""
+        monkeypatch.delenv("NOTIFY_SOCKET", raising=False)
+        _sd_notify_watchdog()  # must not raise
+
+    def test_sends_watchdog_notification_to_real_socket(self, tmp_path, monkeypatch) -> None:
+        """Happy-path: NOTIFY_SOCKET is a valid DGRAM socket → WATCHDOG=1 is delivered."""
+        sock_path = str(tmp_path / "notify.sock")
+        with socket.socket(socket.AF_UNIX, socket.SOCK_DGRAM) as server:
+            server.bind(sock_path)
+            server.setblocking(False)
+            monkeypatch.setenv("NOTIFY_SOCKET", sock_path)
+            _sd_notify_watchdog()
+            data = server.recv(1024)
+        assert data == b"WATCHDOG=1\n"
+
+    def test_swallows_oserror_when_socket_path_invalid(self, monkeypatch, tmp_path) -> None:
+        """NOTIFY_SOCKET set to a non-existent path → OSError is swallowed silently."""
+        monkeypatch.setenv("NOTIFY_SOCKET", str(tmp_path / "no_such.sock"))
+        _sd_notify_watchdog()  # must not raise
+
+
+# ---------------------------------------------------------------------------
+# start() / stop() with a real OS thread (fast — thread exits immediately)
+# ---------------------------------------------------------------------------
+
+
+class TestWatchdogStartStop:
+    """Tests that start() creates a thread and stop() joins it (covers watchdog.py:113-128)."""
+
+    def test_start_creates_thread_and_stop_joins_it(self) -> None:
+        """start() with positive timeout creates the OS thread; stop() clears it."""
+        wd = Watchdog(1000, exit_fn=lambda _: None)
+        assert wd._thread is None
+        wd.start()
+        assert wd._thread is not None
+        # stop() sets the stop_event — the thread's wait() returns immediately and exits.
+        wd.stop()
+        assert wd._thread is None
+
+    def test_run_exits_immediately_when_stop_event_is_preset(self) -> None:
+        """Calling _run() with stop_event already set returns without iterating the loop."""
+        wd = Watchdog(60, exit_fn=lambda _: None)
+        wd._stop_event.set()
+        wd._run()  # must return immediately (no sleep) — covers watchdog.py:158-159
 
 
 # ---------------------------------------------------------------------------
