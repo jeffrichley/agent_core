@@ -7,6 +7,7 @@ enforces v1 invariants: loopback-only bind unless an auth hook is configured
 
 from __future__ import annotations
 
+import os
 from pathlib import Path
 from typing import Any
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
@@ -90,6 +91,12 @@ async def build_bus_from_config(path: Path) -> tuple[Bus, HTTPHost | None]:
         redelivery_sweep_seconds=bus_cfg_raw.get("redelivery_sweep_seconds", 10),
         acked_retention_days=bus_cfg_raw.get("acked_retention_days", 14),
         max_pending_per_endpoint=bus_cfg_raw.get("max_pending_per_endpoint", 10_000),
+        slow_deliver_warn_seconds=float(
+            os.environ.get(
+                "BUS_SLOW_DELIVER_WARN_SECONDS",
+                bus_cfg_raw.get("slow_deliver_warn_seconds", 5.0),
+            )
+        ),
         supervisor=supervisor,
     )
 

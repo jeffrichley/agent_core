@@ -4,6 +4,7 @@ The Endpoint protocol is the minimal interface every adapter satisfies.
 @runtime_checkable lets the bus verify Protocol conformance at load time.
 """
 
+from dataclasses import dataclass
 from typing import TYPE_CHECKING, Literal, Protocol, runtime_checkable
 
 from agent_core.bus.envelope import Envelope
@@ -22,9 +23,34 @@ class EndpointUnavailable(Exception):
     """
 
 
+@dataclass(frozen=True)
+class SlowDeliverWarning:
+    """Emitted (via structured log) when deliver() exceeds slow_deliver_warn_seconds.
+
+    Warn-only — no delivery semantics are altered. Provides observability
+    for Theme E and future T4 escalation.
+    """
+
+    endpoint: str
+    envelope_id: str
+    elapsed_seconds: float
+
+
 @runtime_checkable
 class Endpoint(Protocol):
-    """An addressable participant on the bus."""
+    """An addressable participant on the bus.
+
+    Implementation contract (MUST):
+
+    - ``__init__`` MUST be cheap — no model loads, blocking I/O, or network.
+      Heavy or slow setup belongs in ``start()``, which is async and awaited
+      during boot.
+    - ``deliver()`` MUST return promptly. Long work MUST be offloaded to a
+      tracked background task via ``bus.spawn(coro, name=...)``.  Blocking the
+      event loop stalls delivery to every other endpoint; the watchdog in
+      ``Bus._dispatch`` emits ``SlowDeliverWarning`` when the threshold is
+      exceeded.
+    """
 
     name: str
 
@@ -39,9 +65,10 @@ class Endpoint(Protocol):
         Other exceptions are terminal — envelope moves to dead-letter.
 
         The bus awaits this call before dispatching the next envelope to ANY
-        endpoint, so deliver() should return promptly. Long work belongs in
-        a background task — return after acking, then do the work and
-        publish a Progress envelope or follow-up reply when ready.
+        endpoint, so deliver() MUST return promptly. Long work MUST be offloaded
+        to a tracked background task via bus.spawn(coro, name=...). Blocking the
+        event loop stalls delivery to every other endpoint; the watchdog in
+        Bus._dispatch emits SlowDeliverWarning when the threshold is exceeded.
         """
 
     async def stop(self) -> None:

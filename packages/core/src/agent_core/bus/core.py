@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import logging
 import random
+import time
 import uuid
 from collections.abc import Callable
 from dataclasses import dataclass, field
@@ -23,7 +24,7 @@ from typing import TYPE_CHECKING, Literal
 from agent_core.bus.envelope import EndpointInfo, Envelope
 from agent_core.bus.handle import BusHandle
 from agent_core.bus.persistence import Persistence
-from agent_core.bus.protocol import BusHook, Endpoint
+from agent_core.bus.protocol import BusHook, Endpoint, SlowDeliverWarning
 from agent_core.clock import Clock, SystemClock
 
 if TYPE_CHECKING:
@@ -94,6 +95,9 @@ class BusConfig:
     acked_retention_days: int = 14
     max_pending_per_endpoint: int = 10_000
     supervisor: SupervisorConfig = field(default_factory=SupervisorConfig)
+    # Watchdog: warn when deliver() takes longer than this many seconds.
+    # Non-positive value disables the watchdog entirely.
+    slow_deliver_warn_seconds: float = 5.0
 
 
 @dataclass
@@ -386,6 +390,7 @@ class Bus:
         )
         store = self._require_store()
         await store.mark_in_flight(envelope.id, in_flight_until)
+        t0 = time.monotonic()
         try:
             await endpoint.deliver(envelope)
         except Exception as exc:
@@ -431,6 +436,16 @@ class Bus:
                     envelope.to,
                     envelope.id,
                 )
+        finally:
+            elapsed = time.monotonic() - t0
+            warn_s = self.config.slow_deliver_warn_seconds
+            if warn_s > 0 and elapsed >= warn_s:
+                warning = SlowDeliverWarning(
+                    endpoint=envelope.to,
+                    envelope_id=envelope.id,
+                    elapsed_seconds=elapsed,
+                )
+                log.warning("%r threshold=%.1fs", warning, warn_s)
 
     async def drain_for(self, endpoint_name: str) -> None:
         """Drain persisted-but-pending envelopes addressed to this endpoint.

@@ -1,6 +1,7 @@
 """Tests for Bus.publish, dispatch flow, and at-least-once delivery."""
 
 import asyncio
+import logging
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -152,3 +153,96 @@ class TestPublishWithListTo:
         assert len(b_ep.delivered) == 1
         # Each got a distinct envelope id (bus minted N-1 fresh ids).
         assert a.delivered[0].id != b_ep.delivered[0].id
+
+
+class TestSlowDeliverWatchdog:
+    """Bus._dispatch emits SlowDeliverWarning when deliver() exceeds threshold."""
+
+    @pytest.mark.asyncio
+    async def test_slow_deliver_emits_warning(
+        self, tmp_path: Path, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """A deliver() that sleeps 100 ms with a 1 ms threshold emits SlowDeliverWarning."""
+
+        class _SlowEndpoint:
+            name = "slow"
+
+            async def start(self, bus) -> None:
+                self._handle = bus
+
+            async def deliver(self, envelope: Envelope) -> None:
+                await asyncio.sleep(0.1)
+                await self._handle.ack(envelope.id)
+
+            async def stop(self) -> None:
+                pass
+
+        cfg = BusConfig(storage_path=tmp_path / "bus.sqlite", slow_deliver_warn_seconds=0.001)
+        b = Bus(cfg)
+        b.register(EndpointSpec(endpoint=_SlowEndpoint()))
+        await b.start()
+        with caplog.at_level(logging.WARNING, logger="agent_core.bus.core"):
+            await b._enqueue(_envelope(to="slow"))
+        await b.stop()
+
+        warning_records = [r for r in caplog.records if "SlowDeliverWarning" in r.message]
+        assert warning_records, "Expected a SlowDeliverWarning log record, got none"
+
+    @pytest.mark.asyncio
+    async def test_fast_deliver_no_warning(
+        self, tmp_path: Path, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """A deliver() that completes immediately does not emit SlowDeliverWarning."""
+
+        class _FastEndpoint:
+            name = "fast"
+
+            async def start(self, bus) -> None:
+                self._handle = bus
+
+            async def deliver(self, envelope: Envelope) -> None:
+                await self._handle.ack(envelope.id)
+
+            async def stop(self) -> None:
+                pass
+
+        cfg = BusConfig(storage_path=tmp_path / "bus.sqlite", slow_deliver_warn_seconds=10.0)
+        b = Bus(cfg)
+        b.register(EndpointSpec(endpoint=_FastEndpoint()))
+        await b.start()
+        with caplog.at_level(logging.WARNING, logger="agent_core.bus.core"):
+            await b._enqueue(_envelope(to="fast"))
+        await b.stop()
+
+        warning_records = [r for r in caplog.records if "SlowDeliverWarning" in r.message]
+        assert not warning_records, f"Unexpected SlowDeliverWarning: {warning_records}"
+
+    @pytest.mark.asyncio
+    async def test_disabled_watchdog_no_warning(
+        self, tmp_path: Path, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """slow_deliver_warn_seconds <= 0 disables the watchdog entirely."""
+
+        class _SlowEndpoint2:
+            name = "slow2"
+
+            async def start(self, bus) -> None:
+                self._handle = bus
+
+            async def deliver(self, envelope: Envelope) -> None:
+                await asyncio.sleep(0.1)
+                await self._handle.ack(envelope.id)
+
+            async def stop(self) -> None:
+                pass
+
+        cfg = BusConfig(storage_path=tmp_path / "bus.sqlite", slow_deliver_warn_seconds=0.0)
+        b = Bus(cfg)
+        b.register(EndpointSpec(endpoint=_SlowEndpoint2()))
+        await b.start()
+        with caplog.at_level(logging.WARNING, logger="agent_core.bus.core"):
+            await b._enqueue(_envelope(to="slow2"))
+        await b.stop()
+
+        warning_records = [r for r in caplog.records if "SlowDeliverWarning" in r.message]
+        assert not warning_records, f"Watchdog should be disabled: {warning_records}"
