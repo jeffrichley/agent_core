@@ -508,8 +508,16 @@ def test_status_shows_venv_path_when_present(
         ),
     )
 
+    # Force a wide console so Rich does not wrap the long tmp path across
+    # lines (Rich honors COLUMNS before terminal-size detection); the
+    # newline-normalize is a belt-and-suspenders guard for any wrapping.
+    # Without this the exact-substring match false-fails on narrow
+    # non-TTY consoles (e.g. windows-latest CI), where the path wraps
+    # mid-string.
+    monkeypatch.setenv("COLUMNS", "200")
     result = runner.invoke(daemon_app, ["status"])
-    assert str(tmp_path / ".venv") in result.stdout
+    normalized = result.stdout.replace("\r", "").replace("\n", "")
+    assert str(tmp_path / ".venv") in normalized
 
 
 def test_init_writes_config_and_refuses_clobber(
