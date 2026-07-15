@@ -39,6 +39,7 @@ from typing import TYPE_CHECKING, Any
 
 import soundfile as sf
 
+from agent_core.bus.protocol import EndpointUnavailable
 from agent_core_voice.audit import AuditEvent, AuditLog
 from agent_core_voice.lifecycle import transcode_audio
 from agent_core_voice.protocol import (
@@ -112,20 +113,20 @@ class VoiceEndpoint:
         # voice ids on the wire.
         self._agent_to_voice: dict[str, str] = {}
 
-        if backend is None:
-            if model_path is None:
-                raise ValueError(
-                    "VoiceEndpoint requires either backend=... (tests) or "
-                    "model_path=... (production with QwenTTSBackend)"
-                )
-            from madrigal.engine import QwenTTSBackend
-
-            backend = QwenTTSBackend(
-                model_path=model_path,
-                device=device,
-                attn_implementation=attn_implementation,
+        # Fail-fast on misconfiguration: production path needs model_path.
+        if backend is None and model_path is None:
+            raise ValueError(
+                "VoiceEndpoint requires either backend=... (tests) or "
+                "model_path=... (production with QwenTTSBackend)"
             )
-        self._backend = backend
+
+        # Store the pre-built backend (test path) or None (production path, built in start()).
+        self._backend: TTSBackend | None = backend
+
+        # Store production-path params for lazy use in start().
+        self._model_path = model_path
+        self._device = device
+        self._attn_implementation = attn_implementation
 
         # Normalize voices: yaml gives dict[str, dict]; tests give dict[str, VoiceInfo].
         # Expand ~ in all paths so yaml configs can use "~/.agent-core/..." cleanly.
@@ -146,9 +147,7 @@ class VoiceEndpoint:
         self._audit = AuditLog(Path(audit_path).expanduser())
         self._output_dir.mkdir(parents=True, exist_ok=True)
 
-        for voice_id, info in self._voices.items():
-            self._backend.prepare_voice(voice_id, Path(info.ref_wav), info.ref_text)
-            log.info("voice %r prepared (ref_wav=%s)", voice_id, info.ref_wav)
+        # Backend construction and voice warming are deferred to start().
 
     @classmethod
     def for_test(
@@ -384,6 +383,25 @@ class VoiceEndpoint:
     # Endpoint protocol implementation.
     async def start(self, bus: BusHandle) -> None:
         self._handle = bus
+        if self._backend is None:
+            # Production path: build the GPU/CPU backend off the event loop thread.
+            # asyncio.to_thread keeps the loop responsive during the (potentially
+            # multi-second) model load.
+            from madrigal.engine import QwenTTSBackend
+
+            self._backend = await asyncio.to_thread(
+                QwenTTSBackend,
+                model_path=self._model_path,
+                device=self._device,
+                attn_implementation=self._attn_implementation,
+            )
+        # Warm all configured voices (no-op cost for fake backends; off-thread
+        # for real backends so WAV encoding doesn't block the loop).
+        for voice_id, info in self._voices.items():
+            await asyncio.to_thread(
+                self._backend.prepare_voice, voice_id, Path(info.ref_wav), info.ref_text
+            )
+            log.info("voice %r prepared (ref_wav=%s)", voice_id, info.ref_wav)
         log.info("VoiceEndpoint(name=%s) started; output_dir=%s", self._name, self._output_dir)
 
     async def deliver(self, envelope: Envelope) -> None:
@@ -393,6 +411,12 @@ class VoiceEndpoint:
         and let the synthesis run in an asyncio task. The bus is then free
         to dispatch to other endpoints while the GPU is busy.
         """
+        if self._backend is None:
+            # start() has not yet completed. This should not happen in production
+            # (bus awaits start() before draining mail), but fail safe rather than crash.
+            raise EndpointUnavailable(
+                f"VoiceEndpoint(name={self._name!r}): backend not ready — start() not yet complete"
+            )
         if (
             envelope.kind != "Event"
             or not hasattr(envelope.payload, "type")

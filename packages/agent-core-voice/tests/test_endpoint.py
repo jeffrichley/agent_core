@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 import re
+import time
 from pathlib import Path
 
 import pytest
@@ -13,8 +15,54 @@ from agent_core_voice.protocol import VoiceInfo
 from madrigal.engine import FakeTTSBackend
 
 
-def test_init_prepares_every_voice(tmp_path: Path, ref_wav: Path) -> None:
-    """All configured voices are prepare_voice'd before __init__ returns."""
+class _TrackingHandle:
+    """Minimal handle stub with real spawn+drain semantics for lifecycle tests.
+
+    Copied from test_synthesis_task_lifecycle.py — supports the full
+    spawn/publish/ack/nack interface required by start() and deliver().
+    """
+
+    def __init__(self) -> None:
+        self._tasks: set[asyncio.Task] = set()
+        self.failures: list[BaseException] = []
+
+    def spawn(self, coro, *, name=None):  # type: ignore[no-untyped-def]
+        task = asyncio.create_task(coro, name=name)
+        self._tasks.add(task)
+        task.add_done_callback(self._on_done)
+        return task
+
+    def _on_done(self, task: asyncio.Task) -> None:
+        self._tasks.discard(task)
+        if task.cancelled():
+            return
+        exc = task.exception()
+        if exc is not None:
+            self.failures.append(exc)
+
+    async def _drain_tasks(self) -> None:
+        tasks = list(self._tasks)
+        for t in tasks:
+            if not t.done():
+                t.cancel()
+        if tasks:
+            await asyncio.gather(*tasks, return_exceptions=True)
+        self._tasks.clear()
+
+    async def publish(self, *a, **kw) -> None: ...  # type: ignore[no-untyped-def]
+    async def ack(self, *a, **kw) -> None: ...  # type: ignore[no-untyped-def]
+    async def nack(self, *a, **kw) -> None: ...  # type: ignore[no-untyped-def]
+    def endpoints(self) -> list: return []
+
+
+def _minimal_handle() -> _TrackingHandle:
+    """Return a fresh _TrackingHandle for use in start() calls."""
+    return _TrackingHandle()
+
+
+@pytest.mark.asyncio
+async def test_start_prepares_every_voice(tmp_path: Path, ref_wav: Path) -> None:
+    """All configured voices are prepare_voice'd when start() is awaited."""
     backend = FakeTTSBackend()
     voices = {
         "alice": VoiceInfo(voice_id="alice", ref_wav=ref_wav, ref_text="hi alice"),
@@ -26,6 +74,7 @@ def test_init_prepares_every_voice(tmp_path: Path, ref_wav: Path) -> None:
         output_dir=tmp_path / "out",
         audit_path=tmp_path / "audit.jsonl",
     )
+    await ep.start(_minimal_handle())
     assert ep.voice_ids() == {"alice", "bob"}
     # FakeTTSBackend recorded which voices were prepared via call_log.
     prepared = {entry[1] for entry in backend.call_log if entry[0] == "prepare_voice"}
@@ -44,21 +93,23 @@ def test_init_creates_output_dir(tmp_path: Path, ref_wav: Path) -> None:
     assert out.is_dir()
 
 
-def test_init_missing_ref_wav_raises(tmp_path: Path) -> None:
-    """ref_wav validation runs during prepare_voice (the fake refuses missing files)."""
+@pytest.mark.asyncio
+async def test_start_missing_ref_wav_raises(tmp_path: Path) -> None:
+    """ref_wav validation runs during prepare_voice in start() (the fake refuses missing files)."""
+    ep = VoiceEndpoint.for_test(
+        backend=FakeTTSBackend(),
+        voices={
+            "v": VoiceInfo(
+                voice_id="v",
+                ref_wav=tmp_path / "nope.wav",
+                ref_text="r",
+            )
+        },
+        output_dir=tmp_path / "out",
+        audit_path=tmp_path / "audit.jsonl",
+    )
     with pytest.raises(FileNotFoundError):
-        VoiceEndpoint.for_test(
-            backend=FakeTTSBackend(),
-            voices={
-                "v": VoiceInfo(
-                    voice_id="v",
-                    ref_wav=tmp_path / "nope.wav",
-                    ref_text="r",
-                )
-            },
-            output_dir=tmp_path / "out",
-            audit_path=tmp_path / "audit.jsonl",
-        )
+        await ep.start(_minimal_handle())
 
 
 @pytest.mark.asyncio
@@ -69,6 +120,7 @@ async def test_synthesize_safe_happy_path(tmp_path: Path, ref_wav: Path) -> None
         output_dir=tmp_path / "out",
         audit_path=tmp_path / "audit.jsonl",
     )
+    await ep.start(_minimal_handle())
 
     result = await ep.synthesize_safe(
         agent_name="alice",
@@ -98,6 +150,7 @@ async def test_synthesize_output_path_layout(tmp_path: Path, ref_wav: Path) -> N
         output_dir=tmp_path / "out",
         audit_path=tmp_path / "audit.jsonl",
     )
+    await ep.start(_minimal_handle())
 
     result = await ep.synthesize_safe(
         agent_name="alice",
@@ -283,6 +336,7 @@ async def test_handle_synthesis_request_ogg_writes_ogg_file(
         output_dir=tmp_path / "out",
         audit_path=tmp_path / "audit.jsonl",
     )
+    await ep.start(_minimal_handle())
     handle = _CapturingHandle()
     ep._handle = handle  # type: ignore[assignment]
     ep.register_agent("alice", "alice")
@@ -343,6 +397,7 @@ async def test_handle_synthesis_request_transcode_failure_publishes_failed(
         output_dir=tmp_path / "out",
         audit_path=tmp_path / "audit.jsonl",
     )
+    await ep.start(_minimal_handle())
     handle = _CapturingHandle()
     ep._handle = handle  # type: ignore[assignment]
     ep.register_agent("alice", "alice")
@@ -369,12 +424,13 @@ async def test_handle_synthesis_request_transcode_failure_publishes_failed(
     assert failed_payload.retryable is False
 
 
-def test_production_wiring_constructs_madrigal_qwen_backend(
+@pytest.mark.asyncio
+async def test_production_wiring_constructs_madrigal_qwen_backend(
     tmp_path: Path, ref_wav: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """Guard the lazy ``from madrigal.engine import QwenTTSBackend`` path.
 
-    Without ``backend=``, ``VoiceEndpoint.__init__`` lazy-imports madrigal's
+    Without ``backend=``, ``VoiceEndpoint.start()`` lazy-imports madrigal's
     real Qwen backend and constructs it from ``model_path`` / ``device`` /
     ``attn_implementation``. Patching the symbol on ``madrigal.engine`` lets
     us exercise that branch without needing torch + qwen-tts at test time —
@@ -412,6 +468,7 @@ def test_production_wiring_constructs_madrigal_qwen_backend(
         output_dir=tmp_path / "out",
         audit_path=tmp_path / "audit.jsonl",
     )
+    await ep.start(_minimal_handle())
 
     # Backend was constructed exactly once, with the kwargs the endpoint
     # forwarded from its ``model_path`` / ``device`` / ``attn_implementation``
@@ -425,3 +482,150 @@ def test_production_wiring_constructs_madrigal_qwen_backend(
     # And the endpoint itself constructed cleanly — voices prepared, name set.
     assert ep.name == "voice"
     assert ep.voice_ids() == {"v1"}
+
+
+# ---------------------------------------------------------------------------
+# Sub-request 7: new tests proving the offload-boundary behaviour
+# ---------------------------------------------------------------------------
+
+
+def test_init_does_not_construct_backend(
+    tmp_path: Path, ref_wav: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """VoiceEndpoint.__init__ MUST NOT call QwenTTSBackend — only start() may."""
+    construct_calls: list[dict[str, object]] = []
+
+    class _SpyQwen:
+        def __init__(self, **kwargs: object) -> None:
+            construct_calls.append(kwargs)
+
+        def prepare_voice(self, voice_id: str, ref_wav: Path, ref_text: str) -> None:
+            pass
+
+        def synthesize(self, voice_id: str, text: str, seed: int) -> tuple[bytes, float]:
+            return b"", 0.0
+
+        def synthesize_batch(
+            self, voice_id: str, texts: list[str], seed: int
+        ) -> tuple[list[bytes], list[float]]:
+            return [b""] * len(texts), [0.0] * len(texts)
+
+    monkeypatch.setattr("madrigal.engine.QwenTTSBackend", _SpyQwen)
+
+    # Construct without calling start() — backend must NOT be built yet.
+    _ep = VoiceEndpoint(
+        name="voice",
+        model_path="/fake/model",
+        device="cpu",
+        attn_implementation="sdpa",
+        voices={"v1": VoiceInfo(voice_id="v1", ref_wav=ref_wav, ref_text="hi")},
+        output_dir=tmp_path / "out",
+        audit_path=tmp_path / "audit.jsonl",
+    )
+
+    assert construct_calls == [], (
+        "QwenTTSBackend was constructed in __init__ but MUST be deferred to start()"
+    )
+
+
+@pytest.mark.asyncio
+@pytest.mark.slow
+async def test_start_builds_backend_off_thread(tmp_path: Path, ref_wav: Path) -> None:
+    """start() builds the backend via asyncio.to_thread — the event loop is not frozen.
+
+    A progress ticker coroutine increments a counter while a blocking backend
+    constructor sleeps for 200 ms. If the loop were frozen, the ticker could
+    not run, and the counter would stay at 0.
+    """
+    progress_ticks = 0
+
+    async def _ticker() -> None:
+        nonlocal progress_ticks
+        while True:
+            await asyncio.sleep(0.01)
+            progress_ticks += 1
+
+    class _BlockingFakeQwen:
+        """Fake backend whose constructor sleeps 200 ms (simulates model load)."""
+
+        SAMPLE_RATE_HZ = 24000
+
+        def __init__(self, **kwargs: object) -> None:
+            time.sleep(0.2)  # blocks the calling thread, NOT the event loop
+
+        def prepare_voice(self, voice_id: str, ref_wav: Path, ref_text: str) -> None:
+            pass
+
+        def synthesize(self, voice_id: str, text: str, seed: int) -> tuple[bytes, float]:
+            return b"", 0.0
+
+        def synthesize_batch(
+            self, voice_id: str, texts: list[str], seed: int
+        ) -> tuple[list[bytes], list[float]]:
+            return [b""] * len(texts), [0.0] * len(texts)
+
+    import madrigal.engine as _me
+
+    original = _me.QwenTTSBackend
+    _me.QwenTTSBackend = _BlockingFakeQwen  # type: ignore[assignment]
+    try:
+        ep = VoiceEndpoint(
+            name="voice",
+            model_path="/fake/model",
+            device="cpu",
+            attn_implementation="sdpa",
+            voices={},
+            output_dir=tmp_path / "out",
+            audit_path=tmp_path / "audit.jsonl",
+        )
+
+        ticker_task = asyncio.create_task(_ticker())
+        try:
+            await ep.start(_minimal_handle())
+        finally:
+            ticker_task.cancel()
+            await asyncio.gather(ticker_task, return_exceptions=True)
+    finally:
+        _me.QwenTTSBackend = original  # type: ignore[assignment]
+
+    assert progress_ticks > 0, (
+        f"Event loop was frozen during start(): ticker never ran (ticks={progress_ticks}). "
+        "Ensure start() uses asyncio.to_thread for backend construction."
+    )
+
+
+@pytest.mark.asyncio
+async def test_for_test_backend_skips_construction(
+    tmp_path: Path, ref_wav: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """for_test(backend=stub) sets _backend at construction; start() skips QwenTTSBackend."""
+    construct_calls: list[dict[str, object]] = []
+
+    class _SpyQwen2:
+        def __init__(self, **kwargs: object) -> None:
+            construct_calls.append(kwargs)
+
+        def prepare_voice(self, voice_id: str, ref_wav: Path, ref_text: str) -> None:
+            pass
+
+        def synthesize(self, voice_id: str, text: str, seed: int) -> tuple[bytes, float]:
+            return b"", 0.0
+
+        def synthesize_batch(
+            self, voice_id: str, texts: list[str], seed: int
+        ) -> tuple[list[bytes], list[float]]:
+            return [b""] * len(texts), [0.0] * len(texts)
+
+    monkeypatch.setattr("madrigal.engine.QwenTTSBackend", _SpyQwen2)
+
+    ep = VoiceEndpoint.for_test(
+        backend=FakeTTSBackend(),
+        voices={"alice": VoiceInfo(voice_id="alice", ref_wav=ref_wav, ref_text="r")},
+        output_dir=tmp_path / "out",
+        audit_path=tmp_path / "audit.jsonl",
+    )
+    await ep.start(_minimal_handle())
+
+    assert construct_calls == [], (
+        "for_test() path must not call QwenTTSBackend even when start() is invoked"
+    )
