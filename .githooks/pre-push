@@ -1,7 +1,8 @@
 #!/bin/sh
-# Pre-push quality gate: fast presubmit lane — lint + types + contracts + tests,
-# WITHOUT the coverage floor. The 85% coverage gate runs in CI (postsubmit), not
-# here; blocking a push on a flaky coverage % is the anti-pattern. See the
-# `check-fast` recipe rationale in the justfile.
-# Emergency bypass (use sparingly): git push --no-verify
-exec just check-fast
+# Pre-push quality gate: the full `just check` — lint, types, contracts,
+# deterministic-coverage tests (whole-repo 85% floor) + patch coverage (80% of
+# changed lines). Coverage runs single-threaded so the number is stable (no flaky
+# xdist dips), and both coverage checks run here so a worker catches under-tested
+# code before it pushes. Humans can iterate with `just check-fast` (parallel, no
+# coverage). Emergency bypass (use sparingly): git push --no-verify
+exec just check
