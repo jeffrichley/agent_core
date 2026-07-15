@@ -28,6 +28,7 @@ from agent_core.email.cli import email_app
 from agent_core.hooks.pipeline import Pipeline
 from agent_core.plugins.manager import apply_cli_subapps, create_plugin_manager
 from agent_core.vault_migration_plan import vault_app
+from agent_core.venv.cli import venv_app
 
 app = typer.Typer(
     name="agent-core",
@@ -46,6 +47,7 @@ app.add_typer(bus_app, name="bus")
 app.add_typer(bus_log_app, name="bus-log")
 app.add_typer(daemon_app, name="daemon")
 app.add_typer(vault_app, name="vault")
+app.add_typer(venv_app, name="venv")
 
 _HOOK_CONFIG_OPTION = typer.Option(
     "agent_core.yaml",
