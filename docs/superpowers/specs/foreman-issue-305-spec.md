@@ -733,6 +733,22 @@ def test_uninstall_autostart_linux_dispatches_to_linux_module(
     assert len(removed) == 1
 
 
+def test_uninstall_autostart_macos_dispatches_to_macos_module(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("AGENT_CORE_HOME", str(tmp_path))
+    monkeypatch.setattr("sys.platform", "darwin")
+    monkeypatch.setattr("os.getuid", lambda: 501)
+    removed: list[str] = []
+    monkeypatch.setattr(
+        "agent_core.daemon.autostart_macos.uninstall_launchd_plist",
+        lambda path, uid, label: (removed.append(label), True)[1],
+    )
+    result = runner.invoke(daemon_app, ["uninstall-autostart"])
+    assert result.exit_code == 0, result.stdout
+    assert removed == ["com.jeffrichley.agent-core.daemon.prod"]
+
+
 def test_uninstall_autostart_unsupported_platform_exits_1(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -750,7 +766,7 @@ def test_uninstall_autostart_unsupported_platform_exits_1(
 4. **`packages/core/src/agent_core/daemon/cli.py`**: Replace `install_autostart` (keeping the prod-only guard, replacing the `sys.platform != "win32"` guard + Windows block with the four-branch dispatch shown above). Replace `uninstall_autostart` similarly. No other changes to `cli.py`.
 5. **`packages/core/tests/test_daemon_autostart_linux.py`**: Create with all tests shown above.
 6. **`packages/core/tests/test_daemon_autostart_macos.py`**: Create with all tests shown above.
-7. **`packages/core/tests/test_daemon_cli.py`**: Add the six CLI dispatch tests shown above (Linux install/uninstall, macOS install, unsupported platform install/uninstall, binary-missing install).
+7. **`packages/core/tests/test_daemon_cli.py`**: Add the seven CLI dispatch tests shown above (Linux install/uninstall, macOS install/uninstall, unsupported platform install/uninstall, binary-missing install).
 
 ## File-level changes
 
@@ -762,7 +778,7 @@ def test_uninstall_autostart_unsupported_platform_exits_1(
 | `packages/core/src/agent_core/daemon/cli.py` | Replace `install_autostart` and `uninstall_autostart` command bodies with OS dispatch; add `import os as _os` inside the darwin branch (platform-guarded) |
 | `packages/core/tests/test_daemon_autostart_linux.py` | **New**: `UNIT_NAME` constant, `build_systemd_unit` golden-string, `install_systemd_unit` writes+calls, `uninstall_systemd_unit` calls+removes, idempotent tests |
 | `packages/core/tests/test_daemon_autostart_macos.py` | **New**: `LABEL` constant, `build_launchd_plist` plistlib parse, `install_launchd_plist` calls+error paths, `uninstall_launchd_plist` true/false/file-removal |
-| `packages/core/tests/test_daemon_cli.py` | Add 6 platform-dispatch tests for `install-autostart` / `uninstall-autostart` |
+| `packages/core/tests/test_daemon_cli.py` | Add 7 platform-dispatch tests for `install-autostart` / `uninstall-autostart` |
 
 `packages/core/src/agent_core/daemon/autostart.py` — **not modified** (Windows code is untouched).
 
