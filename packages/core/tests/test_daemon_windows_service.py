@@ -8,7 +8,7 @@ from unittest.mock import MagicMock
 import pytest
 
 from agent_core.daemon.windows_service import (
-    RESET_PERIOD_INFINITE,
+    RESET_PERIOD_SECONDS,
     SC_ACTION_RESTART,
     SERVICE_NAME,
     build_failure_actions,
@@ -41,9 +41,13 @@ def test_build_failure_actions_all_zero_delay() -> None:
         assert delay_ms == 0
 
 
-def test_build_failure_actions_infinite_reset_period() -> None:
+def test_build_failure_actions_reset_period_is_pywin32_safe() -> None:
     fa = build_failure_actions()
-    assert fa["ResetPeriod"] == RESET_PERIOD_INFINITE  # == 0xFFFF_FFFF
+    # ResetPeriod = 0 (not Win32 INFINITE/0xFFFFFFFF, which overflows pywin32's
+    # signed-int marshaling); with all-RESTART actions this still restarts
+    # unbounded. Must fit a signed 32-bit int so the real SCM accepts the dict.
+    assert fa["ResetPeriod"] == RESET_PERIOD_SECONDS == 0
+    assert fa["ResetPeriod"] <= 2**31 - 1
 
 
 # ---------------------------------------------------------------------------

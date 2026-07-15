@@ -26,17 +26,26 @@ SERVICE_DESCRIPTION = (
 # Mirrors win32service.SC_ACTION_RESTART = 1. Defined here so
 # build_failure_actions() is importable without pywin32.
 SC_ACTION_RESTART = 1
-RESET_PERIOD_INFINITE = 0xFFFFFFFF
+# ResetPeriod (seconds) for the SCM failure-action config. Use 0, NOT the
+# Win32 INFINITE (0xFFFFFFFF): pywin32 marshals dwResetPeriod as a *signed*
+# 32-bit int, so any value > 2**31 - 1 is rejected with a TypeError. With all
+# three actions set to RESTART, ResetPeriod = 0 is equivalent for our purpose —
+# the failure count resets on every failure, so the SCM always applies the
+# first action (RESTART): the service restarts immediately, unbounded.
+RESET_PERIOD_SECONDS = 0
 
 
 def build_failure_actions() -> dict:
     """Return failure-action config dict for win32service.ChangeServiceConfig2.
 
-    Three RESTART actions at 0 ms delay; ResetPeriod = INFINITE so the
-    failure count never resets and the last action (RESTART) repeats forever.
+    Three RESTART actions at 0 ms delay. ResetPeriod = 0 so the failure count
+    resets on every failure and the first action (RESTART) applies each time —
+    the service restarts immediately, unbounded. (Win32 INFINITE / 0xFFFFFFFF
+    cannot be used: pywin32 marshals ResetPeriod as a signed 32-bit int and
+    rejects it.)
     """
     return {
-        "ResetPeriod": RESET_PERIOD_INFINITE,
+        "ResetPeriod": RESET_PERIOD_SECONDS,
         "RebootMsg": None,
         "Command": None,
         "Actions": [
