@@ -119,3 +119,38 @@ def test_read_stamp_returns_none_when_missing_required_fields(tmp_path: Path) ->
         '{"installed_at": "2026-05-15T19:31:04Z"}', encoding="utf-8"
     )
     assert read_stamp(tmp_path) is None
+
+
+def test_write_then_read_stamp_round_trips_venv_path(tmp_path: Path) -> None:
+    stamp = InstallStamp(
+        installed_at="2026-07-15T10:00:00Z",
+        installed_sha="abc1234",
+        installed_version="0.8.0",
+        python_version="3.12",
+        extra=None,
+        release_tag="v0.8.0",
+        venv_path="/home/user/.agent-core/.venv",
+    )
+    write_stamp(tmp_path, stamp)
+    result = read_stamp(tmp_path)
+    assert result is not None
+    assert result.venv_path == "/home/user/.agent-core/.venv"
+
+
+def test_read_stamp_defaults_venv_path_to_none_for_old_stamps(tmp_path: Path) -> None:
+    """Stamps written before Cα-3 lack venv_path; read_stamp must default it to None."""
+    import json
+    (tmp_path / STAMP_FILENAME).write_text(
+        json.dumps({
+            "installed_at": "2026-07-14T12:00:00Z",
+            "installed_sha": "aaa0001",
+            "installed_version": "0.7.0",
+            "python_version": "3.12",
+            "extra": None,
+            "release_tag": "v0.7.0",
+        }) + "\n",
+        encoding="utf-8",
+    )
+    stamp = read_stamp(tmp_path)
+    assert stamp is not None
+    assert stamp.venv_path is None

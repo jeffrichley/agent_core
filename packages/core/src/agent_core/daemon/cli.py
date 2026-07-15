@@ -31,6 +31,7 @@ from rich.console import Console
 
 from agent_core.daemon import autostart
 from agent_core.daemon import windows_service as _win_svc
+from agent_core.daemon.config_hygiene import run_config_hygiene
 from agent_core.daemon.config_template import build_default_config
 from agent_core.daemon.install import (
     InstallStamp,
@@ -226,6 +227,8 @@ def status(instance: str | None = _INSTANCE_OPTION) -> None:
             console.print(f"installed at: {stamp.installed_at}")
             console.print(f"installed sha: {stamp.installed_sha}")
             console.print(f"installed version: {stamp.installed_version}")
+            if stamp.venv_path is not None:
+                console.print(f"venv path: {stamp.venv_path}")
 
     if log_file.exists():
         console.print("\n[dim]--- last 20 lines of daemon.log ---[/dim]")
@@ -344,6 +347,7 @@ def install(
         python_version="3.12",
         extra=None,
         release_tag=tag,
+        venv_path=str(venv),
     )
     write_stamp(home, stamp)
 
@@ -387,6 +391,47 @@ def _git_sha_of_tag(tag: str) -> str:
     if result.returncode != 0:
         return "unknown"
     return result.stdout.strip() or "unknown"
+
+
+@app.command()
+def doctor(
+    instance: str | None = _INSTANCE_OPTION,
+    fix: bool = typer.Option(
+        False, "--fix", help="Remove detected debris files (drift warnings are always report-only)."
+    ),
+) -> None:
+    """Check config hygiene: detect debris files and reserved-key drift in fragments."""
+    # TODO #317: venv GC section goes here
+    inst = _resolve(instance)
+    home = home_for(inst)
+
+    report = run_config_hygiene(home, fix=fix)
+
+    # Config hygiene section
+    console.print("\nConfig hygiene")
+    if report.debris_found:
+        for path in report.debris_found:
+            if path in report.debris_removed:
+                console.print(f"  debris (removed): {path}")
+            else:
+                console.print(f"  debris: {path}")
+        if not fix:
+            console.print("  → run with --fix to remove debris files")
+        elif report.debris_removed:
+            console.print(f"  → removed {len(report.debris_removed)} debris file(s)")
+    else:
+        console.print("  no debris found")
+
+    # Config drift section
+    console.print("\nConfig drift")
+    if report.drift_messages:
+        for msg in report.drift_messages:
+            console.print(f"  ⚠ {msg}")
+    else:
+        console.print("  no drift detected")
+
+    if report.has_issues:
+        raise typer.Exit(code=1)
 
 
 @app.command()
