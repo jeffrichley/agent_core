@@ -622,7 +622,7 @@ def test_install_autostart_macos_dispatches_to_macos_module(
 ) -> None:
     monkeypatch.setenv("AGENT_CORE_HOME", str(tmp_path))
     monkeypatch.setattr("sys.platform", "darwin")
-    monkeypatch.setattr("os.getuid", lambda: 501)
+    monkeypatch.setattr("os.getuid", lambda: 501, raising=False)
     bin_dir = tmp_path / ".venv" / "bin"
     bin_dir.mkdir(parents=True)
     (bin_dir / "agent-core-daemon").write_text("#!/bin/sh\n")
@@ -676,7 +676,7 @@ def test_uninstall_autostart_macos_dispatches_to_macos_module(
 ) -> None:
     monkeypatch.setenv("AGENT_CORE_HOME", str(tmp_path))
     monkeypatch.setattr("sys.platform", "darwin")
-    monkeypatch.setattr("os.getuid", lambda: 501)
+    monkeypatch.setattr("os.getuid", lambda: 501, raising=False)
     removed: list[str] = []
     monkeypatch.setattr(
         "agent_core.daemon.autostart_macos.uninstall_launchd_plist",
@@ -722,7 +722,7 @@ def test_install_autostart_macos_errors_when_binary_missing(
     """macOS install: missing agent-core-daemon binary exits 1."""
     monkeypatch.setenv("AGENT_CORE_HOME", str(tmp_path))
     monkeypatch.setattr("sys.platform", "darwin")
-    monkeypatch.setattr("os.getuid", lambda: 501)
+    monkeypatch.setattr("os.getuid", lambda: 501, raising=False)
     # No .venv/bin/agent-core-daemon created.
     result = runner.invoke(daemon_app, ["install-autostart"])
     assert result.exit_code == 1
@@ -735,7 +735,7 @@ def test_install_autostart_macos_errors_on_launchctl_failure(
     """macOS install: CalledProcessError from launchctl propagates as exit 1."""
     monkeypatch.setenv("AGENT_CORE_HOME", str(tmp_path))
     monkeypatch.setattr("sys.platform", "darwin")
-    monkeypatch.setattr("os.getuid", lambda: 501)
+    monkeypatch.setattr("os.getuid", lambda: 501, raising=False)
     bin_dir = tmp_path / ".venv" / "bin"
     bin_dir.mkdir(parents=True)
     (bin_dir / "agent-core-daemon").write_text("#!/bin/sh\n")
@@ -756,7 +756,7 @@ def test_uninstall_autostart_macos_reports_absent_when_not_loaded(
     """macOS uninstall: when launchctl bootout reports not-loaded, prints advisory."""
     monkeypatch.setenv("AGENT_CORE_HOME", str(tmp_path))
     monkeypatch.setattr("sys.platform", "darwin")
-    monkeypatch.setattr("os.getuid", lambda: 501)
+    monkeypatch.setattr("os.getuid", lambda: 501, raising=False)
     monkeypatch.setattr(
         "agent_core.daemon.autostart_macos.uninstall_launchd_plist",
         lambda path, uid, label: False,

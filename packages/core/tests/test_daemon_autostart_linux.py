@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import subprocess
+import sys
 from pathlib import Path
 
 import pytest
@@ -18,6 +19,10 @@ def test_unit_name_constant() -> None:
     assert UNIT_NAME == "agent-core.service"
 
 
+@pytest.mark.skipif(
+    sys.platform == "win32",
+    reason="systemd unit is Linux-only; the golden string asserts native POSIX path rendering",
+)
 def test_build_systemd_unit_golden_string() -> None:
     venv_bin = Path("/home/jeff/.agent-core/.venv/bin")
     home = Path("/home/jeff/.agent-core")
