@@ -3,7 +3,7 @@
 Verifies:
 
 1. A static seed job with a 1-second interval fires and reaches the stub
-   within a 3-second window.
+   within a 10-second window.
 2. Dynamic create_job via ToolInvocation lands in the scheduler, fires, and
    reaches the stub.
 3. delete_job stops further fires.
@@ -72,13 +72,18 @@ async def test_seed_job_fires_to_stub(tmp_path, build_bus):
     try:
         stub = bus._endpoints_by_name["agent-test"].endpoint
 
-        # Wait up to 3s for the first fire.
-        for _ in range(60):
+        # Wait up to 10s for the first fire. The interval trigger's first
+        # fire lands at +1s; the generous ceiling absorbs slow/loaded CI
+        # runners (esp. Windows) without changing what is asserted — the
+        # test verifies the fire happens and the payload is correct, not
+        # sub-second latency. A tight 3s window was an intermittent
+        # false-red on the required windows-latest check.
+        for _ in range(200):
             if stub.inbox:
                 break
             await asyncio.sleep(0.05)
 
-        assert stub.inbox, "scheduler did not fire the seed job within 3s"
+        assert stub.inbox, "scheduler did not fire the seed job within 10s"
         env = stub.inbox[0]
         assert env.kind == "TextMessage"
         assert isinstance(env.payload, TextMessagePayload)
@@ -118,7 +123,7 @@ async def test_dynamic_create_job_via_toolinvocation(tmp_path, build_bus):
         )
 
         # Wait for either an Acknowledgment (job created) or the first fire.
-        for _ in range(60):
+        for _ in range(200):
             if any(
                 e.payload.text == "spike-prompt"
                 if isinstance(e.payload, TextMessagePayload)
@@ -133,7 +138,7 @@ async def test_dynamic_create_job_via_toolinvocation(tmp_path, build_bus):
             for e in stub.inbox
             if isinstance(e.payload, TextMessagePayload) and e.payload.text == "spike-prompt"
         ]
-        assert text_envs, "dynamic job did not fire within 3s"
+        assert text_envs, "dynamic job did not fire within 10s"
 
         # And the Acknowledgment for the create_job call should be in stub's inbox too.
         acks = [e for e in stub.inbox if e.kind == "Acknowledgment"]
@@ -171,8 +176,9 @@ async def test_delete_job_stops_fires(tmp_path, build_bus):
             ),
         )
 
-        # Wait for it to fire at least once.
-        for _ in range(60):
+        # Wait up to 10s for it to fire at least once (generous ceiling for
+        # slow/loaded CI runners; see test_seed_job_fires_to_stub).
+        for _ in range(200):
             if any(
                 isinstance(e.payload, TextMessagePayload) and e.payload.text == "transient"
                 for e in stub.inbox
