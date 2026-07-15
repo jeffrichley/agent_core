@@ -123,7 +123,7 @@ No GoF pattern applies. Engineering principle: **SRP** — the existing pure/imp
                    win32serviceutil.ServiceFramework.__init__(self, args)
                    self._proc: subprocess.Popen | None = None
 
-               def SvcStop(self) -> None:  # noqa: N802
+               def SvcStop(self) -> None:
                    self.ReportServiceStatus(win32service.SERVICE_STOP_PENDING)
                    if self._proc is not None and self._proc.poll() is None:
                        self._proc.terminate()
@@ -132,7 +132,7 @@ No GoF pattern applies. Engineering principle: **SRP** — the existing pure/imp
                        except subprocess.TimeoutExpired:
                            self._proc.kill()
 
-               def SvcDoRun(self) -> None:  # noqa: N802
+               def SvcDoRun(self) -> None:
                    from agent_core.daemon.instance import Instance, home_for
 
                    home = home_for(Instance.PROD)
@@ -184,7 +184,7 @@ No GoF pattern applies. Engineering principle: **SRP** — the existing pure/imp
        if _win32service is None:
            if sys.platform != "win32":
                raise RuntimeError("install_windows_service is Windows-only")
-           import win32service as _win32service  # noqa: N812
+           import win32service as _win32service
 
        bin_path = f'"{venv_python}" -m agent_core.daemon.windows_service'
        user_name = f".\\{account}"
@@ -236,7 +236,7 @@ No GoF pattern applies. Engineering principle: **SRP** — the existing pure/imp
        if _win32service is None:
            if sys.platform != "win32":
                raise RuntimeError("uninstall_windows_service is Windows-only")
-           import win32service as _win32service  # noqa: N812
+           import win32service as _win32service
 
        scm = _win32service.OpenSCManager(None, None, _win32service.SC_MANAGER_ALL_ACCESS)
        try:
