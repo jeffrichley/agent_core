@@ -73,7 +73,21 @@ Then replace every subsequent raw-dict access pattern (the variable name is `dae
 | `bus_cfg_raw.get("storage_path", "~/.agent-core/bus.sqlite")` | `daemon_cfg.bus.storage_path` |
 | `bus_cfg_raw.get("supervisor", {}) or {}` | `daemon_cfg.bus.supervisor` |
 | `sup_cfg_raw.get("restart_backoff_base_seconds", 1)` | `daemon_cfg.bus.supervisor.restart_backoff_base_seconds` |
+| `sup_cfg_raw.get("restart_backoff_factor", 2)` | `daemon_cfg.bus.supervisor.restart_backoff_factor` |
+| `sup_cfg_raw.get("restart_backoff_cap_seconds", 60)` | `daemon_cfg.bus.supervisor.restart_backoff_cap_seconds` |
+| `sup_cfg_raw.get("restart_jitter", "full")` | `daemon_cfg.bus.supervisor.restart_jitter` |
+| `sup_cfg_raw.get("restarts_before_quarantine", 5)` | `daemon_cfg.bus.supervisor.restarts_before_quarantine` |
+| `sup_cfg_raw.get("probe_interval_seconds", 300)` | `daemon_cfg.bus.supervisor.probe_interval_seconds` |
+| `sup_cfg_raw.get("delivery_backoff_base_seconds", 2)` | `daemon_cfg.bus.supervisor.delivery_backoff_base_seconds` |
+| `sup_cfg_raw.get("delivery_backoff_factor", 2)` | `daemon_cfg.bus.supervisor.delivery_backoff_factor` |
+| `sup_cfg_raw.get("delivery_backoff_cap_seconds", 60)` | `daemon_cfg.bus.supervisor.delivery_backoff_cap_seconds` |
+| `sup_cfg_raw.get("deliver_failures_before_breaker", 5)` | `daemon_cfg.bus.supervisor.deliver_failures_before_breaker` |
 | `bus_cfg_raw.get("redelivery_timeout_seconds", 300)` | `daemon_cfg.bus.redelivery_timeout_seconds` |
+| `bus_cfg_raw.get("max_delivery_attempts", 5)` | `daemon_cfg.bus.max_delivery_attempts` |
+| `bus_cfg_raw.get("ttl_sweep_seconds", 60)` | `daemon_cfg.bus.ttl_sweep_seconds` |
+| `bus_cfg_raw.get("redelivery_sweep_seconds", 10)` | `daemon_cfg.bus.redelivery_sweep_seconds` |
+| `bus_cfg_raw.get("acked_retention_days", 14)` | `daemon_cfg.bus.acked_retention_days` |
+| `bus_cfg_raw.get("max_pending_per_endpoint", 10_000)` | `daemon_cfg.bus.max_pending_per_endpoint` |
 | `raw.get("mcp_audit", {}) or {}` | `daemon_cfg.mcp_audit` |
 | `audit_cfg.get("enabled", True)` | `daemon_cfg.mcp_audit.enabled` |
 | `audit_cfg.get("log_root", "~/.agent-core/bus/mcp-audit")` | `daemon_cfg.mcp_audit.log_root` |
