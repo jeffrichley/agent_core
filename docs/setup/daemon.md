@@ -223,31 +223,66 @@ Both surfaces are stdio and reconnect independently. The old
 `{"type":"http","url":".../mcp/<agent>"}` form is the #91 failure mode —
 do not use it.
 
-## Auto-start at boot (Windows)
+## Auto-start at boot (Windows) — Windows Service
 
-The prod daemon can register itself with Windows Task Scheduler so it
-returns automatically after a reboot — no manual `daemon start`.
+The prod daemon registers as a **true Windows Service** (`AgentCoreProdDaemon`):
+headless (no console window), runs as your user account (vault + keyring
+access), and restarts immediately on failure with **no count limit**.
+
+### Setup
 
 ```bash
-# Register the autostart task (prod only). Prompts whether to start now.
-agent-core daemon install-autostart
+# Install the prod daemon first (service needs the venv exe to exist).
+agent-core daemon install
 
-# Remove it.
-agent-core daemon uninstall-autostart
+# Register the service. You will be prompted for your Windows password
+# (stored in LSA by the SCM; never written to disk by this command).
+agent-core daemon install-service
+
+# Optional: remove the service.
+agent-core daemon uninstall-service
 ```
 
-`install-autostart` registers a Task Scheduler task named
-`agent-core-daemon-prod` that runs `agent-core daemon start --instance
-prod` at your logon, with restart-on-failure and start-when-available.
-It runs as your own user with least privilege (the daemon binds
-127.0.0.1 only — no admin needed).
+`install-service` registers `AgentCoreProdDaemon` as an auto-start service
+that runs `python -m agent_core.daemon.windows_service` from the prod venv.
+On service start, the daemon spawns `bus run` as a hidden subprocess
+(`CREATE_NO_WINDOW`). When the daemon exits (crash, watchdog self-terminate,
+etc.), the service exits and the SCM restarts it immediately — indefinitely.
 
-`install-autostart` requires the prod daemon to be installed first
-(`agent-core daemon install`) — it points the task at
-`~/.agent-core/.venv/Scripts/agent-core.exe`. Re-running it replaces the
-existing task (idempotent). Pass `--no-start` / `--start` to skip the
-"start now?" prompt in non-interactive use.
+### Manual verification checklist
 
-Auto-start is prod-only and Windows-only. It brings the **daemon** back
-after a reboot; auto-launching Pepper's own Claude Code session is a
-separate, still-open problem.
+After `install-service` and a reboot (or after manually starting the
+service via `sc start AgentCoreProdDaemon` / Services snap-in):
+
+- [ ] `sc query AgentCoreProdDaemon` shows `STATE: RUNNING` (SCM-native confirmation that the service is active).
+- [ ] Task Manager → Details tab: no `agent-core.exe` console window visible
+      under the user's session processes.
+- [ ] Services snap-in: `AgentCoreProdDaemon` shows `Status: Running`,
+      `Startup type: Automatic`, `Log On As: <your account>`.
+- [ ] Failure Actions (right-click → Properties → Recovery): all three
+      actions are **Restart the Service**, delay 0 minutes.
+- [ ] Kill the bus process manually (`taskkill /F /IM python.exe`) → wait
+      5 s → `agent-core daemon status` shows running again (SCM restarted it).
+
+### Migration from the old scheduled task
+
+If you previously ran `install-autostart`, migrate as follows:
+
+```bash
+agent-core daemon uninstall-autostart   # remove the old Task Scheduler task
+agent-core daemon install-service        # register the Windows Service
+```
+
+The old `install-autostart`/`uninstall-autostart` commands remain available
+for rollback but are superseded.
+
+### Why not Task Scheduler?
+
+The `install-autostart` approach used `LogonType: InteractiveToken`, which
+attaches the task to the interactive user session. When the session ends
+(or a console window appears), the task — and the daemon — die. The
+Windows Service runs in Session 0 (no interactive session, no console window)
+and is independent of login/logout cycles. The scheduled task's
+`RestartOnFailure` count was also bounded (max 3), which the B-1 watchdog
+self-terminate exhausted; the SCM's failure-action list repeats the last
+action indefinitely.
