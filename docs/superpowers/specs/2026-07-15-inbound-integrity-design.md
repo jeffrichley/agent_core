@@ -3,7 +3,7 @@
 **Theme:** agent_core#267 (Theme D — Security hardening) · epic #262
 **Date:** 2026-07-15
 **Status:** approved design, pre-implementation
-**Priority:** `[P1]` cluster. Not auto-planned — held for explicit go.
+**Priority:** P1/P2 cluster (eval 2026-07-13: replay-window P1 line 112, body-read DoS P2 line 114; no P0 items, and no P0 depends on Dγ). Not auto-planned — held for explicit go.
 **Cluster:** Dγ of Theme D. Siblings: Dα secret-material handling (spec `2026-07-15-security-secret-handling-design.md`, #345–348), Dβ bus transport auth (spec `2026-07-15-bus-transport-auth-design.md`, #352–356), Dδ untrusted-input boundary (later brainstorm).
 
 ## Problem
@@ -17,10 +17,10 @@ The inbound webhook path (the one public ingress, exposed via Tailscale Funnel) 
 
 Dγ closes the **four residual gaps** around that core — availability and generalization, not authenticity:
 
-1. **Unauthenticated body-read DoS (sharpest).** `funnel_handler.py:48` does `raw = await request.body()` — it reads the *entire* body into memory **before** the signature check, with no size limit. Anyone who can reach the Funnel URL (no secret) can POST a multi-GB body → memory exhaustion + CPU burned hashing it. The rate limiter sits *after* signature verification, so it does not protect this path. `[P1, highest severity in Dγ]`
-2. **Replay is capacity-bounded, not time-bounded.** The de-dupe cache is a fixed-size LRU. A validly-signed delivery replayed *after* its key evicts passes again — GitHub signs the body, not a timestamp, so there is no freshness gate. `[P1]`
-3. **Integrity is GitHub-hardcoded.** The HMAC check lives inline in the GitHub handler. Any *future* inbound connector (a generic webhook, an email push) has no shared "verify-before-receive" contract to inherit — a new connector could be wired in with no integrity check at all. `[P1]`
-4. **No payload-shape limit.** Attacker-controlled JSON is parsed (and walked via dotted paths by the connector matcher) with no nesting-depth guard — a deeply-nested JSON structure is a cheap CPU sink even behind a valid signature. `[P1]`
+1. **Unauthenticated body-read DoS (sharpest).** `funnel_handler.py:48` does `raw = await request.body()` — it reads the *entire* body into memory **before** the signature check, with no size limit. Anyone who can reach the Funnel URL (no secret) can POST a multi-GB body → memory exhaustion + CPU burned hashing it. The rate limiter sits *after* signature verification, so it does not protect this path. `[P2]` (eval 2026-07-13, line 114 — "unbounded webhook body read before HMAC", S effort)
+2. **Replay is capacity-bounded, not time-bounded.** The de-dupe cache is a fixed-size LRU. A validly-signed delivery replayed *after* its key evicts passes again — GitHub signs the body, not a timestamp, so there is no freshness gate. `[P1]` (eval line 112 — "inbound webhook has no replay window"; the highest-priority gap in Dγ)
+3. **Integrity is GitHub-hardcoded.** The HMAC check lives inline in the GitHub handler. Any *future* inbound connector (a generic webhook, an email push) has no shared "verify-before-receive" contract to inherit — a new connector could be wired in with no integrity check at all. `[P1, design addition — hardening beyond the eval's listed gaps]`
+4. **No payload-shape limit.** Attacker-controlled JSON is parsed (and walked via dotted paths by the connector matcher) with no nesting-depth guard — a deeply-nested JSON structure is a cheap CPU sink even behind a valid signature. `[P2, design addition — same class as the body-read DoS]`
 
 Boundary vs **Dδ**: Dγ answers *"is this request authentic, fresh, and non-abusive at the transport/protocol layer?"* Dδ answers *"the content is authentic, but its meaning is untrusted"* (prompt-injection into a being's context). Dγ stops when the router is handed a verified, fresh, size- and shape-bounded event.
 
@@ -59,8 +59,8 @@ All three numeric limits are **configurable with the stated defaults** — per J
 
 ## Ticket decomposition (dependency-ordered)
 
-- **Dγ-1 — Body-size cap before read (per-endpoint config, default 1 MiB).** *(no dep)* Closes the unauthenticated body-read DoS — the highest-severity gap. Touches `funnel_handler.py` + `endpoint.py`.
-- **Dγ-2 — Time-bounded de-dupe (age-based eviction, default 24 h TTL) + clock seam.** *(no dep — isolated to `router.py`)* Closes the evict-then-replay hole.
+- **Dγ-1 — Body-size cap before read (per-endpoint config, default 1 MiB).** *(no dep)* Closes the unauthenticated body-read DoS. `[P2]` — Touches `funnel_handler.py` + `endpoint.py`.
+- **Dγ-2 — Time-bounded de-dupe (age-based eviction, default 24 h TTL) + clock seam.** *(no dep — isolated to `router.py`)* Closes the evict-then-replay hole. `[P1 — the eval's highest-priority Dγ gap]`
 - **Dγ-3 — Connector-agnostic `verify()` contract (relocate GitHub HMAC, fail-closed).** *(blocked_by Dγ-1 — shares `funnel_handler.py`; lands after the size cap)* Generalizes integrity so no future connector is added unverified.
 - **Dγ-4 — JSON nesting-depth cap (per-endpoint config, default 64).** *(blocked_by Dγ-3 — shares `funnel_handler.py`; lands after the verify refactor)* Closes the nested-JSON CPU sink; composes on top of the size cap.
 
