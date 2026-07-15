@@ -1,6 +1,6 @@
 """Tests for `agent-core bus status` and `agent-core bus mailbox`."""
 
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 import yaml
@@ -69,6 +69,37 @@ class TestStatus:
         assert "stub-a" in result.output
         assert "stub-b" in result.output
         assert "dlq" in result.output.lower() or "dead" in result.output.lower()
+
+    def test_status_shows_no_heartbeat_when_file_absent(self, tmp_path: Path):
+        cfg = _write_config(tmp_path)
+        _seed(tmp_path)
+        runner = CliRunner()
+        result = runner.invoke(app, ["bus", "status", "--config", str(cfg)])
+        assert result.exit_code == 0
+        assert "no file" in result.output.lower() or "watchdog disabled" in result.output.lower()
+
+    def test_status_shows_heartbeat_age_when_file_present(self, tmp_path: Path):
+        cfg = _write_config(tmp_path)
+        _seed(tmp_path)
+        # Write a heartbeat file that is ~5 seconds old
+        hb_path = tmp_path / "watchdog_heartbeat"
+        recent_ts = (datetime.now(UTC) - timedelta(seconds=5)).isoformat()
+        hb_path.write_text(recent_ts, encoding="utf-8")
+        runner = CliRunner()
+        result = runner.invoke(app, ["bus", "status", "--config", str(cfg)])
+        assert result.exit_code == 0
+        assert "last heartbeat:" in result.output
+        assert "s ago" in result.output
+
+    def test_status_shows_unreadable_when_heartbeat_corrupt(self, tmp_path: Path):
+        cfg = _write_config(tmp_path)
+        _seed(tmp_path)
+        hb_path = tmp_path / "watchdog_heartbeat"
+        hb_path.write_text("not-a-timestamp", encoding="utf-8")
+        runner = CliRunner()
+        result = runner.invoke(app, ["bus", "status", "--config", str(cfg)])
+        assert result.exit_code == 0
+        assert "unreadable" in result.output.lower()
 
 
 class TestMailbox:

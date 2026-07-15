@@ -98,6 +98,9 @@ class BusConfig:
     # Watchdog: warn when deliver() takes longer than this many seconds.
     # Non-positive value disables the watchdog entirely.
     slow_deliver_warn_seconds: float = 5.0
+    # Liveness watchdog: OS thread fires os._exit if the event loop stops
+    # bumping the heartbeat for this many seconds. Non-positive disables.
+    watchdog_timeout_seconds: int = 90
 
 
 @dataclass
