@@ -773,6 +773,33 @@ def test_uninstall_autostart_unsupported_platform_exits_1(
 1. **Single `autostart.py` with platform dispatch inside it**: all three platform implementations in one module. Ruled out — the file would exceed 250 lines mixing three implementations and two test files, contradicts the Windows module's narrow-responsibility precedent, and makes per-platform unit tests import the whole combined module.
 2. **Formal ABC/Protocol `AutostartBackend`**: OOP abstraction with `build()`, `install()`, `uninstall()` methods. Ruled out — three concrete platforms, no runtime polymorphism needed, three additional module-level classes for zero benefit over plain module-level functions that already match the `autostart.py` style.
 3. **Invoke bus run directly in unit/plist (bypass `daemon start`)**: units would call `~/.agent-core/.venv/bin/python -m agent_core.cli bus run --config ...` in the foreground, which is the semantically cleanest approach for systemd `Type=simple` and macOS `KeepAlive=true`. Ruled out because the issue explicitly names `agent-core-daemon` as the entry point for units and does not ask for a foreground runner mode; implementing the issue literally first and iterating is lower risk.
+4. **`Restart=always` (as stated in the issue) vs `Restart=on-failure` (spec choice)**: The issue body lists `Restart=always` in the Linux scope bullet. The spec deviates to `Restart=on-failure`. The reason: with `Type=forking`, the monitored PID is the forked bus subprocess. `Restart=always` means systemd re-starts the unit immediately after *any* exit — including a clean `systemctl --user stop`. The operator would be unable to stop the daemon intentionally; every `stop` would be defeated by an immediate restart. `Restart=on-failure` (exit code ≠ 0 only) correctly handles crashes while permitting clean operator-initiated stops. This is an intentional deviation from the issue's stated value and is documented here for operator approval before the Worker ships it.
+
+## Manual smoke-test checklist
+
+The issue acceptance criteria requires "manual per-OS verification documented." The following commands constitute the post-install verification steps for each platform. These are intended for the human operator performing the first on-device install; they are not run in CI.
+
+### Linux (systemd --user)
+
+```bash
+# After running: agent-core daemon install-autostart --instance prod
+systemctl --user status agent-core.service   # should show Active: active (running)
+systemctl --user is-enabled agent-core.service  # should print "enabled"
+
+# Verify linger is in effect (daemon survives logout):
+loginctl show-user "$USER" --property=Linger  # shows "Linger=yes" after loginctl enable-linger
+```
+
+### macOS (launchd LaunchAgent)
+
+```bash
+# After running: agent-core daemon install-autostart --instance prod
+launchctl list | grep agent-core             # should show the job PID and label
+launchctl print "gui/$(id -u)/com.jeffrichley.agent-core.daemon.prod"  # full job detail
+
+# After running: agent-core daemon uninstall-autostart --instance prod
+launchctl list | grep agent-core             # should return nothing
+```
 
 ## Open questions
 
@@ -784,5 +811,5 @@ def test_uninstall_autostart_unsupported_platform_exits_1(
 - B-1 (#304) `sd_notify` implementation — `WatchdogSec=60` appears in the systemd unit content but this ticket does not add sd_notify signalling to the daemon process; deployment of the Linux unit is gated on B-1 merging first.
 - Tray icon, OS notification, or Discord surfacing of autostart status (#265).
 - Source / test instance autostart (prod-only, unchanged).
-- Manual per-OS smoke-test documentation (out of scope for foreman-buildable work; the acceptance criteria specifies CI-mocked tests only).
+- Automated deployment of the manual smoke-test steps in CI — the `Manual smoke-test checklist` section above satisfies the issue's "manual per-OS verification documented" acceptance gate; running those steps in CI is not required.
 - Changes to `daemon start`/`stop`/`status`/`install`/`refresh` command behaviour.
