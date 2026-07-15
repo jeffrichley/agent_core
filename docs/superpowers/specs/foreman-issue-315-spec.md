@@ -18,7 +18,7 @@ Design authority: [`docs/superpowers/specs/2026-07-14-interpreter-venv-resolutio
 - **Old versioned dir untouched**: the directory the stable path previously pointed to is left intact (GC deferred to C2-3).
 - Unit tests in `packages/core/tests/test_venv_builder.py` cover: all four `resolve_uv` probe paths, both path-layout functions for being vs daemon target, `create_venv` idempotency, `install_sidecars` command shape, `verify_sidecars` pass/fail, `atomic_repoint` POSIX creates/replaces symlink + leaves old dir, `build_being_venv` happy path and verify-fails-aborts-before-repoint.
 - CLI tests in `packages/core/tests/test_venv_cli.py` cover: `build` exits 0 on happy path, `build` exits 1 on `UvNotFoundError`, `build` exits 1 on `SidecarVerifyError`, `upgrade` invokes identical code path.
-- `just test-fast` passes.
+- `just check` passes (lint-clean via `ruff check packages/core` + full test suite).
 
 ## Approach
 
@@ -861,8 +861,6 @@ def cli_runner() -> CliRunner:
 
 def _patch_build(monkeypatch: pytest.MonkeyPatch, *, raises=None, returns=None):
     """Monkeypatch build_being_venv in the CLI module."""
-    from agent_core.venv import builder as _b
-
     def fake_build(target, *, python_version="3.12", runner=None):
         if raises is not None:
             raise raises
