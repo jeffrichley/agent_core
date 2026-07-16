@@ -59,6 +59,7 @@ class InstallStamp:
     python_version: str          # e.g. "3.12.5"
     extra: str | None            # uv extra name, or None
     release_tag: str | None      # provenance: GH release tag (e.g. "v0.1.0")
+    venv_path: str | None = None  # absolute path of the installed venv (Cα-3, #321)
 
 
 def write_stamp(home: Path, stamp: InstallStamp) -> None:
@@ -88,6 +89,7 @@ def read_stamp(home: Path) -> InstallStamp | None:
             python_version=data["python_version"],
             extra=data.get("extra"),
             release_tag=data.get("release_tag"),
+            venv_path=data.get("venv_path"),
         )
     except (KeyError, TypeError):
         return None
