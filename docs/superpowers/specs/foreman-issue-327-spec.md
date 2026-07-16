@@ -22,10 +22,12 @@ Design authority: [`docs/superpowers/specs/2026-07-14-hatchery-correctness-desig
 - **Loud failure on `reachable_but_missing`**: `cli.py` exits with code 1 when `daemon_check_status == "reachable_but_missing"` (daemon up, fragments written, endpoint not visible — a real defect). When `daemon_check_status == "unreachable"`, the hatch succeeds (exit 0) with the report warning (daemon may be intentionally stopped; endpoint registers on next daemon start).
 - **CLI wiring**: `daemon_check_status = "skipped"` in `cli.py` is replaced by `daemon_check_status = reload_and_probe(cfg) if not cfg.init_missing else "skipped"`.
 - **Tests for new hatcher steps** in `packages/agent-core-hatchery/tests/test_hatcher_venv_mcp.py`:
-  - `test_build_being_venv_called_with_being_name_lower` — verifies `_venv_builder` is called with the correct target.
+  - `test_venv_builder_called_with_being_name_lower` — verifies `_venv_builder` is called with `"testbeing"`.
   - `test_stable_venv_path_tracked_for_rollback` — verifies stable venv path is in `_tracked_writes`.
-  - `test_mcp_json_gen_called_after_venv_build` — verifies generator is called and its return path is tracked.
-  - `test_new_steps_skipped_on_init_missing` — verifies neither `_venv_builder` nor `_mcp_json_gen` is called when `init_missing=True`.
+  - `test_mcp_json_gen_called_after_venv_build` — verifies venv build is called before `.mcp.json` generation (call-order check only; path tracking is verified by a separate test).
+  - `test_mcp_json_path_tracked_for_rollback` — verifies the path returned by `_mcp_json_gen` is appended to `_tracked_writes`.
+  - `test_venv_builder_not_called_on_init_missing` — verifies `_venv_builder` is not called when `init_missing=True`.
+  - `test_mcp_json_gen_not_called_on_init_missing` — verifies `_mcp_json_gen` is not called when `init_missing=True`.
   - `test_rollback_removes_stable_venv_symlink` (POSIX only) — creates a real symlink, verifies `_rollback()` removes it.
 - **Tests for daemon probe** in `packages/agent-core-hatchery/tests/test_daemon_probe.py`:
   - `test_probe_returns_registered_on_non_404_response`
@@ -116,7 +118,49 @@ No GoF pattern applies cleanly. Guiding principles:
 
 13. **Create `packages/agent-core-hatchery/tests/test_daemon_probe.py`**. See File-level changes for exact content.
 
-14. **Update `test_mcp_json_rendered_at_vault_root` in `test_hatcher_config.py`**: change the `hatched` fixture (or use a local override) so `Hatcher` is called with a stub `_mcp_json_gen` that writes a known `.mcp.json` to the vault. Remove the `command == "uvx"` assertion; keep assertions that the file exists, parses, and has `agent-core-busproxy` in `mcpServers`. Also add a stub for `_venv_builder` to prevent C2-1 subprocess calls.
+14. **Inject DI stubs into all bare `Hatcher(cfg)` callsites without stubs** — three files need updating:
+
+    **`test_hatcher_basic.py`**: Add these module-level stubs near the top of the file (after imports, before the first test):
+    ```python
+    def _noop_venv_builder(target: str) -> Path:
+        return Path.home() / f".{target}" / ".venv"
+
+    def _noop_mcp_gen(**kwargs) -> Path:
+        return Path.home() / ".fake" / ".mcp.json"
+    ```
+    Inject both into every `Hatcher(cfg)` call with `init_missing=False` — the callsites at lines 19, 48, 52, 62, 74, 97, 114, and 139. Pattern:
+    ```python
+    # before
+    Hatcher(cfg).hatch()
+    # after
+    Hatcher(cfg, _venv_builder=_noop_venv_builder, _mcp_json_gen=_noop_mcp_gen).hatch()
+    ```
+    The `test_hatch_refuses_if_vault_exists` test has two calls: both the first hatch (line 48) and the re-hatch (line 52) need stubs injected; the second call raises `VaultExistsError` but still needs the stubs so the constructor is valid. The topup call at line 82 (`init_missing=True`) needs no stubs — the new steps are guarded.
+
+    **`test_hatcher_config.py`**: Update the `hatched` fixture (line 21) per the fixture snippet in the Modifications section. Additionally, inject stubs into the two standalone first-hatch calls in:
+    - `test_init_missing_preserves_user_edits_to_config` (line 107): `Hatcher(cfg, _venv_builder=_noop_venv_builder, _mcp_json_gen=_stub_mcp_gen_for_fixture(cfg.resolved_vault_root())).hatch()`
+    - `test_init_missing_restores_deleted_config` (line 131): same pattern.
+    Both files share the `_noop_venv_builder` helper and `_stub_mcp_gen_for_fixture` already defined for the fixture.
+
+    Also update `test_mcp_json_rendered_at_vault_root` per the exact replacement snippet in the Modifications section — remove the `command == "uvx"` assertion; keep the three-sidecar and file-exists assertions.
+
+    **`test_validators.py`**: Inject stubs into the `_hatched_cfg` helper's `Hatcher(cfg)` call at line 21:
+    ```python
+    def _hatched_cfg(tmp_path):
+        cfg = HatchConfig(
+            being_name="TestBeing",
+            primary_human_name="Tester",
+            vault_root=str(tmp_path),
+            daemon_config_dir=str(tmp_path / ".agent-core"),
+        )
+        Hatcher(
+            cfg,
+            _venv_builder=lambda t: Path.home() / f".{t}" / ".venv",
+            _mcp_json_gen=lambda **kw: tmp_path / ".mcp.json",
+        ).hatch()
+        return cfg
+    ```
+    The `_mcp_json_gen` lambda returns a path without writing the file — validator tests only inspect daemon fragments, not `.mcp.json`. If any validator test is later updated to check `.mcp.json`, switch to a writing stub. Also add `from pathlib import Path` to the imports if not already present.
 
 15. **Run `just check`** — fix any lint/coverage gaps.
 
@@ -131,7 +175,9 @@ No GoF pattern applies cleanly. Guiding principles:
 | `packages/agent-core-hatchery/src/agent_core_hatchery/daemon_probe.py` | **New** — `read_daemon_http_config`, `reload_and_probe`, and supporting helpers |
 | `packages/agent-core-hatchery/tests/test_hatcher_venv_mcp.py` | **New** — unit tests for venv-build and mcp-json-gen steps in hatcher |
 | `packages/agent-core-hatchery/tests/test_daemon_probe.py` | **New** — unit tests for daemon_probe.py |
-| `packages/agent-core-hatchery/tests/test_hatcher_config.py` | **Modify** — update `hatched` fixture to inject stubs for `_venv_builder` / `_mcp_json_gen`; update `test_mcp_json_rendered_at_vault_root` to remove uvx assertion |
+| `packages/agent-core-hatchery/tests/test_hatcher_basic.py` | **Modify** — add module-level `_noop_venv_builder` and `_noop_mcp_gen` stubs; inject both into all 8 bare `Hatcher(cfg)` calls with `init_missing=False` (lines 19, 48, 52, 62, 74, 97, 114, 139) |
+| `packages/agent-core-hatchery/tests/test_hatcher_config.py` | **Modify** — (a) update `hatched` fixture to inject stubs for `_venv_builder` / `_mcp_json_gen`; (b) inject stubs into the two standalone first-hatch calls in `test_init_missing_preserves_user_edits_to_config` (line 107) and `test_init_missing_restores_deleted_config` (line 131); (c) update `test_mcp_json_rendered_at_vault_root` to remove uvx assertion |
+| `packages/agent-core-hatchery/tests/test_validators.py` | **Modify** — inject no-op stubs into the `_hatched_cfg` helper's `Hatcher(cfg)` call (line 21) |
 
 ### Exact content: `packages/agent-core-hatchery/src/agent_core_hatchery/daemon_probe.py`
 
