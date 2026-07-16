@@ -1,0 +1,50 @@
+# Pepper's being endpoints — contributed by this fragment to the daemon config
+# at ~/.agent-core/ via conf.d-style merge (bus/runner.py).
+#
+# The monolith (agent_core.yaml) retains infra and system endpoints:
+#   scheduler, handoff-jobs, stub, and test ones.
+# Only Pepper's being-scoped endpoints live here.
+#
+# Live path: ~/.agent-core/endpoints.d/pepper.yaml
+# Regenerate with: agent-core hatchery regenerate pepper  (future Cluster β feature)
+endpoints:
+  - type: builtin.claude_code_mcp
+    name: pepper
+    description: "Pepper's MCP endpoint."
+    params:
+      mount: /mcp/pepper
+      briefs_orchestrator: briefs.pepper
+
+  - type: builtin.briefs_orchestrator
+    name: briefs.pepper
+    description: "Pepper's briefs orchestrator."
+    params:
+      playbooks_path: "C:\\Users\\jeffr\\.pepper\\Memory\\playbooks"
+      fetcher_paths:
+        - "C:\\Users\\jeffr\\.pepper\\Memory\\briefs\\fetchers"
+      destination_paths:
+        - "C:\\Users\\jeffr\\.pepper\\Memory\\briefs\\destinations"
+      audit_log_path: "~/.agent-core/briefs/audit.jsonl"
+      vars:
+        agent_root: "C:\\Users\\jeffr\\.pepper"
+      default_target_agent: "pepper"
+
+  - type: builtin.discord
+    name: discord-pepper
+    description: "Discord adapter for Pepper."
+    params:
+      target: pepper
+      token_env: PEPPER_DISCORD_TOKEN
+      env_file: "~/.agent-core/discord-pepper.env"
+
+  - type: builtin.webcam
+    name: webcam-pepper
+    description: "Pepper's webcam endpoint."
+    params:
+      enabled: true
+      captures_root: "~/.agent-core/webcam/pepper"
+      audit_log_path: "~/.agent-core/webcam/pepper/audit.jsonl"
+      default_camera_index: 0
+      default_resolution: [1280, 720]
+      max_resolution: [3840, 2160]
+      capture_timeout_seconds: 3.0
