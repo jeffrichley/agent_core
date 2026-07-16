@@ -147,7 +147,15 @@ In the fragment, the `pepper` endpoint's `briefs_orchestrator` param should refe
            )
            continue
    ```
-   Note: the `endpoints_by_name` dict and `raw_endpoint_configs` dict that are built after this loop for `apply_endpoint_wiring` will naturally exclude skipped entries because skipped entries were never registered on the bus. No change needed to the wiring step.
+   **Wiring-step follow-on (required):** The `endpoints_by_name` dict (built from `bus._endpoints_by_name.values()`) naturally excludes skipped entries. However, the `raw_endpoint_configs` dict comprehension at `runner.py` lines 227–229 iterates over `raw.get("endpoints", [])` — the **full** merged list including skipped entries — and calls `entry["name"]`. This will raise `KeyError` on any entry that was skipped for missing `"name"`. The Worker must update that comprehension to filter to only names present in `endpoints_by_name`:
+   ```python
+   raw_endpoint_configs: dict[str, dict[str, Any]] = {
+       entry["name"]: entry
+       for entry in (raw.get("endpoints", []) or [])
+       if isinstance(entry, dict) and entry.get("name") in endpoints_by_name
+   }
+   ```
+   This ensures only successfully-registered entries participate in cross-endpoint wiring and prevents `KeyError` from undoing the graceful degradation.
 
 5. **Update `test_endpoints_d_malformed_fragment_raises_with_filename`**
    In `packages/core/tests/bus/test_runner_endpoints_d.py`:
@@ -413,7 +421,48 @@ In the fragment, the `pepper` endpoint's `briefs_orchestrator` param should refe
          capture_timeout_seconds: 3.0
    ```
 
-9. **Update `docs/examples/pepper-agent-core.yaml`**
+9. **Update 4 tests in `packages/core/tests/bus/test_runner.py` that expect `BusBootError` to propagate**
+   After sub-request 4's per-entry changes convert entry-level validation errors into log-and-skip, the following four tests in `class TestRunner` will fail because they expect `BusBootError` to propagate:
+   - `test_unknown_class_raises` (line 55)
+   - `test_class_not_endpoint_protocol` (line 70)
+   - `test_endpoint_missing_name_raises` (line 88)
+   - `test_endpoint_missing_type_raises` (line 95)
+
+   Update each test consistently with the pattern in sub-request 5 — rename it and replace `pytest.raises(BusBootError)` with a `caplog.at_level` assertion verifying boot continues and the error was logged. Add `import logging` to the file imports. The test method signatures must add the `build_bus` and `caplog` fixtures.
+
+   Example for `test_unknown_class_skipped_boot_continues` (renamed from `test_unknown_class_raises`):
+   ```python
+   async def test_unknown_class_skipped_boot_continues(self, tmp_path: Path, build_bus, caplog):
+       config = {
+           "endpoints": [
+               {
+                   "type": "does.not_exist.Foo",
+                   "name": "x",
+                   "params": {},
+               }
+           ]
+       }
+       p = tmp_path / "bad.yaml"
+       p.write_text(yaml.dump(config))
+       with caplog.at_level(logging.ERROR, logger="agent_core.bus.runner"):
+           bus, _http = await build_bus(p)
+       try:
+           assert any(
+               "does.not_exist.Foo" in r.message or "x" in r.message
+               for r in caplog.records
+           )
+       finally:
+           await bus.stop()
+   ```
+
+   The three remaining tests follow the same pattern (no raise, `caplog` assertion verifying the relevant error was logged):
+   - `test_class_not_endpoint_protocol_skipped_boot_continues` — verify a log record mentions `"unknown endpoint type"` and/or `"datetime.datetime"`
+   - `test_endpoint_missing_name_skipped_boot_continues` — verify a log record mentions `"missing"` and/or `"'name'"`
+   - `test_endpoint_missing_type_skipped_boot_continues` — verify a log record mentions `"missing"` and/or `"'type'"`
+
+   The `test_non_loopback_bind_refused` test is **not changed** — that is a host/port validation error, not an endpoint-entry error, and must remain loud.
+
+10. **Update `docs/examples/pepper-agent-core.yaml`**
    Remove the `pepper` and `briefs.orchestrator` endpoints from the `endpoints:` list (leaving only `handoff-jobs`). Add a comment at the top of the `endpoints:` block:
    ```yaml
    endpoints:
@@ -432,6 +481,7 @@ In the fragment, the `pepper` endpoint's `briefs_orchestrator` param should refe
 |------|--------|
 | `packages/core/src/agent_core/bus/runner.py` | **Modify** — add `import logging`, `logger = logging.getLogger(__name__)`, `_EntryBusBootError`; replace fragment error from raise to log+continue; wrap per-entry processing with try/except |
 | `packages/core/tests/bus/test_runner_endpoints_d.py` | **Modify** — add `import logging`; rename + update `test_endpoints_d_malformed_fragment_raises_with_filename`; add 5 new tests: yaml-error-quarantine, missing-type-skip, missing-name-skip, unknown-type-skip, construction-failure-skip |
+| `packages/core/tests/bus/test_runner.py` | **Modify** — add `import logging`; rename + update 4 `TestRunner` tests (`test_unknown_class_raises`, `test_class_not_endpoint_protocol`, `test_endpoint_missing_name_raises`, `test_endpoint_missing_type_raises`) from `pytest.raises(BusBootError)` to `caplog.at_level` assertions verifying degraded behavior: boot continues + error logged |
 | `docs/examples/endpoints.d/pepper.yaml` | **New** — canonical Pepper being-endpoint fragment (four endpoints) |
 | `docs/examples/pepper-agent-core.yaml` | **Modify** — remove `pepper` and `briefs.orchestrator` endpoints; add comment directing to fragment |
 
