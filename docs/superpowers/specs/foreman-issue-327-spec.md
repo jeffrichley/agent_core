@@ -29,15 +29,15 @@ Design authority: [`docs/superpowers/specs/2026-07-14-hatchery-correctness-desig
   - `test_venv_builder_not_called_on_init_missing` — verifies `_venv_builder` is not called when `init_missing=True`.
   - `test_mcp_json_gen_not_called_on_init_missing` — verifies `_mcp_json_gen` is not called when `init_missing=True`.
   - `test_rollback_removes_stable_venv_symlink` (POSIX only) — creates a real symlink, verifies `_rollback()` removes it.
-- **Tests for daemon probe** in `packages/agent-core-hatchery/tests/test_daemon_probe.py`:
-  - `test_probe_returns_registered_on_non_404_response`
-  - `test_probe_returns_missing_on_404_response`
-  - `test_probe_returns_unreachable_on_connection_refused`
-  - `test_probe_timeout_returns_unreachable`
-  - `test_reload_stops_then_starts_daemon`
-  - `test_daemon_http_config_read_from_yaml`
+- **Tests for daemon probe** in `packages/agent-core-hatchery/tests/test_daemon_probe.py` (names match the exact content below 1-to-1):
+  - `test_returns_registered_on_200` (in `TestProbeEndpoint`) — any 2xx response yields `"reachable_and_registered"`.
+  - `test_returns_missing_on_404` (in `TestProbeEndpoint`) — HTTP 404 yields `"reachable_but_missing"`.
+  - `test_returns_unreachable_on_connection_refused` (in `TestProbeEndpoint`) — `URLError` retries until deadline.
+  - `test_probe_timeout_returns_unreachable` (in `TestProbeEndpoint`) — `timeout=0.0` exits the poll loop before the first iteration; returns `"unreachable"` immediately.
+  - `test_stops_then_starts_daemon` (in `TestReloadAndProbe`) — verifies stop is called before start.
+  - `test_reads_host_and_port_from_yaml` (in `TestReadDaemonHttpConfig`) — reads bind host/port from `agent_core.yaml`.
 - **Updated `test_hatcher_config.py`**: `test_mcp_json_rendered_at_vault_root` is rewritten to use `_mcp_json_gen=` injection (no real C2-2 call) and removes the `command == "uvx"` assertion; now checks that generator was called and `.mcp.json` exists with the path the stub wrote.
-- `just check` passes (ruff + full test suite with coverage ≥ 85 %).
+- `just check` passes (ruff + full test suite with coverage ≥ 85 %); and `ruff check packages/agent-core-hatchery` and `uv run pytest packages/agent-core-hatchery/tests --no-cov -q` both pass clean. After sub-request 16 folds hatchery into the shared gate, `just check` subsumes these two commands.
 
 ## Approach
 
@@ -162,7 +162,17 @@ No GoF pattern applies cleanly. Guiding principles:
     ```
     The `_mcp_json_gen` lambda returns a path without writing the file — validator tests only inspect daemon fragments, not `.mcp.json`. If any validator test is later updated to check `.mcp.json`, switch to a writing stub. Also add `from pathlib import Path` to the imports if not already present.
 
-15. **Run `just check`** — fix any lint/coverage gaps.
+15. **Run hatchery-scoped verification** — `just lint` (justfile line 38) runs ruff only on `packages/core packages/agent-core-channel`; `[tool.pytest.ini_options] testpaths` in `pyproject.toml` does not include `packages/agent-core-hatchery`. Run these two commands explicitly and fix any errors before proceeding to step 16:
+    ```
+    ruff check packages/agent-core-hatchery
+    uv run pytest packages/agent-core-hatchery/tests --no-cov -q
+    ```
+    Then run `just check` to confirm the rest of the suite is unaffected.
+
+16. **Fold hatchery into the shared CI gates** so every future change to the package is caught automatically:
+    - In `pyproject.toml`, append `"packages/agent-core-hatchery/tests"` to the `testpaths` list under `[tool.pytest.ini_options]`.
+    - In the `justfile`, add `packages/agent-core-hatchery` to the `lint` recipe's ruff invocation (currently `ruff check packages/core packages/agent-core-channel`; expand to include `packages/agent-core-hatchery`).
+    After these two edits, `just check` subsumes both explicit commands from step 15. Run `just check` once more to confirm everything is green.
 
 ## File-level changes
 
@@ -178,6 +188,8 @@ No GoF pattern applies cleanly. Guiding principles:
 | `packages/agent-core-hatchery/tests/test_hatcher_basic.py` | **Modify** — add module-level `_noop_venv_builder` and `_noop_mcp_gen` stubs; inject both into all 8 bare `Hatcher(cfg)` calls with `init_missing=False` (lines 19, 48, 52, 62, 74, 97, 114, 139) |
 | `packages/agent-core-hatchery/tests/test_hatcher_config.py` | **Modify** — (a) update `hatched` fixture to inject stubs for `_venv_builder` / `_mcp_json_gen`; (b) inject stubs into the two standalone first-hatch calls in `test_init_missing_preserves_user_edits_to_config` (line 107) and `test_init_missing_restores_deleted_config` (line 131); (c) update `test_mcp_json_rendered_at_vault_root` to remove uvx assertion |
 | `packages/agent-core-hatchery/tests/test_validators.py` | **Modify** — inject no-op stubs into the `_hatched_cfg` helper's `Hatcher(cfg)` call (line 21) |
+| `pyproject.toml` | **Modify** — append `"packages/agent-core-hatchery/tests"` to `[tool.pytest.ini_options] testpaths` list (sub-request 16) |
+| `justfile` | **Modify** — add `packages/agent-core-hatchery` to the `lint` recipe's ruff invocation (sub-request 16) |
 
 ### Exact content: `packages/agent-core-hatchery/src/agent_core_hatchery/daemon_probe.py`
 
@@ -185,7 +197,8 @@ No GoF pattern applies cleanly. Guiding principles:
 """Daemon reload and endpoint health-probe for hatch→run handoff (Cβ-3, issue #327).
 
 SRP: this module does two things only — restart the daemon process and HTTP-probe the
-new being's endpoint. It imports nothing from agent_core_hatchery to avoid cycles.
+new being's endpoint. Imports HatchConfig and DaemonCheckStatus from agent_core_hatchery;
+no cycle exists (daemon_probe is not imported by hatcher.py or config.py).
 """
 
 from __future__ import annotations
@@ -366,8 +379,6 @@ class TestBuildBeingVenvStep:
     def test_venv_builder_called_with_being_name_lower(self, tmp_path: Path) -> None:
         calls: list[str] = []
         cfg = _cfg(tmp_path)
-        vault = cfg.resolved_vault_root()
-
         gen_calls: list = []
         hatcher = Hatcher(
             cfg,
@@ -509,14 +520,11 @@ class TestRollbackSymlink:
 
 from __future__ import annotations
 
-import json
 import urllib.error
-import urllib.request
 from pathlib import Path
 from unittest.mock import patch
 
 import pytest
-import yaml
 
 from agent_core_hatchery.config import HatchConfig
 from agent_core_hatchery.daemon_probe import (
@@ -674,6 +682,13 @@ class TestProbeEndpoint:
         result = _probe_endpoint("127.0.0.1", 8789, "wren", timeout=0.1, poll_interval=0.0)
         assert result == "unreachable"
         assert call_count >= 1
+
+    def test_probe_timeout_returns_unreachable(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """timeout=0.0 means deadline == now; while-loop condition is False on first check."""
+        monkeypatch.setattr("agent_core_hatchery.daemon_probe.time.sleep", lambda s: None)
+        # urlopen is not patched — the loop body never executes when timeout=0.0
+        result = _probe_endpoint("127.0.0.1", 8789, "wren", timeout=0.0, poll_interval=0.0)
+        assert result == "unreachable"
 
 
 class TestReloadAndProbe:
