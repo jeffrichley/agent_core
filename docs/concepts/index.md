@@ -4,10 +4,13 @@ agent-core is built around one central idea: **endpoints on a bus, work as envel
 
 Every participant in the system — an AI agent, a Discord adapter, a scheduler, a stub for testing — is an **endpoint**: an addressable name that can receive and send messages. Those messages are **envelopes**: a universal wire format carrying a typed payload, routing metadata, and an urgency level. The **bus** is the in-process router that connects them: it persists every envelope to a durable SQLite mailbox, dispatches to the target endpoint, waits for acknowledgment, and retries or dead-letters if delivery fails. Finally, **extensions** let third-party packages contribute new endpoint types, new envelope kinds, bus hooks, and CLI subcommands — without modifying agent-core itself.
 
-These four concepts build on each other in order:
+New to agent-core? Read the [Architecture](architecture.md) page first for a full system diagram and noun definitions.
+
+These concepts build on each other in order:
 
 | Concept | What it does |
 |---|---|
+| [Architecture](architecture.md) | How the daemon, bus, endpoints, beings, and sidecars compose |
 | [Bus](bus.md) | Routes, persists, retries, and supervises everything |
 | [Envelopes](envelopes.md) | The universal wire format all participants share |
 | [Endpoints](endpoints.md) | Addressable participants; the deliver/ack contract |
