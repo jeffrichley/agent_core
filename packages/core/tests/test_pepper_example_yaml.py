@@ -24,6 +24,7 @@ from agent_core.hooks.pipeline import Pipeline
 
 _REPO_ROOT = Path(__file__).resolve().parents[3]
 _EXAMPLE_YAML = _REPO_ROOT / "docs" / "examples" / "pepper-agent-core.yaml"
+_EXAMPLE_FRAGMENT = _REPO_ROOT / "docs" / "examples" / "endpoints.d" / "pepper.yaml"
 
 
 @pytest.fixture(scope="module")
@@ -116,22 +117,22 @@ class TestPepperExampleYamlBusLog:
 class TestPepperExampleYamlBriefs:
     """Cutover #09 wiring tripwire — brief framework orchestrator endpoint.
 
-    The orchestrator endpoint is the single point through which all
-    BriefRequest events flow. If a future refactor drops or mis-names
-    the endpoint, Pepper's morning brief and other scheduled briefs
-    silently stop firing. These assertions lock the canonical wiring
-    in the example yaml so regressions surface at test time.
+    Pepper's being-endpoints now live in docs/examples/endpoints.d/pepper.yaml
+    (Cα-2 migration). These assertions lock the canonical wiring in that
+    fragment so regressions surface at test time.
     """
 
     @pytest.fixture(scope="class")
     def raw_yaml(self) -> dict:
-        # Read the example yaml directly so these assertions don't depend
+        # Read the fragment directly so these assertions don't depend
         # on the briefs orchestrator being importable as an endpoint type
         # by Pipeline (Pipeline only loads hook-tool pipelines, not bus
         # endpoints — the briefs orchestrator is a bus endpoint).
+        # Cα-2: Pepper's being-endpoints migrated from the monolith to
+        # endpoints.d/pepper.yaml; this fixture now reads from there.
         import yaml as pyyaml
 
-        return pyyaml.safe_load(_EXAMPLE_YAML.read_text(encoding="utf-8")) or {}
+        return pyyaml.safe_load(_EXAMPLE_FRAGMENT.read_text(encoding="utf-8")) or {}
 
     def _endpoint_by_name(self, raw: dict, name: str) -> dict | None:
         for entry in raw.get("endpoints") or []:
@@ -140,12 +141,12 @@ class TestPepperExampleYamlBriefs:
         return None
 
     def test_briefs_orchestrator_endpoint_exists(self, raw_yaml: dict):
-        """Cutover #09 acceptance: the example yaml must declare a
-        builtin.briefs_orchestrator endpoint named ``briefs.orchestrator``
+        """Cutover #09 acceptance: the Pepper fragment must declare a
+        builtin.briefs_orchestrator endpoint named ``briefs.pepper``
         so Pepper can receive BriefRequest events on the bus."""
-        ep = self._endpoint_by_name(raw_yaml, "briefs.orchestrator")
+        ep = self._endpoint_by_name(raw_yaml, "briefs.pepper")
         assert ep is not None, (
-            "Cutover #09 expects an endpoint named 'briefs.orchestrator' in the example yaml"
+            "Cutover #09 expects an endpoint named 'briefs.pepper' in the Pepper fragment"
         )
         assert ep.get("type") == "builtin.briefs_orchestrator"
 
@@ -153,24 +154,24 @@ class TestPepperExampleYamlBriefs:
         """The orchestrator must point at a playbooks directory — the brief
         framework loads ``<playbooks_path>/<brief_type>.md`` per request, so
         a missing or empty path means no briefs can be composed."""
-        ep = self._endpoint_by_name(raw_yaml, "briefs.orchestrator")
+        ep = self._endpoint_by_name(raw_yaml, "briefs.pepper")
         assert ep is not None
         params = ep.get("params") or {}
         playbooks_path = params.get("playbooks_path")
         assert isinstance(playbooks_path, str) and playbooks_path, (
-            "briefs.orchestrator.params.playbooks_path must be a non-empty string"
+            "briefs.pepper.params.playbooks_path must be a non-empty string"
         )
 
     def test_briefs_orchestrator_has_fetcher_paths(self, raw_yaml: dict):
         """fetcher_paths must list at least one directory — without fetchers
         the gather step has no data sources, so every brief composes against
         empty context. The runner uses fetcher_paths (not fetcher_catalog)."""
-        ep = self._endpoint_by_name(raw_yaml, "briefs.orchestrator")
+        ep = self._endpoint_by_name(raw_yaml, "briefs.pepper")
         assert ep is not None
         params = ep.get("params") or {}
         fetcher_paths = params.get("fetcher_paths")
         assert isinstance(fetcher_paths, list) and len(fetcher_paths) >= 1, (
-            "briefs.orchestrator.params.fetcher_paths must be a list with at least one entry"
+            "briefs.pepper.params.fetcher_paths must be a list with at least one entry"
         )
         for entry in fetcher_paths:
             assert isinstance(entry, str) and entry, (
@@ -182,7 +183,7 @@ class TestPepperExampleYamlBriefs:
         (compose_brief MCP path with no envelope metadata) is routed back to
         Pepper's MCP endpoint. Mis-routing here would silently drop the
         ComposeBrief envelope on the bus floor."""
-        ep = self._endpoint_by_name(raw_yaml, "briefs.orchestrator")
+        ep = self._endpoint_by_name(raw_yaml, "briefs.pepper")
         assert ep is not None
         params = ep.get("params") or {}
         assert params.get("default_target_agent") == "pepper"
@@ -192,41 +193,37 @@ class TestPepperExampleYamlBriefs:
         gather config paths (``${agent_root}/Memory/...``). Every Pepper
         playbook references it; a missing entry would surface as a parse-time
         error at the first BriefRequest, not at boot."""
-        ep = self._endpoint_by_name(raw_yaml, "briefs.orchestrator")
+        ep = self._endpoint_by_name(raw_yaml, "briefs.pepper")
         assert ep is not None
         params = ep.get("params") or {}
         vars_block = params.get("vars")
-        assert isinstance(vars_block, dict), "briefs.orchestrator.params.vars must be a mapping"
+        assert isinstance(vars_block, dict), "briefs.pepper.params.vars must be a mapping"
         agent_root = vars_block.get("agent_root")
         assert isinstance(agent_root, str) and agent_root, (
-            "briefs.orchestrator.params.vars.agent_root must be a non-empty string"
+            "briefs.pepper.params.vars.agent_root must be a non-empty string"
         )
 
     def test_pepper_claude_code_mcp_endpoint_still_exists(self, raw_yaml: dict):
-        """Regression check: adding the orchestrator entry must not displace
-        Pepper's existing claude_code_mcp endpoint. Both must coexist —
-        the MCP endpoint is the inbound surface for Claude Code; the
-        orchestrator is the bus subscriber for BriefRequest events."""
+        """Regression check: Pepper's claude_code_mcp endpoint must exist
+        in the fragment. The MCP endpoint is the inbound surface for Claude Code;
+        the orchestrator is the bus subscriber for BriefRequest events."""
         ep = self._endpoint_by_name(raw_yaml, "pepper")
         assert ep is not None, (
-            "Pepper's existing claude_code_mcp endpoint must remain in the example yaml"
+            "Pepper's claude_code_mcp endpoint must remain in the Pepper fragment"
         )
         assert ep.get("type") == "builtin.claude_code_mcp"
 
     def test_pepper_mcp_endpoint_references_briefs_orchestrator(self, raw_yaml: dict):
         """T19 cross-endpoint wiring: Pepper's MCP endpoint must name the
         briefs orchestrator via ``params.briefs_orchestrator`` so the runner
-        mounts the seven briefs agent tools (compose_brief, list_sections,
-        get_section_spec, validate_section, compress_sections,
-        add_extension_section, submit_brief) onto Pepper's MCP session at
-        ``bus.start()`` time. Without this entry, Pepper's session
-        connects to the bus but cannot compose or submit briefs — Step 6
-        of the cutover #09 playbook (real morning_brief on cron) fails."""
+        mounts the seven briefs agent tools onto Pepper's MCP session at
+        ``bus.start()`` time. Cα-2: the reference is now ``briefs.pepper``
+        (correcting the naming inconsistency with the old ``briefs.orchestrator``)."""
         ep = self._endpoint_by_name(raw_yaml, "pepper")
         assert ep is not None
         params = ep.get("params") or {}
-        assert params.get("briefs_orchestrator") == "briefs.orchestrator", (
-            "pepper.params.briefs_orchestrator must equal 'briefs.orchestrator' so "
+        assert params.get("briefs_orchestrator") == "briefs.pepper", (
+            "pepper.params.briefs_orchestrator must equal 'briefs.pepper' so "
             "the cross-endpoint wiring hook pairs the MCP session with the orchestrator"
         )
 
@@ -236,14 +233,14 @@ class TestPepperExampleYamlBriefs:
         built-in destinations only when omitted; either shape is
         acceptable. This locks the shape so a future refactor can't
         silently break the param's contract."""
-        ep = self._endpoint_by_name(raw_yaml, "briefs.orchestrator")
+        ep = self._endpoint_by_name(raw_yaml, "briefs.pepper")
         assert ep is not None
         params = ep.get("params") or {}
         if "destination_paths" not in params:
             return  # using the default (built-in destinations only) — fine
         destination_paths = params["destination_paths"]
         assert isinstance(destination_paths, list) and len(destination_paths) >= 1, (
-            "briefs.orchestrator.params.destination_paths must be a list with at "
+            "briefs.pepper.params.destination_paths must be a list with at "
             "least one entry when present"
         )
         for entry in destination_paths:

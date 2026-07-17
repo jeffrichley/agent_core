@@ -7,6 +7,7 @@ enforces v1 invariants: loopback-only bind unless an auth hook is configured
 
 from __future__ import annotations
 
+import logging
 import os
 from pathlib import Path
 from typing import Any
@@ -28,9 +29,20 @@ from agent_core.plugins.manager import (
 )
 from agent_core.plugins.specs import RunnerServices
 
+logger = logging.getLogger(__name__)
+
 
 class BusBootError(Exception):
     """Raised when the runner cannot construct a valid Bus from the config."""
+
+
+class _EntryBusBootError(BusBootError):
+    """Degradable per-entry validation failure.
+
+    Raised instead of plain BusBootError so that the per-entry try/except
+    in build_bus_from_config can catch entry-level failures without silencing
+    name collisions (which raise plain BusBootError via bus.register()).
+    """
 
 
 _LOOPBACK_HOSTS = {"127.0.0.1", "::1", "localhost"}
@@ -55,13 +67,25 @@ async def build_bus_from_config(path: Path) -> tuple[Bus, HTTPHost | None]:
     fragments_dir = Path(path).parent / "endpoints.d"
     if fragments_dir.is_dir():
         for fragment_path in sorted(fragments_dir.glob("*.yaml")):
-            fragment = yaml.safe_load(fragment_path.read_text(encoding="utf-8")) or {}
+            try:
+                fragment = yaml.safe_load(fragment_path.read_text(encoding="utf-8")) or {}
+            except yaml.YAMLError as exc:
+                logger.error(
+                    "endpoints.d fragment %r: YAML parse error — quarantining fragment, "
+                    "boot continues: %s",
+                    fragment_path.name,
+                    exc,
+                )
+                continue
             fragment_endpoints = fragment.get("endpoints", []) or []
             if not isinstance(fragment_endpoints, list):
-                raise BusBootError(
-                    f"endpoints.d fragment {fragment_path.name!r}: "
-                    f"'endpoints' must be a list, got {type(fragment_endpoints).__name__}"
+                logger.error(
+                    "endpoints.d fragment %r: 'endpoints' must be a list, got %r — "
+                    "quarantining fragment, boot continues",
+                    fragment_path.name,
+                    type(fragment_endpoints).__name__,
                 )
+                continue
             raw.setdefault("endpoints", []).extend(fragment_endpoints)
     plugin_manager = create_plugin_manager()
     plugin_manager.hook.validate_config(raw_config=raw)
@@ -180,40 +204,58 @@ async def build_bus_from_config(path: Path) -> tuple[Bus, HTTPHost | None]:
     # apply_endpoint_wiring below, where they're actually consumed.
     reserved_params = collect_reserved_endpoint_params(plugin_manager)
     for entry in raw.get("endpoints", []) or []:
-        if "type" not in entry:
-            raise BusBootError(f"endpoint entry missing required 'type' field: {entry!r}")
-        if "name" not in entry:
-            raise BusBootError(f"endpoint entry missing required 'name' field: {entry!r}")
-        endpoint_type = str(entry["type"])
-        cls = endpoint_types.get(endpoint_type)
-        if cls is None:
-            raise BusBootError(f"unknown endpoint type: {endpoint_type!r}")
-        params = entry.get("params", {})
-        constructor_params = {k: v for k, v in params.items() if k not in reserved_params}
-        # Runner-side convention (not enforced by the Endpoint Protocol):
-        # every endpoint class must accept `name` as a constructor kwarg.
-        # The Protocol only requires `name` as an *attribute*; this convention
-        # is what lets the runner construct from YAML without per-class adapters.
+        name_hint = entry.get("name", "<unknown>") if isinstance(entry, dict) else "<non-dict>"
+        type_hint = entry.get("type", "<unknown>") if isinstance(entry, dict) else "<non-dict>"
         try:
-            instance = cls(name=entry["name"], **constructor_params)
-        except Exception as exc:
-            raise BusBootError(
-                f"endpoint type {endpoint_type!r} does not satisfy Endpoint protocol: {exc}"
-            ) from exc
-        if not isinstance(instance, Endpoint):
-            raise BusBootError(
-                f"endpoint type {endpoint_type!r} does not satisfy Endpoint protocol"
+            if "type" not in entry:
+                raise _EntryBusBootError(
+                    f"endpoint entry missing required 'type' field: {entry!r}"
+                )
+            if "name" not in entry:
+                raise _EntryBusBootError(
+                    f"endpoint entry missing required 'name' field: {entry!r}"
+                )
+            endpoint_type = str(entry["type"])
+            cls = endpoint_types.get(endpoint_type)
+            if cls is None:
+                raise _EntryBusBootError(f"unknown endpoint type: {endpoint_type!r}")
+            params = entry.get("params", {})
+            constructor_params = {k: v for k, v in params.items() if k not in reserved_params}
+            # Runner-side convention (not enforced by the Endpoint Protocol):
+            # every endpoint class must accept `name` as a constructor kwarg.
+            # The Protocol only requires `name` as an *attribute*; this convention
+            # is what lets the runner construct from YAML without per-class adapters.
+            try:
+                instance = cls(name=entry["name"], **constructor_params)
+            except Exception as exc:
+                raise _EntryBusBootError(
+                    f"endpoint type {endpoint_type!r} does not satisfy Endpoint protocol: {exc}"
+                ) from exc
+            if not isinstance(instance, Endpoint):
+                raise _EntryBusBootError(
+                    f"endpoint type {endpoint_type!r} does not satisfy Endpoint protocol"
+                )
+            plugin_manager.hook.configure_endpoint_instance(
+                instance=instance,
+                endpoint_name=entry["name"],
+                endpoint_config=entry,
+                services=services,
             )
-        plugin_manager.hook.configure_endpoint_instance(
-            instance=instance,
-            endpoint_name=entry["name"],
-            endpoint_config=entry,
-            services=services,
-        )
-        try:
-            bus.register(EndpointSpec(endpoint=instance, description=entry.get("description", "")))
-        except ValueError as exc:
-            raise BusBootError(str(exc)) from exc
+            try:
+                bus.register(
+                    EndpointSpec(endpoint=instance, description=entry.get("description", ""))
+                )
+            except ValueError as exc:
+                # Name collision: loud config conflict, NOT an _EntryBusBootError.
+                raise BusBootError(str(exc)) from exc
+        except _EntryBusBootError as exc:
+            logger.error(
+                "endpoint entry name=%r type=%r: %s — skipping entry, boot continues",
+                name_hint,
+                type_hint,
+                exc,
+            )
+            continue
 
     # Cross-endpoint wiring (T19 — cutover #09 follow-up). Once every
     # endpoint in the yaml has been constructed and registered on the bus
@@ -225,7 +267,9 @@ async def build_bus_from_config(path: Path) -> tuple[Bus, HTTPHost | None]:
         spec.name: spec.endpoint for spec in bus._endpoints_by_name.values()
     }
     raw_endpoint_configs: dict[str, dict[str, Any]] = {
-        entry["name"]: entry for entry in (raw.get("endpoints", []) or [])
+        entry["name"]: entry
+        for entry in (raw.get("endpoints", []) or [])
+        if isinstance(entry, dict) and entry.get("name") in endpoints_by_name
     }
     apply_endpoint_wiring(
         plugin_manager,
