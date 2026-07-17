@@ -30,7 +30,13 @@ drops cleanly into the new shape; jobs whose `task_id` points at
   ```
   Set up next week's Apex screening availability slots.
   
-  1. Get Apex credentials: `pepper creds get apex --json`
+  1. Get Apex credentials via the vault API (creds get no longer emits the secret after Dα-2):
+     ```python
+     from agent_core_credentials import get_credential
+     cred = get_credential("apex")
+     # Use cred.username and cred.password in-process; never echo them to any output
+     ```
+     **Note:** the `apex_weekly_slots` entry in Pepper's `~/.pepper/scheduler.db` also needs updating to match this pattern.
   2. Use the browse tool to log into https://screenings.apexsystems.com/screenings
   3. Navigate to My Schedule
   4. Check Jeff's calendar for next week using `gog cal list` — identify any conflicts during the 5-7 PM windows Mon-Fri

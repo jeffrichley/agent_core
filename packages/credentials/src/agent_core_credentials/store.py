@@ -2,11 +2,11 @@
 
 from __future__ import annotations
 
-import os
 from pathlib import Path
 
 from pykeepass import PyKeePass, create_database  # type: ignore[import-untyped]
 
+from agent_core_credentials.master_password import get_master_password
 from agent_core_credentials.models import Credential, CredentialSummary
 
 
@@ -14,26 +14,31 @@ class CredentialStore:
     """CRUD operations on an encrypted KeePass vault.
 
     Each operation opens the vault, performs the action, and saves/closes.
-    The master password comes from the AGENT_CORE_VAULT_PASSWORD env var.
+    The master password is fetched from the OS keyring or owner-only encrypted
+    file fallback via ``get_master_password()``.
 
     Args:
         vault_path: Path to the .kdbx file. Created on first write.
+        _master_password: Optional DI override for the master password (tests).
     """
 
-    def __init__(self, vault_path: Path) -> None:
+    def __init__(self, vault_path: Path, *, _master_password: str | None = None) -> None:
         """Initialize the store with a path to the vault file."""
         self.vault_path = vault_path
+        self._password_override = _master_password
 
     def _get_password(self) -> str:
-        """Read the master password from the environment."""
-        password = os.environ.get("AGENT_CORE_VAULT_PASSWORD")
-        if not password:
+        """Return the master password from override DI or the active backend."""
+        if self._password_override is not None:
+            return self._password_override
+        result = get_master_password(self.vault_path)
+        if not result:
             msg = (
-                "AGENT_CORE_VAULT_PASSWORD environment variable is not set. "
-                "Add it to ~/.agent-core/.env or set it in your shell."
+                "No master password found. Run 'agent-core-creds init' to initialize "
+                "the vault, or ensure the OS keyring is accessible."
             )
             raise ValueError(msg)
-        return password
+        return result
 
     def _open(self) -> PyKeePass:
         """Open the vault, creating it if it doesn't exist."""
@@ -54,6 +59,7 @@ class CredentialStore:
             password=entry.password or "",
             url=entry.url or "",
             notes=entry.notes or "",
+            mtime=entry.mtime,
         )
 
     def set(

@@ -11,6 +11,7 @@ from pykeepass import create_database  # type: ignore[import-untyped]
 from rich import print as rprint
 
 from agent_core_credentials import default_vault_path
+from agent_core_credentials.master_password import set_master_password
 from agent_core_credentials.store import CredentialStore
 
 creds_app = typer.Typer(
@@ -58,9 +59,7 @@ def init_vault() -> None:
     _vault_path.parent.mkdir(parents=True, exist_ok=True)
     create_database(str(_vault_path), password=password)
 
-    # Append to .env so agent-core and future CLI calls can unlock the vault
-    with open(_env_path, "a", encoding="utf-8") as f:
-        f.write(f"\nAGENT_CORE_VAULT_PASSWORD={password}\n")
+    set_master_password(_vault_path, password)
 
     rprint(f"[green]Created credential vault at {_vault_path}[/green]")
 
@@ -87,7 +86,7 @@ def set_credential(
 @creds_app.command("get")
 def get_credential(
     service: str = typer.Argument(help="Service name to retrieve"),
-    as_json: bool = typer.Option(False, "--json", help="Output as JSON with password"),
+    as_json: bool = typer.Option(False, "--json", help="Output as JSON (metadata only, no secret)"),
 ) -> None:
     """Retrieve a stored credential."""
     try:
@@ -101,24 +100,14 @@ def get_credential(
         raise typer.Exit(1)
 
     if as_json:
-        print(
-            json.dumps(
-                {
-                    "service": cred.service,
-                    "username": cred.username,
-                    "password": cred.password,
-                    "url": cred.url,
-                    "notes": cred.notes,
-                }
-            )
-        )
+        print(json.dumps({"name": cred.service, "exists": True, "length": len(cred.password)}))
     else:
-        rprint(f"[bold]Service:[/bold]  {cred.service}")
-        rprint(f"[bold]Username:[/bold] {cred.username}")
-        if cred.url:
-            rprint(f"[bold]URL:[/bold]      {cred.url}")
-        if cred.notes:
-            rprint(f"[bold]Notes:[/bold]    {cred.notes}")
+        rprint(f"[bold]Service:[/bold]   {cred.service}")
+        rprint(f"[bold]Length:[/bold]    {len(cred.password)} chars")
+        if cred.mtime is not None:
+            rprint(f"[bold]Modified:[/bold]  {cred.mtime.strftime('%Y-%m-%d %H:%M UTC')}")
+        else:
+            rprint("[bold]Modified:[/bold]  (unknown)")
 
 
 @creds_app.command("list")

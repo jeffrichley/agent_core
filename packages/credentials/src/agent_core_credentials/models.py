@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import datetime
 
 
 @dataclass
@@ -14,6 +15,7 @@ class Credential:
     password: str
     url: str = ""
     notes: str = ""
+    mtime: datetime | None = None
 
 
 @dataclass
