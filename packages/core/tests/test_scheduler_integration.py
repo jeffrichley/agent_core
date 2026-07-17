@@ -150,6 +150,22 @@ async def test_dynamic_create_job_via_toolinvocation(tmp_path, build_bus):
         await bus.stop()
 
 
+def _is_delete_ack(env) -> bool:
+    """True if *env* is the scheduler's Acknowledgment for a completed delete_job.
+
+    The scheduler replies to ``delete_job`` with an Acknowledgment whose
+    ``note`` is ``{"status": "deleted", "name": ...}`` (see
+    ``endpoints/scheduler.py::_delete_job``). Non-Acknowledgment envelopes and
+    error acks carrying a non-JSON note are safely rejected.
+    """
+    if env.kind != "Acknowledgment":
+        return False
+    try:
+        return json.loads(env.payload.note).get("status") == "deleted"
+    except (ValueError, AttributeError, TypeError):
+        return False
+
+
 @pytest.mark.asyncio
 async def test_delete_job_stops_fires(tmp_path, build_bus):
     cfg = tmp_path / "agent_core.yaml"
@@ -202,8 +218,21 @@ async def test_delete_job_stops_fires(tmp_path, build_bus):
             payload=ToolInvocationPayload(tool="delete_job", args={"name": "ephemeral"}),
         )
 
-        # Give the delete a moment to take effect.
-        await asyncio.sleep(0.5)
+        # Wait for the scheduler to ACK the deletion — proof the job was
+        # actually removed — instead of a blind sleep. The fixed 0.5s guess
+        # raced a fire through before the delete was processed on loaded CI
+        # runners (windows-latest flake: "scheduler kept firing after
+        # delete_job", after == baseline + 1).
+        for _ in range(200):  # up to 10s
+            if any(_is_delete_ack(e) for e in stub.inbox):
+                break
+            await asyncio.sleep(0.05)
+        else:
+            raise AssertionError("scheduler did not ACK delete_job within 10s")
+
+        # Let a fire dispatched just before the delete took effect land — so it
+        # is counted in the baseline, not the measured window. One interval + margin.
+        await asyncio.sleep(1.2)
 
         # Wait 2s; no new fires of "transient" should arrive.
         baseline = len(
