@@ -54,6 +54,7 @@ class CredentialStore:
             password=entry.password or "",
             url=entry.url or "",
             notes=entry.notes or "",
+            mtime=entry.mtime,
         )
 
     def set(
