@@ -11,13 +11,9 @@
 
 Core infrastructure for AI agents. Consolidates memory, knowledge compilation, and shared tooling.
 
-## Setup
+## Documentation
 
-```bash
-uv sync
-```
-
-- **Running the bus daemon:** see [docs/setup/daemon.md](docs/setup/daemon.md) for the one-time setup and the `daemon refresh` daily flow.
+→ [Getting started](https://jeffrichley.github.io/agent_core/getting-started/) — install from PyPI, hatch a being, run the daemon, connect your agent.
 
 ## Memory Compiler
 
