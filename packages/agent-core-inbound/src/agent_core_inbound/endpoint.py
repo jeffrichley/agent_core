@@ -29,7 +29,6 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import os
 import uuid
 from datetime import UTC, datetime
 from pathlib import Path
@@ -37,6 +36,8 @@ from typing import TYPE_CHECKING, Any
 
 import uvicorn
 
+from agent_core_credentials.secrets import SecretNotFoundError
+from agent_core_credentials.secrets import get as get_secret
 from agent_core_inbound.audit import AuditLog
 from agent_core_inbound.funnel_handler import build_funnel_app
 from agent_core_inbound.github_connector import GitHubConnector
@@ -76,12 +77,13 @@ class InboundEndpoint:
 
         # Validate secret at construction (fail-loud at config-load,
         # not at first GitHub delivery).
-        secret = os.environ.get(webhook_secret_env)
-        if not secret:
+        try:
+            secret = get_secret(webhook_secret_env)
+        except SecretNotFoundError:
             raise RuntimeError(
                 f"inbound endpoint {name!r}: env var {webhook_secret_env} not set "
                 f"(needed for GitHub webhook HMAC signature verification)"
-            )
+            ) from None
         self._webhook_secret = secret.encode("utf-8")
 
         # Defer Router + funnel app construction to start(); they need
