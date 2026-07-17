@@ -41,7 +41,7 @@ def test_config_mode_hatches_into_tmpdir(tmp_path):
     assert result.exit_code == 0, result.stdout
     vault = tmp_path / ".testbeing"
     assert (vault / "Memory" / "IDENTITY.md").is_file()
-    assert "TestBeing" in (vault / "Memory" / "IDENTITY.md").read_text()
+    assert "TestBeing" in (vault / "Memory" / "IDENTITY.md").read_text(encoding="utf-8")
 
 
 def test_config_mode_writes_hatching_report(tmp_path):
@@ -49,4 +49,4 @@ def test_config_mode_writes_hatching_report(tmp_path):
     assert result.exit_code == 0, result.stdout
     report = tmp_path / ".testbeing" / "HATCHING-REPORT.md"
     assert report.is_file()
-    assert "TestBeing" in report.read_text()
+    assert "TestBeing" in report.read_text(encoding="utf-8")
