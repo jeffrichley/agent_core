@@ -62,9 +62,11 @@ the individual concept pages readable as deeper dives rather than first introduc
 
 **Style and tone.** Follow the prose style of `docs/concepts/bus.md` exactly: short
 declarative sentences, no marketing phrasing, concrete file and module references where
-they anchor a claim, admonitions for important invariants, a final "Read more" table
-linking to related pages. The ASCII diagram style follows `docs/index.md`'s 60-second
-picture (monospace box-drawing with `▶` arrows).
+they anchor a claim, admonitions for important invariants (e.g. the `!!! note "Fan-out
+is atomic"` block that closes `bus.md`). The ASCII diagram style follows `docs/index.md`'s
+60-second picture (monospace box-drawing with `▶` arrows). The architecture page ends
+with a "Read more" table (specified in sub-request 1) — this is an addition beyond bus.md's
+structure, not a feature borrowed from it.
 
 **Nav placement.** `concepts/architecture.md` is listed first under `Concepts:` in
 `mkdocs.yml`, after `concepts/index.md`. The `concepts/index.md` ToC table gains an
@@ -150,6 +152,12 @@ direct readers there first.
                  │ MCP tools
                  ▼
          Claude Code session
+
+          Being: discord service
+      ┌─────────────────────────┐
+      │ busproxy  (stdio MCP)   │──▶ http://127.0.0.1:8789
+      │ channel   (stdio MCP)   │──▶ http://127.0.0.1:8789
+      └─────────────────────────┘
    ```
 
    The narrative (after the diagram, ~3–4 sentences) explains: the daemon is the single
