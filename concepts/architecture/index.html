@@ -12,31 +12,31 @@
         <meta name="author" content="agent beings 🪶">
       
       
-        <link rel="canonical" href="https://jeffrichley.github.io/agent_core/concepts/">
+        <link rel="canonical" href="https://jeffrichley.github.io/agent_core/concepts/architecture/">
       
       
-        <link rel="prev" href="../getting-started/daemon/">
+        <link rel="prev" href="../">
       
       
-        <link rel="next" href="architecture/">
+        <link rel="next" href="../bus/">
       
       
         
       
       
-      <link rel="icon" href="../assets/images/favicon.png">
+      <link rel="icon" href="../../assets/images/favicon.png">
       <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.7.6">
     
     
       
-        <title>Concepts - agent-core</title>
+        <title>Architecture - agent-core</title>
       
     
     
-      <link rel="stylesheet" href="../assets/stylesheets/main.484c7ddc.min.css">
+      <link rel="stylesheet" href="../../assets/stylesheets/main.484c7ddc.min.css">
       
         
-        <link rel="stylesheet" href="../assets/stylesheets/palette.ab4e12ef.min.css">
+        <link rel="stylesheet" href="../../assets/stylesheets/palette.ab4e12ef.min.css">
       
       
 
@@ -55,9 +55,9 @@
       
     
     
-      <link rel="stylesheet" href="../assets/_mkdocstrings.css">
+      <link rel="stylesheet" href="../../assets/_mkdocstrings.css">
     
-    <script>__md_scope=new URL("..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
+    <script>__md_scope=new URL("../..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
     
       
 
@@ -82,7 +82,7 @@
     <div data-md-component="skip">
       
         
-        <a href="#concepts" class="md-skip">
+        <a href="#architecture" class="md-skip">
           Skip to content
         </a>
       
@@ -98,7 +98,7 @@
 
 <header class="md-header md-header--shadow" data-md-component="header">
   <nav class="md-header__inner md-grid" aria-label="Header">
-    <a href=".." title="agent-core" class="md-header__button md-logo" aria-label="agent-core" data-md-component="logo">
+    <a href="../.." title="agent-core" class="md-header__button md-logo" aria-label="agent-core" data-md-component="logo">
       
   
   <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M22 2s-7.64-.37-13.66 7.88C3.72 16.21 2 22 2 22l1.94-1c1.44-2.5 2.19-3.53 3.6-5 2.53.74 5.17.65 7.46-2-2-.56-3.6-.43-5.96-.19C11.69 12 13.5 11.6 16 12l1-2c-1.8-.34-3-.37-4.78.04C14.19 8.65 15.56 7.87 18 8l1.21-1.93c-1.56-.11-2.5.06-4.29.5 1.61-1.46 3.08-2.12 5.22-2.25 0 0 1.05-1.89 1.86-2.32"/></svg>
@@ -118,7 +118,7 @@
         <div class="md-header__topic" data-md-component="header-topic">
           <span class="md-ellipsis">
             
-              Concepts
+              Architecture
             
           </span>
         </div>
@@ -236,7 +236,7 @@
 
 <nav class="md-nav md-nav--primary" aria-label="Navigation" data-md-level="0">
   <label class="md-nav__title" for="__drawer">
-    <a href=".." title="agent-core" class="md-nav__button md-logo" aria-label="agent-core" data-md-component="logo">
+    <a href="../.." title="agent-core" class="md-nav__button md-logo" aria-label="agent-core" data-md-component="logo">
       
   
   <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M22 2s-7.64-.37-13.66 7.88C3.72 16.21 2 22 2 22l1.94-1c1.44-2.5 2.19-3.53 3.6-5 2.53.74 5.17.65 7.46-2-2-.56-3.6-.43-5.96-.19C11.69 12 13.5 11.6 16 12l1-2c-1.8-.34-3-.37-4.78.04C14.19 8.65 15.56 7.87 18 8l1.21-1.93c-1.56-.11-2.5.06-4.29.5 1.61-1.46 3.08-2.12 5.22-2.25 0 0 1.05-1.89 1.86-2.32"/></svg>
@@ -266,7 +266,7 @@
   
   
     <li class="md-nav__item">
-      <a href=".." class="md-nav__link">
+      <a href="../.." class="md-nav__link">
         
   
   
@@ -345,7 +345,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../getting-started/" class="md-nav__link">
+      <a href="../../getting-started/" class="md-nav__link">
         
   
   
@@ -373,7 +373,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../getting-started/first-agent/" class="md-nav__link">
+      <a href="../../getting-started/first-agent/" class="md-nav__link">
         
   
   
@@ -401,7 +401,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../getting-started/daemon/" class="md-nav__link">
+      <a href="../../getting-started/daemon/" class="md-nav__link">
         
   
   
@@ -487,19 +487,10 @@
                 
   
   
-    
   
   
-  
-    <li class="md-nav__item md-nav__item--active">
-      
-      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
-      
-      
-        
-      
-      
-      <a href="./" class="md-nav__link md-nav__link--active">
+    <li class="md-nav__item">
+      <a href="../" class="md-nav__link">
         
   
   
@@ -515,7 +506,6 @@
   
 
       </a>
-      
     </li>
   
 
@@ -525,10 +515,37 @@
                 
   
   
+    
   
   
-    <li class="md-nav__item">
-      <a href="architecture/" class="md-nav__link">
+  
+    <li class="md-nav__item md-nav__item--active">
+      
+      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
+      
+      
+        
+      
+      
+        <label class="md-nav__link md-nav__link--active" for="__toc">
+          
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Architecture
+  
+
+    
+  </span>
+  
+  
+
+          <span class="md-nav__icon md-icon"></span>
+        </label>
+      
+      <a href="./" class="md-nav__link md-nav__link--active">
         
   
   
@@ -544,6 +561,81 @@
   
 
       </a>
+      
+        
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#the-six-core-nouns" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        The six core nouns
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#runtime-topology" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Runtime topology
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#the-delivery-path" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        The delivery path
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#pluggable-endpoints" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Pluggable endpoints
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#read-more" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Read more
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+      
     </li>
   
 
@@ -556,7 +648,7 @@
   
   
     <li class="md-nav__item">
-      <a href="bus/" class="md-nav__link">
+      <a href="../bus/" class="md-nav__link">
         
   
   
@@ -584,7 +676,7 @@
   
   
     <li class="md-nav__item">
-      <a href="envelopes/" class="md-nav__link">
+      <a href="../envelopes/" class="md-nav__link">
         
   
   
@@ -612,7 +704,7 @@
   
   
     <li class="md-nav__item">
-      <a href="endpoints/" class="md-nav__link">
+      <a href="../endpoints/" class="md-nav__link">
         
   
   
@@ -640,7 +732,7 @@
   
   
     <li class="md-nav__item">
-      <a href="extensions/" class="md-nav__link">
+      <a href="../extensions/" class="md-nav__link">
         
   
   
@@ -727,7 +819,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../guides/" class="md-nav__link">
+      <a href="../../guides/" class="md-nav__link">
         
   
   
@@ -755,7 +847,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../guides/add-an-endpoint/" class="md-nav__link">
+      <a href="../../guides/add-an-endpoint/" class="md-nav__link">
         
   
   
@@ -783,7 +875,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../guides/send-and-consume/" class="md-nav__link">
+      <a href="../../guides/send-and-consume/" class="md-nav__link">
         
   
   
@@ -811,7 +903,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../guides/write-an-extension/" class="md-nav__link">
+      <a href="../../guides/write-an-extension/" class="md-nav__link">
         
   
   
@@ -846,7 +938,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../reference/" class="md-nav__link">
+      <a href="../../reference/" class="md-nav__link">
         
   
   
@@ -873,7 +965,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../about/" class="md-nav__link">
+      <a href="../../about/" class="md-nav__link">
         
   
   
@@ -913,6 +1005,69 @@
     
   
   
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#the-six-core-nouns" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        The six core nouns
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#runtime-topology" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Runtime topology
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#the-delivery-path" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        The delivery path
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#pluggable-endpoints" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Pluggable endpoints
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#read-more" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Read more
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
 </nav>
                   </div>
                 </div>
@@ -931,42 +1086,90 @@
   
 
 
-<h1 id="concepts">Concepts<a class="headerlink" href="#concepts" title="Permanent link">&para;</a></h1>
-<p>agent-core is built around one central idea: <strong>endpoints on a bus, work as envelopes</strong>.</p>
-<p>Every participant in the system — an AI agent, a Discord adapter, a scheduler, a stub for testing — is an <strong>endpoint</strong>: an addressable name that can receive and send messages. Those messages are <strong>envelopes</strong>: a universal wire format carrying a typed payload, routing metadata, and an urgency level. The <strong>bus</strong> is the in-process router that connects them: it persists every envelope to a durable SQLite mailbox, dispatches to the target endpoint, waits for acknowledgment, and retries or dead-letters if delivery fails. Finally, <strong>extensions</strong> let third-party packages contribute new endpoint types, new envelope kinds, bus hooks, and CLI subcommands — without modifying agent-core itself.</p>
-<p>New to agent-core? Read the <a href="architecture/">Architecture</a> page first for a full system diagram and noun definitions.</p>
-<p>These concepts build on each other in order:</p>
+<h1 id="architecture">Architecture<a class="headerlink" href="#architecture" title="Permanent link">&para;</a></h1>
+<p>This page explains how agent-core's pieces fit together at runtime; the individual concept pages go deeper on each.</p>
+<h2 id="the-six-core-nouns">The six core nouns<a class="headerlink" href="#the-six-core-nouns" title="Permanent link">&para;</a></h2>
+<p><strong>Being</strong> — an AI agent identity (a Claude Code session, or any process that talks to the bus). Each being has a home directory (<code>~/.&lt;being&gt;/</code>), a credentials vault, and one or more registered endpoints on the bus.</p>
+<p><strong>Daemon</strong> — the single long-running host process started with <code>agent-core daemon start</code>. It owns the bus, starts and supervises all configured endpoints, and exposes an HTTP API the sidecars connect to.</p>
+<p><strong>Bus</strong> — the in-process async message router inside the daemon. It reads <code>agent_core.yaml</code>, routes envelopes between registered endpoints, persists every envelope to a SQLite mailbox before delivery, and retries or dead-letters on failure.</p>
+<p><strong>Endpoint</strong> — an addressable participant registered on the bus. An endpoint implements three async methods (<code>start</code>, <code>deliver</code>, <code>stop</code>). The daemon hosts many: one <code>ClaudeCodeMCPEndpoint</code> per being, a <code>DiscordEndpoint</code>, a <code>SchedulerEndpoint</code>, etc. Third-party packages contribute additional endpoint types via Python entry points.</p>
+<p><strong>Sidecar</strong> — a lightweight stdio MCP server process each being runs alongside its AI session. Two sidecars per being: <code>agent-core-busproxy</code> (exposes bus tools — publish, inbox, ack) and <code>agent-core-channel</code> (inline-wake relay — wakes the agent when high-urgency mail arrives). Each sidecar proxies calls to the daemon over HTTP; each tool call opens a fresh connection so daemon restarts do not strand the agent.</p>
+<p><strong>Envelope</strong> — the universal wire format for all bus messages. Every message carries: <code>id</code>, <code>from_</code> (stamped by the bus), <code>to</code>, <code>kind</code>, <code>payload</code>, <code>urgency</code> (<code>green</code>/<code>yellow</code>/<code>red</code>), optional <code>expires_at</code>, and <code>correlation_id</code>.</p>
+<h2 id="runtime-topology">Runtime topology<a class="headerlink" href="#runtime-topology" title="Permanent link">&para;</a></h2>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a>                ┌─────────────────────────────────────────────────────┐
+<a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a>                │                daemon  (one process)                 │
+<a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a>                │                                                      │
+<a id="__codelineno-0-4" name="__codelineno-0-4" href="#__codelineno-0-4"></a>                │   ┌──────────────────────────────────────────────┐   │
+<a id="__codelineno-0-5" name="__codelineno-0-5" href="#__codelineno-0-5"></a>                │   │           Bus  (SQLite mailbox)              │   │
+<a id="__codelineno-0-6" name="__codelineno-0-6" href="#__codelineno-0-6"></a>                │   │                                              │   │
+<a id="__codelineno-0-7" name="__codelineno-0-7" href="#__codelineno-0-7"></a>                │   │  ┌──────────────────┐  ┌─────────────────┐  │   │
+<a id="__codelineno-0-8" name="__codelineno-0-8" href="#__codelineno-0-8"></a>                │   │  │ endpoint: wren    │  │ endpoint:       │  │   │
+<a id="__codelineno-0-9" name="__codelineno-0-9" href="#__codelineno-0-9"></a>                │   │  │ ClaudeCodeMCP     │  │ discord         │  │   │
+<a id="__codelineno-0-10" name="__codelineno-0-10" href="#__codelineno-0-10"></a>                │   │  └────────┬─────────┘  └────────┬────────┘  │   │
+<a id="__codelineno-0-11" name="__codelineno-0-11" href="#__codelineno-0-11"></a>                │   └───────────│────────────────────  │  ─────────┘   │
+<a id="__codelineno-0-12" name="__codelineno-0-12" href="#__codelineno-0-12"></a>                │               │ HTTP                  │ Discord API   │
+<a id="__codelineno-0-13" name="__codelineno-0-13" href="#__codelineno-0-13"></a>                └───────────────│───────────────────────│───────────────┘
+<a id="__codelineno-0-14" name="__codelineno-0-14" href="#__codelineno-0-14"></a>                                │                       └──────────▶ Discord
+<a id="__codelineno-0-15" name="__codelineno-0-15" href="#__codelineno-0-15"></a>                                │
+<a id="__codelineno-0-16" name="__codelineno-0-16" href="#__codelineno-0-16"></a>             ┌──────────────────┘
+<a id="__codelineno-0-17" name="__codelineno-0-17" href="#__codelineno-0-17"></a>             ▼
+<a id="__codelineno-0-18" name="__codelineno-0-18" href="#__codelineno-0-18"></a>       Being: wren
+<a id="__codelineno-0-19" name="__codelineno-0-19" href="#__codelineno-0-19"></a>   ┌──────────────────────┐
+<a id="__codelineno-0-20" name="__codelineno-0-20" href="#__codelineno-0-20"></a>   │ busproxy  (stdio MCP) │──▶ http://127.0.0.1:8789
+<a id="__codelineno-0-21" name="__codelineno-0-21" href="#__codelineno-0-21"></a>   │ channel   (stdio MCP) │──▶ http://127.0.0.1:8789
+<a id="__codelineno-0-22" name="__codelineno-0-22" href="#__codelineno-0-22"></a>   └──────────┬────────────┘
+<a id="__codelineno-0-23" name="__codelineno-0-23" href="#__codelineno-0-23"></a>              │ MCP tools
+<a id="__codelineno-0-24" name="__codelineno-0-24" href="#__codelineno-0-24"></a>              ▼
+<a id="__codelineno-0-25" name="__codelineno-0-25" href="#__codelineno-0-25"></a>      Claude Code session
+<a id="__codelineno-0-26" name="__codelineno-0-26" href="#__codelineno-0-26"></a>
+<a id="__codelineno-0-27" name="__codelineno-0-27" href="#__codelineno-0-27"></a>       Being: discord service
+<a id="__codelineno-0-28" name="__codelineno-0-28" href="#__codelineno-0-28"></a>   ┌──────────────────────────┐
+<a id="__codelineno-0-29" name="__codelineno-0-29" href="#__codelineno-0-29"></a>   │ busproxy  (stdio MCP)    │──▶ http://127.0.0.1:8789
+<a id="__codelineno-0-30" name="__codelineno-0-30" href="#__codelineno-0-30"></a>   │ channel   (stdio MCP)    │──▶ http://127.0.0.1:8789
+<a id="__codelineno-0-31" name="__codelineno-0-31" href="#__codelineno-0-31"></a>   └──────────────────────────┘
+</code></pre></div>
+<p>The daemon is the single process that owns everything: no being embeds the bus directly. Sidecars are the indirection layer that decouples beings from the daemon — a being's Claude Code session keeps running even if the daemon restarts, because each sidecar tool call opens a fresh HTTP connection rather than keeping a persistent socket alive. The HTTP boundary at <code>http://127.0.0.1:8789</code> is the only crossing point between beings and the daemon.</p>
+<div class="admonition note">
+<p class="admonition-title">Daemon restarts are transparent to beings</p>
+<p>Because sidecars open a fresh connection per tool call, a daemon restart (for upgrades or config changes) does not strand an active agent session. The sidecar simply reconnects on the next call.</p>
+</div>
+<h2 id="the-delivery-path">The delivery path<a class="headerlink" href="#the-delivery-path" title="Permanent link">&para;</a></h2>
+<p>An envelope's journey from sender to recipient: <code>handle.publish()</code> runs any registered <code>pre_publish</code> hooks (which may mutate or drop the envelope), then inserts the envelope into the SQLite mailbox with status <code>pending</code>. The bus then calls <code>endpoint.deliver(envelope)</code> — after running any <code>pre_deliver</code> hooks — and awaits the result. Once the endpoint processes the message it calls <code>bus.ack(envelope_id)</code>, which marks the row <code>acked</code> in the mailbox. If delivery raises <code>EndpointUnavailable</code> the envelope is requeued; any other exception moves it to <code>dead_letter</code>.</p>
+<p>See <a href="../bus/">The bus</a> for the full delivery lifecycle diagram, redelivery sweeps, TTL expiry, and dead-letter handling.</p>
+<h2 id="pluggable-endpoints">Pluggable endpoints<a class="headerlink" href="#pluggable-endpoints" title="Permanent link">&para;</a></h2>
+<p>Endpoint types are not hardcoded in agent-core. Third-party packages register new endpoint types by declaring an entry point under the <code>agent_core</code> group (<code>[project.entry-points."agent_core"]</code> in <code>pyproject.toml</code>). The daemon discovers and loads all registered entry points at startup, making the set of available endpoint types open-ended without modifying agent-core itself.</p>
+<p>See <a href="../extensions/">Extensions</a> for the full plugin contract: entry-point naming, how hooks and envelope kinds are contributed, and how to write your own extension.</p>
+<h2 id="read-more">Read more<a class="headerlink" href="#read-more" title="Permanent link">&para;</a></h2>
 <table>
 <thead>
 <tr>
-<th>Concept</th>
-<th>What it does</th>
+<th>Topic</th>
+<th>Page</th>
 </tr>
 </thead>
 <tbody>
 <tr>
-<td><a href="architecture/">Architecture</a></td>
-<td>How the daemon, bus, endpoints, beings, and sidecars compose</td>
+<td>Bus delivery lifecycle, hooks, config</td>
+<td><a href="../bus/">The bus</a></td>
 </tr>
 <tr>
-<td><a href="bus/">Bus</a></td>
-<td>Routes, persists, retries, and supervises everything</td>
+<td>Envelope fields and built-in kinds</td>
+<td><a href="../envelopes/">Envelopes</a></td>
 </tr>
 <tr>
-<td><a href="envelopes/">Envelopes</a></td>
-<td>The universal wire format all participants share</td>
+<td>Endpoint protocol and supervision</td>
+<td><a href="../endpoints/">Endpoints</a></td>
 </tr>
 <tr>
-<td><a href="endpoints/">Endpoints</a></td>
-<td>Addressable participants; the deliver/ack contract</td>
+<td>Plugin hooks and extension types</td>
+<td><a href="../extensions/">Extensions</a></td>
 </tr>
 <tr>
-<td><a href="extensions/">Extensions</a></td>
-<td>How plugins contribute new types and behaviors</td>
+<td>Running the daemon</td>
+<td><a href="../../getting-started/daemon/">Running the daemon</a></td>
 </tr>
 </tbody>
 </table>
-<p>Read the pages in order if you are new to agent-core. If you are looking for exact field names and method signatures, see the <a href="../reference/">API Reference</a>.</p>
 
 
 
@@ -1002,7 +1205,7 @@
       <nav class="md-footer__inner md-grid" aria-label="Footer" >
         
           
-          <a href="../getting-started/daemon/" class="md-footer__link md-footer__link--prev" aria-label="Previous: Running the daemon">
+          <a href="../" class="md-footer__link md-footer__link--prev" aria-label="Previous: Concepts">
             <div class="md-footer__button md-icon">
               
               <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11z"/></svg>
@@ -1012,20 +1215,20 @@
                 Previous
               </span>
               <div class="md-ellipsis">
-                Running the daemon
+                Concepts
               </div>
             </div>
           </a>
         
         
           
-          <a href="architecture/" class="md-footer__link md-footer__link--next" aria-label="Next: Architecture">
+          <a href="../bus/" class="md-footer__link md-footer__link--next" aria-label="Next: The bus">
             <div class="md-footer__title">
               <span class="md-footer__direction">
                 Next
               </span>
               <div class="md-ellipsis">
-                Architecture
+                The bus
               </div>
             </div>
             <div class="md-footer__button md-icon">
@@ -1066,10 +1269,10 @@
     
       
       
-      <script id="__config" type="application/json">{"annotate": null, "base": "..", "features": ["navigation.instant", "navigation.tracking", "navigation.sections", "navigation.top", "navigation.footer", "toc.follow", "search.suggest", "search.highlight", "content.code.copy", "content.code.annotate"], "search": "../assets/javascripts/workers/search.2c215733.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": null}</script>
+      <script id="__config" type="application/json">{"annotate": null, "base": "../..", "features": ["navigation.instant", "navigation.tracking", "navigation.sections", "navigation.top", "navigation.footer", "toc.follow", "search.suggest", "search.highlight", "content.code.copy", "content.code.annotate"], "search": "../../assets/javascripts/workers/search.2c215733.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": null}</script>
     
     
-      <script src="../assets/javascripts/bundle.79ae519e.min.js"></script>
+      <script src="../../assets/javascripts/bundle.79ae519e.min.js"></script>
       
     
   </body>

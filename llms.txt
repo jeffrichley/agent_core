@@ -12,6 +12,7 @@
 ## Concepts
 
 - [Concepts](https://jeffrichley.github.io/agent_core/concepts/index.md)
+- [Architecture](https://jeffrichley.github.io/agent_core/concepts/architecture/index.md)
 - [The bus](https://jeffrichley.github.io/agent_core/concepts/bus/index.md)
 - [Endpoints](https://jeffrichley.github.io/agent_core/concepts/endpoints/index.md)
 - [Envelopes](https://jeffrichley.github.io/agent_core/concepts/envelopes/index.md)
