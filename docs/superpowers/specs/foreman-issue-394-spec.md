@@ -82,8 +82,15 @@ No GoF pattern applies. This is SRP in documentation form: the rewritten `index.
    ```
    prod daemon is running (PID: NNNNN)
    running from: ~/.agent-core/.venv/bin/python
+   installed at: <ISO timestamp>
+   installed sha: <git sha>
    installed version: <X.Y.Z>
+   ...
+   --- last 20 lines of daemon.log ---
+   <log output>
    ```
+
+   *(The `installed at:`, `installed sha:`, and `installed version:` fields appear for a release-installed daemon, followed by the last 20 lines of `daemon.log`. The exact log content varies; its presence confirms the daemon started successfully.)*
 
    **Step 4 — Connect your Claude Code session**: Intro sentence: "Your being connects to the bus through two stdio MCP servers bundled in the daemon venv." Then: place `.mcp.json` at `~/.<your-being>/.mcp.json` (or at the Claude Code project root if your being is tied to a project).
 
@@ -115,7 +122,7 @@ No GoF pattern applies. This is SRP in documentation form: the rewritten `index.
      "mcpServers": {
        "agent-core": {
          "type": "stdio",
-         "command": "/Users/<you>/.agent-core/.venv/bin/python",
+         "command": "/home/<you>/.agent-core/.venv/bin/python",
          "args": ["-m", "agent_core_busproxy", "--agent", "<your-being>",
                   "--daemon-url", "http://127.0.0.1:8789"]
        },
@@ -128,6 +135,8 @@ No GoF pattern applies. This is SRP in documentation form: the rewritten `index.
      }
    }
    ```
+
+   > **macOS users:** replace `/home/<you>` with `/Users/<you>` in both command paths above.
 
    After the tabs, include a `!!! warning` admonition: "Do not use `\"type\": \"http\"` — that form strands live Claude Code sessions on daemon restart. Always use the stdio form above."
 
