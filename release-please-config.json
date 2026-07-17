@@ -9,6 +9,90 @@
     ".": {
       "release-type": "simple",
       "changelog-path": "CHANGELOG.md"
+    },
+    "packages/core": {
+      "release-type": "simple",
+      "component": "agent-core",
+      "changelog-path": "CHANGELOG.md",
+      "version-file": "VERSION",
+      "skip-github-release": true
+    },
+    "packages/agent-core-briefs": {
+      "release-type": "simple",
+      "component": "agent-core-briefs",
+      "changelog-path": "CHANGELOG.md",
+      "version-file": "VERSION",
+      "skip-github-release": true
+    },
+    "packages/agent-core-busproxy": {
+      "release-type": "simple",
+      "component": "agent-core-busproxy",
+      "changelog-path": "CHANGELOG.md",
+      "version-file": "VERSION",
+      "skip-github-release": true
+    },
+    "packages/agent-core-channel": {
+      "release-type": "simple",
+      "component": "agent-core-channel",
+      "changelog-path": "CHANGELOG.md",
+      "version-file": "VERSION",
+      "skip-github-release": true
+    },
+    "packages/credentials": {
+      "release-type": "simple",
+      "component": "agent-core-credentials",
+      "changelog-path": "CHANGELOG.md",
+      "version-file": "VERSION",
+      "skip-github-release": true
+    },
+    "packages/agent-core-discord": {
+      "release-type": "simple",
+      "component": "agent-core-discord",
+      "changelog-path": "CHANGELOG.md",
+      "version-file": "VERSION",
+      "skip-github-release": true
+    },
+    "packages/agent-core-hatchery": {
+      "release-type": "simple",
+      "component": "agent-core-hatchery",
+      "changelog-path": "CHANGELOG.md",
+      "version-file": "VERSION",
+      "skip-github-release": true
+    },
+    "packages/agent-core-inbound": {
+      "release-type": "simple",
+      "component": "agent-core-inbound",
+      "changelog-path": "CHANGELOG.md",
+      "version-file": "VERSION",
+      "skip-github-release": true
+    },
+    "packages/notify": {
+      "release-type": "simple",
+      "component": "agent-core-notify",
+      "changelog-path": "CHANGELOG.md",
+      "version-file": "VERSION",
+      "skip-github-release": true
+    },
+    "packages/agent-core-qa": {
+      "release-type": "simple",
+      "component": "agent-core-qa",
+      "changelog-path": "CHANGELOG.md",
+      "version-file": "VERSION",
+      "skip-github-release": true
+    },
+    "packages/agent-core-voice": {
+      "release-type": "simple",
+      "component": "agent-core-voice",
+      "changelog-path": "CHANGELOG.md",
+      "version-file": "VERSION",
+      "skip-github-release": true
+    },
+    "packages/agent-core-webcam": {
+      "release-type": "simple",
+      "component": "agent-core-webcam",
+      "changelog-path": "CHANGELOG.md",
+      "version-file": "VERSION",
+      "skip-github-release": true
     }
   }
 }
