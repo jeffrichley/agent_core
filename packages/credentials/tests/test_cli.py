@@ -1,5 +1,7 @@
 """Tests for agent-core creds CLI commands."""
 
+import json
+
 from typer.testing import CliRunner
 
 from agent_core_credentials.cli import creds_app
@@ -23,13 +25,14 @@ def test_creds_set_and_get(tmp_path, monkeypatch):
 
     result = runner.invoke(creds_app, ["get", "apex"])
     assert result.exit_code == 0
-    assert "jeff@test.com" in result.output
+    assert "jeff@test.com" not in result.output
+    assert "Length:" in result.output
     # Default mode should NOT show password
     assert "secret123" not in result.output
 
 
 def test_creds_get_json(tmp_path, monkeypatch):
-    """Get with --json includes password."""
+    """Get with --json returns metadata only, no secret."""
     monkeypatch.setenv("AGENT_CORE_VAULT_PASSWORD", "testpass")
     vault_path = tmp_path / "credentials.kdbx"
     monkeypatch.setattr("agent_core_credentials.cli._vault_path", vault_path)
@@ -41,7 +44,10 @@ def test_creds_get_json(tmp_path, monkeypatch):
     )
     result = runner.invoke(creds_app, ["get", "apex", "--json"])
     assert result.exit_code == 0
-    assert "secret123" in result.output
+    assert "secret123" not in result.output
+    data = json.loads(result.output)
+    assert data == {"name": "apex", "exists": True, "length": 9}
+    assert "password" not in data
 
 
 def test_creds_get_not_found(tmp_path, monkeypatch):
@@ -180,3 +186,41 @@ def test_creds_no_password_env(tmp_path, monkeypatch):
     result = runner.invoke(creds_app, ["list"])
     assert result.exit_code == 1
     assert "AGENT_CORE_VAULT_PASSWORD" in result.output
+
+
+def test_creds_get_text_shows_length(tmp_path, monkeypatch):
+    """Text mode shows Length and char count; password and username are absent."""
+    monkeypatch.setenv("AGENT_CORE_VAULT_PASSWORD", "testpass")
+    vault_path = tmp_path / "credentials.kdbx"
+    monkeypatch.setattr("agent_core_credentials.cli._vault_path", vault_path)
+
+    runner.invoke(
+        creds_app,
+        ["set", "apex"],
+        input="jeff@test.com\nsecret123\n\n\n",
+    )
+    result = runner.invoke(creds_app, ["get", "apex"])
+    assert result.exit_code == 0
+    assert "Length:" in result.output
+    assert "9" in result.output
+    assert "secret123" not in result.output
+    assert "jeff@test.com" not in result.output
+
+
+def test_creds_get_json_schema(tmp_path, monkeypatch):
+    """JSON output has exactly the keys name/exists/length, no password."""
+    monkeypatch.setenv("AGENT_CORE_VAULT_PASSWORD", "testpass")
+    vault_path = tmp_path / "credentials.kdbx"
+    monkeypatch.setattr("agent_core_credentials.cli._vault_path", vault_path)
+
+    runner.invoke(
+        creds_app,
+        ["set", "apex"],
+        input="jeff@test.com\nsecret123\n\n\n",
+    )
+    result = runner.invoke(creds_app, ["get", "apex", "--json"])
+    assert result.exit_code == 0
+    data = json.loads(result.output)
+    assert set(data.keys()) == {"name", "exists", "length"}
+    assert data["length"] == 9
+    assert "secret123" not in result.output
