@@ -16,8 +16,9 @@ from rich.console import Console
 from rich.table import Table
 
 from agent_core.bus.backup import run_backup
+from agent_core.bus.config import BusBootError
 from agent_core.bus.persistence import Persistence
-from agent_core.bus.runner import BusBootError, build_bus_from_config
+from agent_core.bus.runner import build_bus_from_config
 from agent_core.bus.watchdog import Watchdog
 
 app = typer.Typer(help="Bus operations: run, status, mailbox, trace, dlq, replay.")

@@ -75,8 +75,8 @@ async def test_yaml_parse_error_quarantines_fragment_boot_continues(build_bus, t
 
 
 @pytest.mark.asyncio
-async def test_entry_missing_type_skipped_sibling_loads(build_bus, tmp_path, caplog):
-    """Entry missing 'type' is skipped; sibling entries load."""
+async def test_entry_missing_type_raises_bus_boot_error(tmp_path):
+    """Entry missing 'type' aborts boot with BusBootError (caught by Pydantic schema validation)."""
     main_yaml = tmp_path / "agent_core.yaml"
     main_yaml.write_text(
         'bus:\n  storage_path: ":memory:"\n'
@@ -85,20 +85,13 @@ async def test_entry_missing_type_skipped_sibling_loads(build_bus, tmp_path, cap
         '  - name: no-type-ep\n    params: {}\n'
         '  - type: builtin.stub\n    name: good-ep\n'
     )
-    with caplog.at_level(logging.ERROR, logger="agent_core.bus.runner"):
-        bus, _http = await build_bus(main_yaml)
-    try:
-        names = {ep.name for ep in bus._endpoints()}
-        assert "good-ep" in names
-        assert "no-type-ep" not in names
-        assert any("no-type-ep" in r.message or "'type'" in r.message for r in caplog.records)
-    finally:
-        await bus.stop()
+    with pytest.raises(BusBootError, match="Field required"):
+        await build_bus_from_config(main_yaml)
 
 
 @pytest.mark.asyncio
-async def test_entry_missing_name_skipped_sibling_loads(build_bus, tmp_path, caplog):
-    """Entry missing 'name' is skipped; sibling entries load."""
+async def test_entry_missing_name_raises_bus_boot_error(tmp_path):
+    """Entry missing 'name' aborts boot with BusBootError (caught by Pydantic schema validation)."""
     main_yaml = tmp_path / "agent_core.yaml"
     main_yaml.write_text(
         'bus:\n  storage_path: ":memory:"\n'
@@ -107,14 +100,8 @@ async def test_entry_missing_name_skipped_sibling_loads(build_bus, tmp_path, cap
         '  - type: builtin.stub\n    params: {}\n'
         '  - type: builtin.stub\n    name: good-ep\n'
     )
-    with caplog.at_level(logging.ERROR, logger="agent_core.bus.runner"):
-        bus, _http = await build_bus(main_yaml)
-    try:
-        names = {ep.name for ep in bus._endpoints()}
-        assert "good-ep" in names
-        assert any("'name'" in r.message or "missing" in r.message for r in caplog.records)
-    finally:
-        await bus.stop()
+    with pytest.raises(BusBootError, match="Field required"):
+        await build_bus_from_config(main_yaml)
 
 
 @pytest.mark.asyncio

@@ -15,6 +15,11 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 import yaml
 
+from agent_core.bus.config import (
+    BusBootError,
+    DaemonConfig,
+    HttpConfig,
+)
 from agent_core.bus.core import Bus, BusConfig, BusHookSpec, EndpointSpec, SupervisorConfig
 from agent_core.bus.http_host import HTTPHost, MCPHostable
 from agent_core.bus.notify_broker import NotificationBroker
@@ -32,10 +37,6 @@ from agent_core.plugins.specs import RunnerServices
 logger = logging.getLogger(__name__)
 
 
-class BusBootError(Exception):
-    """Raised when the runner cannot construct a valid Bus from the config."""
-
-
 class _EntryBusBootError(BusBootError):
     """Degradable per-entry validation failure.
 
@@ -48,11 +49,10 @@ class _EntryBusBootError(BusBootError):
 _LOOPBACK_HOSTS = {"127.0.0.1", "::1", "localhost"}
 
 
-def _validate_http(http_cfg: dict, has_auth_hook: bool) -> None:
-    host = http_cfg.get("bind_host", "127.0.0.1")
-    if host not in _LOOPBACK_HOSTS and not has_auth_hook:
+def _validate_http(http_cfg: HttpConfig, has_auth_hook: bool) -> None:
+    if http_cfg.bind_host not in _LOOPBACK_HOSTS and not has_auth_hook:
         raise BusBootError(
-            f"http.bind_host={host!r} is non-loopback but no auth hook is configured. "
+            f"http.bind_host={http_cfg.bind_host!r} is non-loopback but no auth hook is configured. "
             "v1 supports loopback only; see BACKLOG for the auth hook trigger."
         )
 
@@ -89,49 +89,40 @@ async def build_bus_from_config(path: Path) -> tuple[Bus, HTTPHost | None]:
             raw.setdefault("endpoints", []).extend(fragment_endpoints)
     plugin_manager = create_plugin_manager()
     plugin_manager.hook.validate_config(raw_config=raw)
+    daemon_cfg = DaemonConfig.model_validate(raw)  # named daemon_cfg to avoid collision with cfg = BusConfig(...) below
     endpoint_types = get_endpoint_types(plugin_manager)
     bus_hook_types = get_bus_hook_types(plugin_manager)
 
-    bus_cfg_raw = raw.get("bus", {})
-    storage_path = Path(bus_cfg_raw.get("storage_path", "~/.agent-core/bus.sqlite")).expanduser()
-    sup_cfg_raw = bus_cfg_raw.get("supervisor", {}) or {}
+    storage_path = Path(daemon_cfg.bus.storage_path).expanduser()
     supervisor = SupervisorConfig(
-        restart_backoff_base_seconds=sup_cfg_raw.get("restart_backoff_base_seconds", 1),
-        restart_backoff_factor=sup_cfg_raw.get("restart_backoff_factor", 2),
-        restart_backoff_cap_seconds=sup_cfg_raw.get("restart_backoff_cap_seconds", 60),
-        restart_jitter=sup_cfg_raw.get("restart_jitter", "full"),
-        restarts_before_quarantine=sup_cfg_raw.get("restarts_before_quarantine", 5),
-        probe_interval_seconds=sup_cfg_raw.get("probe_interval_seconds", 300),
-        delivery_backoff_base_seconds=sup_cfg_raw.get("delivery_backoff_base_seconds", 2),
-        delivery_backoff_factor=sup_cfg_raw.get("delivery_backoff_factor", 2),
-        delivery_backoff_cap_seconds=sup_cfg_raw.get("delivery_backoff_cap_seconds", 60),
-        deliver_failures_before_breaker=sup_cfg_raw.get("deliver_failures_before_breaker", 5),
+        restart_backoff_base_seconds=daemon_cfg.bus.supervisor.restart_backoff_base_seconds,
+        restart_backoff_factor=daemon_cfg.bus.supervisor.restart_backoff_factor,
+        restart_backoff_cap_seconds=daemon_cfg.bus.supervisor.restart_backoff_cap_seconds,
+        restart_jitter=daemon_cfg.bus.supervisor.restart_jitter,
+        restarts_before_quarantine=daemon_cfg.bus.supervisor.restarts_before_quarantine,
+        probe_interval_seconds=daemon_cfg.bus.supervisor.probe_interval_seconds,
+        delivery_backoff_base_seconds=daemon_cfg.bus.supervisor.delivery_backoff_base_seconds,
+        delivery_backoff_factor=daemon_cfg.bus.supervisor.delivery_backoff_factor,
+        delivery_backoff_cap_seconds=daemon_cfg.bus.supervisor.delivery_backoff_cap_seconds,
+        deliver_failures_before_breaker=daemon_cfg.bus.supervisor.deliver_failures_before_breaker,
     )
     cfg = BusConfig(
         storage_path=storage_path,
-        redelivery_timeout_seconds=bus_cfg_raw.get("redelivery_timeout_seconds", 300),
-        max_delivery_attempts=bus_cfg_raw.get("max_delivery_attempts", 5),
-        ttl_sweep_seconds=bus_cfg_raw.get("ttl_sweep_seconds", 60),
-        redelivery_sweep_seconds=bus_cfg_raw.get("redelivery_sweep_seconds", 10),
-        acked_retention_days=bus_cfg_raw.get("acked_retention_days", 14),
-        max_pending_per_endpoint=bus_cfg_raw.get("max_pending_per_endpoint", 10_000),
+        redelivery_timeout_seconds=daemon_cfg.bus.redelivery_timeout_seconds,
+        max_delivery_attempts=daemon_cfg.bus.max_delivery_attempts,
+        ttl_sweep_seconds=daemon_cfg.bus.ttl_sweep_seconds,
+        redelivery_sweep_seconds=daemon_cfg.bus.redelivery_sweep_seconds,
+        acked_retention_days=daemon_cfg.bus.acked_retention_days,
+        max_pending_per_endpoint=daemon_cfg.bus.max_pending_per_endpoint,
         slow_deliver_warn_seconds=float(
-            os.environ.get(
-                "BUS_SLOW_DELIVER_WARN_SECONDS",
-                bus_cfg_raw.get("slow_deliver_warn_seconds", 5.0),
-            )
+            os.environ.get("BUS_SLOW_DELIVER_WARN_SECONDS", daemon_cfg.bus.slow_deliver_warn_seconds)
         ),
         watchdog_timeout_seconds=int(
-            os.environ.get(
-                "BUS_WATCHDOG_TIMEOUT_SECONDS",
-                bus_cfg_raw.get("watchdog_timeout_seconds", 90),
-            )
+            os.environ.get("BUS_WATCHDOG_TIMEOUT_SECONDS", daemon_cfg.bus.watchdog_timeout_seconds)
         ),
         supervisor=supervisor,
-        backup_dir=Path(bus_cfg_raw["backup_dir"]).expanduser()
-        if bus_cfg_raw.get("backup_dir")
-        else None,
-        backup_interval_seconds=int(bus_cfg_raw.get("backup_interval_seconds", 3600)),
+        backup_dir=Path(daemon_cfg.bus.backup_dir).expanduser() if daemon_cfg.bus.backup_dir else None,
+        backup_interval_seconds=int(daemon_cfg.bus.backup_interval_seconds),
     )
 
     bus = Bus(cfg)
@@ -142,13 +133,12 @@ async def build_bus_from_config(path: Path) -> tuple[Bus, HTTPHost | None]:
     notify_broker = NotificationBroker()
 
     # MCP audit (top-level `mcp_audit:` YAML block, optional).
-    audit_cfg = raw.get("mcp_audit", {}) or {}
-    audit_enabled = bool(audit_cfg.get("enabled", True))
+    audit_enabled = bool(daemon_cfg.mcp_audit.enabled)
     mcp_audit_writer: MCPAuditWriter | None = None
     mcp_audit_skip_tools: frozenset[str] = frozenset()
     if audit_enabled:
-        log_root = audit_cfg.get("log_root", "~/.agent-core/bus/mcp-audit")
-        tz = audit_cfg.get("timezone", "US/Eastern")
+        log_root = daemon_cfg.mcp_audit.log_root
+        tz = daemon_cfg.mcp_audit.timezone
         try:
             ZoneInfo(tz)
         except ZoneInfoNotFoundError as exc:
@@ -156,7 +146,7 @@ async def build_bus_from_config(path: Path) -> tuple[Bus, HTTPHost | None]:
                 f"mcp_audit.timezone is invalid: {tz!r}"
             ) from exc
         mcp_audit_writer = MCPAuditWriter(log_root=log_root, timezone=tz)
-        skip_raw = audit_cfg.get("skip_tools", []) or []
+        skip_raw = daemon_cfg.mcp_audit.skip_tools
         if not isinstance(skip_raw, list):
             raise BusBootError(
                 f"mcp_audit.skip_tools must be a list, got {type(skip_raw).__name__}"
@@ -174,15 +164,13 @@ async def build_bus_from_config(path: Path) -> tuple[Bus, HTTPHost | None]:
     # Until then, non-loopback bind is always refused. See BACKLOG.md.
     has_auth_hook = False
     for stage in ("pre_publish", "pre_deliver"):
-        for entry in (raw.get("bus_hooks", {}) or {}).get(stage, []) or []:
-            if "type" not in entry:
-                raise BusBootError(f"hook entry missing required 'type' field: {entry!r}")
-            hook_type = str(entry["type"])
+        for entry in getattr(daemon_cfg.bus_hooks, stage):
+            hook_type = entry.type
             cls = bus_hook_types.get(hook_type)
             if cls is None:
                 raise BusBootError(f"unknown bus hook type: {hook_type!r}")
             try:
-                instance = cls(**entry.get("params", {}))
+                instance = cls(**entry.params)
             except Exception as exc:
                 raise BusBootError(
                     f"bus hook type {hook_type!r} does not satisfy BusHook protocol: {exc}"
@@ -192,14 +180,13 @@ async def build_bus_from_config(path: Path) -> tuple[Bus, HTTPHost | None]:
             plugin_manager.hook.configure_bus_hook_instance(
                 instance=instance,
                 stage=stage,
-                hook_config=entry,
+                hook_config=entry.model_dump(),
                 services=services,
             )
-            bus.register_hook(stage, BusHookSpec(hook=instance, params=entry.get("params", {})))
+            bus.register_hook(stage, BusHookSpec(hook=instance, params=entry.params))
 
     # HTTP guardrail.
-    http_cfg = raw.get("http", {})
-    _validate_http(http_cfg, has_auth_hook)
+    _validate_http(daemon_cfg.http, has_auth_hook)
 
     # Endpoints.
     # Plugin-managed param names (e.g., briefs_orchestrator) get popped before
@@ -207,30 +194,20 @@ async def build_bus_from_config(path: Path) -> tuple[Bus, HTTPHost | None]:
     # raw config (including the popped keys) still reaches plugins via
     # apply_endpoint_wiring below, where they're actually consumed.
     reserved_params = collect_reserved_endpoint_params(plugin_manager)
-    for entry in raw.get("endpoints", []) or []:
-        name_hint = entry.get("name", "<unknown>") if isinstance(entry, dict) else "<non-dict>"
-        type_hint = entry.get("type", "<unknown>") if isinstance(entry, dict) else "<non-dict>"
+    for entry in daemon_cfg.endpoints:
         try:
-            if "type" not in entry:
-                raise _EntryBusBootError(
-                    f"endpoint entry missing required 'type' field: {entry!r}"
-                )
-            if "name" not in entry:
-                raise _EntryBusBootError(
-                    f"endpoint entry missing required 'name' field: {entry!r}"
-                )
-            endpoint_type = str(entry["type"])
+            endpoint_type = entry.type
             cls = endpoint_types.get(endpoint_type)
             if cls is None:
                 raise _EntryBusBootError(f"unknown endpoint type: {endpoint_type!r}")
-            params = entry.get("params", {})
+            params = entry.params
             constructor_params = {k: v for k, v in params.items() if k not in reserved_params}
             # Runner-side convention (not enforced by the Endpoint Protocol):
             # every endpoint class must accept `name` as a constructor kwarg.
             # The Protocol only requires `name` as an *attribute*; this convention
             # is what lets the runner construct from YAML without per-class adapters.
             try:
-                instance = cls(name=entry["name"], **constructor_params)
+                instance = cls(name=entry.name, **constructor_params)
             except Exception as exc:
                 raise _EntryBusBootError(
                     f"endpoint type {endpoint_type!r} does not satisfy Endpoint protocol: {exc}"
@@ -241,13 +218,13 @@ async def build_bus_from_config(path: Path) -> tuple[Bus, HTTPHost | None]:
                 )
             plugin_manager.hook.configure_endpoint_instance(
                 instance=instance,
-                endpoint_name=entry["name"],
-                endpoint_config=entry,
+                endpoint_name=entry.name,
+                endpoint_config=entry.model_dump(),
                 services=services,
             )
             try:
                 bus.register(
-                    EndpointSpec(endpoint=instance, description=entry.get("description", ""))
+                    EndpointSpec(endpoint=instance, description=entry.description)
                 )
             except ValueError as exc:
                 # Name collision: loud config conflict, NOT an _EntryBusBootError.
@@ -255,8 +232,8 @@ async def build_bus_from_config(path: Path) -> tuple[Bus, HTTPHost | None]:
         except _EntryBusBootError as exc:
             logger.error(
                 "endpoint entry name=%r type=%r: %s — skipping entry, boot continues",
-                name_hint,
-                type_hint,
+                entry.name,
+                entry.type,
                 exc,
             )
             continue
@@ -270,10 +247,13 @@ async def build_bus_from_config(path: Path) -> tuple[Bus, HTTPHost | None]:
     endpoints_by_name: dict[str, Endpoint] = {
         spec.name: spec.endpoint for spec in bus._endpoints_by_name.values()
     }
+    # Filter to successfully-registered endpoints only: entries that fail per-entry registration
+    # (unknown type, protocol violation, duplicate name) are absent from endpoints_by_name and
+    # must be excluded here so wire_endpoints_after_registration is not passed phantom entries.
     raw_endpoint_configs: dict[str, dict[str, Any]] = {
-        entry["name"]: entry
-        for entry in (raw.get("endpoints", []) or [])
-        if isinstance(entry, dict) and entry.get("name") in endpoints_by_name
+        entry.name: entry.model_dump()
+        for entry in daemon_cfg.endpoints
+        if entry.name in endpoints_by_name
     }
     apply_endpoint_wiring(
         plugin_manager,
@@ -289,11 +269,9 @@ async def build_bus_from_config(path: Path) -> tuple[Bus, HTTPHost | None]:
     ]
     http_host: HTTPHost | None = None
     if hostable:
-        host = http_cfg.get("bind_host", "127.0.0.1")
-        port = http_cfg.get("bind_port", 8788)
         http_host = HTTPHost(
-            bind_host=host,
-            bind_port=port,
+            bind_host=daemon_cfg.http.bind_host,
+            bind_port=daemon_cfg.http.bind_port,
             notify_broker=notify_broker,
             notify_snapshot=bus.snapshot_for_agent,
         )

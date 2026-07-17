@@ -48,8 +48,13 @@ class BuiltinRuntimePlugin:
 
     @hookimpl
     def validate_config(self, raw_config):
-        # Reserved for future built-in config validation.
-        return None
+        import pydantic
+
+        from agent_core.bus.config import BusBootError, DaemonConfig
+        try:
+            DaemonConfig.model_validate(raw_config)
+        except pydantic.ValidationError as exc:
+            raise BusBootError(f"daemon config validation failed:\n{exc}") from exc
 
 
 def create_plugin_manager() -> pluggy.PluginManager:
