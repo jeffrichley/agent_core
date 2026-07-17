@@ -104,31 +104,32 @@ class TestRunner:
         with pytest.raises(BusBootError, match="loopback"):
             await build_bus_from_config(p)
 
-    async def test_endpoint_missing_name_skipped_boot_continues(
-        self, tmp_path: Path, build_bus, caplog
+    async def test_endpoint_missing_name_raises_bus_boot_error(
+        self, tmp_path: Path
     ):
         config = {"endpoints": [{"type": "builtin.stub", "params": {}}]}
         p = tmp_path / "bad.yaml"
         p.write_text(yaml.dump(config))
-        with caplog.at_level(logging.ERROR, logger="agent_core.bus.runner"):
-            bus, _http = await build_bus(p)
-        try:
-            assert any("missing" in r.message or "'name'" in r.message for r in caplog.records)
-        finally:
-            await bus.stop()
+        with pytest.raises(BusBootError, match="Field required"):
+            await build_bus_from_config(p)
 
-    async def test_endpoint_missing_type_skipped_boot_continues(
-        self, tmp_path: Path, build_bus, caplog
+    async def test_endpoint_missing_type_raises_bus_boot_error(
+        self, tmp_path: Path
     ):
         config = {"endpoints": [{"name": "x", "params": {}}]}
         p = tmp_path / "bad.yaml"
         p.write_text(yaml.dump(config))
-        with caplog.at_level(logging.ERROR, logger="agent_core.bus.runner"):
-            bus, _http = await build_bus(p)
-        try:
-            assert any("missing" in r.message or "'type'" in r.message for r in caplog.records)
-        finally:
-            await bus.stop()
+        with pytest.raises(BusBootError, match="Field required"):
+            await build_bus_from_config(p)
+
+    async def test_unknown_top_level_key_raises_bus_boot_error(
+        self, tmp_path: Path
+    ):
+        config = {"buus": {}}
+        p = tmp_path / "bad.yaml"
+        p.write_text(yaml.dump(config))
+        with pytest.raises(BusBootError):
+            await build_bus_from_config(p)
 
     async def test_plugin_can_resolve_endpoint_class(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, build_bus
