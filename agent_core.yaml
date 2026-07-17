@@ -22,6 +22,12 @@ bus:
   ttl_sweep_seconds: 60
   redelivery_sweep_seconds: 10
   max_pending_per_endpoint: 10000
+  # backup_dir: E:/agent-core-backups   # Off-volume backup directory (REQUIRED to
+  #                                       # enable hourly snapshots). Must point to a
+  #                                       # different physical volume than storage_path
+  #                                       # — a backup on the same drive is worthless
+  #                                       # when that drive fails. Omit to disable.
+  # backup_interval_seconds: 3600        # Snapshot cadence in seconds (default 1 h).
 
 http:
   bind_host: 127.0.0.1
