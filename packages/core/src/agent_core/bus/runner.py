@@ -128,6 +128,10 @@ async def build_bus_from_config(path: Path) -> tuple[Bus, HTTPHost | None]:
             )
         ),
         supervisor=supervisor,
+        backup_dir=Path(bus_cfg_raw["backup_dir"]).expanduser()
+        if bus_cfg_raw.get("backup_dir")
+        else None,
+        backup_interval_seconds=int(bus_cfg_raw.get("backup_interval_seconds", 3600)),
     )
 
     bus = Bus(cfg)
