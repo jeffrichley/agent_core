@@ -5,7 +5,7 @@ description = "Webcam endpoint for agent_core — agent-driven on-demand frame c
 license = "MIT"
 requires-python = ">=3.12"
 dependencies = [
-    "agent-core",
+    "agent-core>=0.7,<0.8",
     "fastmcp>=2.0",
     "opencv-python>=5.0.0.93",
     "pluggy>=1.6",

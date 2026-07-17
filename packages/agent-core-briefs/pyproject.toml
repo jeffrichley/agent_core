@@ -5,7 +5,7 @@ description = "Brief framework — structured-composition pattern for agent_core
 license = "MIT"
 requires-python = ">=3.12"
 dependencies = [
-    "agent-core",
+    "agent-core>=0.7,<0.8",
     "pluggy>=1.6",
     "pydantic>=2.7",
     "pyyaml>=6.0",

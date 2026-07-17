@@ -5,8 +5,8 @@ description = "Discord bot adapter for the agent-core bus — one bot per agent 
 license = "MIT"
 requires-python = ">=3.12"
 dependencies = [
-    "agent-core",
-    "agent-core-credentials",
+    "agent-core>=0.7,<0.8",
+    "agent-core-credentials>=0.7,<0.8",
     "discord.py>=2.4",
     "python-dotenv>=1.0.0",
     "pydantic>=2.0",
