@@ -15,8 +15,9 @@ Eliminate the ambient-process-environment P0 by introducing a typed `secrets.get
 - `InboundEndpoint.__init__` resolves the webhook secret by calling `secrets.get(webhook_secret_env)` instead of `os.environ.get(webhook_secret_env)`. The existing `RuntimeError` is still raised (with the env var name in the message) when neither vault nor env has the secret.
 - `DiscordEndpoint.start()` resolves the bot token by calling `secrets.get(self.token_env)` instead of `os.environ.get(self.token_env)`. The existing `RuntimeError` is still raised (with `self.token_env` in the message) when neither vault nor env has the token.
 - `agent_core.email.client.get_client()` resolves `AGENTMAIL_API_KEY` by calling `secrets.get("AGENTMAIL_API_KEY")` instead of `os.environ.get("AGENTMAIL_API_KEY")`. The existing failure message/exit is triggered on `SecretNotFoundError`.
-- `packages/core/src/agent_core/daemon/cli.py` passes `env=_daemon_safe_env()` to the `subprocess.Popen` call at line 159. `_daemon_safe_env()` returns `{k: v for k, v in os.environ.items() if k not in _DAEMON_ENV_BLOCKLIST}` where `_DAEMON_ENV_BLOCKLIST` is a module-level `frozenset` containing `{"AGENT_CORE_VAULT_PASSWORD", "FOREMAN_GITHUB_WEBHOOK_SECRET", "AGENTMAIL_API_KEY"}`.
-- `packages/core/src/agent_core/daemon/windows_service.py` applies the same `_daemon_safe_env()` to its `subprocess.Popen` call at line 100 (imports and references the same frozenset from `daemon/cli.py`).
+- `packages/core/src/agent_core/daemon/_env.py` defines `_DAEMON_ENV_BLOCKLIST: frozenset[str] = frozenset({"AGENT_CORE_VAULT_PASSWORD", "FOREMAN_GITHUB_WEBHOOK_SECRET", "AGENTMAIL_API_KEY"})` and `_daemon_safe_env() -> dict[str, str]` returning `{k: v for k, v in os.environ.items() if k not in _DAEMON_ENV_BLOCKLIST}`. This thin shared module breaks the circular import that would occur if `windows_service.py` imported directly from `cli.py` (which already imports `windows_service` at line 33).
+- `packages/core/src/agent_core/daemon/cli.py` imports `_daemon_safe_env` from `agent_core.daemon._env` and passes `env=_daemon_safe_env()` to the `subprocess.Popen` call at line 159.
+- `packages/core/src/agent_core/daemon/windows_service.py` imports `_daemon_safe_env` from `agent_core.daemon._env` and passes `env=_daemon_safe_env()` to its `subprocess.Popen` call at line 100.
 - `agent-core-credentials` is listed in the `dependencies` array of each package that now imports from it: `packages/agent-core-inbound/pyproject.toml`, `packages/agent-core-discord/pyproject.toml`, `packages/core/pyproject.toml`.
 - New test file `packages/credentials/tests/test_secrets.py` covers all four resolution paths (vault hit, env fallback, vault-error fallback, not-found error).
 - All existing tests in `packages/agent-core-inbound/tests/`, `packages/agent-core-discord/tests/`, and `packages/credentials/tests/` continue to pass without modification — the env fallback ensures tests that use `monkeypatch.setenv` keep working.
@@ -32,13 +33,13 @@ No GoF pattern fits cleanly here. This is straightforward SRP decomposition: one
 
 **Existing tests continue to pass:** the env fallback ensures any test that calls `monkeypatch.setenv("SOME_KEY", "val")` will still have the value found at the env-fallback step after a vault miss. Tests that assert `RuntimeError` on missing secrets will still fire because both vault (no vault file in CI) and env (deleted by `monkeypatch.delenv`) miss, causing `SecretNotFoundError`, which the endpoint converts to `RuntimeError`. No test changes are required for existing tests.
 
-**Subprocess env scrubbing:** `_daemon_safe_env()` in `daemon/cli.py` strips a bounded frozenset of known secret-key names. It is `os.environ` minus `_DAEMON_ENV_BLOCKLIST`. The blocklist covers `AGENT_CORE_VAULT_PASSWORD` (belt-and-suspenders against Dα-1 migration lag), `FOREMAN_GITHUB_WEBHOOK_SECRET`, and `AGENTMAIL_API_KEY`. Discord token env var names are per-being and vary by instance, so they cannot be statically enumerated — after Dα-3 switches the Discord read site to vault, these vars should not be in the operator's env at all. Windows service Popen imports the same frozenset from `daemon.cli` so there is a single source of truth.
+**Subprocess env scrubbing:** `_daemon_safe_env()` in `daemon/_env.py` strips a bounded frozenset of known secret-key names. It returns `os.environ` minus `_DAEMON_ENV_BLOCKLIST`. The blocklist covers `AGENT_CORE_VAULT_PASSWORD` (belt-and-suspenders against Dα-1 migration lag), `FOREMAN_GITHUB_WEBHOOK_SECRET`, and `AGENTMAIL_API_KEY`. Discord token env var names are per-being and vary by instance, so they cannot be statically enumerated — after Dα-3 switches the Discord read site to vault, these vars should not be in the operator's env at all. Both `cli.py` and `windows_service.py` import `_daemon_safe_env` from the thin shared module `daemon._env` so there is a single source of truth — `cli.py` cannot be the source because it already imports `windows_service` at module level (line 33), which would create a mutual circular import.
 
 ## Sub-requests (topologically sorted)
 
 1. **Create `packages/credentials/src/agent_core_credentials/secrets.py`** — `SecretNotFoundError` exception and `get(name: str) -> str` with vault-first, env-fallback resolution.
 
-2. **Update `packages/credentials/src/agent_core_credentials/__init__.py`** — add `"secrets", "SecretNotFoundError"` to `__all__`; add `from agent_core_credentials.secrets import SecretNotFoundError, get as get_secret` import.
+2. **Update `packages/credentials/src/agent_core_credentials/__init__.py`** — add `"SecretNotFoundError"` and `"get"` to `__all__`; add `from agent_core_credentials.secrets import SecretNotFoundError, get` import (no alias). Do not add `"secrets"` to `__all__` without a corresponding `from . import secrets` binding — doing so would cause `AttributeError` for `import *` consumers since CPython does not auto-bind unimported submodules via `getattr`.
 
 3. **Create `packages/credentials/tests/test_secrets.py`** — four unit tests covering (a) vault-hit returns password, (b) vault-miss falls through to env, (c) vault-exception falls through to env, (d) neither source → `SecretNotFoundError`.
 
@@ -54,9 +55,9 @@ No GoF pattern fits cleanly here. This is straightforward SRP decomposition: one
 
 9. **Update `packages/core/src/agent_core/email/client.py`** — replace `os.environ.get("AGENTMAIL_API_KEY")` (line 26) with `secrets.get("AGENTMAIL_API_KEY")`; catch `SecretNotFoundError` in place of the `if not api_key:` check and print the same error message.
 
-10. **Update `packages/core/src/agent_core/daemon/cli.py`** — add `_DAEMON_ENV_BLOCKLIST: frozenset[str]` constant and `_daemon_safe_env() -> dict[str, str]` helper at module level; pass `env=_daemon_safe_env()` to the `subprocess.Popen` call at line 159.
+10. **Create `packages/core/src/agent_core/daemon/_env.py`** — define `_DAEMON_ENV_BLOCKLIST: frozenset[str]` and `_daemon_safe_env() -> dict[str, str]` (see Acceptance criteria for exact values and return expression). **Then update `packages/core/src/agent_core/daemon/cli.py`** — import `_daemon_safe_env` from `agent_core.daemon._env` and pass `env=_daemon_safe_env()` to the `subprocess.Popen` call at line 159.
 
-11. **Update `packages/core/src/agent_core/daemon/windows_service.py`** — import `_daemon_safe_env` from `agent_core.daemon.cli`; pass `env=_daemon_safe_env()` to the `subprocess.Popen` call at line 100.
+11. **Update `packages/core/src/agent_core/daemon/windows_service.py`** — import `_daemon_safe_env` from `agent_core.daemon._env` (not from `agent_core.daemon.cli`, which would create a circular import since `cli.py` imports `windows_service` at module level); pass `env=_daemon_safe_env()` to the `subprocess.Popen` call at line 100.
 
 12. **Run `just check`** and confirm green.
 
@@ -65,7 +66,7 @@ No GoF pattern fits cleanly here. This is straightforward SRP decomposition: one
 | File | Change |
 |------|--------|
 | `packages/credentials/src/agent_core_credentials/secrets.py` | **New** — `SecretNotFoundError` + `get(name)` accessor (vault-first, env-fallback) |
-| `packages/credentials/src/agent_core_credentials/__init__.py` | **Modify** — re-export `SecretNotFoundError` and `get_secret` from secrets sub-module |
+| `packages/credentials/src/agent_core_credentials/__init__.py` | **Modify** — re-export `SecretNotFoundError` and `get` (no alias) from `secrets` sub-module; `__all__` lists `"SecretNotFoundError"` and `"get"` |
 | `packages/credentials/tests/test_secrets.py` | **New** — four unit tests for all resolution paths |
 | `packages/agent-core-inbound/pyproject.toml` | **Modify** — add `"agent-core-credentials"` to `dependencies` |
 | `packages/agent-core-inbound/src/agent_core_inbound/endpoint.py` | **Modify** — replace `os.environ.get(webhook_secret_env)` with `secrets.get()` call at line 79; handle `SecretNotFoundError` |
@@ -73,8 +74,9 @@ No GoF pattern fits cleanly here. This is straightforward SRP decomposition: one
 | `packages/agent-core-discord/src/agent_core_discord/endpoint.py` | **Modify** — replace `os.environ.get(self.token_env)` with `secrets.get()` call at line 499; handle `SecretNotFoundError` |
 | `packages/core/pyproject.toml` | **Modify** — add `"agent-core-credentials"` to `dependencies` |
 | `packages/core/src/agent_core/email/client.py` | **Modify** — replace `os.environ.get("AGENTMAIL_API_KEY")` with `secrets.get()` at line 26; catch `SecretNotFoundError` |
-| `packages/core/src/agent_core/daemon/cli.py` | **Modify** — add `_DAEMON_ENV_BLOCKLIST` frozenset + `_daemon_safe_env()` helper; pass `env=_daemon_safe_env()` to `Popen` at line 159 |
-| `packages/core/src/agent_core/daemon/windows_service.py` | **Modify** — import `_daemon_safe_env` from `agent_core.daemon.cli`; pass `env=_daemon_safe_env()` to `Popen` at line 100 |
+| `packages/core/src/agent_core/daemon/_env.py` | **New** — `_DAEMON_ENV_BLOCKLIST` frozenset + `_daemon_safe_env()` helper (shared module imported by both `cli.py` and `windows_service.py` to avoid circular import) |
+| `packages/core/src/agent_core/daemon/cli.py` | **Modify** — import `_daemon_safe_env` from `agent_core.daemon._env`; pass `env=_daemon_safe_env()` to `Popen` at line 159 |
+| `packages/core/src/agent_core/daemon/windows_service.py` | **Modify** — import `_daemon_safe_env` from `agent_core.daemon._env`; pass `env=_daemon_safe_env()` to `Popen` at line 100 |
 
 ## Alternatives considered
 
