@@ -4,10 +4,12 @@ Phase 2 covers memory-template rendering only. Subsequent phases add:
 - Phase 3: daemon-fragment writing + parse validation.
 - Phase 4: elder-letter copying + skill rendering.
 - Phase 5: TUI wizard, channel scaffolding, EDITOR gate, HATCHING-REPORT.
+- Phase 6 (Cβ-3, #327): venv build + .mcp.json generation + daemon reload/probe.
 """
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -15,7 +17,6 @@ from agent_core_hatchery.config import HatchConfig
 from agent_core_hatchery.file_classes import FileClassManifest
 from agent_core_hatchery.renderer import Renderer
 from agent_core_hatchery.validators import ValidationError, validate_load_bearing_paths
-
 
 PACKAGE_ROOT = Path(__file__).parent.parent.parent
 TEMPLATES_DIR = PACKAGE_ROOT / "templates"
@@ -38,12 +39,17 @@ class Hatcher:
         self,
         config: HatchConfig,
         templates_dir: Path | None = None,
+        *,
+        _venv_builder: Callable | None = None,
+        _mcp_json_gen: Callable | None = None,
     ) -> None:
         self._config = config
         self._templates_dir = templates_dir or TEMPLATES_DIR
         self._renderer = Renderer(config)
         self._manifest = FileClassManifest.load(self._templates_dir / "file-classes.yaml")
         self._tracked_writes: list[Path] = []
+        self._venv_builder = _venv_builder
+        self._mcp_json_gen = _mcp_json_gen
 
     def hatch(self) -> HatchResult:
         vault_root = self._config.resolved_vault_root()
@@ -74,6 +80,9 @@ class Hatcher:
                 daemon_writes = DaemonConfigWriter(self._config).write_all()
                 self._tracked_writes.extend(daemon_writes)
                 result.files_written.extend(daemon_writes)
+
+                self._build_being_venv(result)
+                self._generate_mcp_json(result)
 
             validate_load_bearing_paths(self._config)
             if not self._config.init_missing:
@@ -132,7 +141,6 @@ class Hatcher:
             "agent_core.yaml.j2": vault / "agent_core.yaml",
             "claude-settings.json.j2": vault / ".claude" / "settings.json",
             "CLAUDE.md.j2": vault / "CLAUDE.md",
-            ".mcp.json.j2": vault / ".mcp.json",
         }
 
         for src in sorted(config_src.iterdir()):
@@ -219,10 +227,59 @@ class Hatcher:
                 except (OSError, NotImplementedError):
                     pass  # Windows doesn't have a meaningful exec bit
 
+    def _build_being_venv(self, result: HatchResult) -> None:
+        """Build the being's slim sidecar venv via C2-1's builder (Cβ-3, #327).
+
+        Uses the injected _venv_builder callable if set (for tests); otherwise
+        lazy-imports build_being_venv from agent_core.venv.builder.
+
+        Appends stable venv path to _tracked_writes so rollback removes the
+        symlink/junction on failure.
+        """
+        if self._venv_builder is not None:
+            stable = self._venv_builder(self._config.being_name_lower)
+        else:
+            from agent_core.venv.builder import build_being_venv  # C2-1 (#315)
+            stable = build_being_venv(self._config.being_name_lower)
+
+        self._tracked_writes.append(stable)
+        result.files_written.append(stable)
+
+    def _generate_mcp_json(self, result: HatchResult) -> None:
+        """Write the being's .mcp.json via C2-2's canonical generator (Cβ-3, #327).
+
+        Uses the injected _mcp_json_gen callable if set (for tests); otherwise
+        lazy-imports C2-2's generate_mcp_json from agent_core.venv.mcp_config
+        (module path to be confirmed once #316 merges — update here then).
+
+        Appends the returned path to _tracked_writes for transactional rollback.
+        """
+        if self._mcp_json_gen is not None:
+            path = self._mcp_json_gen(
+                being_name=self._config.being_name_lower,
+                vault_root=self._config.resolved_vault_root(),
+                daemon_config_dir=self._config.resolved_daemon_config_dir(),
+            )
+        else:
+            # C2-2 (#316): not yet merged. This lazy import resolves once #316 lands.
+            # Expected module path: agent_core.venv.mcp_config (confirm on merge).
+            # Expected contract: generate_mcp_json(target, *, vault_root, ...) -> Path
+            from agent_core.venv.mcp_config import generate_mcp_json  # type: ignore[import]
+            path = generate_mcp_json(
+                self._config.being_name_lower,
+                vault_root=self._config.resolved_vault_root(),
+                daemon_config_dir=self._config.resolved_daemon_config_dir(),
+            )
+
+        self._tracked_writes.append(path)
+        result.files_written.append(path)
+
     def _rollback(self) -> None:
         for path in reversed(self._tracked_writes):
             try:
                 if path.is_file():
+                    path.unlink()
+                elif path.is_symlink():
                     path.unlink()
                 elif path.is_dir() and not any(path.iterdir()):
                     path.rmdir()

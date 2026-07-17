@@ -1,10 +1,8 @@
 """Tests for daemon_config.py — writing endpoints.d/ and jobs.d/ fragments."""
 
-from pathlib import Path
 
 import pytest
 import yaml
-
 from agent_core_hatchery.config import HatchConfig
 from agent_core_hatchery.daemon_config import DaemonConfigWriter
 

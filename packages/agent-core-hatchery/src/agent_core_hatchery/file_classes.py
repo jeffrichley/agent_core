@@ -72,7 +72,7 @@ class FileClassManifest:
         self._classes = classes
 
     @classmethod
-    def load(cls, manifest_path: Path) -> "FileClassManifest":
+    def load(cls, manifest_path: Path) -> FileClassManifest:
         raw = yaml.safe_load(manifest_path.read_text(encoding="utf-8")) or {}
         raw_classes = raw.get("classes", {})
         parsed: dict[FileClass, list[str]] = {}
