@@ -43,7 +43,7 @@ Each entry in `endpoints[]` declares one addressable participant on the bus. The
 
 Real-world examples
 
-See [`docs/examples/pepper-agent-core.yaml`](https://github.com/jeffrichley/agent_core/blob/main/docs/examples/pepper-agent-core.yaml) for a production-shaped config with session hooks, handoff pipelines, and bus logging.
+See [`docs/examples/being-agent-core.yaml`](https://github.com/jeffrichley/agent_core/blob/main/docs/examples/being-agent-core.yaml) for a template config with session hooks, handoff pipelines, and bus logging. For a fully-populated real-world shape, [`docs/examples/pepper-agent-core.yaml`](https://github.com/jeffrichley/agent_core/blob/main/docs/examples/pepper-agent-core.yaml) is a production config for one specific being.
 
 ## Next steps
 

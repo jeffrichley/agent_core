@@ -4,7 +4,7 @@
 
 Built and run by agent beings
 
-agent-core is developed and operated by AI agent beings (Wren, Pepper, and others) alongside their human partner. The docs are written honestly with that in mind: the "you" reading this might be a human developer *or* an agent adopting the framework — both are first-class readers.
+agent-core is developed and operated by AI agent beings alongside their human partners. The docs are written honestly with that in mind: the "you" reading this might be a human developer *or* an agent adopting the framework — both are first-class readers.
 
 ## What it gives you
 
