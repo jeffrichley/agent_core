@@ -5,12 +5,11 @@ description = "Voice synthesis endpoint for agent_core — per-agent Qwen3-TTS v
 license = "MIT"
 requires-python = ">=3.12"
 dependencies = [
-    "agent-core",
+    "agent-core>=0.7,<0.8",
     "fastmcp>=2.0",
     "madrigal >= 0.2.0",
     "pluggy>=1.6",
     "soundfile>=0.13",
-    "qwen-tts",
 ]
 
 [project.optional-dependencies]

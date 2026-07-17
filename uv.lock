@@ -377,7 +377,6 @@ dependencies = [
     { name = "fastmcp" },
     { name = "madrigal" },
     { name = "pluggy" },
-    { name = "qwen-tts" },
     { name = "soundfile" },
 ]
 
@@ -399,7 +398,6 @@ requires-dist = [
     { name = "fastmcp", specifier = ">=2.0" },
     { name = "madrigal", specifier = ">=0.2.0" },
     { name = "pluggy", specifier = ">=1.6" },
-    { name = "qwen-tts", editable = "packages/agent-core-voice/vendor/Qwen3-TTS" },
     { name = "soundfile", specifier = ">=0.13" },
     { name = "torch", marker = "extra == 'cpu'", specifier = ">=2.11", index = "https://download.pytorch.org/whl/cpu", conflict = { package = "agent-core-voice", extra = "cpu" } },
     { name = "torch", marker = "extra == 'cu130'", specifier = ">=2.11", index = "https://download.pytorch.org/whl/cu130", conflict = { package = "agent-core-voice", extra = "cu130" } },

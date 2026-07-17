@@ -6,7 +6,7 @@ license = "MIT"
 requires-python = ">=3.12"
 dependencies = [
     "claude-agent-sdk>=0.1.29",
-    "agent-core-credentials",
+    "agent-core-credentials>=0.7,<0.8",
     "python-dotenv>=1.0.0",
     "tzdata>=2024.1",
     "pydantic>=2.0",
