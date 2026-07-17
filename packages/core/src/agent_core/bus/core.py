@@ -101,6 +101,11 @@ class BusConfig:
     # Liveness watchdog: OS thread fires os._exit if the event loop stops
     # bumping the heartbeat for this many seconds. Non-positive disables.
     watchdog_timeout_seconds: int = 90
+    # Backup: directory where VACUUM INTO snapshots are written. None disables
+    # backup entirely; must point to a different volume than the stores in prod.
+    backup_dir: Path | None = None
+    # Backup: cadence of the hourly snapshot loop (default 3600 = 1 hour).
+    backup_interval_seconds: int = 3600
 
 
 @dataclass

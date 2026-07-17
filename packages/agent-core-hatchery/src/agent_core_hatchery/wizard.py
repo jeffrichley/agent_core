@@ -23,7 +23,6 @@ from agent_core_hatchery.config import (
     WebcamChannelConfig,
 )
 
-
 _NAME_RE = re.compile(r"^[A-Za-z][A-Za-z0-9_-]*$")
 _KEBAB_RE = re.compile(r"^[a-z][a-z0-9_-]*$")
 
@@ -80,7 +79,7 @@ def run_wizard() -> HatchConfig:
     typer.echo(f"  Resolved vault path: {resolved_vault}")
     if resolved_vault.exists():
         typer.secho(
-            f"  ⚠ Vault already exists. mv it aside or use --init-missing.",
+            "  ⚠ Vault already exists. mv it aside or use --init-missing.",
             fg=typer.colors.YELLOW,
         )
 
@@ -111,7 +110,7 @@ def run_wizard() -> HatchConfig:
         webcam_cfg = WebcamChannelConfig(enabled=True)
 
     github_cfg = GitHubBackupConfig()
-    if questionary.confirm(f"Install GitHub backup of Memory/?", default=False).ask():
+    if questionary.confirm("Install GitHub backup of Memory/?", default=False).ask():
         repo_url = questionary.text(
             "Repo URL (or 'gh' to assume configured gh CLI):",
         ).ask() or ""
@@ -139,7 +138,7 @@ def run_wizard() -> HatchConfig:
     )
     typer.echo("   • Elder letters: resolved at hatch time from manifest")
 
-    typer.secho(f"\n  ── Preview ──", bold=True)
+    typer.secho("\n  ── Preview ──", bold=True)
     typer.echo(f"  Will create: {resolved_vault}")
     typer.echo(
         f"  Will modify: ~/.agent-core/endpoints.d/{being_lower}.yaml"
@@ -173,7 +172,7 @@ def offer_letter_authoring(config: HatchConfig) -> bool:
         return False
 
     if not questionary.confirm(
-        f"Open editor on from-her-creator.md now?", default=True
+        "Open editor on from-her-creator.md now?", default=True
     ).ask():
         return False
 

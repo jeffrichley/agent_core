@@ -31,7 +31,6 @@ classes:
     - "config/agent_core.yaml.j2"
     - "config/claude-settings.json.j2"
     - "config/CLAUDE.md.j2"
-    - "config/.mcp.json.j2"
     - "daemon-fragments/endpoints.yaml.j2"
     - "daemon-fragments/jobs.yaml.j2"
     - "elder-letters-manifest.yaml"

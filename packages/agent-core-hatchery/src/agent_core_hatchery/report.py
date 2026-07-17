@@ -9,7 +9,6 @@ from typing import Literal
 from agent_core_hatchery.config import HatchConfig
 from agent_core_hatchery.hatcher import HatchResult
 
-
 DaemonCheckStatus = Literal["reachable_and_registered", "reachable_but_missing", "unreachable", "skipped"]
 
 

@@ -1,6 +1,7 @@
-# Morning brief — Pepper
+# Morning brief — example
+# This file uses "Jeff" as an example human-partner name in content templates. Substitute your own.
 
-Pepper's daily morning brief. Composed by the brief framework
+An example daily morning brief. Composed by the brief framework
 (cutover #09): the orchestrator gathers context against the
 playbook's `gather_config`, an agent composes section content via
 the MCP tool surface, and the result is delivered to Discord and
@@ -14,10 +15,10 @@ filename's stem must match `brief_type` (the orchestrator loads
 
 ```yaml
 brief_type: morning_brief
-voice: pepper
+voice: <your-being>
 schedule:
   cron: "0 7 * * *"
-  scheduler: "pepper-scheduler"
+  scheduler: "<your-being>-scheduler"
 gather_config: ${agent_root}/Memory/gather/morning.yaml
 ```
 
@@ -34,7 +35,7 @@ destinations:
       channel_id: "REPLACE_WITH_CHANNEL_ID"
       # Bus endpoint name of the Discord adapter that will publish this
       # embed. Default is ``discord``; override when the DiscordEndpoint
-      # is registered under a different name (e.g. ``discord-pepper`` if
+      # is registered under a different name (e.g. ``discord-<your-being>`` if
       # following the agent-* convention). Caught on testbot 2026-05-05:
       # without this, the brief silently failed Discord delivery with
       # ``publish to unregistered endpoint 'discord'`` while markdown

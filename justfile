@@ -35,7 +35,7 @@ fix:
 
 # Lint
 lint:
-    uv run --no-sync ruff check packages/core packages/agent-core-channel
+    uv run --no-sync ruff check packages/core packages/agent-core-channel packages/agent-core-hatchery
 
 lint-all:
     uv run --no-sync ruff check .

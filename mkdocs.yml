@@ -51,6 +51,7 @@ nav:
       - Running the daemon: getting-started/daemon.md
   - Concepts:
       - concepts/index.md
+      - Architecture: concepts/architecture.md
       - The bus: concepts/bus.md
       - Envelopes: concepts/envelopes.md
       - Endpoints: concepts/endpoints.md

@@ -1,9 +1,7 @@
 """Tests for the Jinja2-based template renderer."""
 
-from pathlib import Path
 
 import pytest
-
 from agent_core_hatchery.config import HatchConfig
 from agent_core_hatchery.renderer import LeftoverBraceError, Renderer
 

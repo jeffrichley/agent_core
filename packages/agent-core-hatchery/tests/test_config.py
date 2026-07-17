@@ -1,11 +1,9 @@
 """Tests for HatchConfig pydantic model."""
 
-import os
 
 import pytest
-from pydantic import ValidationError
-
 from agent_core_hatchery.config import HatchConfig
+from pydantic import ValidationError
 
 
 def test_minimal_config_loads():

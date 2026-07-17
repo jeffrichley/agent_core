@@ -8,7 +8,6 @@ import yaml
 
 from agent_core_hatchery.config import HatchConfig
 
-
 LOAD_BEARING_FILES = (
     "Memory/IDENTITY.md",
     "Memory/SOUL.md",

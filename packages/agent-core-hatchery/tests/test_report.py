@@ -23,7 +23,7 @@ def test_happy_path_report(tmp_path):
         daemon_check_status="reachable_and_registered",
     )
     assert path == vault / "HATCHING-REPORT.md"
-    body = path.read_text()
+    body = path.read_text(encoding="utf-8")
     assert "# HATCHING-REPORT — Deb" in body
     assert "Cynthia" in body
     assert "REQUIRED" not in body  # happy path; no escalation
@@ -44,6 +44,6 @@ def test_escalated_report_when_letter_skipped(tmp_path):
         letter_authored=False,
         daemon_check_status="unreachable",
     )
-    body = path.read_text()
+    body = path.read_text(encoding="utf-8")
     assert "REQUIRED BEFORE FIRST AWAKENING" in body
     assert "ACTION REQUIRED" in body  # daemon-unreachable escalation
