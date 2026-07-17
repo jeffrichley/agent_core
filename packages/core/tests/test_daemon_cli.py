@@ -392,6 +392,134 @@ def test_unknown_instance_dev_parse_error() -> None:
     assert "prod" in msg or "source" in msg or "test" in msg
 
 
+def test_install_writes_venv_path_to_stamp(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """daemon install records venv_path = str(home / '.venv') in the install stamp."""
+    monkeypatch.setenv("AGENT_CORE_HOME", str(tmp_path))
+
+    # Monkeypatch away GitHub and subprocess calls
+    monkeypatch.setattr("agent_core.daemon.cli.resolve_version", lambda r, repo: "v0.8.0")
+    monkeypatch.setattr("agent_core.daemon.cli.list_release_wheels", lambda t, repo: [("core.whl", "url")])
+    monkeypatch.setattr("agent_core.daemon.cli.download_wheels", lambda a, dest: [tmp_path / "core.whl"])
+    monkeypatch.setattr("agent_core.daemon.cli.download_requirements", lambda t, repo, dest: tmp_path / "requirements.txt")
+    monkeypatch.setattr("agent_core.daemon.cli.ensure_venv", lambda venv, python_version: None)
+    monkeypatch.setattr("agent_core.daemon.cli.install_requirements", lambda req, venv_python: None)
+    monkeypatch.setattr("agent_core.daemon.cli.install_wheels", lambda wheels, venv_python: None)
+    monkeypatch.setattr("agent_core.daemon.cli._git_sha_of_tag", lambda tag: "abc1234")
+
+    result = runner.invoke(daemon_app, ["install"])
+    assert result.exit_code == 0, result.stdout
+
+    from agent_core.daemon.install import read_stamp
+    stamp = read_stamp(tmp_path)
+    assert stamp is not None
+    assert stamp.venv_path == str(tmp_path / ".venv")
+
+
+def test_doctor_reports_config_hygiene(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """daemon doctor runs the config hygiene pass and reports findings."""
+    monkeypatch.setenv("AGENT_CORE_HOME", str(tmp_path))
+
+    from agent_core.daemon.config_hygiene import HygieneReport
+
+    fake_report = HygieneReport(
+        debris_found=[tmp_path / "agent_core.yaml.bak"],
+        debris_removed=[],
+        drift_messages=["fragment 'bad.yaml': reserved key(s) ['bus']"],
+    )
+    monkeypatch.setattr(
+        "agent_core.daemon.cli.run_config_hygiene",
+        lambda config_dir, fix: fake_report,
+    )
+
+    result = runner.invoke(daemon_app, ["doctor"])
+    # doctor exits 1 when issues are found
+    assert result.exit_code == 1
+    assert "debris" in result.stdout.lower() or "agent_core.yaml.bak" in result.stdout
+    assert "drift" in result.stdout.lower() or "bad.yaml" in result.stdout
+
+
+def test_doctor_clean_config_exits_zero(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """daemon doctor exits 0 and shows clean report when no issues found."""
+    monkeypatch.setenv("AGENT_CORE_HOME", str(tmp_path))
+
+    from agent_core.daemon.config_hygiene import HygieneReport
+
+    monkeypatch.setattr(
+        "agent_core.daemon.cli.run_config_hygiene",
+        lambda config_dir, fix: HygieneReport(),
+    )
+
+    result = runner.invoke(daemon_app, ["doctor"])
+    assert result.exit_code == 0
+    assert "no debris" in result.stdout.lower()
+    assert "no drift" in result.stdout.lower()
+
+
+def test_doctor_fix_shows_removed_debris(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """daemon doctor --fix shows 'removed' for deleted debris files."""
+    monkeypatch.setenv("AGENT_CORE_HOME", str(tmp_path))
+
+    from agent_core.daemon.config_hygiene import HygieneReport
+
+    bak = tmp_path / "agent_core.yaml.bak"
+    fake_report = HygieneReport(
+        debris_found=[bak],
+        debris_removed=[bak],
+        drift_messages=[],
+    )
+    monkeypatch.setattr(
+        "agent_core.daemon.cli.run_config_hygiene",
+        lambda config_dir, fix: fake_report,
+    )
+
+    result = runner.invoke(daemon_app, ["doctor", "--fix"])
+    assert result.exit_code == 1  # has_issues is True (debris_found is populated)
+    assert "removed" in result.stdout.lower()
+
+
+def test_status_shows_venv_path_when_present(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """daemon status prints venv_path when the install stamp includes it."""
+    import os
+
+    from agent_core.daemon.install import InstallStamp, write_stamp
+
+    monkeypatch.setenv("AGENT_CORE_HOME", str(tmp_path))
+    (tmp_path / "daemon.pid").write_text(str(os.getpid()))
+    write_stamp(
+        tmp_path,
+        InstallStamp(
+            installed_at="2026-07-15T10:00:00Z",
+            installed_sha="abc1234",
+            installed_version="0.8.0",
+            python_version="3.12",
+            extra=None,
+            release_tag="v0.8.0",
+            venv_path=str(tmp_path / ".venv"),
+        ),
+    )
+
+    # Force a wide console so Rich does not wrap the long tmp path across
+    # lines (Rich honors COLUMNS before terminal-size detection); the
+    # newline-normalize is a belt-and-suspenders guard for any wrapping.
+    # Without this the exact-substring match false-fails on narrow
+    # non-TTY consoles (e.g. windows-latest CI), where the path wraps
+    # mid-string.
+    monkeypatch.setenv("COLUMNS", "200")
+    result = runner.invoke(daemon_app, ["status"])
+    normalized = result.stdout.replace("\r", "").replace("\n", "")
+    assert str(tmp_path / ".venv") in normalized
+
+
 def test_init_writes_config_and_refuses_clobber(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

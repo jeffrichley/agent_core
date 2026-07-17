@@ -40,62 +40,12 @@ http:
   bind_port: 8789
 
 endpoints:
+  # System / infra endpoints only — Pepper's being endpoints live in
+  # endpoints.d/pepper.yaml, conf.d-merged at daemon startup.
   - type: builtin.handoff_jobs
     name: handoff-jobs
     params:
       mount: /internal/handoff-jobs
-
-  - type: builtin.claude_code_mcp
-    name: pepper
-    params:
-      mount: /mcp/pepper
-      # Cutover #04: bus_log_root defaults to ~/.agent-core/bus/raw
-      # (matches builtin.daily_raw_jsonl writer). Override here only if
-      # the daemon writes the log somewhere non-default.
-      #
-      # Cutover #09 (T19): naming the briefs orchestrator here mounts
-      # the seven briefs agent tools (compose_brief, list_sections,
-      # get_section_spec, validate_section, compress_sections,
-      # add_extension_section, submit_brief) onto Pepper's MCP session
-      # via cross-endpoint wiring at runner construction time. The
-      # orchestrator must be registered as a sibling endpoint below.
-      briefs_orchestrator: briefs.orchestrator
-
-  # Cutover #09: brief framework orchestrator. Listens for BriefRequest
-  # events on the bus, runs the playbook's gather config (loaded from
-  # `<playbooks_path>/<brief_type>.md`), and publishes a ComposeBrief
-  # envelope back to `default_target_agent` (Pepper). The agent then
-  # composes the brief content via the registered MCP tool surface
-  # (T14) and submits it via T13.
-  #
-  # `fetcher_paths` is the runner-friendly path: the orchestrator
-  # discovers fetchers on construction via `discover_implementations`.
-  # In-process callers (tests, the briefs CLI) use the alternative
-  # `fetcher_catalog=` constructor kwarg instead.
-  #
-  # `vars.agent_root` anchors `${agent_root}/...` substitutions in the
-  # playbook + gather YAMLs. T16 wires this entry through pluggy
-  # (`agent_core_briefs.plugin.register_endpoint_types`); the briefs
-  # subsystem is contributed via entry-points, not a hard dep on core.
-  - type: builtin.briefs_orchestrator
-    name: briefs.orchestrator
-    params:
-      playbooks_path: "C:\\Users\\jeffr\\.pepper\\Memory\\playbooks"
-      fetcher_paths:
-        - "C:\\Users\\jeffr\\.pepper\\Memory\\briefs\\fetchers"
-      # T19 (cutover #09): destination_paths and audit_log_path are
-      # optional — both default to sensible values (built-in
-      # destinations + ~/.agent-core/briefs/audit.jsonl). Listed
-      # explicitly so operators see the knobs.
-      # NOTE: built-in `discord_embed` and `markdown_file` are auto-loaded
-      # from the package; operator-supplied paths add NEW destinations only
-      # and cannot redefine a built-in `type_id` (duplicate raises LoaderError).
-      destination_paths:
-        - "C:\\Users\\jeffr\\.pepper\\Memory\\briefs\\destinations"
-      audit_log_path: "C:\\Users\\jeffr\\.agent-core\\briefs\\audit.jsonl"
-      vars:
-        agent_root: "C:\\Users\\jeffr\\.pepper"
-      default_target_agent: "pepper"
 
 bus_hooks:
   pre_publish:

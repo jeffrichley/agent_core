@@ -1,5 +1,6 @@
 """Tests for the Bus runner — load YAML, instantiate, start."""
 
+import logging
 from pathlib import Path
 from typing import Any
 
@@ -52,7 +53,9 @@ class TestRunner:
         finally:
             await bus.stop()
 
-    async def test_unknown_class_raises(self, tmp_path: Path):
+    async def test_unknown_class_skipped_boot_continues(
+        self, tmp_path: Path, build_bus, caplog
+    ):
         config = {
             "endpoints": [
                 {
@@ -64,16 +67,32 @@ class TestRunner:
         }
         p = tmp_path / "bad.yaml"
         p.write_text(yaml.dump(config))
-        with pytest.raises(BusBootError):
-            await build_bus_from_config(p)
+        with caplog.at_level(logging.ERROR, logger="agent_core.bus.runner"):
+            bus, _http = await build_bus(p)
+        try:
+            assert any(
+                "does.not_exist.Foo" in r.message or "x" in r.message
+                for r in caplog.records
+            )
+        finally:
+            await bus.stop()
 
-    async def test_class_not_endpoint_protocol(self, tmp_path: Path):
+    async def test_class_not_endpoint_protocol_skipped_boot_continues(
+        self, tmp_path: Path, build_bus, caplog
+    ):
         # Unknown class aliases are rejected in strict plugin-resolution mode.
         config = {"endpoints": [{"type": "datetime.datetime", "name": "x", "params": {}}]}
         p = tmp_path / "bad.yaml"
         p.write_text(yaml.dump(config))
-        with pytest.raises(BusBootError, match="unknown endpoint type"):
-            await build_bus_from_config(p)
+        with caplog.at_level(logging.ERROR, logger="agent_core.bus.runner"):
+            bus, _http = await build_bus(p)
+        try:
+            assert any(
+                "unknown endpoint type" in r.message or "datetime.datetime" in r.message
+                for r in caplog.records
+            )
+        finally:
+            await bus.stop()
 
     async def test_non_loopback_bind_refused(self, tmp_path: Path):
         config = {
@@ -85,19 +104,31 @@ class TestRunner:
         with pytest.raises(BusBootError, match="loopback"):
             await build_bus_from_config(p)
 
-    async def test_endpoint_missing_name_raises(self, tmp_path: Path):
+    async def test_endpoint_missing_name_skipped_boot_continues(
+        self, tmp_path: Path, build_bus, caplog
+    ):
         config = {"endpoints": [{"type": "builtin.stub", "params": {}}]}
         p = tmp_path / "bad.yaml"
         p.write_text(yaml.dump(config))
-        with pytest.raises(BusBootError, match="missing required 'name'"):
-            await build_bus_from_config(p)
+        with caplog.at_level(logging.ERROR, logger="agent_core.bus.runner"):
+            bus, _http = await build_bus(p)
+        try:
+            assert any("missing" in r.message or "'name'" in r.message for r in caplog.records)
+        finally:
+            await bus.stop()
 
-    async def test_endpoint_missing_type_raises(self, tmp_path: Path):
+    async def test_endpoint_missing_type_skipped_boot_continues(
+        self, tmp_path: Path, build_bus, caplog
+    ):
         config = {"endpoints": [{"name": "x", "params": {}}]}
         p = tmp_path / "bad.yaml"
         p.write_text(yaml.dump(config))
-        with pytest.raises(BusBootError, match="missing required 'type'"):
-            await build_bus_from_config(p)
+        with caplog.at_level(logging.ERROR, logger="agent_core.bus.runner"):
+            bus, _http = await build_bus(p)
+        try:
+            assert any("missing" in r.message or "'type'" in r.message for r in caplog.records)
+        finally:
+            await bus.stop()
 
     async def test_plugin_can_resolve_endpoint_class(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, build_bus
