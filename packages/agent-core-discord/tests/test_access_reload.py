@@ -9,6 +9,8 @@ import pytest
 from agent_core_discord.endpoint import DiscordEndpoint
 from agent_core_discord.testing.fakes import FakeBusHandle, FakeDiscordClient
 
+from agent_core.testing import wait_until
+
 
 async def _start(monkeypatch, tmp_path, *, interval: float = 0.05, path_json: dict | None = None):
     """Start a DiscordEndpoint with an optional access config file at tmp_path."""
@@ -36,7 +38,7 @@ async def test_access_reload_picks_up_added_channel(monkeypatch, tmp_path):
     ep, p = await _start(monkeypatch, tmp_path, path_json=initial)
     try:
         p.write_text(json.dumps({"channels": {"100": {}, "200": {}}}), encoding="utf-8")
-        await asyncio.sleep(0.05 + 0.1)
+        await wait_until(lambda: "200" in ep._access.channels, message="access config reload picks up added channel 200")
         assert "200" in ep._access.channels
     finally:
         await ep.stop()
@@ -48,7 +50,7 @@ async def test_access_reload_picks_up_removed_channel(monkeypatch, tmp_path):
     ep, p = await _start(monkeypatch, tmp_path, path_json=initial)
     try:
         p.write_text(json.dumps({"channels": {"100": {}}}), encoding="utf-8")
-        await asyncio.sleep(0.05 + 0.1)
+        await wait_until(lambda: "200" not in ep._access.channels, message="access config reload picks up removed channel 200")
         assert "200" not in ep._access.channels
         assert "100" in ep._access.channels
     finally:
@@ -76,7 +78,10 @@ async def test_access_reload_warns_on_malformed_json(monkeypatch, tmp_path, capl
     try:
         p.write_text("{bad json", encoding="utf-8")
         with caplog.at_level(logging.WARNING):
-            await asyncio.sleep(0.05 + 0.1)
+            await wait_until(
+                lambda: any("access config reload" in rec.message for rec in caplog.records),
+                message="access config reload warning logged for malformed json",
+            )
         assert any("access config reload" in rec.message for rec in caplog.records)
     finally:
         await ep.stop()
@@ -137,7 +142,10 @@ async def test_access_reload_warns_on_schema_invalid_json(monkeypatch, tmp_path,
     try:
         p.write_text(json.dumps({"channels": 5}), encoding="utf-8")
         with caplog.at_level(logging.WARNING):
-            await asyncio.sleep(0.05 + 0.1)
+            await wait_until(
+                lambda: any("access config reload" in rec.message for rec in caplog.records),
+                message="access config reload warning logged for schema-invalid json",
+            )
         assert any("access config reload" in rec.message for rec in caplog.records)
     finally:
         await ep.stop()
@@ -154,7 +162,7 @@ async def test_access_reload_recovers_after_schema_invalid_json(monkeypatch, tmp
         await asyncio.sleep(0.05 + 0.1)
         # Now write a valid config — loop must NOT have poisoned the mtime on error
         p.write_text(json.dumps({"channels": {"200": {}}}), encoding="utf-8")
-        await asyncio.sleep(0.05 + 0.1)
+        await wait_until(lambda: "200" in ep._access.channels, message="access config reload recovers and picks up channel 200")
         # Recovery: new channel picked up
         assert "200" in ep._access.channels
     finally:
