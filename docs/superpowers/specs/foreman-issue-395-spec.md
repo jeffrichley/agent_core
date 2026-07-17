@@ -209,8 +209,14 @@ direct readers there first.
    | [Architecture](architecture.md) | How the daemon, bus, endpoints, beings, and sidecars compose |
    ```
 
-   Add one sentence at the top of the "four concepts build on each other" paragraph
-   directing readers to the architecture page first: "New to agent-core? Read the
+   Also update the sentence that precedes the table. `docs/concepts/index.md` line 7
+   currently reads "These four concepts build on each other in order:" — adding
+   Architecture makes the table five rows, so that sentence must be updated. Change
+   it to "These five concepts build on each other in order:" (or remove the count
+   entirely: "These concepts build on each other in order:").
+
+   Add one sentence at the top of that updated paragraph directing readers to the
+   architecture page first: "New to agent-core? Read the
    [Architecture](architecture.md) page first for a full system diagram and noun
    definitions."
 
