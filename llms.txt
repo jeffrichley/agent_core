@@ -5,7 +5,7 @@
 ## Getting started
 
 - [Home](https://jeffrichley.github.io/agent_core/index.md)
-- [Getting Started](https://jeffrichley.github.io/agent_core/getting-started/index.md)
+- [Index](https://jeffrichley.github.io/agent_core/getting-started/index.md)
 - [Running the daemon](https://jeffrichley.github.io/agent_core/getting-started/daemon/index.md)
 - [First agent](https://jeffrichley.github.io/agent_core/getting-started/first-agent/index.md)
 
