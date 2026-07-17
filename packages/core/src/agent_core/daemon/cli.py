@@ -31,6 +31,7 @@ from rich.console import Console
 
 from agent_core.daemon import autostart
 from agent_core.daemon import windows_service as _win_svc
+from agent_core.daemon._env import _daemon_safe_env
 from agent_core.daemon.config_hygiene import run_config_hygiene
 from agent_core.daemon.config_template import build_default_config
 from agent_core.daemon.install import (
@@ -162,6 +163,7 @@ def start(instance: str | None = _INSTANCE_OPTION) -> None:
         stderr=subprocess.STDOUT,
         stdin=subprocess.DEVNULL,
         start_new_session=True,
+        env=_daemon_safe_env(),
     )
     write_pid(pid_file, proc.pid)
     console.print(f"[green]{inst} daemon started (PID: {proc.pid})[/green]")
