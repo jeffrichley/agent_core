@@ -116,8 +116,13 @@ watchdog_timeout_seconds=int(os.environ.get("BUS_WATCHDOG_TIMEOUT_SECONDS", daem
 **Plugin hookspec dict-shape compatibility**: `configure_endpoint_instance` and `wire_endpoints_after_registration` accept `endpoint_config: dict[str, Any]` and `raw_endpoint_configs: dict[str, dict[str, Any]]` respectively. When building these dicts from the typed Pydantic objects, use `.model_dump()`:
 ```python
 # building raw_endpoint_configs for cross-endpoint wiring
+# Filter to successfully-registered endpoints only: entries that fail per-entry registration
+# (unknown type, protocol violation, duplicate name) are absent from endpoints_by_name and
+# must be excluded here so wire_endpoints_after_registration is not passed phantom entries.
 raw_endpoint_configs: dict[str, dict[str, Any]] = {
-    entry.name: entry.model_dump() for entry in daemon_cfg.endpoints
+    entry.name: entry.model_dump()
+    for entry in daemon_cfg.endpoints
+    if entry.name in endpoints_by_name
 }
 # and for configure_endpoint_instance:
 plugin_manager.hook.configure_endpoint_instance(
@@ -143,7 +148,7 @@ Same pattern for `configure_bus_hook_instance(hook_config=entry.model_dump())`.
 
 5. **Create `packages/core/tests/bus/test_config.py`** — unit tests for all Pydantic models: valid round-trip, `extra="forbid"` fires at root + every nested level, defaults match runner defaults, `params` dict is unconstrained.
 
-6. **Modify `packages/core/tests/bus/test_runner.py`** — (a) add one async test: unknown top-level key (e.g. `{"buus": {}}` in YAML) causes `build_bus_from_config` to raise `BusBootError`; (b) update `test_endpoint_missing_name_raises` (line 92) and `test_endpoint_missing_type_raises` (line 99) — after the manual field-presence guards are removed per Sub-request 2, `BusBootError` is raised by the hookimpl wrapping Pydantic's `ValidationError`; Pydantic's message contains `"Field required"` but not the old guard strings `"missing required 'name'"` or `"missing required 'type'"`. Change both `match=` arguments to `match="Field required"` (or remove them and rely solely on `pytest.raises(BusBootError)`).
+6. **Modify `packages/core/tests/bus/test_runner.py`** — (a) add one async test: unknown top-level key (e.g. `{"buus": {}}` in YAML) causes `build_bus_from_config` to raise `BusBootError`; (b) convert `test_endpoint_missing_name_skipped_boot_continues` (line 107) and `test_endpoint_missing_type_skipped_boot_continues` (line 120) — **behaviour change**: after the manual field-presence guards are removed per Sub-request 2, a YAML endpoint entry with a missing `type` or `name` is caught by `DaemonConfig.model_validate(raw)` inside the hookimpl, which wraps the `pydantic.ValidationError` as `BusBootError` and aborts the entire boot (previously the runner skipped the bad entry and continued booting; now it refuses to start). Both existing tests currently use `await build_bus(p)` and assert boot continues with a log message; they must be converted to use `pytest.raises(BusBootError)` against `build_bus_from_config` directly (not the teardown-safe `build_bus` fixture). Rename them to `test_endpoint_missing_name_raises_bus_boot_error` and `test_endpoint_missing_type_raises_bus_boot_error`, change their bodies to call `await build_bus_from_config(p)` inside `pytest.raises(BusBootError)`, and either remove or update the `match=` argument to `match="Field required"` (the Pydantic `ValidationError` message contains this string for required fields). The `caplog` parameter is no longer needed in either test.
 
 ## File-level changes
 
