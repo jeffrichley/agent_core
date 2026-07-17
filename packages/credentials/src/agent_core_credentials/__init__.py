@@ -10,13 +10,16 @@ import os
 from pathlib import Path
 
 from agent_core_credentials.models import Credential, CredentialSummary
+from agent_core_credentials.secrets import SecretNotFoundError, get
 from agent_core_credentials.store import CredentialStore
 
 __all__ = [
     "Credential",
     "CredentialSummary",
+    "SecretNotFoundError",
     "default_vault_path",
     "delete_credential",
+    "get",
     "get_credential",
     "list_credentials",
     "set_credential",

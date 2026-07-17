@@ -12,6 +12,8 @@ import subprocess
 import sys
 from pathlib import Path
 
+from agent_core.daemon._env import _daemon_safe_env
+
 # ---------------------------------------------------------------------------
 # Constants / pure config
 # ---------------------------------------------------------------------------
@@ -109,6 +111,7 @@ if sys.platform == "win32":  # pragma: no cover
                     | subprocess.CREATE_NEW_PROCESS_GROUP
                 ),
                 stdin=subprocess.DEVNULL,
+                env=_daemon_safe_env(),
             )
             self._proc.wait()
             self.ReportServiceStatus(_win32.win32service.SERVICE_STOPPED)

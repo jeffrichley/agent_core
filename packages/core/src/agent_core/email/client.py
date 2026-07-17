@@ -10,6 +10,9 @@ from pathlib import Path
 import typer
 from dotenv import load_dotenv
 
+from agent_core_credentials.secrets import SecretNotFoundError
+from agent_core_credentials.secrets import get as get_secret
+
 # Load .env from ~/.pepper/.env if it exists (for API keys)
 _pepper_env = Path.home() / ".pepper" / ".env"
 if _pepper_env.exists():
@@ -23,10 +26,11 @@ def get_client():
     """
     from agentmail import AgentMail
 
-    api_key = os.environ.get("AGENTMAIL_API_KEY")
-    if not api_key:
+    try:
+        api_key = get_secret("AGENTMAIL_API_KEY")
+    except SecretNotFoundError:
         typer.echo("Error: AGENTMAIL_API_KEY environment variable not set.", err=True)
-        raise SystemExit(1)
+        raise SystemExit(1) from None
 
     return AgentMail(api_key=api_key)
 

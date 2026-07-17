@@ -115,6 +115,7 @@ wheels = [
 name = "agent-core"
 source = { editable = "packages/core" }
 dependencies = [
+    { name = "agent-core-credentials" },
     { name = "agentmail" },
     { name = "aiosqlite" },
     { name = "apscheduler" },
@@ -137,6 +138,7 @@ dependencies = [
 
 [package.metadata]
 requires-dist = [
+    { name = "agent-core-credentials", editable = "packages/credentials" },
     { name = "agentmail", specifier = ">=0.4" },
     { name = "aiosqlite", specifier = ">=0.20" },
     { name = "apscheduler", specifier = ">=4.0.0a5" },
@@ -240,6 +242,7 @@ name = "agent-core-discord"
 source = { editable = "packages/agent-core-discord" }
 dependencies = [
     { name = "agent-core" },
+    { name = "agent-core-credentials" },
     { name = "discord-py" },
     { name = "pydantic" },
     { name = "python-dotenv" },
@@ -253,6 +256,7 @@ voice = [
 [package.metadata]
 requires-dist = [
     { name = "agent-core", editable = "packages/core" },
+    { name = "agent-core-credentials", editable = "packages/credentials" },
     { name = "discord-py", specifier = ">=2.4" },
     { name = "faster-whisper", marker = "extra == 'voice'", specifier = ">=1.1" },
     { name = "pydantic", specifier = ">=2.0" },
@@ -301,6 +305,7 @@ name = "agent-core-inbound"
 source = { editable = "packages/agent-core-inbound" }
 dependencies = [
     { name = "agent-core" },
+    { name = "agent-core-credentials" },
     { name = "fastapi" },
     { name = "pydantic" },
     { name = "uvicorn" },
@@ -317,6 +322,7 @@ test = [
 [package.metadata]
 requires-dist = [
     { name = "agent-core", editable = "packages/core" },
+    { name = "agent-core-credentials", editable = "packages/credentials" },
     { name = "fastapi", specifier = ">=0.110" },
     { name = "httpx", marker = "extra == 'test'" },
     { name = "pydantic", specifier = ">=2.0" },
