@@ -113,6 +113,7 @@ testpaths = [
     "packages/agent-core-webcam/tests",
     "packages/agent-core-voice/tests",
     "packages/agent-core-busproxy/tests",
+    "packages/agent-core-hatchery/tests",
 ]
 asyncio_mode = "auto"
 # --cov-fail-under=75: whole-repo floor on SOURCE-only coverage (test dirs are

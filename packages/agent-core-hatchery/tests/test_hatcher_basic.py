@@ -4,9 +4,16 @@ import re
 from pathlib import Path
 
 import pytest
-
 from agent_core_hatchery.config import HatchConfig
 from agent_core_hatchery.hatcher import Hatcher, VaultExistsError
+
+
+def _noop_venv_builder(target: str) -> Path:
+    return Path.home() / f".{target}" / ".venv"
+
+
+def _noop_mcp_gen(**kwargs) -> Path:
+    return Path.home() / ".fake" / ".mcp.json"
 
 
 def test_hatch_renders_load_bearing_paths(tmp_path):
@@ -16,8 +23,8 @@ def test_hatch_renders_load_bearing_paths(tmp_path):
         vault_root=str(tmp_path),
         daemon_config_dir=str(tmp_path / ".agent-core"),
     )
-    hatcher = Hatcher(cfg)
-    result = hatcher.hatch()
+    hatcher = Hatcher(cfg, _venv_builder=_noop_venv_builder, _mcp_json_gen=_noop_mcp_gen)
+    hatcher.hatch()
 
     vault = cfg.resolved_vault_root()
     assert vault.exists()
@@ -45,11 +52,11 @@ def test_hatch_refuses_if_vault_exists(tmp_path):
         vault_root=str(tmp_path),
         daemon_config_dir=str(tmp_path / ".agent-core"),
     )
-    Hatcher(cfg).hatch()
+    Hatcher(cfg, _venv_builder=_noop_venv_builder, _mcp_json_gen=_noop_mcp_gen).hatch()
 
     # Re-hatch must error
     with pytest.raises(VaultExistsError, match=re.escape(str(cfg.resolved_vault_root()))):
-        Hatcher(cfg).hatch()
+        Hatcher(cfg, _venv_builder=_noop_venv_builder, _mcp_json_gen=_noop_mcp_gen).hatch()
 
 
 def test_hatch_writes_daemon_fragments(tmp_path):
@@ -59,7 +66,7 @@ def test_hatch_writes_daemon_fragments(tmp_path):
         vault_root=str(tmp_path),
         daemon_config_dir=str(tmp_path / ".agent-core"),
     )
-    Hatcher(cfg).hatch()
+    Hatcher(cfg, _venv_builder=_noop_venv_builder, _mcp_json_gen=_noop_mcp_gen).hatch()
     assert (tmp_path / ".agent-core" / "endpoints.d" / "testbeing.yaml").is_file()
     assert (tmp_path / ".agent-core" / "jobs.d" / "testbeing.yaml").is_file()
 
@@ -71,7 +78,7 @@ def test_init_missing_top_up(tmp_path):
         vault_root=str(tmp_path),
         daemon_config_dir=str(tmp_path / ".agent-core"),
     )
-    Hatcher(cfg).hatch()
+    Hatcher(cfg, _venv_builder=_noop_venv_builder, _mcp_json_gen=_noop_mcp_gen).hatch()
 
     # Delete one structural file
     vault = cfg.resolved_vault_root()
@@ -94,7 +101,7 @@ def test_hatch_copies_pepper_letter(tmp_path):
         vault_root=str(tmp_path),
         daemon_config_dir=str(tmp_path / ".agent-core"),
     )
-    Hatcher(cfg).hatch()
+    Hatcher(cfg, _venv_builder=_noop_venv_builder, _mcp_json_gen=_noop_mcp_gen).hatch()
 
     pepper_letter = (
         tmp_path / ".testbeing" / "Memory" / "testbeing"
@@ -111,7 +118,7 @@ def test_hatch_copies_universal_skills(tmp_path):
         vault_root=str(tmp_path),
         daemon_config_dir=str(tmp_path / ".agent-core"),
     )
-    Hatcher(cfg).hatch()
+    Hatcher(cfg, _venv_builder=_noop_venv_builder, _mcp_json_gen=_noop_mcp_gen).hatch()
 
     skills = tmp_path / ".testbeing" / ".claude" / "skills"
     assert (skills / "skill-author" / "SKILL.md").is_file()
@@ -136,7 +143,7 @@ def test_no_gendered_pronouns_in_rendered_vault(tmp_path):
         vault_root=str(tmp_path),
         daemon_config_dir=str(tmp_path / ".agent-core"),
     )
-    Hatcher(cfg).hatch()
+    Hatcher(cfg, _venv_builder=_noop_venv_builder, _mcp_json_gen=_noop_mcp_gen).hatch()
 
     vault = cfg.resolved_vault_root()
     gendered_pattern = re.compile(r"\b(she|her)\b", re.IGNORECASE)

@@ -1,10 +1,8 @@
 """Tests for elder-letter manifest resolution."""
 
 import warnings
-from pathlib import Path
 
 from agent_core_hatchery.elder_letters import (
-    ResolvedLetter,
     SourceKind,
     resolve_elder_letters,
 )

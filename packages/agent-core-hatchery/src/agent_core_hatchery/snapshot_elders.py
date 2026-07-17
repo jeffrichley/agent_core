@@ -19,12 +19,12 @@ app = typer.Typer(name="hatchery-snapshot-elders")
 
 @app.callback(invoke_without_command=True)
 def snapshot(
-    manifest: Path = typer.Option(
+    manifest: Path = typer.Option(  # noqa: B008
         Path(__file__).parent.parent.parent / "templates" / "elder-letters-manifest.yaml",
         "--manifest",
         help="Path to elder-letters-manifest.yaml",
     ),
-    bundled_dir: Path = typer.Option(
+    bundled_dir: Path = typer.Option(  # noqa: B008
         Path(__file__).parent.parent.parent / "templates" / "elder-letters" / "bundled",
         "--bundled-dir",
         help="Path to bundled snapshots directory",

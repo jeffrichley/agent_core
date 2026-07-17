@@ -1,7 +1,8 @@
 """Validator tests."""
 
-import pytest
+from pathlib import Path
 
+import pytest
 from agent_core_hatchery.config import HatchConfig
 from agent_core_hatchery.hatcher import Hatcher
 from agent_core_hatchery.validators import (
@@ -18,7 +19,11 @@ def _hatched_cfg(tmp_path):
         vault_root=str(tmp_path),
         daemon_config_dir=str(tmp_path / ".agent-core"),
     )
-    Hatcher(cfg).hatch()
+    Hatcher(
+        cfg,
+        _venv_builder=lambda t: Path.home() / f".{t}" / ".venv",
+        _mcp_json_gen=lambda **kw: tmp_path / ".mcp.json",
+    ).hatch()
     # Note: after Step 2 below, Hatcher will write the fragments itself.
     # If your Hatcher already does that by the time this test runs, the
     # explicit DaemonConfigWriter call below is redundant. Remove it then.
