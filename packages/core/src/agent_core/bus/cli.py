@@ -5,14 +5,17 @@ from __future__ import annotations
 import asyncio
 import logging
 import re
+import shutil
 import signal
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
+import aiosqlite
 import typer
 from rich.console import Console
 from rich.table import Table
 
+from agent_core.bus.backup import run_backup
 from agent_core.bus.persistence import Persistence
 from agent_core.bus.runner import BusBootError, build_bus_from_config
 from agent_core.bus.watchdog import Watchdog
@@ -28,6 +31,12 @@ _RUN_CONFIG_OPTION = typer.Option(
     help="Path to agent_core.yaml",
     exists=True,
     readable=True,
+)
+
+# Module-level singletons for Path-typed Typer arguments (B008 requires this for Path).
+_RESTORE_SNAPSHOT_ARG = typer.Argument(..., help="Path to the snapshot file to restore.")
+_RESTORE_TARGET_ARG = typer.Argument(
+    ..., help="Path to the target database (daemon must be stopped)."
 )
 
 
@@ -121,7 +130,26 @@ async def _run_bus(config_path: Path) -> None:
                 except TimeoutError:
                     pass
 
+        async def _backup_loop():  # pragma: no cover
+            while not stop_event.is_set():
+                try:
+                    scheduler_db = bus.config.storage_path.parent / "scheduler.db"
+                    stores = [bus.config.storage_path]
+                    if scheduler_db.exists():
+                        stores.append(scheduler_db)
+                    await run_backup(stores, bus.config.backup_dir)  # type: ignore[arg-type]
+                except Exception:
+                    log.exception("backup loop failed")
+                try:
+                    await asyncio.wait_for(
+                        stop_event.wait(), timeout=bus.config.backup_interval_seconds
+                    )
+                except TimeoutError:
+                    pass
+
         sweeps = [asyncio.create_task(_ttl_loop()), asyncio.create_task(_redelivery_loop())]
+        if bus.config.backup_dir is not None:  # pragma: no cover
+            sweeps.append(asyncio.create_task(_backup_loop()))
         try:
             await stop_event.wait()
         except KeyboardInterrupt:
@@ -362,3 +390,43 @@ async def _dlq_purge(older_than: str, config_path: Path) -> None:
         console.print(f"[green]purged {n} envelope(s) older than {older_than}[/green]")
     finally:
         await store.close()
+
+
+@app.command()
+def restore(
+    snapshot: Path = _RESTORE_SNAPSHOT_ARG,
+    target: Path = _RESTORE_TARGET_ARG,
+    yes: bool = typer.Option(False, "--yes", "-y", help="Skip confirmation prompt."),
+) -> None:
+    """Validate and restore a snapshot over a target database.
+
+    Runs PRAGMA integrity_check on the snapshot before overwriting the target.
+    The daemon must be stopped before running this command.
+    """
+    asyncio.run(_restore(snapshot, target, yes))
+
+
+async def _restore(snapshot: Path, target: Path, yes: bool) -> None:
+    if not snapshot.exists():
+        console.print(f"[red]snapshot not found:[/red] {snapshot}")
+        raise typer.Exit(code=1)
+
+    try:
+        async with aiosqlite.connect(snapshot) as db:
+            async with db.execute("PRAGMA integrity_check") as cursor:
+                row = await cursor.fetchone()
+        result = row[0] if row else None
+        if result != "ok":
+            console.print(f"[red]integrity check failed:[/red] {result!r}")
+            raise typer.Exit(code=1)
+    except typer.Exit:
+        raise
+    except Exception as exc:
+        console.print(f"[red]cannot open snapshot:[/red] {exc}")
+        raise typer.Exit(code=1) from exc
+
+    if not yes:
+        typer.confirm(f"Overwrite '{target}' with '{snapshot}'?", abort=True)
+
+    shutil.copy2(snapshot, target)
+    console.print(f"[green]restored:[/green] {snapshot} → {target}")

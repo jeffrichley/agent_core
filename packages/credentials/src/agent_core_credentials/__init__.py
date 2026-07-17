@@ -9,6 +9,7 @@ from __future__ import annotations
 import os
 from pathlib import Path
 
+from agent_core_credentials.master_password import get_master_password, set_master_password
 from agent_core_credentials.models import Credential, CredentialSummary
 from agent_core_credentials.secrets import SecretNotFoundError, get
 from agent_core_credentials.store import CredentialStore
@@ -21,8 +22,10 @@ __all__ = [
     "delete_credential",
     "get",
     "get_credential",
+    "get_master_password",
     "list_credentials",
     "set_credential",
+    "set_master_password",
 ]
 
 
