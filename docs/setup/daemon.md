@@ -18,7 +18,7 @@ The daemon supports three instances, selected with `--instance` on every
 | Install stamp | yes | none — source is not installed | yes |
 
 With no `--instance` flag and no `AGENT_CORE_INSTANCE` env var, every
-command resolves to `prod` with port 8789 — the live Pepper + Wren home.
+command resolves to `prod` with port 8789 — the live agent home.
 The `source` and `test` instances are purely additive: a `source`/`test`
 `start`/`stop`/`refresh`/crash can never touch prod's venv, port, or state.
 
@@ -78,7 +78,7 @@ agent-core daemon refresh --release v0.2.0 # pin a specific version (rollback)
 ## Source instance
 
 The source instance lets you iterate on daemon code without bouncing the
-prod daemon that Pepper and Wren depend on. It runs **editable from the
+live prod daemon. It runs **editable from the
 workspace `.venv`** — your source edits are live on the next restart.
 
 ### One-time source setup
@@ -157,7 +157,7 @@ daemon. Pepper went offline mid-session on 2026-05-10 from exactly this.
 
 The fix: install the prod daemon non-editable into a venv outside the
 workspace tree. The source instance accepts the editable workspace venv on
-purpose — it exists for iteration, and is never the live Pepper/Wren home.
+purpose — it exists for iteration, and is never the live prod home.
 
 ## Defect A — `cache-keys` history
 

@@ -25,9 +25,9 @@ Set it as an env var in the daemon's environment (e.g., your `~/.agent-core/.env
 FOREMAN_GITHUB_WEBHOOK_SECRET=<paste-here>
 ```
 
-### 2. Write Wren's allowance file
+### 2. Write your allowance file
 
-`~/.wren/.config/inbound/github-allowance.toml`:
+`~/.<being>/.config/inbound/github-allowance.toml`:
 
 ```toml
 # Schema-flexible rule shape (v2).  See spec
@@ -37,14 +37,14 @@ FOREMAN_GITHUB_WEBHOOK_SECRET=<paste-here>
 [[allow]]
 rule_id = "pr_review_requested_any_project"
 event = "pull_request_review_requested"
-match = { "requested_reviewer.login" = "wrenrichley" }
+match = { "requested_reviewer.login" = "<your-github-login>" }
 tier = "red"
 reason = "PR review requested on me"
 
 [[allow]]
 rule_id = "needs_help_foreman"
 event = "issues_labeled"
-repo = "jeffrichley/foreman"
+repo = "<org>/<repo>"
 match = { "label.name" = "foreman:needs-help" }
 tier = "red"
 reason = "Foreman escalation — needs operator unstick"
@@ -52,7 +52,7 @@ reason = "Foreman escalation — needs operator unstick"
 
 The `reviewer`/`label_name` shortcuts from v1.a still work — they translate to `match` entries automatically. `body_contains` was removed in v2 (raises `ValueError` on load); use exact-equality `match` instead, or wait for v2.1's `match_contains` operator.
 
-**Body projection.** The GitHub connector trims the Notification envelope body to a small per-event-type field set (event type, action, repo, key identifiers). This keeps inline bus payloads under 1 KB and avoids bloating tool results with GitHub metadata Wren never uses. The full raw webhook payload is always recoverable from GitHub's webhook delivery history via `gh api repos/<repo>/hooks/<id>/deliveries/<delivery_id>`.
+**Body projection.** The GitHub connector trims the Notification envelope body to a small per-event-type field set (event type, action, repo, key identifiers). This keeps inline bus payloads under 1 KB and avoids bloating tool results with GitHub metadata your being doesn't need. The full raw webhook payload is always recoverable from GitHub's webhook delivery history via `gh api repos/<repo>/hooks/<id>/deliveries/<delivery_id>`.
 
 The router watches the file's mtime and reloads on every webhook delivery — edit the TOML and the next event picks up the new rules without restarting the daemon.
 
@@ -67,12 +67,12 @@ endpoints:
   - type: inbound.github
     name: inbound
     params:
-      target_being: wren
+      target_being: <your-being>
       listen_host: 127.0.0.1
       listen_port: 8765
       webhook_secret_env: FOREMAN_GITHUB_WEBHOOK_SECRET
-      github_allowance_path: ~/.wren/.config/inbound/github-allowance.toml
-      audit_log_path: ~/.wren/state/inbound-audit.jsonl
+      github_allowance_path: ~/.<being>/.config/inbound/github-allowance.toml
+      audit_log_path: ~/.<being>/state/inbound-audit.jsonl
       rate_limit_per_minute: 30
 ```
 
@@ -88,7 +88,7 @@ Note the issued `https://router.<tailnet>.ts.net` URL.
 
 ### 5. Configure the GitHub webhook
 
-In the `jeffrichley/foreman` repo settings → Webhooks → Add webhook:
+In your repo settings → Webhooks → Add webhook:
 
 - **Payload URL:** `https://router.<tailnet>.ts.net/github`
 - **Content type:** `application/json`
@@ -97,12 +97,12 @@ In the `jeffrichley/foreman` repo settings → Webhooks → Add webhook:
 
 ### 6. Smoke test
 
-On any PR in `jeffrichley/foreman`, request a review from `@wrenrichley`. Within ~10s:
+On any PR in your configured repo, request a review from `@<your-github-login>`. Within ~10s:
 
-- `~/.wren/state/inbound-audit.jsonl` gains an `allow` line with `rule_id=pr_review_requested_any_project`.
-- Wren's bus inbox receives a `Notification` envelope (urgency `red`).
+- `~/.<being>/state/inbound-audit.jsonl` gains an `allow` line with `rule_id=pr_review_requested_any_project`.
+- Your being's bus inbox receives a `Notification` envelope (urgency `red`).
 
-If you instead see a `deny` line, double-check `match = { "requested_reviewer.login" = "wrenrichley" }` in the allowance TOML against the actual reviewer GitHub login.
+If you instead see a `deny` line, double-check `match = { "requested_reviewer.login" = "<your-github-login>" }` in the allowance TOML against the actual reviewer GitHub login.
 
 ### Troubleshooting
 

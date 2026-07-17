@@ -1,0 +1,50 @@
+# being.yaml — adopter template for being-scoped endpoints.d fragment.
+#
+# This is a generic template contributed to the daemon config via
+# conf.d-style merge (bus/runner.py). Substitute your being's name
+# and paths throughout. For a production-shaped real-world example,
+# see docs/examples/endpoints.d/pepper.yaml (Pepper's live config).
+#
+# Live path: ~/.agent-core/endpoints.d/being.yaml
+# Regenerate with: agent-core hatchery regenerate <your-being>  (future Cluster β feature)
+endpoints:
+  - type: builtin.claude_code_mcp
+    name: <your-being>
+    description: "Your being's MCP endpoint."
+    params:
+      mount: /mcp/<your-being>
+      briefs_orchestrator: briefs.<your-being>
+
+  - type: builtin.briefs_orchestrator
+    name: briefs.<your-being>
+    description: "Your being's briefs orchestrator."
+    params:
+      playbooks_path: "~/.<being>/Memory/playbooks"
+      fetcher_paths:
+        - "~/.<being>/Memory/briefs/fetchers"
+      destination_paths:
+        - "~/.<being>/Memory/briefs/destinations"
+      audit_log_path: "~/.agent-core/briefs/audit.jsonl"
+      vars:
+        agent_root: "~/.<being>"
+      default_target_agent: "<your-being>"
+
+  - type: builtin.discord
+    name: discord-<your-being>
+    description: "Discord adapter for your being."
+    params:
+      target: <your-being>
+      token_env: <YOUR_BEING>_DISCORD_TOKEN
+      env_file: "~/.agent-core/discord-<your-being>.env"
+
+  - type: builtin.webcam
+    name: webcam-<your-being>
+    description: "Your being's webcam endpoint."
+    params:
+      enabled: true
+      captures_root: "~/.agent-core/webcam/<your-being>"
+      audit_log_path: "~/.agent-core/webcam/<your-being>/audit.jsonl"
+      default_camera_index: 0
+      default_resolution: [1280, 720]
+      max_resolution: [3840, 2160]
+      capture_timeout_seconds: 3.0
