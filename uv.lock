@@ -223,6 +223,8 @@ requires-dist = [
 name = "agent-core-credentials"
 source = { editable = "packages/credentials" }
 dependencies = [
+    { name = "cryptography" },
+    { name = "keyring" },
     { name = "pykeepass" },
     { name = "rich" },
     { name = "typer" },
@@ -230,6 +232,8 @@ dependencies = [
 
 [package.metadata]
 requires-dist = [
+    { name = "cryptography", specifier = ">=41.0" },
+    { name = "keyring", specifier = ">=24.0" },
     { name = "pykeepass", specifier = ">=4.1.1.post1" },
     { name = "rich", specifier = ">=13.0" },
     { name = "typer", specifier = ">=0.12" },
