@@ -3,7 +3,6 @@
 from pathlib import Path
 
 import pytest
-
 from agent_core_hatchery.file_classes import (
     FileClass,
     FileClassManifest,

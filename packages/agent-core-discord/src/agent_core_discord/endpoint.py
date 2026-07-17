@@ -15,7 +15,6 @@ import asyncio
 import contextlib
 import json
 import logging
-import os
 import re
 import time
 import uuid
@@ -35,7 +34,15 @@ from agent_core.bus.envelope import (
     TextMessagePayload,
 )
 from agent_core.bus.protocol import EndpointUnavailable
-from agent_core_discord.access import AccessConfig, InboundContext, _build_access_config, gate_message, load_access_config
+from agent_core_credentials.secrets import SecretNotFoundError
+from agent_core_credentials.secrets import get as get_secret
+from agent_core_discord.access import (
+    AccessConfig,
+    InboundContext,
+    _build_access_config,
+    gate_message,
+    load_access_config,
+)
 from agent_core_discord.args import (
     _CancelScheduledEventArgs,
     _CreatePollArgs,
@@ -496,12 +503,13 @@ class DiscordEndpoint:
                     log.info("loaded env file: %s", self.env_file)
 
             # 2. Read the bot token. Fail fast if missing.
-            token = os.environ.get(self.token_env)
-            if not token:
+            try:
+                token = get_secret(self.token_env)
+            except SecretNotFoundError:
                 raise RuntimeError(
                     f"discord endpoint '{self.name}': env var "
                     f"'{self.token_env}' is not set (env_file={self.env_file})"
-                )
+                ) from None
 
             # 3. Load access policy (or use permissive defaults).
             self._access = load_access_config(self.access_config_path)

@@ -3,16 +3,15 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Optional
 
 import typer
 import yaml
 
 from agent_core_hatchery.config import HatchConfig
+from agent_core_hatchery.daemon_probe import reload_and_probe
 from agent_core_hatchery.hatcher import Hatcher, VaultExistsError
 from agent_core_hatchery.report import write_hatching_report
 from agent_core_hatchery.wizard import offer_letter_authoring, run_wizard
-
 
 app = typer.Typer(
     name="hatch-being",
@@ -23,15 +22,15 @@ app = typer.Typer(
 
 @app.callback(invoke_without_command=True)
 def hatch_being(
-    config: Optional[Path] = typer.Option(
+    config: Path | None = typer.Option(  # noqa: B008
         None, "--config",
         help="Non-interactive: load HatchConfig from YAML.",
     ),
-    vault_root: Optional[Path] = typer.Option(
+    vault_root: Path | None = typer.Option(  # noqa: B008
         None, "--vault-root", "--root",
         help="Override the resolved vault root. Default: $HOME.",
     ),
-    daemon_config_dir: Optional[Path] = typer.Option(
+    daemon_config_dir: Path | None = typer.Option(  # noqa: B008
         None, "--daemon-config-dir",
         help="Override the daemon's config directory. Default: ~/.agent-core/.",
     ),
@@ -59,13 +58,16 @@ def hatch_being(
         result = Hatcher(cfg).hatch()
     except VaultExistsError as exc:
         typer.secho(str(exc), fg=typer.colors.RED)
-        raise typer.Exit(code=1)
+        raise typer.Exit(code=1) from None
 
     letter_authored = False
     if interactive:
         letter_authored = offer_letter_authoring(cfg)
 
-    daemon_check_status = "skipped"  # Phase 5 keeps this simple; live daemon check is Phase 6 e2e.
+    if not cfg.init_missing:
+        daemon_check_status = reload_and_probe(cfg)
+    else:
+        daemon_check_status = "skipped"
 
     report_path = write_hatching_report(
         cfg, result,
@@ -76,3 +78,11 @@ def hatch_being(
     typer.echo(f"\nHatched at {result.vault_root}")
     typer.echo(f"Report: {report_path}")
     typer.echo("🐣")
+
+    if daemon_check_status == "reachable_but_missing":
+        typer.secho(
+            "⚠  Daemon probe: endpoint not registered after reload. See HATCHING-REPORT.md.",
+            fg=typer.colors.RED,
+            err=True,
+        )
+        raise typer.Exit(code=1)

@@ -1,13 +1,45 @@
 """Tests for the config-template rendering in Hatcher._render_config_tree."""
 
 import json
+import json as _json
 from pathlib import Path
 
 import pytest
 import yaml
-
 from agent_core_hatchery.config import HatchConfig
 from agent_core_hatchery.hatcher import Hatcher
+
+
+def _noop_venv_builder(target: str) -> Path:
+    return Path.home() / f".{target}" / ".venv"
+
+
+def _stub_mcp_gen_for_fixture(vault_root: Path):
+    """Returns a generator that writes a minimal valid .mcp.json."""
+    def _gen(**kwargs) -> Path:
+        p = vault_root / ".mcp.json"
+        p.parent.mkdir(parents=True, exist_ok=True)
+        p.write_text(
+            _json.dumps({
+                "mcpServers": {
+                    "agent-core-busproxy": {
+                        "command": "/fake/.venv/bin/python",
+                        "args": ["-m", "agent_core_busproxy", "--agent", "testbeing"],
+                    },
+                    "agent-core-channel": {
+                        "command": "/fake/.venv/bin/python",
+                        "args": ["-m", "agent_core_channel", "--agent", "testbeing"],
+                    },
+                    "agent-core-notify": {
+                        "command": "/fake/.venv/bin/python",
+                        "args": ["-m", "agent_core_notify", "--agent", "testbeing"],
+                    },
+                }
+            }),
+            encoding="utf-8",
+        )
+        return p
+    return _gen
 
 
 @pytest.fixture
@@ -18,8 +50,13 @@ def hatched(tmp_path: Path) -> tuple[HatchConfig, Path]:
         vault_root=str(tmp_path),
         daemon_config_dir=str(tmp_path / ".agent-core"),
     )
-    Hatcher(cfg).hatch()
-    return cfg, cfg.resolved_vault_root()
+    vault = cfg.resolved_vault_root()
+    Hatcher(
+        cfg,
+        _venv_builder=_noop_venv_builder,
+        _mcp_json_gen=_stub_mcp_gen_for_fixture(vault),
+    ).hatch()
+    return cfg, vault
 
 
 def test_agent_core_yaml_rendered_at_vault_root(hatched):
@@ -104,8 +141,12 @@ def test_init_missing_preserves_user_edits_to_config(tmp_path: Path):
         vault_root=str(tmp_path),
         daemon_config_dir=str(tmp_path / ".agent-core"),
     )
-    Hatcher(cfg).hatch()
     vault = cfg.resolved_vault_root()
+    Hatcher(
+        cfg,
+        _venv_builder=_noop_venv_builder,
+        _mcp_json_gen=_stub_mcp_gen_for_fixture(vault),
+    ).hatch()
 
     # User edits CLAUDE.md
     (vault / "CLAUDE.md").write_text("user-edited content")
@@ -128,8 +169,12 @@ def test_init_missing_restores_deleted_config(tmp_path: Path):
         vault_root=str(tmp_path),
         daemon_config_dir=str(tmp_path / ".agent-core"),
     )
-    Hatcher(cfg).hatch()
     vault = cfg.resolved_vault_root()
+    Hatcher(
+        cfg,
+        _venv_builder=_noop_venv_builder,
+        _mcp_json_gen=_stub_mcp_gen_for_fixture(vault),
+    ).hatch()
 
     (vault / "agent_core.yaml").unlink()
     cfg_topup = cfg.model_copy(update={"init_missing": True})
@@ -141,19 +186,13 @@ def test_init_missing_restores_deleted_config(tmp_path: Path):
 def test_mcp_json_rendered_at_vault_root(hatched):
     cfg, vault = hatched
     path = vault / ".mcp.json"
-    assert path.is_file(), ".mcp.json was not rendered into the vault root"
-    text = path.read_text(encoding="utf-8")
-    assert "{{" not in text and "}}" not in text, "Jinja markers left in .mcp.json"
-    import json
-    data = json.loads(text)
+    assert path.is_file(), ".mcp.json was not written into the vault root"
+    data = json.loads(path.read_text(encoding="utf-8"))
     assert "mcpServers" in data
     servers = data["mcpServers"]
+    # C2-2 generator writes 3 sidecars (stub writes them for the fixture)
     assert "agent-core-busproxy" in servers
     assert "agent-core-channel" in servers
-    busproxy = servers["agent-core-busproxy"]
-    assert busproxy["command"] == "uvx"
-    assert "agent-core-busproxy" in busproxy["args"]
-    assert "--agent" in busproxy["args"]
-    # endpoint_name is "testbeing" for the test fixture
-    assert "testbeing" in busproxy["args"]
-    assert "--daemon-url" in busproxy["args"]
+    assert "agent-core-notify" in servers
+    # Stable venv interpreter — not uvx
+    assert servers["agent-core-busproxy"]["command"] != "uvx"

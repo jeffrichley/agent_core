@@ -11,10 +11,8 @@ import os
 import re
 from datetime import date
 from pathlib import Path
-from typing import Optional
 
 from pydantic import BaseModel, ConfigDict, Field, computed_field, model_validator
-
 
 _ENV_VAR_PATTERN = re.compile(r"\$\{([A-Z_][A-Z0-9_]*)\}")
 
@@ -70,11 +68,11 @@ class HatchConfig(BaseModel):
     being_name: str
     being_emoji: str = ""
     primary_human_name: str
-    being_role_placeholder: Optional[str] = None
+    being_role_placeholder: str | None = None
     # endpoint_name is Optional[str]; after validation, None is replaced by being_name_lower.
     # This allows `endpoint_name: foo` in YAML to override, while defaulting to being_name_lower.
-    endpoint_name: Optional[str] = None
-    vault_root: Optional[str] = None
+    endpoint_name: str | None = None
+    vault_root: str | None = None
     daemon_config_dir: str = "~/.agent-core"
     channels: ChannelsConfig = Field(default_factory=ChannelsConfig)
     init_missing: bool = False

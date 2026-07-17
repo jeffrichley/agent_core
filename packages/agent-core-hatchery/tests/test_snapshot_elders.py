@@ -1,8 +1,7 @@
 """Tests for hatchery-snapshot-elders CLI."""
 
-from typer.testing import CliRunner
-
 from agent_core_hatchery.snapshot_elders import app
+from typer.testing import CliRunner
 
 
 def test_snapshot_refreshes_bundled_from_canonical(tmp_path):

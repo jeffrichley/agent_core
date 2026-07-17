@@ -1,0 +1,116 @@
+# being-agent-core.yaml — adopter template for agent_core pipeline config.
+#
+# This is a generic template; substitute your being's name and paths
+# throughout. For a production-shaped real-world example, see
+# docs/examples/pepper-agent-core.yaml (Pepper's live config).
+#
+# How it works:
+#   1. SessionStart: TimeInjector tells your being what time it is, then
+#      one IdentityInjector per identity file (critical first), then a
+#      HandoffInjector that consults the sidecar status file before loading
+#      handoff.md.
+#   2. UserPromptSubmit: TimeInjector fires again with track_session=true so
+#      the current time stays fresh on every turn (re-anchors against drift)
+#      and emits "Session started Xm ago" / "Last user turn Ym ago" deltas.
+#   3. PreCompact/SessionEnd: HandoffWriter enqueues a daemon job. The daemon
+#      worker generates handoff.md and writes handoff-status.json.
+#   4. pre_publish: every envelope on the bus (Discord inbound, your being's
+#      replies, scheduler triggers, agent-to-agent) is appended to
+#      ~/.agent-core/bus/raw/<date>.jsonl.
+#
+# .claude/settings.json hooks should point to:
+#   "command": "uv run agent-core hooks run SessionStart"
+#   "command": "uv run agent-core hooks run UserPromptSubmit"
+#   "command": "uv run agent-core hooks run PreCompact"
+#   "command": "uv run agent-core hooks run SessionEnd"
+
+bus:
+  # Single shared bus database across all agents on this daemon — NOT
+  # one per agent. Tilde expansion is supported.
+  storage_path: "~/.agent-core/bus.sqlite"
+
+http:
+  bind_host: "127.0.0.1"
+  bind_port: 8789
+
+endpoints:
+  # System / infra endpoints only — your being's endpoints live in
+  # endpoints.d/being.yaml, conf.d-merged at daemon startup.
+  - type: builtin.handoff_jobs
+    name: handoff-jobs
+    params:
+      mount: /internal/handoff-jobs
+
+bus_hooks:
+  pre_publish:
+    # Every published envelope (Discord, scheduler, relay, cross-agent)
+    # lands as JSONL in the daemon-owned daily log.
+    - type: builtin.daily_raw_jsonl
+      params: {}
+
+pipelines:
+  SessionStart:
+    - type: builtin.time_injector
+      params:
+        format: "%A, %B %d, %Y %I:%M %p %Z"
+
+    - type: builtin.identity_injector
+      params:
+        base_path: "~/.<being>/Memory"
+        files:
+          - "SOUL.md"
+        heading: "Identity — Critical Core"
+        missing_file_behavior: "error"
+
+    - type: builtin.identity_injector
+      params:
+        base_path: "~/.<being>/Memory"
+        files:
+          - "IDENTITY.md"
+        heading: "Identity — Self-model"
+        missing_file_behavior: "warn"
+
+    - type: builtin.identity_injector
+      params:
+        base_path: "~/.<being>/Memory"
+        files:
+          - "<your-being>/preferences.md"
+        heading: "Identity — Preferences"
+        missing_file_behavior: "warn"
+
+    - type: builtin.handoff_injector
+      params:
+        base_path: "~/.<being>/Memory"
+        files:
+          - "<your-being>/handoff.md"
+        heading: "Continuity"
+        missing_file_behavior: "warn"
+
+  UserPromptSubmit:
+    # Re-fires every turn so the current time stays fresh and the agent
+    # gets relative-time deltas to re-anchor against drift. track_session
+    # persists per-session timestamps to ~/.agent_core/time-state.json.
+    - type: builtin.time_injector
+      params:
+        format: "%A, %B %d, %Y %I:%M %p %Z"
+        track_session: true
+
+  PreCompact:
+    - type: builtin.handoff_writer
+      params:
+        output_path: "~/.<being>/Memory/<your-being>/handoff.md"
+        vault_root: "~/.<being>/Memory/<your-being>"
+        handoff_status_path: "~/.<being>/Memory/<your-being>/handoff-status.json"
+        handoff_jobs_url: "http://127.0.0.1:8789/internal/handoff-jobs"
+        agent_name: "<YourBeing>"
+        mailbox: "<your-being>"
+
+  SessionEnd:
+    - type: builtin.handoff_writer
+      params:
+        output_path: "~/.<being>/Memory/<your-being>/handoff.md"
+        vault_root: "~/.<being>/Memory/<your-being>"
+        handoff_status_path: "~/.<being>/Memory/<your-being>/handoff-status.json"
+        handoff_jobs_url: "http://127.0.0.1:8789/internal/handoff-jobs"
+        agent_name: "<YourBeing>"
+        mailbox: "<your-being>"
