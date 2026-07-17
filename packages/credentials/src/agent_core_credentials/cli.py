@@ -11,6 +11,7 @@ from pykeepass import create_database  # type: ignore[import-untyped]
 from rich import print as rprint
 
 from agent_core_credentials import default_vault_path
+from agent_core_credentials.master_password import set_master_password
 from agent_core_credentials.store import CredentialStore
 
 creds_app = typer.Typer(
@@ -58,9 +59,7 @@ def init_vault() -> None:
     _vault_path.parent.mkdir(parents=True, exist_ok=True)
     create_database(str(_vault_path), password=password)
 
-    # Append to .env so agent-core and future CLI calls can unlock the vault
-    with open(_env_path, "a", encoding="utf-8") as f:
-        f.write(f"\nAGENT_CORE_VAULT_PASSWORD={password}\n")
+    set_master_password(_vault_path, password)
 
     rprint(f"[green]Created credential vault at {_vault_path}[/green]")
 

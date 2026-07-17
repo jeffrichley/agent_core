@@ -26,11 +26,10 @@ def test_credential_summary_excludes_password():
 
 
 @pytest.fixture()
-def vault(tmp_path, monkeypatch):
-    """Create a temp vault with a known master password."""
-    monkeypatch.setenv("AGENT_CORE_VAULT_PASSWORD", "testpass")
+def vault(tmp_path):
+    """Create a temp vault with a known master password via DI."""
     vault_path = tmp_path / "credentials.kdbx"
-    return CredentialStore(vault_path)
+    return CredentialStore(vault_path, _master_password="testpass")
 
 
 def test_set_and_get(vault):
@@ -93,8 +92,11 @@ def test_creates_vault_on_first_set(vault, tmp_path):
 
 
 def test_missing_password_env_raises(tmp_path, monkeypatch):
-    """Store raises ValueError if AGENT_CORE_VAULT_PASSWORD is not set."""
-    monkeypatch.delenv("AGENT_CORE_VAULT_PASSWORD", raising=False)
+    """Store raises ValueError with new message when no password is available."""
+    monkeypatch.setattr(
+        "agent_core_credentials.store.get_master_password",
+        lambda vault_path: None,
+    )
     store = CredentialStore(tmp_path / "credentials.kdbx")
-    with pytest.raises(ValueError, match="AGENT_CORE_VAULT_PASSWORD environment variable is not set. Add it to ~/.agent-core/.env or set it in your shell."):
+    with pytest.raises(ValueError, match="No master password found"):
         store.get("anything")
