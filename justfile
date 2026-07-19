@@ -21,7 +21,7 @@ default:
 # changed lines). Both coverage checks run HERE so a worker catches under-tested
 # code BEFORE it pushes — not after, in CI. Coverage runs single-threaded (see
 # `test`) so the number can't flake. Used by .githooks/pre-push.
-check: lint typecheck contracts test patch-cov
+check: format-check lint typecheck contracts test patch-cov
 
 # Fast iteration gate (humans): the same checks but tests run parallel and
 # WITHOUT coverage, so it's quick. It does NOT enforce the coverage floors —
