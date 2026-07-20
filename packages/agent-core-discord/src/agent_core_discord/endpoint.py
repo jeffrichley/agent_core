@@ -1,12 +1,7 @@
 """DiscordEndpoint — bus endpoint that bridges one Discord bot to one agent.
 
-This module hosts the class and the module-level _active_endpoints registry
-that lets discord.py event handlers find the live endpoint instance from
-inside the asyncio loop.
-
-Inbound (on_message, on_reaction_add) and outbound (8 tools dispatched via
-ToolInvocation envelopes) handlers land in subsequent tasks; this scaffold
-just owns lifecycle and dispatch entry points.
+The bulk of the implementation lives in the five mixin classes imported below.
+This module owns only the module-level live-endpoint registry and __init__.
 """
 
 from __future__ import annotations
@@ -22,24 +17,14 @@ from typing import TYPE_CHECKING, Any
 
 from agent_core.bus.protocol import EndpointUnavailable  # noqa: F401 — deliver() globals
 from agent_core_discord._acks import _AcksMixin
-from agent_core_discord._exceptions import _PersistError, _ToolError  # noqa: F401 — re-export
 from agent_core_discord._handlers import _HandlersMixin
-from agent_core_discord._lifecycle import _active_endpoints, _LifecycleMixin  # noqa: F401
-from agent_core_discord._outbound import (
-    _TOOL_ALIASES,  # noqa: F401 — re-exported; tests import from this module
-    _canonical_tool,  # noqa: F401 — re-exported; tests import from this module
-    _check_embeds_within_caps,  # noqa: F401 — re-exported; tests import from this module
-    _embed_char_count,  # noqa: F401 — re-exported; tests import from this module
-    _OutboundMixin,
-)
-from agent_core_discord._tools import (
-    _parse_iso_datetime,  # noqa: F401 — re-exported; tests import from this module
-    _ToolsMixin,
-)
+from agent_core_discord._lifecycle import _LifecycleMixin
+from agent_core_discord._outbound import _OutboundMixin
+from agent_core_discord._tools import _ToolsMixin
 from agent_core_discord.access import AccessConfig
 from agent_core_discord.send_retry import is_retryable_discord_send_error  # noqa: F401 — deliver()
 from agent_core_discord.shape_validator import Recognized, Unrecognized  # noqa: F401 — deliver()
-from agent_core_discord.shape_validator import (  # noqa: F401 — re-export + deliver() globals
+from agent_core_discord.shape_validator import (  # noqa: F401 — deliver() globals + patch target
     validate as validate_shape,
 )
 
@@ -180,3 +165,23 @@ class DiscordEndpoint(_AcksMixin, _LifecycleMixin, _HandlersMixin, _OutboundMixi
         # Stored as (st_mtime, st_size) so we detect changes even on
         # filesystems with coarse mtime granularity (e.g. overlay in CI).
         self._access_config_mtime: tuple[float, int] | None = None
+
+
+# ---------------------------------------------------------------------------
+# Backward-compat re-exports.
+# External code and existing tests import these names directly from this
+# module.  They now live in the mixin modules from the F-B6 split; the
+# imports below keep every `from agent_core_discord.endpoint import X`
+# working without requiring any consumer change.  Do NOT remove.
+# ---------------------------------------------------------------------------
+from agent_core_discord._exceptions import _PersistError, _ToolError  # noqa: F401
+from agent_core_discord._handlers import _redact_url_qs  # noqa: F401
+from agent_core_discord._lifecycle import _active_endpoints  # noqa: F401
+from agent_core_discord._outbound import (  # noqa: F401
+    _TOOL_ALIASES,
+    _canonical_tool,
+    _check_embeds_within_caps,
+    _embed_char_count,
+    _serialize_poll,
+)
+from agent_core_discord._tools import _parse_iso_datetime, _safe_filename  # noqa: F401
