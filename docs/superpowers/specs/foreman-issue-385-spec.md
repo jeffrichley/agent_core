@@ -92,6 +92,18 @@ No GoF pattern fits cleanly here — this is straightforward stdlib wiring. The 
    The `try/finally` wraps the entire existing body of `_dispatch()`. No changes to any `log.*()` call sites.
 
 5. **Create `packages/core/tests/test_structured_logging.py`** — tests covering:
+
+   **Root-logger state isolation**: the test file MUST include a per-function pytest fixture that saves `logging.root.handlers[:]` and `logging.root.level` before each call to `configure_logging()` and restores them in teardown. This prevents global logging state from bleeding into co-located modules sharing the same pytest-xdist worker (violating the "just test-fast passes" acceptance criterion). Apply this fixture to every test that calls `configure_logging()`. Example:
+   ```python
+   @pytest.fixture()
+   def restore_root_logger():
+       handlers = logging.root.handlers[:]
+       level = logging.root.level
+       yield
+       logging.root.handlers[:] = handlers
+       logging.root.setLevel(level)
+   ```
+
    - `JsonFormatter` outputs valid JSON with all five required fields.
    - `JsonFormatter` includes `exc_info` key when `record.exc_info` is set.
    - `CorrelationIdFilter` stamps `record.correlation_id` from the active contextvar.
