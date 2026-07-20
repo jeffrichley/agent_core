@@ -68,6 +68,7 @@ def test_status_with_stale_pid_reports_not_running_and_cleans(
     assert not pid_file.exists()  # stale file cleaned
 
 
+@pytest.mark.slow
 def test_start_writes_pid_file_and_stop_kills(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     """End-to-end: write a config, daemon start, daemon stop. Real subprocess."""
     monkeypatch.setenv("AGENT_CORE_HOME", str(tmp_path))
