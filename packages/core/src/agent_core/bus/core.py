@@ -26,6 +26,8 @@ from agent_core.bus.handle import BusHandle
 from agent_core.bus.persistence import Persistence
 from agent_core.bus.protocol import BusHook, Endpoint, SlowDeliverWarning
 from agent_core.clock import Clock, SystemClock
+from agent_core.logging import bind_correlation_id
+from agent_core.logging import correlation_id as _correlation_id_var
 
 if TYPE_CHECKING:
     from agent_core.bus.supervisor import EndpointSupervisor
@@ -381,79 +383,84 @@ class Bus:
             await self._dispatch(new_env)
 
     async def _dispatch(self, envelope: Envelope) -> None:
-        hooked = await self._run_hooks("pre_deliver", envelope)
-        if hooked is None:
-            # Pre_deliver dropped: dead-letter rather than silently leaving in pending.
-            store = self._require_store()
-            await store.mark_dead_letter(envelope.id, reason="dropped by pre_deliver hook")
-            return
-        envelope = hooked
-
-        spec = self._endpoints_by_name.get(envelope.to)
-        if spec is None:
-            return  # shouldn't happen — caller already checked
-        endpoint = spec.endpoint
-        in_flight_until = datetime.now(UTC) + timedelta(
-            seconds=self.config.redelivery_timeout_seconds
-        )
-        store = self._require_store()
-        await store.mark_in_flight(envelope.id, in_flight_until)
-        t0 = time.monotonic()
+        _tok = bind_correlation_id(envelope.correlation_id)
         try:
-            await endpoint.deliver(envelope)
-        except Exception as exc:
-            from agent_core.bus.protocol import EndpointUnavailable
+            hooked = await self._run_hooks("pre_deliver", envelope)
+            if hooked is None:
+                # Pre_deliver dropped: dead-letter rather than silently leaving in pending.
+                store = self._require_store()
+                await store.mark_dead_letter(envelope.id, reason="dropped by pre_deliver hook")
+                return
+            envelope = hooked
 
-            if isinstance(exc, EndpointUnavailable):
-                # Transient failure — backoff-requeue or dead-letter if exhausted.
-                row = await store.row(envelope.id)
-                if row is None:
-                    log.warning(
-                        "envelope %s not found after mark_in_flight; skipping requeue", envelope.id
-                    )
-                    return
-                attempt = row["delivery_count"]  # already incremented by mark_in_flight
-                if attempt >= self.config.max_delivery_attempts:
-                    await store.mark_dead_letter(
-                        envelope.id,
-                        reason=f"exceeded {self.config.max_delivery_attempts} delivery attempts (transient)",
-                    )
-                    log.info(
-                        "endpoint %s transient failure; exceeded %d attempts; dead-lettering %s",
-                        envelope.to,
-                        self.config.max_delivery_attempts,
-                        envelope.id,
-                    )
+            spec = self._endpoints_by_name.get(envelope.to)
+            if spec is None:
+                return  # shouldn't happen — caller already checked
+            endpoint = spec.endpoint
+            in_flight_until = datetime.now(UTC) + timedelta(
+                seconds=self.config.redelivery_timeout_seconds
+            )
+            store = self._require_store()
+            await store.mark_in_flight(envelope.id, in_flight_until)
+            t0 = time.monotonic()
+            try:
+                await endpoint.deliver(envelope)
+            except Exception as exc:
+                from agent_core.bus.protocol import EndpointUnavailable
+
+                if isinstance(exc, EndpointUnavailable):
+                    # Transient failure — backoff-requeue or dead-letter if exhausted.
+                    row = await store.row(envelope.id)
+                    if row is None:
+                        log.warning(
+                            "envelope %s not found after mark_in_flight; skipping requeue",
+                            envelope.id,
+                        )
+                        return
+                    attempt = row["delivery_count"]  # already incremented by mark_in_flight
+                    if attempt >= self.config.max_delivery_attempts:
+                        await store.mark_dead_letter(
+                            envelope.id,
+                            reason=f"exceeded {self.config.max_delivery_attempts} delivery attempts (transient)",
+                        )
+                        log.info(
+                            "endpoint %s transient failure; exceeded %d attempts; dead-lettering %s",
+                            envelope.to,
+                            self.config.max_delivery_attempts,
+                            envelope.id,
+                        )
+                    else:
+                        backoff_secs = _compute_delivery_backoff(attempt, self.config.supervisor)
+                        next_attempt_at = self._clock.now() + timedelta(seconds=backoff_secs)
+                        await store.requeue_with_backoff(envelope.id, next_attempt_at)
+                        log.info(
+                            "endpoint %s unavailable (attempt %d); envelope %s requeued until %s: %s",
+                            envelope.to,
+                            attempt,
+                            envelope.id,
+                            next_attempt_at.isoformat(),
+                            exc,
+                        )
                 else:
-                    backoff_secs = _compute_delivery_backoff(attempt, self.config.supervisor)
-                    next_attempt_at = self._clock.now() + timedelta(seconds=backoff_secs)
-                    await store.requeue_with_backoff(envelope.id, next_attempt_at)
-                    log.info(
-                        "endpoint %s unavailable (attempt %d); envelope %s requeued until %s: %s",
+                    # Terminal failure — dead-letter.
+                    await store.mark_dead_letter(envelope.id, reason=str(exc))
+                    log.exception(
+                        "endpoint %s deliver() raised; dead-lettering envelope %s",
                         envelope.to,
-                        attempt,
                         envelope.id,
-                        next_attempt_at.isoformat(),
-                        exc,
                     )
-            else:
-                # Terminal failure — dead-letter.
-                await store.mark_dead_letter(envelope.id, reason=str(exc))
-                log.exception(
-                    "endpoint %s deliver() raised; dead-lettering envelope %s",
-                    envelope.to,
-                    envelope.id,
-                )
+            finally:
+                elapsed = time.monotonic() - t0
+                warn_s = self.config.slow_deliver_warn_seconds
+                if warn_s > 0 and elapsed >= warn_s:
+                    warning = SlowDeliverWarning(
+                        endpoint=envelope.to,
+                        envelope_id=envelope.id,
+                        elapsed_seconds=elapsed,
+                    )
+                    log.warning("%r threshold=%.1fs", warning, warn_s)
         finally:
-            elapsed = time.monotonic() - t0
-            warn_s = self.config.slow_deliver_warn_seconds
-            if warn_s > 0 and elapsed >= warn_s:
-                warning = SlowDeliverWarning(
-                    endpoint=envelope.to,
-                    envelope_id=envelope.id,
-                    elapsed_seconds=elapsed,
-                )
-                log.warning("%r threshold=%.1fs", warning, warn_s)
+            _correlation_id_var.reset(_tok)
 
     async def drain_for(self, endpoint_name: str) -> None:
         """Drain persisted-but-pending envelopes addressed to this endpoint.
