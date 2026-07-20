@@ -59,7 +59,7 @@ No GoF pattern applies. This is DRY (eliminate 7× duplication) + SRP (each file
 
 2. **Replace the four raising guards** with `self._require_handle()` (or `handle = self._require_handle()` where the return value is used).
 
-   - `deliver()` (line 657): `if self._handle is None: raise RuntimeError(...)` → `handle = self._require_handle()` then replace all `self._handle.ack(...)` in that branch with `handle.ack(...)`.
+   - `deliver()` (line 656): `if self._handle is None: raise RuntimeError(...)` → `handle = self._require_handle()` then replace all `self._handle.ack(...)` in that branch with `handle.ack(...)`.
    - `send()` tool closure (line 855–856): same pattern → `handle = self._require_handle()`, then `handle.publish(env)`.
    - `consume()` tool closure (line 982–983): → `handle = self._require_handle()`, then `handle.ack(...)`.
    - `reply()` tool closure (line 1047–1048): → `handle = self._require_handle()`, then `handle.publish(env)` and `handle.ack(in_reply_to)`.
@@ -199,16 +199,10 @@ No GoF pattern applies. This is DRY (eliminate 7× duplication) + SRP (each file
 
    Create `packages/core/src/agent_core/endpoints/claude_code_mcp/_endpoint.py` containing:
    - Full module docstring from original file
-   - All imports from the original file except `AcknowledgmentPayload` and `Envelope` sub-fields used only in tools (keep imports that `ClaudeCodeMCPEndpoint` methods need directly)
+   - All imports from the original file that `ClaudeCodeMCPEndpoint` methods use directly. **`AcknowledgmentPayload` MUST be retained in `_endpoint.py`** — it is used by `_is_routine_green_ack()` (line 382) and `_release_outbound_registry_for_ack_envelope()` (line 435), both of which are `ClaudeCodeMCPEndpoint` class methods that live in this file. Move to `_tools.py` only those imports that are exclusively referenced inside the tool closures (i.e., inside `register_tools()`), such as `Envelope`'s payload sub-fields that are only used to construct outbound envelopes in tool logic.
    - Module-level constants: `_META_KEY_RE`, `_MISSING_ACK_DELAY_MAX_SECONDS`, `_OUTBOUND_REGISTRY_TTL_MIN_SECONDS`, `_OUTBOUND_REGISTRY_TTL_MAX_SECONDS`
    - `_require_handle()` method on the class
    - `ClaudeCodeMCPEndpoint` class body with `_register_tools()` replaced by a call to `register_tools(self)` imported from `._tools`; `SessionRegistry` imported from `._session`
-
-   The `__init__` method line:
-   ```python
-   # was: self._register_tools()
-   from .._claude_code_mcp._tools import register_tools  # wrong – use relative import correctly
-   ```
 
    Correct relative import at top of file:
    ```python
