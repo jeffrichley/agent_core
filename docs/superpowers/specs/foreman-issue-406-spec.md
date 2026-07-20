@@ -29,6 +29,8 @@ The three-phase discipline from Decision D2 in the Track B spec:
 
 **Why mixins over function extraction**: the natural alternative (extract `start_endpoint(ep, bus)` module-level functions, make class methods one-line delegators) would require importing `DiscordEndpoint` into each helper module, creating circular imports. Mixins avoid the circle: helper modules import nothing from `endpoint.py`; `endpoint.py` imports the mixins.
 
+**Shared exceptions live in `_exceptions.py`**: `_ToolError` and `_PersistError` are raised and caught by the outbound/tool mixin methods, but the anti-circular rule forbids the mixin modules from importing `endpoint.py`. Defining the exceptions in `endpoint.py` would therefore be unusable from the mixins (a mixin importing `endpoint.py` reintroduces the exact circular import the mixin split avoids). The exceptions are moved into a thin, leaf `_exceptions.py` that imports nothing from any other module in the package. `endpoint.py` imports them from `_exceptions.py` and re-exports them unchanged, so any external code doing `from ...endpoint import _ToolError` keeps working; the mixins import them directly from `_exceptions.py`.
+
 **Why mixin-level attribute declarations**: `mypy --strict` cannot verify `self.name` in `_LifecycleMixin.start()` without knowing what `self` provides. The mixin declares `name: str` at class scope; `DiscordEndpoint.__init__` assigns `self.name = name`. mypy sees both and resolves the type without a Protocol or `TYPE_CHECKING` import of the concrete class.
 
 **Module-level helper placement**: helpers move with their primary consumer:
@@ -49,19 +51,21 @@ The three-phase discipline from Decision D2 in the Track B spec:
    - Urgency mapping: a successful dispatch emits `urgency="green"`; a `_ToolError` dispatch emits `urgency="yellow"`
    - Run `just test-fast` and confirm all new tests pass against the existing unmodified `endpoint.py`
 
-2. **Create `_acks.py`** — move `_track_pending_ack`, `_remote_remove_ack`, `_clear_pending_ack` from `DiscordEndpoint` into a new `class _AcksMixin` in `packages/agent-core-discord/src/agent_core_discord/_acks.py`. Method bodies are byte-identical. Move-only commit.
+2. **Create `_exceptions.py`** — create `packages/agent-core-discord/src/agent_core_discord/_exceptions.py` and move the `_ToolError` and `_PersistError` class definitions into it verbatim. This module imports nothing from any other `agent_core_discord` module, so `endpoint.py` and every mixin can import the exceptions from it without a circular import. Move-only commit.
 
-3. **Create `_lifecycle.py`** — move `start`, `stop`, `_pending_acks_sweep_loop`, `_attachment_sweep_loop`, `_access_config_reload_loop`, `_sweep_pending_acks_once`, `_sweep_attachments_once`, `_sweep_recent_inbounds_once` into `class _LifecycleMixin` in `_lifecycle.py`. Move-only commit.
+3. **Create `_acks.py`** — move `_track_pending_ack`, `_remote_remove_ack`, `_clear_pending_ack` from `DiscordEndpoint` into a new `class _AcksMixin` in `packages/agent-core-discord/src/agent_core_discord/_acks.py`. Method bodies are byte-identical. Move-only commit.
 
-4. **Create `_handlers.py`** — move `_add_listener`, `_channel_allowed`, `_remember_inbound_mapping`, `_record_inbound`, `_resolve_channel_id`, `_typing_while_pending`, `_resolve_user_display_name`, `_make_on_message_handler`, `_make_on_reaction_add_handler`, `_make_on_raw_poll_vote_handler`, `_make_on_raw_message_lifecycle_handler` into `class _HandlersMixin` in `_handlers.py`. Move-only commit.
+4. **Create `_lifecycle.py`** — move `start`, `stop`, `_pending_acks_sweep_loop`, `_attachment_sweep_loop`, `_access_config_reload_loop`, `_sweep_pending_acks_once`, `_sweep_attachments_once`, `_sweep_recent_inbounds_once` into `class _LifecycleMixin` in `_lifecycle.py`. Move-only commit.
 
-5. **Create `_outbound.py`** — move module-level helpers (`_TOOL_ALIASES`, `_canonical_tool`, `_DISCORD_EMBED_TOTAL_CHAR_CAP`, `_embed_char_count`, `_check_embeds_within_caps`, `_serialize_poll`) and methods `deliver`, `_reply`, `_deliver_text_message`, `_dispatch`, `_resolve_channel`, `_send`, `_edit`, `_react`, `_fetch` into `class _OutboundMixin` in `_outbound.py`. Move-only commit.
+5. **Create `_handlers.py`** — move `_add_listener`, `_channel_allowed`, `_remember_inbound_mapping`, `_record_inbound`, `_resolve_channel_id`, `_typing_while_pending`, `_resolve_user_display_name`, `_make_on_message_handler`, `_make_on_reaction_add_handler`, `_make_on_raw_poll_vote_handler`, `_make_on_raw_message_lifecycle_handler` into `class _HandlersMixin` in `_handlers.py`. Move-only commit.
 
-6. **Create `_tools.py`** — move module-level helpers (`_parse_iso_datetime`, `_safe_filename`, `_redact_url_qs`, `_FILENAME_ALLOWED`) and methods `_download_url`, `_persist_attachment`, `_download_attachments`, `_list_channels`, `_get_channel_info`, `_resolve_guild`, `_send_briefing`, `_create_poll`, `_create_scheduled_event`, `_cancel_scheduled_event`, `_list_scheduled_events`, `_create_thread`, `_send_typing`, `_transcribe_audio_sync`, `_transcribe_audio` into `class _ToolsMixin` in `_tools.py`. Move-only commit.
+6. **Create `_outbound.py`** — move module-level helpers (`_TOOL_ALIASES`, `_canonical_tool`, `_DISCORD_EMBED_TOTAL_CHAR_CAP`, `_embed_char_count`, `_check_embeds_within_caps`, `_serialize_poll`) and methods `deliver`, `_reply`, `_deliver_text_message`, `_dispatch`, `_resolve_channel`, `_send`, `_edit`, `_react`, `_fetch` into `class _OutboundMixin` in `_outbound.py`. Import any of `_ToolError`/`_PersistError` this module raises or catches from `_exceptions.py` (`from ._exceptions import _ToolError`), never from `endpoint.py`. Move-only commit.
 
-7. **Update `endpoint.py`** — reduce to: all imports, `_active_endpoints`, `_default_attachments_dir`, the mixin imports, `class DiscordEndpoint(_AcksMixin, _LifecycleMixin, _HandlersMixin, _OutboundMixin, _ToolsMixin)` with only `__init__`, and `_ToolError`/`_PersistError`. Move-only commit (can be bundled with sub-requests 2–6 as one commit or a separate follow-up commit). Verify `just test-fast` passes unchanged.
+7. **Create `_tools.py`** — move module-level helpers (`_parse_iso_datetime`, `_safe_filename`, `_redact_url_qs`, `_FILENAME_ALLOWED`) and methods `_download_url`, `_persist_attachment`, `_download_attachments`, `_list_channels`, `_get_channel_info`, `_resolve_guild`, `_send_briefing`, `_create_poll`, `_create_scheduled_event`, `_cancel_scheduled_event`, `_list_scheduled_events`, `_create_thread`, `_send_typing`, `_transcribe_audio_sync`, `_transcribe_audio` into `class _ToolsMixin` in `_tools.py`. Import any of `_ToolError`/`_PersistError` this module raises or catches from `_exceptions.py`, never from `endpoint.py`. Move-only commit.
 
-8. **Add `mypy --strict` annotations** — in each mixin file, declare class-level attribute annotations for all `self.X` accesses the mixin methods make (so mypy can verify without importing `DiscordEndpoint`). Add full parameter + return type annotations to every method. Fix any errors surfaced by `uv run mypy --strict packages/agent-core-discord/src`. In the root `pyproject.toml`, add `"packages/agent-core-discord/src"` to the `files` list under `[tool.mypy]`, and add:
+8. **Update `endpoint.py`** — reduce to: all imports, `_active_endpoints`, `_default_attachments_dir`, the mixin imports, `class DiscordEndpoint(_AcksMixin, _LifecycleMixin, _HandlersMixin, _OutboundMixin, _ToolsMixin)` with only `__init__`, and `from ._exceptions import _ToolError, _PersistError` re-exported for backward compatibility (external code importing `endpoint._ToolError`/`endpoint._PersistError` keeps working). The exceptions are **not** defined here. Move-only commit (can be bundled with sub-requests 3–7 as one commit or a separate follow-up commit). Verify `just test-fast` passes unchanged.
+
+9. **Add `mypy --strict` annotations** — in each mixin file, declare class-level attribute annotations for all `self.X` accesses the mixin methods make (so mypy can verify without importing `DiscordEndpoint`). Add full parameter + return type annotations to every method. Fix any errors surfaced by `uv run mypy --strict packages/agent-core-discord/src`. In the root `pyproject.toml`, add `"packages/agent-core-discord/src"` to the `files` list under `[tool.mypy]`, and add:
    ```toml
    [[tool.mypy.overrides]]
    module = ["agent_core_discord.*"]
@@ -70,13 +74,14 @@ The three-phase discipline from Decision D2 in the Track B spec:
    ```
    Run `just check` to confirm the gate stays green.
 
-9. **Document the 8 CancelledError guards** — in `_lifecycle.py` (after sub-request 3), in each of the 8 `except asyncio.CancelledError: pass` blocks, add the inline comment: `# Intentional: explicitly cancelled above; swallowing CancelledError is correct cleanup.` This is a logic-touch commit (no move, no type change) and must be separate from the move commits.
+10. **Document the 8 CancelledError guards** — in `_lifecycle.py` (after sub-request 4), in each of the 8 `except asyncio.CancelledError: pass` blocks, add the inline comment: `# Intentional: explicitly cancelled above; swallowing CancelledError is correct cleanup.` This is a logic-touch commit (no move, no type change) and must be separate from the move commits.
 
 ## File-level changes
 
 | File | Change |
 |---|---|
-| `packages/agent-core-discord/src/agent_core_discord/endpoint.py` | **Modify** — gut to ~220 lines: imports, `_active_endpoints`, `_default_attachments_dir`, mixin imports, `DiscordEndpoint` with `__init__` only, `_ToolError`, `_PersistError` |
+| `packages/agent-core-discord/src/agent_core_discord/endpoint.py` | **Modify** — gut to ~220 lines: imports, `_active_endpoints`, `_default_attachments_dir`, mixin imports, `DiscordEndpoint` with `__init__` only; imports `_ToolError`/`_PersistError` from `_exceptions.py` and re-exports them for backward compatibility (does **not** define them) |
+| `packages/agent-core-discord/src/agent_core_discord/_exceptions.py` | **Create** — defines `_ToolError` and `_PersistError` (moved verbatim from `endpoint.py`); imports nothing from any other `agent_core_discord` module, so both `endpoint.py` and the mixin modules import the exceptions from here without a circular import (~15 lines) |
 | `packages/agent-core-discord/src/agent_core_discord/_acks.py` | **Create** — `_AcksMixin` with `_track_pending_ack`, `_remote_remove_ack`, `_clear_pending_ack` (~150 lines) |
 | `packages/agent-core-discord/src/agent_core_discord/_lifecycle.py` | **Create** — `_LifecycleMixin` with `start`, `stop`, 3 background loops, 3 sweep helpers (~480 lines) |
 | `packages/agent-core-discord/src/agent_core_discord/_handlers.py` | **Create** — `_HandlersMixin` with `_add_listener`, inbound state helpers, 4 event handler factories, channel allow, user display name, typing (~480 lines) |
