@@ -8,6 +8,8 @@ import sys
 import time
 from pathlib import Path
 
+import pytest
+
 from agent_core.daemon.supervisor import (
     is_alive,
     kill_tree,
@@ -52,6 +54,7 @@ def test_is_alive_true_for_current_process():
     assert is_alive(os.getpid()) is True
 
 
+@pytest.mark.slow
 def test_kill_tree_terminates_subprocess(tmp_path: Path):
     """Spawn a sleeping subprocess and verify kill_tree takes it down."""
     proc = subprocess.Popen(
