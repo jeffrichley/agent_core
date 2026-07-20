@@ -2,7 +2,7 @@
 
 ## Goal
 
-Add a JSON log formatter and a `correlation_id` contextvar to `agent_core.core` so that every log line emitted during envelope dispatch carries the envelope's correlation id as a queryable structured field. A config toggle selects the JSON handler (prod) or the existing human-readable handler (dev). No new dependencies are required; implementation uses stdlib `logging`, `contextvars`, and `json`. See the parent design spec `docs/superpowers/specs/2026-07-15-observability-design.md` §3 and issue #385.
+Add a JSON log formatter and a `correlation_id` contextvar to `agent_core.logging` so that every log line emitted during envelope dispatch carries the envelope's correlation id as a queryable structured field. A config toggle selects the JSON handler (prod) or the existing human-readable handler (dev). No new dependencies are required; implementation uses stdlib `logging`, `contextvars`, and `json`. See the parent design spec `docs/superpowers/specs/2026-07-15-observability-design.md` §3 and issue #385.
 
 ---
 
@@ -101,6 +101,8 @@ No GoF pattern fits cleanly here — this is straightforward stdlib wiring. The 
    - `configure_logging("pretty")` installs a plain `logging.Formatter` (not `JsonFormatter`).
    - `CorrelationIdFilter` is attached to the handler in both modes.
    - End-to-end: a log emitted inside a `_dispatch()`-like wrapper (set id, emit, reset) appears in captured records with the correct `correlation_id` field when the JSON handler is active.
+   - `LoggingConfig(format="unknown")` raises `pydantic.ValidationError` (not a silent fallback).
+   - `DaemonConfig` instantiated without a `logging:` key yields `logging.format == "pretty"` (backward-compatible default).
 
 ---
 
