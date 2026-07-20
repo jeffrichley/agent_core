@@ -63,6 +63,11 @@ _OUTBOUND_REGISTRY_TTL_MIN_SECONDS = 1.0
 _OUTBOUND_REGISTRY_TTL_MAX_SECONDS = 86400.0 * 366  # ~one year
 
 
+def _not_started_error() -> dict[str, str]:
+    """Standard not-started response for dict-returning tool functions."""
+    return {"status": "error", "message": "endpoint not started"}
+
+
 class SessionRegistry(Middleware):
     """Middleware that captures the connected ServerSession on first message.
 
@@ -310,6 +315,16 @@ class ClaudeCodeMCPEndpoint:
         self._sessions.discard(session)
         if len(self._sessions) != before:
             log.debug("endpoint '%s' unregistered session count=%d", self.name, len(self._sessions))
+
+    def _require_handle(self) -> BusHandle:
+        """Assert the endpoint has been started; raise RuntimeError otherwise.
+
+        Returns the handle so callers can write:
+            handle = self._require_handle()
+        """
+        if self._handle is None:
+            raise RuntimeError(f"endpoint '{self.name}' is not started")
+        return self._handle
 
     def _clamp_missing_ack_delay(self, seconds: float) -> float:
         s = float(seconds)
@@ -653,11 +668,10 @@ class ClaudeCodeMCPEndpoint:
         self._evict_stale_outbounds(now)
         self._evict_stale_inbounds(now)
         if self._is_routine_green_ack(envelope):
-            if self._handle is None:
-                raise RuntimeError(f"endpoint '{self.name}' is not started")
+            handle = self._require_handle()
             irt = envelope.in_reply_to
             assert irt is not None
-            await self._handle.ack(envelope.id)
+            await handle.ack(envelope.id)
             log.debug(
                 "endpoint '%s': auto-acked routine green acknowledgment inbound_id=%s "
                 "outbound_id=%s",
@@ -852,8 +866,7 @@ class ClaudeCodeMCPEndpoint:
 
             urgency: 'green' (default), 'yellow', or 'red'. Schema-validated.
             """
-            if self._handle is None:
-                raise RuntimeError(f"endpoint '{self.name}' is not started")
+            handle = self._require_handle()
             env = Envelope(
                 id=uuid.uuid4().hex,
                 correlation_id=correlation_id or uuid.uuid4().hex,
@@ -875,7 +888,7 @@ class ClaudeCodeMCPEndpoint:
             if not self.wake_on_all_acknowledgments:
                 self._register_outbound_sent(env.id, env.metadata)
             try:
-                await self._handle.publish(env)
+                await handle.publish(env)
             except Exception:
                 if not self.wake_on_all_acknowledgments:
                     self._recent_outbound_ids.pop(env.id, None)
@@ -924,7 +937,7 @@ class ClaudeCodeMCPEndpoint:
         async def handle(envelope_id: str) -> dict:
             """Acknowledge an envelope and remove it from the pickup queue."""
             if self._handle is None:
-                return {"status": "error", "message": "endpoint not started"}
+                return _not_started_error()
             env_before = next((e for e in self._pending if e.id == envelope_id), None)
             await self._handle.ack(envelope_id)
             if env_before is not None:
@@ -936,7 +949,7 @@ class ClaudeCodeMCPEndpoint:
         async def ack(envelope_id: str) -> dict:
             """Direct ack via the BusHandle."""
             if self._handle is None:
-                return {"status": "error", "message": "endpoint not started"}
+                return _not_started_error()
             env_before = next((e for e in self._pending if e.id == envelope_id), None)
             await self._handle.ack(envelope_id)
             if env_before is not None:
@@ -948,7 +961,7 @@ class ClaudeCodeMCPEndpoint:
         async def nack(envelope_id: str, requeue: bool = True) -> dict:
             """Direct nack via the BusHandle."""
             if self._handle is None:
-                return {"status": "error", "message": "endpoint not started"}
+                return _not_started_error()
             env_before = next((e for e in self._pending if e.id == envelope_id), None)
             await self._handle.nack(envelope_id, requeue)
             if env_before is not None:
@@ -979,8 +992,7 @@ class ClaudeCodeMCPEndpoint:
             ``consume()`` → ``reply(in_reply_to=item_id, payload=...)`` (2
             calls).
             """
-            if self._handle is None:
-                raise RuntimeError(f"endpoint '{self.name}' is not started")
+            handle = self._require_handle()
             result = await self._call_list_pending(batch_window_seconds=batch_window_seconds)
             items = result["items"]
             if max_items is not None and max_items >= 0:
@@ -1003,7 +1015,7 @@ class ClaudeCodeMCPEndpoint:
                 # failure would drop items from _pending whose ids never made
                 # it back to the caller — a silent data-loss path.
                 for env_id in ids:
-                    await self._handle.ack(env_id)
+                    await handle.ack(env_id)
                 drop = set(ids)
                 envs_dropped = [e for e in self._pending if e.id in drop]
                 self._pending = [e for e in self._pending if e.id not in drop]
@@ -1044,8 +1056,7 @@ class ClaudeCodeMCPEndpoint:
 
             Returns ``{"published_envelope_id": ..., "acked_envelope_id": ...}``.
             """
-            if self._handle is None:
-                raise RuntimeError(f"endpoint '{self.name}' is not started")
+            handle = self._require_handle()
 
             inbound_pending = next((e for e in self._pending if e.id == in_reply_to), None)
             if inbound_pending is not None:
@@ -1092,14 +1103,14 @@ class ClaudeCodeMCPEndpoint:
             if not self.wake_on_all_acknowledgments:
                 self._register_outbound_sent(env.id, env.metadata)
             try:
-                await self._handle.publish(env)
+                await handle.publish(env)
             except Exception:
                 if not self.wake_on_all_acknowledgments:
                     self._recent_outbound_ids.pop(env.id, None)
                     self._cancel_missing_ack(env.id)
                 raise
 
-            await self._handle.ack(in_reply_to)
+            await handle.ack(in_reply_to)
             if inbound_pending is not None:
                 self._release_outbound_registry_for_ack_envelope(inbound_pending)
             self._pending = [e for e in self._pending if e.id != in_reply_to]
