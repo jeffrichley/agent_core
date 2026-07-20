@@ -22,7 +22,6 @@ import asyncio
 import json
 import logging
 import re
-import uuid
 from collections import Counter
 from collections.abc import Callable
 from datetime import UTC, datetime, timedelta
@@ -30,9 +29,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal, cast
 from zoneinfo import ZoneInfo
 
-import anyio
 from fastmcp import FastMCP
-from fastmcp.server.middleware import Middleware, MiddlewareContext
 from mcp.shared.session import SessionMessage
 from mcp.types import JSONRPCMessage, JSONRPCNotification
 
@@ -46,82 +43,16 @@ if TYPE_CHECKING:
     from agent_core.bus.handle import BusHandle
     from agent_core.mcp_audit.writer import MCPAuditWriter
 
+from ._session import SessionRegistry
+from ._tools import register_tools
+
 log = logging.getLogger(__name__)
 _META_KEY_RE = re.compile(r"^[A-Za-z0-9_]+$")
-
-# Inbound-only Discord metadata fields that must be stripped from reply() outbounds.
-# The Discord adapter's outbound validator only accepts channel_id (and a small set
-# of canonical send args); these five fields are receive-side only and fail
-# shape validation on TextMessage, producing a silent-drop Acknowledgment (issue #222).
-_DISCORD_INBOUND_ONLY_KEYS: frozenset[str] = frozenset(
-    {"author_display_name", "author_id", "guild_id", "is_bot", "is_dm"}
-)
 
 # Missing-ack timers and registry TTL must stay bounded (YAML / metadata cannot DoS the loop).
 _MISSING_ACK_DELAY_MAX_SECONDS = 86400.0  # 24 hours
 _OUTBOUND_REGISTRY_TTL_MIN_SECONDS = 1.0
 _OUTBOUND_REGISTRY_TTL_MAX_SECONDS = 86400.0 * 366  # ~one year
-
-
-def _not_started_error() -> dict[str, str]:
-    """Standard not-started response for dict-returning tool functions."""
-    return {"status": "error", "message": "endpoint not started"}
-
-
-class SessionRegistry(Middleware):
-    """Middleware that captures the connected ServerSession on first message.
-
-    Mirrors FastMCP's official PingMiddleware pattern: spawn a long-lived
-    coroutine into session._subscription_task_group; the coroutine registers
-    the session with the endpoint, awaits forever, and runs cleanup in
-    finally: when the session task group is cancelled (which fires when the
-    SSE stream closes).
-
-    Dedup key is `mcp-session-id` (string), not `id(session)`. The header is
-    the spec-defined stable identifier across HTTP requests in a streamable-
-    HTTP session; `id(session)` happens to also be stable in stateful mode
-    but isn't load-bearing — and using the string makes us robust to clients
-    that genuinely open new logical sessions.
-    """
-
-    def __init__(self, endpoint: ClaudeCodeMCPEndpoint) -> None:
-        self._endpoint = endpoint
-        self._spawned_for: set[str] = set()
-        self._lock = anyio.Lock()
-
-    async def on_message(self, context: MiddlewareContext, call_next) -> Any:
-        if context.fastmcp_context is None or context.fastmcp_context.request_context is None:
-            return await call_next(context)
-
-        ctx = context.fastmcp_context
-        session = ctx.session
-        # `session_id` is the mcp-session-id header (stable across the SSE
-        # stream's lifetime in stateful mode). Fall back to `id(session)` for
-        # in-memory transports that don't have a session id.
-        sid = getattr(ctx, "session_id", None) or f"obj:{id(session)}"
-        log.debug(
-            "endpoint '%s': on_message session_id=%s id(session)=%d",
-            self._endpoint.name,
-            sid,
-            id(session),
-        )
-
-        async with self._lock:
-            if sid not in self._spawned_for:
-                tg = getattr(session, "_subscription_task_group", None)
-                if tg is not None:
-                    self._spawned_for.add(sid)
-                    tg.start_soon(self._claim_session, session, sid)
-
-        return await call_next(context)
-
-    async def _claim_session(self, session: Any, sid: str) -> None:
-        try:
-            self._endpoint._register_session(session)
-            await anyio.sleep_forever()
-        finally:
-            self._endpoint._unregister_session(session)
-            self._spawned_for.discard(sid)
 
 
 class ClaudeCodeMCPEndpoint:
@@ -229,7 +160,7 @@ class ClaudeCodeMCPEndpoint:
         # TTL'd alongside the outbound registry — same operational concern.
         self._recent_inbounds: dict[str, dict[str, Any]] = {}
         self._mcp.add_middleware(SessionRegistry(self))
-        self._register_tools()
+        register_tools(self)
         # T14: plugin-provided tool mounters can register additional MCP
         # tools on this endpoint at construction time. Each mounter is a
         # callable that takes the FastMCP server and adds tools via the
@@ -847,318 +778,3 @@ class ClaudeCodeMCPEndpoint:
                     exc_info=True,
                 )
                 self._unregister_session(session)
-
-    def _register_tools(self) -> None:
-        """Register the bus's MCP tool surface on the FastMCP server."""
-
-        @self._mcp.tool()
-        async def send(
-            to: str,
-            kind: str,
-            payload: dict[str, Any],
-            correlation_id: str | None = None,
-            in_reply_to: str | None = None,
-            metadata: dict[str, Any] | None = None,
-            urgency: str = "green",
-            expires_at: str | None = None,
-        ) -> dict:
-            """Publish an envelope. Bus stamps `from:` to this endpoint's name.
-
-            urgency: 'green' (default), 'yellow', or 'red'. Schema-validated.
-            """
-            handle = self._require_handle()
-            env = Envelope(
-                id=uuid.uuid4().hex,
-                correlation_id=correlation_id or uuid.uuid4().hex,
-                in_reply_to=in_reply_to,
-                to=to,
-                kind=kind,
-                payload=payload,  # discriminated by kind
-                metadata=metadata or {},
-                urgency=urgency,  # type: ignore[arg-type]  # validated by Pydantic
-                expires_at=datetime.fromisoformat(expires_at) if expires_at else None,
-                created_at=datetime.now(UTC),
-            )
-            # Issue #69: register the outbound BEFORE publishing. The bus is
-            # single-loop and dispatches in-process, so an in-flight routine
-            # ack from the recipient adapter can reach our deliver() while
-            # we're still awaiting publish — the ack's auto-clear path needs
-            # something concrete to cancel, otherwise it pops nothing and a
-            # phantom missing-ack timer scheduled afterward fires a wake.
-            if not self.wake_on_all_acknowledgments:
-                self._register_outbound_sent(env.id, env.metadata)
-            try:
-                await handle.publish(env)
-            except Exception:
-                if not self.wake_on_all_acknowledgments:
-                    self._recent_outbound_ids.pop(env.id, None)
-                    self._cancel_missing_ack(env.id)
-                raise
-            return {"status": "published", "id": env.id}
-
-        @self._mcp.tool()
-        async def list_endpoints() -> list[dict]:
-            """Return the directory of registered bus endpoints."""
-            if self._handle is None:
-                return []
-            return [
-                {"name": e.name, "description": e.description} for e in self._handle.endpoints()
-            ]
-
-        @self._mcp.tool()
-        async def describe_endpoint(name: str) -> dict | None:
-            """Return one endpoint's directory entry, or None if unknown."""
-            if self._handle is None:
-                return None
-            for e in self._handle.endpoints():
-                if e.name == name:
-                    return {"name": e.name, "description": e.description}
-            return None
-
-        @self._mcp.tool()
-        async def list_pending(batch_window_seconds: int = 0) -> dict:
-            """Return a snapshot of envelopes in this agent's pickup queue,
-            sorted by urgency (red → yellow → green) with FIFO within tier.
-
-            Returns {"meta": {...}, "items": [...]}. meta carries count,
-            urgency_max, urgency_counts, by_sender, endpoint, fetched_at —
-            computed atomically with items, so the aggregate cannot drift
-            from the actual queue contents (see issue #33).
-
-            When batch_window_seconds > 0, consecutive same-sender same-urgency
-            same-kind envelopes whose arrival times fall within the window are
-            collapsed into a single {"type": "batch", ...} entry inside items.
-            Each underlying envelope retains its own id and ack semantics —
-            call handle(envelope_id) per envelope.
-            """
-            return await self._call_list_pending(batch_window_seconds=batch_window_seconds)
-
-        @self._mcp.tool()
-        async def handle(envelope_id: str) -> dict:
-            """Acknowledge an envelope and remove it from the pickup queue."""
-            if self._handle is None:
-                return _not_started_error()
-            env_before = next((e for e in self._pending if e.id == envelope_id), None)
-            await self._handle.ack(envelope_id)
-            if env_before is not None:
-                self._release_outbound_registry_for_ack_envelope(env_before)
-            self._pending = [e for e in self._pending if e.id != envelope_id]
-            return {"status": "handled", "id": envelope_id}
-
-        @self._mcp.tool()
-        async def ack(envelope_id: str) -> dict:
-            """Direct ack via the BusHandle."""
-            if self._handle is None:
-                return _not_started_error()
-            env_before = next((e for e in self._pending if e.id == envelope_id), None)
-            await self._handle.ack(envelope_id)
-            if env_before is not None:
-                self._release_outbound_registry_for_ack_envelope(env_before)
-            self._pending = [e for e in self._pending if e.id != envelope_id]
-            return {"status": "acked", "id": envelope_id}
-
-        @self._mcp.tool()
-        async def nack(envelope_id: str, requeue: bool = True) -> dict:
-            """Direct nack via the BusHandle."""
-            if self._handle is None:
-                return _not_started_error()
-            env_before = next((e for e in self._pending if e.id == envelope_id), None)
-            await self._handle.nack(envelope_id, requeue)
-            if env_before is not None:
-                self._release_outbound_registry_for_ack_envelope(env_before)
-            self._pending = [e for e in self._pending if e.id != envelope_id]
-            return {"status": "nacked", "id": envelope_id, "requeue": requeue}
-
-        @self._mcp.tool()
-        async def consume(
-            batch_window_seconds: int = 30,
-            auto_ack: bool = True,
-            max_items: int | None = None,
-        ) -> dict:
-            """Read pending envelopes and ack them in one call (issue #67).
-
-            Same return shape as ``list_pending``: ``{"meta": {...}, "items": [...]}``.
-            ``meta`` always reflects the current full queue (the ``max_items``
-            cap trims ``items`` only — meta is presentational-of-total, not
-            of-the-trimmed-slice).
-
-            When ``auto_ack=True`` (default), every envelope referenced in the
-            returned ``items`` is ack'd via the bus before this call returns;
-            the items are also dropped from the pickup queue. When False,
-            ``consume`` is a pure read — ack with ``handle()`` later. Set
-            False if you might bail before processing and need redelivery.
-
-            Composes with ``reply()``: a typical Discord round-trip is
-            ``consume()`` → ``reply(in_reply_to=item_id, payload=...)`` (2
-            calls).
-            """
-            handle = self._require_handle()
-            result = await self._call_list_pending(batch_window_seconds=batch_window_seconds)
-            items = result["items"]
-            if max_items is not None and max_items >= 0:
-                items = items[:max_items]
-                result = {"meta": result["meta"], "items": items}
-
-            if auto_ack:
-                ids: list[str] = []
-                for item in items:
-                    if "envelope" in item:  # batched single
-                        ids.append(item["envelope"]["id"])
-                    elif "envelopes" in item:  # batched run
-                        ids.extend(e["id"] for e in item["envelopes"])
-                    elif "id" in item:  # flat envelope dict
-                        ids.append(item["id"])
-                # Ack everything FIRST; only mutate _pending after the bus has
-                # accepted every ack. If a mid-walk ack raises, _pending is
-                # untouched and the caller can retry the whole consume safely
-                # (bus acks are idempotent). Without this ordering, a partial
-                # failure would drop items from _pending whose ids never made
-                # it back to the caller — a silent data-loss path.
-                for env_id in ids:
-                    await handle.ack(env_id)
-                drop = set(ids)
-                envs_dropped = [e for e in self._pending if e.id in drop]
-                self._pending = [e for e in self._pending if e.id not in drop]
-                for env in envs_dropped:
-                    self._release_outbound_registry_for_ack_envelope(env)
-            return result
-
-        @self._mcp.tool()
-        async def reply(
-            in_reply_to: str,
-            payload: dict[str, Any],
-            urgency: str = "green",
-            metadata: dict[str, Any] | None = None,
-        ) -> dict:
-            """Publish an outbound and ack the inbound it answers in one call.
-
-            Routing inherits from the inbound envelope (``to`` ← inbound.from_,
-            ``correlation_id`` ← inbound.correlation_id, ``metadata`` ← inbound
-            metadata, then top-level keys overridden by the ``metadata``
-            argument). The metadata merge is **shallow** — supplying
-            ``{"discord": {"channel_id": "X"}}`` replaces the entire
-            ``discord`` dict, dropping sibling keys like ``guild_id`` from the
-            inbound. Override fully or not at all when touching transport
-            metadata.
-
-            ``urgency`` defaults to ``"green"`` (matching ``send()``); a
-            reply is its own message and inherits no urgency by default.
-            Pass ``"auto"`` to inherit the inbound's urgency (escalating
-            error chains, etc.) or an explicit ``"red"|"yellow"|"green"``
-            override.
-
-            ``in_reply_to`` is looked up in the pickup queue first, then in
-            the recent-inbounds cache (so it works after
-            ``consume(auto_ack=True)``). Raises if the id isn't known.
-
-            The reply's ``kind`` is ``TextMessage`` — for non-text replies,
-            use ``send()`` + ``handle()`` instead.
-
-            Returns ``{"published_envelope_id": ..., "acked_envelope_id": ...}``.
-            """
-            handle = self._require_handle()
-
-            inbound_pending = next((e for e in self._pending if e.id == in_reply_to), None)
-            if inbound_pending is not None:
-                from_ = inbound_pending.from_
-                inbound_metadata = inbound_pending.metadata
-                inbound_urgency = inbound_pending.urgency
-                inbound_correlation = inbound_pending.correlation_id
-            else:
-                cached = self._recent_inbounds.get(in_reply_to)
-                if cached is None:
-                    raise ValueError(
-                        f"reply: no inbound found for in_reply_to={in_reply_to!r}"
-                    )
-                from_ = cached["from"]
-                inbound_metadata = cached["metadata"]
-                inbound_urgency = cached["urgency"]
-                inbound_correlation = cached["correlation_id"]
-
-            out_urgency: str = inbound_urgency if urgency == "auto" else urgency
-            out_metadata = {**inbound_metadata, **(metadata or {})}
-            discord_meta = out_metadata.get("discord")
-            if isinstance(discord_meta, dict) and (discord_meta.keys() & _DISCORD_INBOUND_ONLY_KEYS):
-                out_metadata = {
-                    **out_metadata,
-                    "discord": {
-                        k: v for k, v in discord_meta.items() if k not in _DISCORD_INBOUND_ONLY_KEYS
-                    },
-                }
-
-            env = Envelope(
-                id=uuid.uuid4().hex,
-                correlation_id=inbound_correlation,
-                in_reply_to=in_reply_to,
-                to=from_,
-                kind="TextMessage",
-                payload=payload,  # discriminated by kind
-                metadata=out_metadata,
-                urgency=out_urgency,  # type: ignore[arg-type]  # validated by Pydantic
-                created_at=datetime.now(UTC),
-            )
-            # Issue #69: register before publishing — see send() for the full
-            # rationale. An in-flight routine ack would otherwise leave the
-            # registry empty on auto-clear and a phantom timer fires later.
-            if not self.wake_on_all_acknowledgments:
-                self._register_outbound_sent(env.id, env.metadata)
-            try:
-                await handle.publish(env)
-            except Exception:
-                if not self.wake_on_all_acknowledgments:
-                    self._recent_outbound_ids.pop(env.id, None)
-                    self._cancel_missing_ack(env.id)
-                raise
-
-            await handle.ack(in_reply_to)
-            if inbound_pending is not None:
-                self._release_outbound_registry_for_ack_envelope(inbound_pending)
-            self._pending = [e for e in self._pending if e.id != in_reply_to]
-            self._recent_inbounds.pop(in_reply_to, None)
-
-            return {"published_envelope_id": env.id, "acked_envelope_id": in_reply_to}
-
-        @self._mcp.tool()
-        async def peek(envelope_id: str) -> dict:
-            """Return one specific envelope from the pickup queue without acking.
-
-            Used to hydrate a truncated inline preview into the full payload
-            (issue #70). Also useful for power-use cases (manual triage of a
-            specific envelope without disturbing other queue state).
-
-            Pure read: does NOT ack, does NOT remove from the pickup queue.
-            Idempotent — multiple calls return identical data.
-
-            Looks only at the live pickup queue. Does NOT consult the
-            recent-inbounds routing cache (which holds metadata only, not
-            full payload — the cache cannot satisfy peek's contract).
-
-            Raises if ``envelope_id`` is not in the queue.
-            """
-            env = next((e for e in self._pending if e.id == envelope_id), None)
-            if env is None:
-                raise ValueError(
-                    f"peek: envelope_id={envelope_id!r} not in queue"
-                )
-            return {"envelope": self._envelope_to_dict(env)}
-
-        @self._mcp.tool()
-        async def show_my_day(
-            date: str | None = None,
-            projected: bool = True,
-            limit: int | None = None,
-        ) -> list[dict]:
-            """Return today's bus traffic for this agent.
-
-            Use for self-introspection ('what just happened') or feeding
-            into a reflection summary. Projected output is Tool 3-shaped
-            rows; ``projected=False`` returns full envelope JSON.
-
-            The agent identity is the name this endpoint was constructed
-            with — no ``agent`` parameter is exposed to prevent cross-agent
-            queries. ``date`` defaults to today in the configured timezone
-            (default ``US/Eastern``), matching the writer's local-midnight
-            rollover so an evening invocation reads the same day's file.
-            ``limit`` must be >= 1 if provided.
-            """
-            return await self._show_my_day_impl(date=date, projected=projected, limit=limit)
