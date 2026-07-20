@@ -194,20 +194,28 @@ ticket leaves inbound untouched.
    - Keep `default_path()` static method and `__all__` unchanged.
    - The `path` property is now inherited; remove the local definition.
    - The `__init__` delegates: `def __init__(self, path: Path) -> None: super().__init__(path)`.
-   - Remove `import asyncio`, `import sys` (no longer used directly); keep
-     `import json`, `import logging`, `from datetime import datetime`,
+   - Remove `import asyncio`, `import sys`, `import logging` (no longer used
+     directly — the base class owns logging; the module-level
+     `log = logging.getLogger(__name__)` is also dropped); keep
+     `import json`, `from datetime import datetime`,
      `from pathlib import Path`, `from typing import Any`.
    - Drop module-level `log = logging.getLogger(__name__)` (base owns logging now).
 
 4. **Refactor `packages/agent-core-voice/src/agent_core_voice/audit.py`.**
    Same pattern as #3. Voice has no `default_path` — preserve that omission.
    Voice's `_serialize` uses `json.dumps(payload, ensure_ascii=False)` (no
-   `default=str`) — keep that exactly.
+   `default=str`) — keep that exactly. Remove `import asyncio`, `import sys`,
+   and `import logging` (no longer used directly); drop the module-level logger
+   assignment. Keep `import json`, `from pathlib import Path`, and any other
+   imports voice uses directly.
 
 5. **Refactor `packages/agent-core-webcam/src/agent_core_webcam/audit.py`.**
    Same pattern as #3. Webcam keeps `default_path(endpoint_name: str) -> Path`
    as a `@staticmethod`. Webcam's `_serialize` uses
-   `json.dumps(payload, default=str, ensure_ascii=False)`.
+   `json.dumps(payload, default=str, ensure_ascii=False)`. Remove
+   `import asyncio`, `import sys`, and `import logging` (no longer used
+   directly); drop the module-level logger assignment. Keep `import json`,
+   `from pathlib import Path`, and any other imports webcam uses directly.
 
 6. **Verify.** Run:
    ```bash
