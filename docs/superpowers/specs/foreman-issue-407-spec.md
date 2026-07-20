@@ -64,7 +64,7 @@ No GoF pattern applies. This is DRY (eliminate 7× duplication) + SRP (each file
    - `consume()` tool closure (line 982–983): → `handle = self._require_handle()`, then `handle.ack(...)`.
    - `reply()` tool closure (line 1047–1048): → `handle = self._require_handle()`, then `handle.publish(env)` and `handle.ack(in_reply_to)`.
 
-3. **Add `_not_started_error()` free function** just above `_register_tools()` in the same file (temporary; moves to `_tools.py` in SR5):
+3. **Add `_not_started_error()` free function** at module level, between the constants block (ending ~line 63) and `class SessionRegistry` (~line 66) in the same file (temporary; moves to `_tools.py` in SR8):
 
    ```python
    def _not_started_error() -> dict[str, str]:
@@ -99,7 +99,9 @@ No GoF pattern applies. This is DRY (eliminate 7× duplication) + SRP (each file
    __all__ = ["ClaudeCodeMCPEndpoint"]
    ```
 
-   The original `claude_code_mcp.py` still exists at this point; Python will use the package over the `.py` file if the directory comes first in the search path. Delete `claude_code_mcp.py` **after** `_endpoint.py` is in place (SR8).
+   The original `claude_code_mcp.py` still exists at this point; Python will use the package over the `.py` file if the directory comes first in the search path. Delete `claude_code_mcp.py` **after** `_endpoint.py` is in place (SR9).
+
+   > **⚠ Import window warning:** The `__init__.py` created in this step imports `from ._endpoint import ClaudeCodeMCPEndpoint`, but `_endpoint.py` does not exist until SR9. Because Python prefers a package (`claude_code_mcp/`) over a same-named `.py` file in the same directory, **do not run tests or import `agent_core.endpoints.claude_code_mcp` between this step and SR9** — any such import will raise `ModuleNotFoundError` even though the original `claude_code_mcp.py` is still present. Run tests only after SR10.
 
 7. **Create `_session.py`** — move `SessionRegistry` into the package:
 
@@ -246,7 +248,7 @@ No GoF pattern applies. This is DRY (eliminate 7× duplication) + SRP (each file
 | `packages/core/src/agent_core/endpoints/claude_code_mcp/__init__.py` | **Create** | Re-exports `ClaudeCodeMCPEndpoint`; preserves all existing import paths |
 | `packages/core/src/agent_core/endpoints/claude_code_mcp/_session.py` | **Create** | `SessionRegistry` middleware class (~70 lines) |
 | `packages/core/src/agent_core/endpoints/claude_code_mcp/_endpoint.py` | **Create** | Module constants + `ClaudeCodeMCPEndpoint` class + `_require_handle()` method; calls `register_tools(self)` in `__init__` (~790 lines) |
-| `packages/core/src/agent_core/endpoints/claude_code_mcp/_tools.py` | **Create** | `_DISCORD_INBOUND_ONLY_KEYS` + `_not_started_error()` + `register_tools(ep)` with all 10 tool closures (~340 lines) |
+| `packages/core/src/agent_core/endpoints/claude_code_mcp/_tools.py` | **Create** | `_DISCORD_INBOUND_ONLY_KEYS` + `_not_started_error()` + `register_tools(ep)` with all 11 tool closures (~340 lines) |
 
 No test files change. No caller files change.
 
