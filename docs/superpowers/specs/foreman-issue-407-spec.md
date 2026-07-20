@@ -8,7 +8,7 @@ Addresses issue #407, part of Theme F Track B (B7 ticket in `docs/superpowers/sp
 
 ## Acceptance criteria
 
-- `grep -rn "if self\._handle is None" packages/core/src/agent_core/endpoints/claude_code_mcp/ | grep -v '_require_handle'` returns zero matches after the refactor. (The one permitted instance of `if self._handle is None:` inside `_require_handle()` itself is the correct implementation; all seven former inline guards are collapsed into helper calls.)
+- `grep -rn "if self\._handle is None" packages/core/src/agent_core/endpoints/claude_code_mcp/ | wc -l` returns exactly `1` after the refactor. The single remaining occurrence is the implementation line inside `_require_handle()` itself (`if self._handle is None: raise RuntimeError(...)`); all seven former inline guards are collapsed into helper calls.
 - `_require_handle()` exists as a private method on `ClaudeCodeMCPEndpoint`; it raises `RuntimeError(f"endpoint '{self.name}' is not started")` when `_handle is None` and returns the `BusHandle` otherwise.
 - `_not_started_error()` exists as a module-level function in `_tools.py`; it returns `{"status": "error", "message": "endpoint not started"}`.
 - The four `raise RuntimeError` guards (in `deliver`, `send`, `consume`, `reply`) are replaced by `self._require_handle()` / `ep._require_handle()`.
