@@ -7,16 +7,13 @@ audit failure never breaks a capture.
 
 from __future__ import annotations
 
-import asyncio
 import json
-import logging
-import sys
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 from typing import Any
 
-log = logging.getLogger(__name__)
+from agent_core.audit import JsonlAuditLog
 
 
 @dataclass(frozen=True)
@@ -29,40 +26,18 @@ class AuditEvent:
     data: dict[str, Any]
 
 
-class AuditLog:
+class AuditLog(JsonlAuditLog[AuditEvent]):
     """Append-only JSONL audit log."""
 
-    def __init__(self, path: Path):
-        self._path = Path(path)
-
-    @property
-    def path(self) -> Path:
-        return self._path
+    def __init__(self, path: Path) -> None:
+        super().__init__(path)
 
     @staticmethod
     def default_path(endpoint_name: str) -> Path:
         """Returns ``~/.agent-core/webcam/<endpoint_name>/audit.jsonl``."""
         return Path.home() / ".agent-core" / "webcam" / endpoint_name / "audit.jsonl"
 
-    async def write(self, event: AuditEvent) -> None:
-        try:
-            line = self._serialize(event)
-            await asyncio.to_thread(self._append_line, self._path, line)
-        except Exception as exc:
-            msg = f"agent_core_webcam.audit: write failed for {self._path}: {exc}"
-            log.warning(msg)
-            print(msg, file=sys.stderr)
-
-    @staticmethod
-    def _append_line(path: Path, line: str) -> None:
-        path.parent.mkdir(parents=True, exist_ok=True)
-        with path.open("a", encoding="utf-8") as handle:
-            # Single write() call so POSIX O_APPEND atomicity guarantees
-            # concurrent appends interleave only at line boundaries.
-            handle.write(line + "\n")
-
-    @staticmethod
-    def _serialize(event: AuditEvent) -> str:
+    def _serialize(self, event: AuditEvent) -> str:
         payload = {
             "timestamp": event.timestamp.isoformat(),
             "tool": event.tool,
