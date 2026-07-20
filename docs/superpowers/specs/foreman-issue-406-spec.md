@@ -49,6 +49,7 @@ The three-phase discipline from Decision D2 in the Track B spec:
    - Not-started shape: `deliver()` on a non-started endpoint raises `EndpointUnavailable` with `f"discord '{ep.name}' not started"` as the message
    - Acknowledgment emission shape: a successful tool dispatch emits exactly one Acknowledgment with `kind="Acknowledgment"`, `correlation_id` matching the inbound envelope's `correlation_id`, `in_reply_to` matching the inbound envelope's `id`, `to` matching the inbound envelope's `from_`, `payload.of` matching the inbound envelope's `id`
    - Urgency mapping: a successful dispatch emits `urgency="green"`; a `_ToolError` dispatch emits `urgency="yellow"`
+   - Lifecycle transitions: (a) `start()` with the fake client sets `self._handle` to the provided bus and registers the endpoint in `_active_endpoints[ep.name]`; (b) `stop()` after a successful start removes the endpoint from `_active_endpoints` and clears `self._handle` so a subsequent `deliver()` raises `EndpointUnavailable`. Both cases use the existing `_client_factory` seam; no real Discord connection needed.
    - Run `just test-fast` and confirm all new tests pass against the existing unmodified `endpoint.py`
 
 2. **Create `_exceptions.py`** — create `packages/agent-core-discord/src/agent_core_discord/_exceptions.py` and move the `_ToolError` and `_PersistError` class definitions into it verbatim. This module imports nothing from any other `agent_core_discord` module, so `endpoint.py` and every mixin can import the exceptions from it without a circular import. Move-only commit.
@@ -87,7 +88,7 @@ The three-phase discipline from Decision D2 in the Track B spec:
 | `packages/agent-core-discord/src/agent_core_discord/_handlers.py` | **Create** — `_HandlersMixin` with `_add_listener`, inbound state helpers, 4 event handler factories, channel allow, user display name, typing (~480 lines) |
 | `packages/agent-core-discord/src/agent_core_discord/_outbound.py` | **Create** — `_OutboundMixin` with `deliver`, `_reply`, `_deliver_text_message`, `_dispatch`, `_resolve_channel`, `_send`, `_edit`, `_react`, `_fetch` + module-level dispatch helpers (~550 lines) |
 | `packages/agent-core-discord/src/agent_core_discord/_tools.py` | **Create** — `_ToolsMixin` with download/persist/transcribe, all remaining tool implementations + module-level helpers (~430 lines) |
-| `packages/agent-core-discord/tests/test_endpoint_characterization.py` | **Create** — golden-master characterization suite: routing table, alias resolution, not-started shape, ack emission shape, urgency mapping |
+| `packages/agent-core-discord/tests/test_endpoint_characterization.py` | **Create** — golden-master characterization suite: routing table, alias resolution, not-started shape, ack emission shape, urgency mapping, lifecycle transitions (start registers in `_active_endpoints`; stop drains it and clears `_handle`) |
 | `pyproject.toml` | **Modify** — add `"packages/agent-core-discord/src"` to `[tool.mypy] files`; add `[[tool.mypy.overrides]]` block with `strict = true` for `agent_core_discord.*` |
 
 ## Alternatives considered
