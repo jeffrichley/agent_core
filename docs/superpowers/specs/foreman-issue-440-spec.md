@@ -151,7 +151,7 @@ first is conventional.
       ```python
       class DiscordEndpoint(_AcksMixin, _LifecycleMixin):
       ```
-   d. Remove from `endpoint.py`'s body the nine method definitions now in the
+   d. Remove from `endpoint.py`'s body the eleven method definitions now in the
       mixins (`_sweep_recent_inbounds_once`, `_track_pending_ack`,
       `_remote_remove_ack`, `_sweep_pending_acks_once`, `_pending_acks_sweep_loop`,
       `_sweep_attachments_once`, `_access_config_reload_loop`,
