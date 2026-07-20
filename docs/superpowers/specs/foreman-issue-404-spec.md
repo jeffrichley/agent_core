@@ -221,7 +221,7 @@ ticket leaves inbound untouched.
    ```
    All must be green. Then confirm `--strict` on the new file:
    ```bash
-   uv run mypy packages/core/src
+   uv run mypy --strict packages/core/src
    ```
    Must exit 0 with no errors in `agent_core/audit.py`.
 
