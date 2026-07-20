@@ -8,7 +8,7 @@ Addresses issue #407, part of Theme F Track B (B7 ticket in `docs/superpowers/sp
 
 ## Acceptance criteria
 
-- `grep -n "if self\._handle is None" packages/core/src/agent_core/endpoints/claude_code_mcp` returns zero matches after the refactor (the guards moved to `_endpoint.py` and `_tools.py` as helper calls).
+- `grep -rn "if self\._handle is None" packages/core/src/agent_core/endpoints/claude_code_mcp/ | grep -v '_require_handle'` returns zero matches after the refactor. (The one permitted instance of `if self._handle is None:` inside `_require_handle()` itself is the correct implementation; all seven former inline guards are collapsed into helper calls.)
 - `_require_handle()` exists as a private method on `ClaudeCodeMCPEndpoint`; it raises `RuntimeError(f"endpoint '{self.name}' is not started")` when `_handle is None` and returns the `BusHandle` otherwise.
 - `_not_started_error()` exists as a module-level function in `_tools.py`; it returns `{"status": "error", "message": "endpoint not started"}`.
 - The four `raise RuntimeError` guards (in `deliver`, `send`, `consume`, `reply`) are replaced by `self._require_handle()` / `ep._require_handle()`.
@@ -16,7 +16,7 @@ Addresses issue #407, part of Theme F Track B (B7 ticket in `docs/superpowers/sp
 - `from agent_core.endpoints.claude_code_mcp import ClaudeCodeMCPEndpoint` continues to work without modification in all existing callers.
 - `SessionRegistry` lives in `_session.py`; `ClaudeCodeMCPEndpoint` lives in `_endpoint.py`; tool closures live in `_tools.py`.
 - No module exceeds ~800 lines.
-- `mypy --strict packages/core/src` passes clean (no regressions, no new suppressions).
+- `mypy packages/core/src` passes clean (no regressions, no new suppressions). (`--strict` is not yet enforced in `[tool.mypy]`; the CI gate is `just typecheck`, which runs `mypy` without `--strict`. If a Worker wishes to run `mypy --strict packages/core/src` as an extra check, they should first confirm the pre-existing baseline passes before attributing any failure to their changes.)
 - `just check` passes (lint, typecheck, tests, coverage gates).
 
 ## Approach
