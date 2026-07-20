@@ -2,128 +2,129 @@
 
 ## Goal
 
-Reduce `packages/agent-core-discord/src/agent_core_discord/endpoint.py` from its current 2295 lines to ~220 lines by wiring together the five mixin classes created in Steps 1–4 of the F-B6 series, keeping only the `__init__` method and the module-level registry items, and adding a backward-compat re-export block so every `from agent_core_discord.endpoint import X` statement in existing tests and external code continues to resolve without breakage. See issue #443.
+Reduce `packages/agent-core-discord/src/agent_core_discord/endpoint.py` from its current 2,295 lines to ~220 lines by wiring together the five mixin classes created in Steps 1–4 of the F-B6 series (decomposed from issue #406), retaining only the module-level registry, `_default_attachments_dir`, and `__init__`, and adding a backward-compat re-export block so every existing `from agent_core_discord.endpoint import X` import continues to resolve without any consumer change. See issue #443.
 
 ## Acceptance criteria
 
-- `wc -l packages/agent-core-discord/src/agent_core_discord/endpoint.py` reports ≤230 lines.
-- `class DiscordEndpoint` declaration reads exactly `class DiscordEndpoint(_AcksMixin, _LifecycleMixin, _HandlersMixin, _OutboundMixin, _ToolsMixin):` and the class body contains only `_TYPING_TTL_SECONDS: float = 90.0` and `__init__` (verbatim from the current file).
+- `wc -l packages/agent-core-discord/src/agent_core_discord/endpoint.py` reports ≤ 230 lines.
+- `class DiscordEndpoint` declaration reads exactly `class DiscordEndpoint(_AcksMixin, _LifecycleMixin, _HandlersMixin, _OutboundMixin, _ToolsMixin):` and the class body contains only `_TYPING_TTL_SECONDS: float = 90.0` and `__init__` (verbatim from the current file, lines 252–347).
 - `_active_endpoints: dict[str, DiscordEndpoint] = {}` remains a module-level name directly defined in `endpoint.py`.
 - `_default_attachments_dir` function remains directly defined in `endpoint.py`.
-- Each of the following names resolves successfully when imported from `agent_core_discord.endpoint`:
-  - `_ToolError` (re-export from `_exceptions.py`)
-  - `_PersistError` (re-export from `_exceptions.py`)
-  - `_parse_iso_datetime` (re-export from its mixin module)
-  - `_check_embeds_within_caps` (re-export from its mixin module)
-  - `_embed_char_count` (re-export from its mixin module)
-  - `_TOOL_ALIASES` (re-export from its mixin module)
-  - `_canonical_tool` (re-export from its mixin module)
-  - `_serialize_poll` (re-export from its mixin module)
-  - `_safe_filename` (re-export from its mixin module)
-  - `_redact_url_qs` (re-export from its mixin module)
-- `just test-fast` exits 0.
+- Each of the following names resolves when imported from `agent_core_discord.endpoint` (verified by a small `python -c "from agent_core_discord.endpoint import X"` check):
+  - `_ToolError` — re-export from `_exceptions.py`
+  - `_PersistError` — re-export from `_exceptions.py`
+  - `_parse_iso_datetime` — re-export from the mixin module where it lives post-split
+  - `_check_embeds_within_caps` — re-export from the mixin module where it lives post-split
+  - `_embed_char_count` — re-export from the mixin module where it lives post-split
+  - `_TOOL_ALIASES` — re-export from the mixin module where it lives post-split
+  - `_canonical_tool` — re-export from the mixin module where it lives post-split
+  - `_serialize_poll` — re-export from the mixin module where it lives post-split
+  - `_safe_filename` — re-export from the mixin module where it lives post-split
+  - `_redact_url_qs` — re-export from the mixin module where it lives post-split
 - `uv run pytest packages/agent-core-discord/ --no-cov -n auto` exits 0.
-- No test file is modified; the re-export block does all the backward-compat work.
+- `just test-fast` exits 0.
+- No test file is modified; the re-export block does all backward-compat work.
 
 ## Approach
 
-**Pattern**: no GoF pattern fits. Python multiple-inheritance mixins are the standard idiom for splitting a god-class into focused facets without changing public API — the "make the right thing easy" principle (Google engineering canon). All external import paths are preserved; no consumer needs to change.
+**Pattern**: No GoF pattern fits. Python multiple-inheritance mixins are the standard idiom for decomposing a god-class into focused facets while preserving the public API — Google's "make the right thing easy" principle applied to file size and review ergonomics. All external import paths are preserved by re-exports; no consumer changes.
 
-**Prerequisite check (do first)**: Steps 1–4 of the F-B6 series must have merged before this step can be implemented. The Worker must confirm the following files exist in `packages/agent-core-discord/src/agent_core_discord/` before making any changes:
-- `_exceptions.py` — defining `_ToolError` and `_PersistError`
-- The mixin module(s) defining `_AcksMixin`, `_LifecycleMixin`, `_HandlersMixin`, `_OutboundMixin`, `_ToolsMixin`
+**Prerequisite gate (check first)**: Steps 1–4 of F-B6 must have merged before this step can be implemented. The Worker must confirm the following files exist in `packages/agent-core-discord/src/agent_core_discord/` before making any changes:
 
-If those files are absent, stop and wait for the prior steps to merge.
+- `_exceptions.py` — defines `_ToolError` and `_PersistError`
+- The five mixin module(s) defining `_AcksMixin`, `_LifecycleMixin`, `_HandlersMixin`, `_OutboundMixin`, `_ToolsMixin`
+
+If those files are absent, stop. This step has a hard dependency on the prior steps.
 
 **What stays in `endpoint.py`**:
-1. Trimmed module docstring (4–6 lines: module purpose only; method-level detail has moved to the mixin files).
-2. Imports required by `__init__` and the two module-level items below — trim the current 78-line import block down to only what is consumed locally.
-3. `_active_endpoints: dict[str, DiscordEndpoint] = {}` — the module-level live-endpoint registry that discord.py event handlers look up by name. This is a module global, not a mixin concern; it stays here.
-4. `_default_attachments_dir` — a module-level helper used by `__init__`; stays alongside the registry.
-5. `class DiscordEndpoint(_AcksMixin, _LifecycleMixin, _HandlersMixin, _OutboundMixin, _ToolsMixin):` containing only `_TYPING_TTL_SECONDS = 90.0` and `__init__` (verbatim, no changes to the body).
-6. Backward-compat re-export block at the bottom (see below).
 
-**What is not in `endpoint.py` after this step** (moved in Steps 1–4):
-- All method implementations — they now live in the mixin classes.
+1. A trimmed 4–6 line module docstring (module purpose only; method-level documentation has moved to the mixin files).
+2. Only the imports consumed locally by `__init__` and the two module-level definitions — trim the current 78-line import block accordingly.
+3. `_active_endpoints: dict[str, DiscordEndpoint] = {}` — the module-level live-endpoint registry that discord.py event handlers look up by name. This is a process-global, not a mixin concern; it must stay here.
+4. `_default_attachments_dir(endpoint_name: str) -> Path` — a module-level helper used by `__init__`; stays alongside the registry.
+5. `class DiscordEndpoint(_AcksMixin, _LifecycleMixin, _HandlersMixin, _OutboundMixin, _ToolsMixin):` with only `_TYPING_TTL_SECONDS: float = 90.0` and `__init__` (verbatim body, no changes).
+6. Backward-compat re-export block (see below).
+
+**What is removed from `endpoint.py`** (moved in Steps 1–4):
+
+- All method implementations — they now live in the five mixin classes.
 - Module-level helpers: `_parse_iso_datetime`, `_TOOL_ALIASES`, `_canonical_tool`, `_check_embeds_within_caps`, `_embed_char_count`, `_serialize_poll`, `_safe_filename`, `_redact_url_qs`, `_FILENAME_ALLOWED`, `_DISCORD_EMBED_TOTAL_CHAR_CAP`.
 - `_ToolError` and `_PersistError` — now in `_exceptions.py`.
 
-**Backward-compat re-export block**: Place this block at the bottom of `endpoint.py`, after the class definition, with a clearly-worded comment so future contributors do not remove it by mistake:
+**Backward-compat re-export block**: Place this at the bottom of `endpoint.py` after the class definition, with a clearly-worded banner comment so future contributors do not accidentally remove it:
 
 ```python
 # ---------------------------------------------------------------------------
 # Backward-compat re-exports.
-# External code and existing tests import these names from this module.
-# They now live in the mixin modules created in the F-B6 split; the imports
-# below keep every `from agent_core_discord.endpoint import X` working without
-# requiring any consumer change.  Do NOT remove these imports.
+# External code and existing tests import these names directly from this
+# module.  They now live in the mixin modules from the F-B6 split; the
+# imports below keep every `from agent_core_discord.endpoint import X`
+# working without requiring any consumer change.  Do NOT remove.
 # ---------------------------------------------------------------------------
 from agent_core_discord._exceptions import _PersistError, _ToolError  # noqa: F401
-from agent_core_discord.<acks_module> import ...       # noqa: F401  (fill in from Step 1–4 result)
-from agent_core_discord.<lifecycle_module> import ...  # noqa: F401
-from agent_core_discord.<handlers_module> import ...   # noqa: F401
-from agent_core_discord.<outbound_module> import ...   # noqa: F401
-from agent_core_discord.<tools_module> import ...      # noqa: F401
+# (per-symbol imports from mixin modules — fill in after running Sub-request 3)
 ```
 
-The Worker must determine the actual module names and which symbols live in each by grepping the mixin files (see Sub-request 3 below) and filling in the concrete import paths. The `# noqa: F401` suppresses the "imported but unused" lint warning that would otherwise fire on re-exports. The complete symbol set to re-export (verified by grepping the current codebase for `from agent_core_discord.endpoint import`) is:
+The Worker must discover the concrete module paths for each re-exported symbol by grepping the mixin files (Sub-request 3 below) and filling in the actual `from agent_core_discord.<module> import <symbol>  # noqa: F401` lines. The `# noqa: F401` suppresses the "imported but unused" lint warning that fires on re-exports.
 
-| Symbol | Imported by (current codebase) | Expected home after Steps 1–4 |
+**Symbol-to-module mapping** (verified by grepping current test/production code for `from agent_core_discord.endpoint import`):
+
+| Symbol | Confirmed importer | Expected home after Steps 1–4 |
 |---|---|---|
-| `_parse_iso_datetime` | `tests/test_endpoint_outbound.py:22` | mixin module for `_ToolsMixin` |
 | `_ToolError` | `tests/test_endpoint_outbound.py`, `tests/test_resolve_channel_id.py`, `tests/test_endpoint_hardening.py` | `_exceptions.py` |
-| `_PersistError` | (issue #443 — external usage) | `_exceptions.py` |
+| `_PersistError` | issue #443 external usage | `_exceptions.py` |
+| `_parse_iso_datetime` | `tests/test_endpoint_outbound.py:22` | mixin module for `_ToolsMixin` (scheduled-event tools use it) |
 | `_check_embeds_within_caps` | `tests/test_endpoint_hardening.py:12` | mixin module for `_OutboundMixin` |
 | `_embed_char_count` | `tests/test_endpoint_hardening.py:249` | mixin module for `_OutboundMixin` |
-| `_TOOL_ALIASES` | (issue #443 — external usage) | mixin module for `_LifecycleMixin` or `_OutboundMixin` |
-| `_canonical_tool` | (issue #443 — external usage) | same module as `_TOOL_ALIASES` |
-| `_serialize_poll` | (issue #443 — external usage) | mixin module for `_OutboundMixin` |
-| `_safe_filename` | (issue #443 — external usage) | mixin module for `_HandlersMixin` |
-| `_redact_url_qs` | (issue #443 — external usage) | mixin module for `_HandlersMixin` |
+| `_TOOL_ALIASES` | issue #443 external usage | mixin module for `_HandlersMixin` or `_OutboundMixin` |
+| `_canonical_tool` | issue #443 external usage | same module as `_TOOL_ALIASES` |
+| `_serialize_poll` | issue #443 external usage | mixin module for `_OutboundMixin` (used in `_fetch`) |
+| `_safe_filename` | issue #443 external usage | mixin module for `_HandlersMixin` (used in attachment inbound path) |
+| `_redact_url_qs` | issue #443 external usage | mixin module for `_HandlersMixin` (used in inbound logging) |
 
-**`__init__` is copied verbatim**: The `__init__` body (currently lines 252–347 in `endpoint.py`) must not be altered — it initialises all instance attributes that mixin methods read. The only change to the class definition is adding the five mixin base classes to the class declaration line.
+**`__init__` is copied verbatim**: Lines 251–347 of the current `endpoint.py`. The only change to the class declaration is adding the five mixin bases. The body must not be altered — it initialises all instance attributes that mixin methods read.
 
 ## Sub-requests (topologically sorted)
 
-1. **Verify prerequisites** — confirm the mixin modules and `_exceptions.py` from Steps 1–4 exist:
+1. **Verify prerequisites** — confirm mixin modules and `_exceptions.py` exist:
    ```bash
    ls packages/agent-core-discord/src/agent_core_discord/_*.py
    ```
-   Stop if any expected file is absent.
+   Expected: `_exceptions.py` plus at least five mixin module files (one per mixin class). **Stop if any expected file is absent.**
 
-2. **Re-run the full backward-compat import grep** — confirm the complete symbol list has not grown since this spec was written:
+2. **Re-run the backward-compat import grep** — confirm the symbol list has not grown since this spec was written:
    ```bash
-   grep -r "from agent_core_discord.endpoint import" packages/ --include="*.py"
+   grep -rn "from agent_core_discord\.endpoint import" packages/ --include="*.py"
    ```
-   If any symbol appears that is not in the table above (and is not `DiscordEndpoint` or `_active_endpoints`), add it to the re-export list before writing the new file.
+   Add any newly discovered symbol (not `DiscordEndpoint` or `_active_endpoints`) to the re-export list before proceeding.
 
-3. **Map each re-exported symbol to its new module** — for each symbol in the table, find its definition in the mixin files:
+3. **Map each re-exported symbol to its new module** — for each symbol in the table above, find its definition in the mixin files:
    ```bash
    grep -rn "^def _parse_iso_datetime\|^_TOOL_ALIASES\|^def _canonical_tool\|^def _check_embeds_within_caps\|^def _embed_char_count\|^def _serialize_poll\|^def _safe_filename\|^def _redact_url_qs" \
      packages/agent-core-discord/src/agent_core_discord/_*.py
    ```
-   Record the module path for each hit. This determines the concrete from-import lines in the re-export block.
+   Record the module path for each hit. This determines the concrete `from-import` lines in the re-export block.
 
-4. **Rewrite `endpoint.py`** with the following structure (fill in concrete mixin module names from step 3):
-   ```
+4. **Rewrite `endpoint.py`** with the following structure (fill in the concrete mixin and module names discovered in steps 1–3):
+   ```python
    """DiscordEndpoint — bus endpoint that bridges one Discord bot to one agent.
-   (4–6 line summary only; detailed method docs live in the mixin modules.)
+
+   The bulk of the implementation lives in the five mixin classes imported below.
+   This module owns only the module-level live-endpoint registry and __init__.
    """
    from __future__ import annotations
 
-   # — only the imports consumed by _active_endpoints, _default_attachments_dir,
-   #   or __init__ directly —
+   import asyncio
    import logging
-   from pathlib import Path
+   import time
    from collections import OrderedDict
    from collections.abc import Callable
    from datetime import UTC, datetime
+   from pathlib import Path
    from typing import TYPE_CHECKING, Any
-   import asyncio
-   import time
 
    from agent_core_discord.access import AccessConfig
-   from agent_core_discord._exceptions import _ToolError, _PersistError  # noqa: F401
+   from agent_core_discord._exceptions import _PersistError, _ToolError  # noqa: F401
    from agent_core_discord.<module_a> import _AcksMixin
    from agent_core_discord.<module_b> import _LifecycleMixin
    from agent_core_discord.<module_c> import _HandlersMixin
@@ -135,7 +136,7 @@ The Worker must determine the actual module names and which symbols live in each
 
    log = logging.getLogger(__name__)
 
-   _active_endpoints: dict[str, DiscordEndpoint] = {}
+   _active_endpoints: dict[str, "DiscordEndpoint"] = {}
 
 
    def _default_attachments_dir(endpoint_name: str) -> Path:
@@ -151,28 +152,54 @@ The Worker must determine the actual module names and which symbols live in each
        def __init__(
            self,
            *,
-           # ... (verbatim from current file) ...
+           # ... (verbatim from current endpoint.py lines 251–347) ...
        ):
-           # ... (verbatim from current file) ...
+           # ... (verbatim body) ...
 
 
    # ---------------------------------------------------------------------------
-   # Backward-compat re-exports.  External code and existing tests import
-   # these names from this module.  They now live in the mixin modules from
-   # the F-B6 split.  Do NOT remove these imports.
+   # Backward-compat re-exports.
+   # External code and existing tests import these names from this module.
+   # They now live in the mixin modules from the F-B6 split.  Do NOT remove.
    # ---------------------------------------------------------------------------
    from agent_core_discord._exceptions import _PersistError, _ToolError  # noqa: F401
-   # (plus per-symbol imports from Steps 3–4 above)
+   # (fill in per-symbol imports from steps 3–4)
    ```
-   Note: `_ToolError` and `_PersistError` appear twice in this template — once at the top with the mixin imports (needed for `__init__` to reference them if any) and once in the re-export block. Consolidate to a single import statement if they are not used inside `endpoint.py` itself after the reduction.
+   Note: if `_ToolError`/`_PersistError` are already imported at the top for use in `__init__` (unlikely — `__init__` does not raise them directly), consolidate to a single import statement.
 
-5. **Confirm line count** — run `wc -l packages/agent-core-discord/src/agent_core_discord/endpoint.py` and confirm ≤230.
+5. **Confirm line count**:
+   ```bash
+   wc -l packages/agent-core-discord/src/agent_core_discord/endpoint.py
+   ```
+   Expected: ≤ 230 lines.
 
-6. **Run the fast suite** — `just test-fast` — confirm exit 0.
+6. **Verify all re-exports resolve**:
+   ```bash
+   uv run python -c "
+   from agent_core_discord.endpoint import (
+       _ToolError, _PersistError, _parse_iso_datetime,
+       _check_embeds_within_caps, _embed_char_count,
+       _TOOL_ALIASES, _canonical_tool, _serialize_poll,
+       _safe_filename, _redact_url_qs, DiscordEndpoint, _active_endpoints,
+   )
+   print('all imports resolved')
+   "
+   ```
+   Expected: prints `all imports resolved` with no `ImportError`.
 
-7. **Run the discord characterization suite** — `uv run pytest packages/agent-core-discord/ --no-cov -n auto` — confirm exit 0.
+7. **Run the discord package suite**:
+   ```bash
+   uv run pytest packages/agent-core-discord/ --no-cov -n auto
+   ```
+   Expected: exit 0.
 
-8. **Commit**:
+8. **Run the full fast suite**:
+   ```bash
+   just test-fast
+   ```
+   Expected: exit 0.
+
+9. **Commit**:
    ```bash
    git add packages/agent-core-discord/src/agent_core_discord/endpoint.py
    git commit -m "refactor(discord): reduce endpoint.py to composition + backward-compat re-exports"
@@ -182,26 +209,28 @@ The Worker must determine the actual module names and which symbols live in each
 
 | File | Change |
 |---|---|
-| `packages/agent-core-discord/src/agent_core_discord/endpoint.py` | **Rewrite** — 2295 → ≤230 lines; class declaration gains five mixin bases; all method bodies removed (moved to mixin modules in Steps 1–4); backward-compat re-export block added at bottom |
+| `packages/agent-core-discord/src/agent_core_discord/endpoint.py` | **Rewrite** — 2,295 → ≤ 230 lines; class declaration gains five mixin bases; all method bodies removed (moved to mixin modules in Steps 1–4); backward-compat re-export block added at the bottom |
 
-No other files change. Tests are not modified; `__init__.py` is not modified.
+No other files change. Tests are not modified. `__init__.py` is not modified (it already imports only `DiscordEndpoint`).
 
 ## Alternatives considered
 
-1. **Update all test import sites to point directly at mixin modules** — avoids re-exports entirely but requires touching 15+ test files, pollutes unrelated diffs, and breaks the "no external-import change" guarantee called out as Critical in SpecReview #406. Ruled out.
+1. **Update all test import sites to point directly at the mixin modules** — avoids re-exports but requires touching 10+ test files, pollutes this diff with test churn, and breaks the "no consumer change" guarantee that SpecReview #406 flagged as Critical. Ruled out.
 
-2. **Use `__all__` without explicit re-import lines** — `__all__` controls `from endpoint import *` star-imports but does NOT make `from endpoint import _ToolError` work when `_ToolError` is not imported into the `endpoint` module namespace. Ruled out (doesn't solve the problem).
+2. **Use `__all__` without explicit re-import lines** — `__all__` governs star-imports only; it does NOT make `from endpoint import _ToolError` work if `_ToolError` is not imported into the `endpoint` module namespace. Ruled out (does not solve the problem).
 
-3. **Merge all six F-B6 steps into a single atomic PR** — reduces integration risk but produces an enormous diff that is harder to review and bisect. The issue explicitly decomposes into 6 steps; Step 5 is the composition wiring. Ruled out.
+3. **Merge all six F-B6 steps into a single PR** — reduces integration risk but produces an enormous diff that is harder to review, bisect, and roll back. The issue explicitly decomposes into 6 steps. Ruled out.
 
 ## Open questions
 
-The exact module filenames for the five mixin classes are not known until the Worker inspects the output of Steps 1–4 (those files do not yet exist in the codebase at spec-writing time). The Worker must discover the filenames at implementation time by running the `ls` in Sub-request 1. The mixin class names (`_AcksMixin`, `_LifecycleMixin`, `_HandlersMixin`, `_OutboundMixin`, `_ToolsMixin`) and the exceptions module name (`_exceptions.py`) are fixed by the issue.
+The exact module filenames and which symbols live in which mixin module are not known at spec-writing time — the mixin files from Steps 1–4 do not yet exist in the codebase. The Worker must discover this at implementation time via Sub-requests 1 and 3. The mixin class names (`_AcksMixin`, `_LifecycleMixin`, `_HandlersMixin`, `_OutboundMixin`, `_ToolsMixin`) and the exceptions module name (`_exceptions.py`) are fixed by the issue.
+
+This is a known unknown, not a blocking ambiguity: the Worker can resolve it with a single `ls` and a `grep` once the prior steps have merged.
 
 ## Out of scope
 
 - Creating the mixin modules (`_acks.py`, `_lifecycle.py`, `_handlers.py`, `_outbound.py`, `_tools.py`, `_exceptions.py`) — that is Steps 1–4 of F-B6.
-- Modifying any test file — re-exports handle backward compat entirely.
-- Modifying `packages/agent-core-discord/src/agent_core_discord/__init__.py` — it imports `DiscordEndpoint` from `endpoint` and is already correct.
-- Refactoring `__init__`'s body — the `__init__` is copied verbatim; its content is a separate concern.
+- Modifying any test file — the re-export block handles backward compat entirely.
+- Modifying `packages/agent-core-discord/src/agent_core_discord/__init__.py` — it already imports only `DiscordEndpoint`, which stays in `endpoint.py`.
+- Refactoring `__init__`'s body — it is copied verbatim; its content is a separate concern.
 - Step 6 of the F-B6 series (whatever cleanup follows this step).
