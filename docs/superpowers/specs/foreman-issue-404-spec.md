@@ -24,7 +24,7 @@ Theme F #269 Track B, specified in
   `packages/agent-core-webcam/src/agent_core_webcam/audit.py` each subclass
   `JsonlAuditLog` — no `write`, `_append_line`, or swallow logic duplicated.
 - `packages/agent-core-inbound/src/agent_core_inbound/audit.py` is unchanged.
-- All six existing audit test files pass without modification:
+- All four existing audit test files pass without modification:
   `packages/agent-core-briefs/tests/test_audit.py`,
   `packages/agent-core-voice/tests/test_audit.py`,
   `packages/agent-core-webcam/tests/test_audit.py`,
