@@ -14,7 +14,7 @@ Split `packages/agent-core-discord/src/agent_core_discord/endpoint.py` (2295 lin
 - A new `packages/agent-core-discord/tests/test_endpoint_characterization.py` file passes before and after the split, serving as the permanent regression suite.
 - `uv run mypy --strict packages/agent-core-discord/src` exits 0 after the annotation commit.
 - `packages/agent-core-discord/src` is added to `[tool.mypy] files` in the root `pyproject.toml`, and a `[[tool.mypy.overrides]]` block applies `strict = true` to `agent_core_discord.*`.
-- The eight `except asyncio.CancelledError: pass` guards in `start()` and `stop()` each have an inline comment explaining they are intentional post-cancel cleanup; no new logging is added for them. *(Note: the issue parenthetical says "(log them)", but this spec deliberately overrides that direction — see Approach § The 8 swallows for the explicit rationale.)*
+- The eight `except asyncio.CancelledError: pass` guards in `start()` and `stop()` are handled per the direction confirmed by the issue author before sub-request 10 is implemented (see Open questions): either (a) annotated with an inline comment marking intentional post-cancel cleanup, or (b) each `pass` replaced with a `logger.debug()` or `logger.warning()` call per the explicit B6 issue text "(log them)".
 - `just check` passes throughout (lint + typecheck + tests + coverage).
 
 ## Approach
@@ -35,12 +35,13 @@ The three-phase discipline from Decision D2 in the Track B spec:
 
 **Module-level helper placement**: helpers move with their primary consumer:
 - `_TOOL_ALIASES`, `_canonical_tool`, `_embed_char_count`, `_check_embeds_within_caps`, `_serialize_poll`, `_DISCORD_EMBED_TOTAL_CHAR_CAP` → `_outbound.py` (used only by outbound dispatch methods)
-- `_parse_iso_datetime`, `_safe_filename`, `_redact_url_qs`, `_FILENAME_ALLOWED` → `_tools.py` (used only by tool implementations)
+- `_parse_iso_datetime`, `_safe_filename`, `_FILENAME_ALLOWED` → `_tools.py` (used only by tool implementations)
+- `_redact_url_qs` → `_handlers.py` (used exclusively inside `_make_on_message_handler()` at lines 1166 and 1206 of `endpoint.py`; that method is assigned to `_HandlersMixin`)
 - `_default_attachments_dir`, `_active_endpoints` → `endpoint.py` (used in `__init__`)
 
 **The 8 swallows**: all eight are `except asyncio.CancelledError: pass` clauses that immediately follow an explicit `task.cancel()` + `await task` pair in `start()` rollback and `stop()`. Logging a CancelledError here is noise — the task was cancelled on purpose.
 
-**Conflict with issue parenthetical — deliberate override**: The issue body says "(4) fold in discord's 8 `except:pass` swallows (log them)." This spec intentionally deviates from that direction. The rationale: D7 states "Replace unlogged `except: pass` with a logged warning at the appropriate level. Keep genuinely intentional guards (the 2 `psutil.NoSuchProcess` reap guards in `supervisor.py`) — but comment them so intent is explicit. Discord's 8 swallows are handled inside B6." D7 does not classify the discord swallows explicitly, but the same "genuinely intentional guard" logic applies: each guard immediately follows `task.cancel()` + `await task` — the CancelledError is the expected and desired outcome of the explicit cancel, not an unexpected failure. Adding a `logger.warning(...)` here would emit a spurious warning on every clean shutdown and every `start()` rollback, polluting production logs with noise on the happy path. The Worker should annotate these guards (matching the D7 treatment of `psutil.NoSuchProcess`) rather than add log calls. If the issue author intended log calls after reading this rationale, this is the decision point to revisit.
+**Conflict with issue parenthetical — pending issue-author confirmation**: The issue body says "(4) fold in discord's 8 `except:pass` swallows (log them)." The Planner proposes comment-only treatment by analogy to D7's handling of intentional guards (`psutil.NoSuchProcess`), reasoning that each guard immediately follows an explicit `task.cancel()` + `await task` and the CancelledError is the expected outcome. However, D7 itself does not classify the discord swallows as intentional — it only says "Discord's 8 swallows are handled inside B6." That classification is the Planner's inference, not an explicit D7 ruling. Before sub-request 10 is implemented, the issue author must confirm the direction. If the issue author confirms comment-only treatment, update this paragraph to record the approval explicitly and proceed with sub-request 10 option (a). If the issue author confirms logging, proceed with sub-request 10 option (b). See Open questions.
 
 ## Sub-requests (topologically sorted)
 
@@ -60,11 +61,11 @@ The three-phase discipline from Decision D2 in the Track B spec:
 
 4. **Create `_lifecycle.py`** — move `start`, `stop`, `_pending_acks_sweep_loop`, `_attachment_sweep_loop`, `_access_config_reload_loop`, `_sweep_pending_acks_once`, `_sweep_attachments_once`, `_sweep_recent_inbounds_once` into `class _LifecycleMixin` in `_lifecycle.py`. Move-only commit.
 
-5. **Create `_handlers.py`** — move `_add_listener`, `_channel_allowed`, `_remember_inbound_mapping`, `_record_inbound`, `_resolve_channel_id`, `_typing_while_pending`, `_resolve_user_display_name`, `_make_on_message_handler`, `_make_on_reaction_add_handler`, `_make_on_raw_poll_vote_handler`, `_make_on_raw_message_lifecycle_handler` into `class _HandlersMixin` in `_handlers.py`. Move-only commit.
+5. **Create `_handlers.py`** — move module-level helper `_redact_url_qs` and methods `_add_listener`, `_channel_allowed`, `_remember_inbound_mapping`, `_record_inbound`, `_resolve_channel_id`, `_typing_while_pending`, `_resolve_user_display_name`, `_make_on_message_handler`, `_make_on_reaction_add_handler`, `_make_on_raw_poll_vote_handler`, `_make_on_raw_message_lifecycle_handler` into `class _HandlersMixin` in `_handlers.py`. (`_redact_url_qs` moves here because it is called at lines 1166 and 1206 of `_make_on_message_handler()` — nowhere else in the file.) Move-only commit.
 
 6. **Create `_outbound.py`** — move module-level helpers (`_TOOL_ALIASES`, `_canonical_tool`, `_DISCORD_EMBED_TOTAL_CHAR_CAP`, `_embed_char_count`, `_check_embeds_within_caps`, `_serialize_poll`) and methods `deliver`, `_reply`, `_deliver_text_message`, `_dispatch`, `_resolve_channel`, `_send`, `_edit`, `_react`, `_fetch` into `class _OutboundMixin` in `_outbound.py`. Import any of `_ToolError`/`_PersistError` this module raises or catches from `_exceptions.py` (`from ._exceptions import _ToolError`), never from `endpoint.py`. Move-only commit.
 
-7. **Create `_tools.py`** — move module-level helpers (`_parse_iso_datetime`, `_safe_filename`, `_redact_url_qs`, `_FILENAME_ALLOWED`) and methods `_download_url`, `_persist_attachment`, `_download_attachments`, `_list_channels`, `_get_channel_info`, `_resolve_guild`, `_send_briefing`, `_create_poll`, `_create_scheduled_event`, `_cancel_scheduled_event`, `_list_scheduled_events`, `_create_thread`, `_send_typing`, `_transcribe_audio_sync`, `_transcribe_audio` into `class _ToolsMixin` in `_tools.py`. Import any of `_ToolError`/`_PersistError` this module raises or catches from `_exceptions.py`, never from `endpoint.py`. Move-only commit.
+7. **Create `_tools.py`** — move module-level helpers (`_parse_iso_datetime`, `_safe_filename`, `_FILENAME_ALLOWED`) and methods `_download_url`, `_persist_attachment`, `_download_attachments`, `_list_channels`, `_get_channel_info`, `_resolve_guild`, `_send_briefing`, `_create_poll`, `_create_scheduled_event`, `_cancel_scheduled_event`, `_list_scheduled_events`, `_create_thread`, `_send_typing`, `_transcribe_audio_sync`, `_transcribe_audio` into `class _ToolsMixin` in `_tools.py`. Import any of `_ToolError`/`_PersistError` this module raises or catches from `_exceptions.py`, never from `endpoint.py`. Move-only commit.
 
 8. **Update `endpoint.py`** — reduce to: all imports, `_active_endpoints`, `_default_attachments_dir`, the mixin imports, `class DiscordEndpoint(_AcksMixin, _LifecycleMixin, _HandlersMixin, _OutboundMixin, _ToolsMixin)` with only `__init__`, and a re-export block for backward compatibility:
    - `from ._exceptions import _ToolError, _PersistError` — external code importing `endpoint._ToolError`/`endpoint._PersistError` keeps working (exceptions are **not** defined here)
@@ -82,7 +83,12 @@ The three-phase discipline from Decision D2 in the Track B spec:
    ```
    Run `just check` to confirm the gate stays green.
 
-10. **Document the 8 CancelledError guards** — in `_lifecycle.py` (after sub-request 4), in each of the 8 `except asyncio.CancelledError: pass` blocks, add the inline comment: `# Intentional: explicitly cancelled above; swallowing CancelledError is correct cleanup.` Do **not** add `logger.warning(...)` calls. The issue body says "(log them)", but this spec deliberately overrides that direction (see Approach § The 8 swallows): each guard follows an explicit `task.cancel()` + `await task`, so the CancelledError is the expected outcome — logging it would produce spurious warnings on every clean shutdown and `start()` rollback. This is a comment-only commit (no move, no type change, no log call), separate from the move commits.
+10. **Handle the 8 CancelledError guards** — **prerequisite: get issue-author confirmation before implementing this sub-request** (see Open questions). In `_lifecycle.py` (after sub-request 4), in each of the 8 `except asyncio.CancelledError: pass` blocks, implement the issue-author-confirmed direction:
+
+    - **(a) Comment-only path (if issue author confirms D7 analogy)**: add the inline comment `# Intentional: explicitly cancelled above; swallowing CancelledError is correct cleanup.` Do **not** add any `logger` call. Before committing, update Approach § Conflict with issue parenthetical to record the approval explicitly.
+    - **(b) Logging path (if issue author confirms B6 text "(log them)")**: replace `pass` with `logger.debug("CancelledError swallowed after explicit task.cancel()", exc_info=True)` (or `logger.warning` if the issue author specifies that level), using the module-level logger already present in `_lifecycle.py`.
+
+    This is a separate commit from the move commits (comment-only or logging-only; no move, no type change).
 
 ## File-level changes
 
@@ -108,7 +114,7 @@ The three-phase discipline from Decision D2 in the Track B spec:
 
 ## Open questions
 
-None. The approach, module layout, mypy strategy, and commit discipline are all resolved by the Track B design decisions (D2, D4, D7) and the existing repo conventions.
+**1. CancelledError swallow treatment (blocks sub-request 10)**: The B6 issue text explicitly says "(4) fold in discord's 8 `except:pass` swallows (log them)". This spec proposes comment-only treatment by analogy to D7's handling of intentional guards (`psutil.NoSuchProcess`), but D7 does not explicitly classify the discord swallows — that is the Planner's inference. The Worker must ask the issue author before implementing sub-request 10: should the 8 `except asyncio.CancelledError: pass` guards be (a) annotated with comments only (per the D7 `psutil.NoSuchProcess` analogy) or (b) logged (per the explicit B6 issue text)? If the issue author confirms (a), update Approach § Conflict with issue parenthetical to record the approval before committing.
 
 ## Out of scope
 
