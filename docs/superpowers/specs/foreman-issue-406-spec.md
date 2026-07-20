@@ -14,7 +14,7 @@ Split `packages/agent-core-discord/src/agent_core_discord/endpoint.py` (2295 lin
 - A new `packages/agent-core-discord/tests/test_endpoint_characterization.py` file passes before and after the split, serving as the permanent regression suite.
 - `uv run mypy --strict packages/agent-core-discord/src` exits 0 after the annotation commit.
 - `packages/agent-core-discord/src` is added to `[tool.mypy] files` in the root `pyproject.toml`, and a `[[tool.mypy.overrides]]` block applies `strict = true` to `agent_core_discord.*`.
-- The eight `except asyncio.CancelledError: pass` guards in `start()` and `stop()` each have an inline comment explaining they are intentional post-cancel cleanup; no new logging is added for them.
+- The eight `except asyncio.CancelledError: pass` guards in `start()` and `stop()` each have an inline comment explaining they are intentional post-cancel cleanup; no new logging is added for them. *(Note: the issue parenthetical says "(log them)", but this spec deliberately overrides that direction — see Approach § The 8 swallows for the explicit rationale.)*
 - `just check` passes throughout (lint + typecheck + tests + coverage).
 
 ## Approach
@@ -38,7 +38,9 @@ The three-phase discipline from Decision D2 in the Track B spec:
 - `_parse_iso_datetime`, `_safe_filename`, `_redact_url_qs`, `_FILENAME_ALLOWED` → `_tools.py` (used only by tool implementations)
 - `_default_attachments_dir`, `_active_endpoints` → `endpoint.py` (used in `__init__`)
 
-**The 8 swallows**: all eight are `except asyncio.CancelledError: pass` clauses that immediately follow an explicit `task.cancel()` + `await task` pair in `start()` rollback and `stop()`. Logging a CancelledError here is noise — the task was cancelled on purpose. Per D7: annotate as intentional, do not add log calls.
+**The 8 swallows**: all eight are `except asyncio.CancelledError: pass` clauses that immediately follow an explicit `task.cancel()` + `await task` pair in `start()` rollback and `stop()`. Logging a CancelledError here is noise — the task was cancelled on purpose.
+
+**Conflict with issue parenthetical — deliberate override**: The issue body says "(4) fold in discord's 8 `except:pass` swallows (log them)." This spec intentionally deviates from that direction. The rationale: D7 states "Replace unlogged `except: pass` with a logged warning at the appropriate level. Keep genuinely intentional guards (the 2 `psutil.NoSuchProcess` reap guards in `supervisor.py`) — but comment them so intent is explicit. Discord's 8 swallows are handled inside B6." D7 does not classify the discord swallows explicitly, but the same "genuinely intentional guard" logic applies: each guard immediately follows `task.cancel()` + `await task` — the CancelledError is the expected and desired outcome of the explicit cancel, not an unexpected failure. Adding a `logger.warning(...)` here would emit a spurious warning on every clean shutdown and every `start()` rollback, polluting production logs with noise on the happy path. The Worker should annotate these guards (matching the D7 treatment of `psutil.NoSuchProcess`) rather than add log calls. If the issue author intended log calls after reading this rationale, this is the decision point to revisit.
 
 ## Sub-requests (topologically sorted)
 
@@ -64,7 +66,12 @@ The three-phase discipline from Decision D2 in the Track B spec:
 
 7. **Create `_tools.py`** — move module-level helpers (`_parse_iso_datetime`, `_safe_filename`, `_redact_url_qs`, `_FILENAME_ALLOWED`) and methods `_download_url`, `_persist_attachment`, `_download_attachments`, `_list_channels`, `_get_channel_info`, `_resolve_guild`, `_send_briefing`, `_create_poll`, `_create_scheduled_event`, `_cancel_scheduled_event`, `_list_scheduled_events`, `_create_thread`, `_send_typing`, `_transcribe_audio_sync`, `_transcribe_audio` into `class _ToolsMixin` in `_tools.py`. Import any of `_ToolError`/`_PersistError` this module raises or catches from `_exceptions.py`, never from `endpoint.py`. Move-only commit.
 
-8. **Update `endpoint.py`** — reduce to: all imports, `_active_endpoints`, `_default_attachments_dir`, the mixin imports, `class DiscordEndpoint(_AcksMixin, _LifecycleMixin, _HandlersMixin, _OutboundMixin, _ToolsMixin)` with only `__init__`, and `from ._exceptions import _ToolError, _PersistError` re-exported for backward compatibility (external code importing `endpoint._ToolError`/`endpoint._PersistError` keeps working). The exceptions are **not** defined here. Move-only commit (can be bundled with sub-requests 3–7 as one commit or a separate follow-up commit). Verify `just test-fast` passes unchanged.
+8. **Update `endpoint.py`** — reduce to: all imports, `_active_endpoints`, `_default_attachments_dir`, the mixin imports, `class DiscordEndpoint(_AcksMixin, _LifecycleMixin, _HandlersMixin, _OutboundMixin, _ToolsMixin)` with only `__init__`, and a re-export block for backward compatibility:
+   - `from ._exceptions import _ToolError, _PersistError` — external code importing `endpoint._ToolError`/`endpoint._PersistError` keeps working (exceptions are **not** defined here)
+   - `from ._tools import _parse_iso_datetime` — `test_endpoint_outbound.py:22` imports this at top-level
+   - `from ._outbound import _check_embeds_within_caps, _embed_char_count` — `test_endpoint_hardening.py:12` imports `_check_embeds_within_caps` at top-level; `test_endpoint_hardening.py:249` imports `_embed_char_count` locally
+
+   Run `grep -r 'from agent_core_discord.endpoint import' packages/agent-core-discord/tests/` before committing to confirm no other private helpers are stranded; add any additional re-exports found. Move-only commit (can be bundled with sub-requests 3–7 as one commit or a separate follow-up commit). Verify `just test-fast` passes unchanged.
 
 9. **Add `mypy --strict` annotations** — in each mixin file, declare class-level attribute annotations for all `self.X` accesses the mixin methods make (so mypy can verify without importing `DiscordEndpoint`). Add full parameter + return type annotations to every method. Fix any errors surfaced by `uv run mypy --strict packages/agent-core-discord/src`. In the root `pyproject.toml`, add `"packages/agent-core-discord/src"` to the `files` list under `[tool.mypy]`, and add:
    ```toml
@@ -75,13 +82,13 @@ The three-phase discipline from Decision D2 in the Track B spec:
    ```
    Run `just check` to confirm the gate stays green.
 
-10. **Document the 8 CancelledError guards** — in `_lifecycle.py` (after sub-request 4), in each of the 8 `except asyncio.CancelledError: pass` blocks, add the inline comment: `# Intentional: explicitly cancelled above; swallowing CancelledError is correct cleanup.` This is a logic-touch commit (no move, no type change) and must be separate from the move commits.
+10. **Document the 8 CancelledError guards** — in `_lifecycle.py` (after sub-request 4), in each of the 8 `except asyncio.CancelledError: pass` blocks, add the inline comment: `# Intentional: explicitly cancelled above; swallowing CancelledError is correct cleanup.` Do **not** add `logger.warning(...)` calls. The issue body says "(log them)", but this spec deliberately overrides that direction (see Approach § The 8 swallows): each guard follows an explicit `task.cancel()` + `await task`, so the CancelledError is the expected outcome — logging it would produce spurious warnings on every clean shutdown and `start()` rollback. This is a comment-only commit (no move, no type change, no log call), separate from the move commits.
 
 ## File-level changes
 
 | File | Change |
 |---|---|
-| `packages/agent-core-discord/src/agent_core_discord/endpoint.py` | **Modify** — gut to ~220 lines: imports, `_active_endpoints`, `_default_attachments_dir`, mixin imports, `DiscordEndpoint` with `__init__` only; imports `_ToolError`/`_PersistError` from `_exceptions.py` and re-exports them for backward compatibility (does **not** define them) |
+| `packages/agent-core-discord/src/agent_core_discord/endpoint.py` | **Modify** — gut to ~220 lines: imports, `_active_endpoints`, `_default_attachments_dir`, mixin imports, `DiscordEndpoint` with `__init__` only; re-exports for backward compatibility: `_ToolError`/`_PersistError` from `_exceptions.py`, `_parse_iso_datetime` from `_tools.py`, `_check_embeds_within_caps`/`_embed_char_count` from `_outbound.py` (none of these are defined here) |
 | `packages/agent-core-discord/src/agent_core_discord/_exceptions.py` | **Create** — defines `_ToolError` and `_PersistError` (moved verbatim from `endpoint.py`); imports nothing from any other `agent_core_discord` module, so both `endpoint.py` and the mixin modules import the exceptions from here without a circular import (~15 lines) |
 | `packages/agent-core-discord/src/agent_core_discord/_acks.py` | **Create** — `_AcksMixin` with `_track_pending_ack`, `_remote_remove_ack`, `_clear_pending_ack` (~150 lines) |
 | `packages/agent-core-discord/src/agent_core_discord/_lifecycle.py` | **Create** — `_LifecycleMixin` with `start`, `stop`, 3 background loops, 3 sweep helpers (~480 lines) |
