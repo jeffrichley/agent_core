@@ -35,7 +35,7 @@ from apscheduler.triggers.cron import CronTrigger
 from apscheduler.triggers.date import DateTrigger
 from apscheduler.triggers.interval import IntervalTrigger
 from pydantic import BaseModel, Field, ValidationError, model_validator
-from sqlalchemy.ext.asyncio import create_async_engine
+from sqlalchemy.ext.asyncio import AsyncEngine, create_async_engine
 
 from agent_core.bus.envelope import (
     AcknowledgmentPayload,
@@ -238,12 +238,18 @@ class SchedulerEndpoint:
         self.db_path: Path = Path(db_path).expanduser() if db_path else _default_db_path()
         self._handle: BusHandle | None = None
         self._scheduler: AsyncScheduler | None = None
+        # The aiosqlite-backed engine is owned here (not by APScheduler's data
+        # store, which never disposes a caller-supplied engine). It MUST be
+        # disposed in stop(), else its connection pool's background aiosqlite
+        # threads leak on every stop — accumulating across a test suite until
+        # the event loop chokes and a random test times out.
+        self._engine: AsyncEngine | None = None
 
     async def start(self, bus: BusHandle) -> None:
         self._handle = bus
         self.db_path.parent.mkdir(parents=True, exist_ok=True)
-        engine = create_async_engine(f"sqlite+aiosqlite:///{self.db_path}")
-        data_store = SQLAlchemyDataStore(engine)
+        self._engine = create_async_engine(f"sqlite+aiosqlite:///{self.db_path}")
+        data_store = SQLAlchemyDataStore(self._engine)
         self._scheduler = AsyncScheduler(data_store=data_store)
         try:
             await self._scheduler.__aenter__()
@@ -261,6 +267,9 @@ class SchedulerEndpoint:
             except Exception:
                 log.exception("rollback __aexit__ failed during start()")
             self._scheduler = None
+            if self._engine is not None:
+                await self._engine.dispose()
+                self._engine = None
             self._handle = None
             raise
         log.info("SchedulerEndpoint(name=%s) started; db=%s", self.name, self.db_path)
@@ -508,6 +517,11 @@ class SchedulerEndpoint:
                 log.exception("SchedulerEndpoint(%s) error during scheduler shutdown", self.name)
             finally:
                 self._scheduler = None
+        if self._engine is not None:
+            # Dispose the engine's connection pool so its aiosqlite worker
+            # threads are joined rather than leaked (see __init__).
+            await self._engine.dispose()
+            self._engine = None
         self._handle = None
         log.info("SchedulerEndpoint(name=%s) stopped", self.name)
 
