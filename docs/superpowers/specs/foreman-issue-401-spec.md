@@ -59,7 +59,7 @@ No GoF pattern applies — these are two independent point changes with one resp
          with:
            fetch-depth: 0
            fetch-tags: true
-       - uses: astral-sh/setup-uv@fac544b07dec837d0ccb6301d7b5580bf5edae39  # v8.2.0
+       - uses: astral-sh/setup-uv@fac544c07dec837d0ccb6301d7b5580bf5edae39  # v8.2.0
          with:
            enable-cache: true
            python-version: "3.12"
