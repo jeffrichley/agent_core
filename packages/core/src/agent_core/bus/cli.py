@@ -12,6 +12,7 @@ from pathlib import Path
 
 import aiosqlite
 import typer
+import yaml as _yaml
 from rich.console import Console
 from rich.table import Table
 
@@ -20,6 +21,7 @@ from agent_core.bus.config import BusBootError
 from agent_core.bus.persistence import Persistence
 from agent_core.bus.runner import build_bus_from_config
 from agent_core.bus.watchdog import Watchdog
+from agent_core.logging import configure_logging
 
 app = typer.Typer(help="Bus operations: run, status, mailbox, trace, dlq, replay.")
 console = Console()
@@ -46,9 +48,14 @@ def run(
     config: Path = _RUN_CONFIG_OPTION,
 ) -> None:
     """Start the bus and all configured endpoints. Runs until SIGINT/SIGTERM."""
-    logging.basicConfig(
-        level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s"
-    )
+    try:
+        _raw = _yaml.safe_load(config.read_text(encoding="utf-8")) or {}
+    except Exception:
+        _raw = {}
+    _log_format = (_raw.get("logging") or {}).get("format", "pretty")
+    if _log_format not in ("json", "pretty"):
+        _log_format = "pretty"
+    configure_logging(_log_format)
     try:
         asyncio.run(_run_bus(config))
     except BusBootError as exc:

@@ -105,14 +105,14 @@ async def test_show_my_day_default_date_uses_configured_timezone(sample_log: Pat
     writer's rollover. At 02:00 UTC May 4, an Eastern operator's 'today' is
     May 3 — the impl must read the May 3 file, not May 4 (or it returns
     empty despite minutes-old traffic)."""
-    import agent_core.endpoints.claude_code_mcp as mcp_module
+    import agent_core.endpoints.claude_code_mcp._endpoint as _endpoint_module
 
     class _FakeDatetime:
         @staticmethod
         def now(tz):
             return datetime(2026, 5, 4, 2, 0, 0, tzinfo=UTC)
 
-    monkeypatch.setattr(mcp_module, "datetime", _FakeDatetime)
+    monkeypatch.setattr(_endpoint_module, "datetime", _FakeDatetime)
 
     ep = ClaudeCodeMCPEndpoint(name="pepper", mount="/mcp/pepper", bus_log_root=sample_log)
     rows = await ep._show_my_day_impl(projected=True, timezone="US/Eastern")
