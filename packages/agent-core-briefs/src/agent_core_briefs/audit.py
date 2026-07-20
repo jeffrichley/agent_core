@@ -32,16 +32,13 @@ contract — same pattern as
 
 from __future__ import annotations
 
-import asyncio
 import json
-import logging
-import sys
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 from typing import Any
 
-log = logging.getLogger(__name__)
+from agent_core.audit import JsonlAuditLog
 
 
 @dataclass(frozen=True)
@@ -62,7 +59,7 @@ class AuditEvent:
     data: dict[str, Any]
 
 
-class AuditLog:
+class AuditLog(JsonlAuditLog[AuditEvent]):
     """Append-only JSONL audit log.
 
     Construction takes a path; :meth:`write` appends one JSON line per
@@ -71,46 +68,15 @@ class AuditLog:
     observability, not the critical path of brief delivery.
     """
 
-    def __init__(self, path: Path):
-        self._path = Path(path)
-
-    @property
-    def path(self) -> Path:
-        return self._path
+    def __init__(self, path: Path) -> None:
+        super().__init__(path)
 
     @staticmethod
     def default_path() -> Path:
         """Returns ``~/.agent-core/briefs/audit.jsonl``."""
         return Path.home() / ".agent-core" / "briefs" / "audit.jsonl"
 
-    async def write(self, event: AuditEvent) -> None:
-        """Append one event as a JSON line.
-
-        Failures are logged and swallowed so an audit failure never
-        breaks a brief submission. The actual filesystem write runs
-        in :func:`asyncio.to_thread` so a slow disk doesn't block
-        the event loop.
-        """
-        try:
-            line = self._serialize(event)
-            await asyncio.to_thread(self._append_line, self._path, line)
-        except Exception as exc:
-            # Audit log is observability; never break the submit flow.
-            # Mirror to stderr so operators see the failure even if the
-            # logging config is silent.
-            msg = f"agent_core_briefs.audit: write failed for {self._path}: {exc}"
-            log.warning(msg)
-            print(msg, file=sys.stderr)
-
-    @staticmethod
-    def _append_line(path: Path, line: str) -> None:
-        path.parent.mkdir(parents=True, exist_ok=True)
-        with path.open("a", encoding="utf-8") as handle:
-            handle.write(line)
-            handle.write("\n")
-
-    @staticmethod
-    def _serialize(event: AuditEvent) -> str:
+    def _serialize(self, event: AuditEvent) -> str:
         payload = {
             "timestamp": event.timestamp.isoformat(),
             "event_type": event.event_type,
