@@ -164,6 +164,64 @@ async def test_start_stop_lifecycle(tmp_path):
     await ep.stop()
 
 
+async def test_stop_disposes_engine_leaving_no_leaked_connections(tmp_path):
+    """``stop()`` must dispose the aiosqlite engine so its worker threads are
+    joined, not leaked.
+
+    Regression lock for the 2026-07-20 connection leak: the engine was a local
+    in ``start()`` and never disposed, so every start/stop leaked the pool's
+    aiosqlite threads — accumulating across the suite until a random test timed
+    out (``ASGI callable returned without completing response``). The autouse
+    ``fail_on_leaked_aiosqlite_connection`` guard enforces this for every test;
+    this asserts the specific mechanism directly.
+    """
+
+    class _FakeHandle:
+        async def publish(self, *a, **kw): ...
+        async def ack(self, *a, **kw): ...
+        async def nack(self, *a, **kw): ...
+        def endpoints(self):
+            return []
+
+    ep = SchedulerEndpoint(name="scheduler", db_path=str(tmp_path / "sched.db"))
+    await ep.start(_FakeHandle())
+    assert ep._engine is not None  # engine is owned by the endpoint
+    await ep.stop()
+    assert ep._engine is None  # disposed and cleared
+
+
+async def test_failed_start_rolls_back_and_disposes_engine(tmp_path, monkeypatch):
+    """A failure after the engine is created must still dispose it (rollback).
+
+    Without this, a half-built scheduler would leak the engine's aiosqlite
+    connection pool. The autouse leak guard also asserts no thread survives.
+    """
+
+    class _FakeHandle:
+        async def publish(self, *a, **kw): ...
+        async def ack(self, *a, **kw): ...
+        async def nack(self, *a, **kw): ...
+        def endpoints(self):
+            return []
+
+    ep = SchedulerEndpoint(
+        name="scheduler",
+        jobs_path=str(tmp_path / "jobs.yaml"),
+        db_path=str(tmp_path / "sched.db"),
+    )
+
+    async def _boom() -> None:
+        raise RuntimeError("seed failed")
+
+    # Force the last start() step (seed jobs) to fail so the rollback path runs.
+    monkeypatch.setattr(ep, "_seed_jobs", _boom)
+
+    with pytest.raises(RuntimeError, match="seed failed"):
+        await ep.start(_FakeHandle())
+
+    assert ep._engine is None  # rollback disposed + cleared the engine
+
+
 def test_load_seed_jobs_returns_empty_for_missing_file(tmp_path):
     from agent_core.endpoints.scheduler import load_seed_jobs
 

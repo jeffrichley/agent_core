@@ -52,7 +52,10 @@ def _retry_after_seconds(exc: BaseException) -> float | None:
 
 def _backoff_seconds(attempt: int) -> float:
     """Exponential backoff, capped."""
-    return min(DISCORD_SEND_MAX_DELAY_S, DISCORD_SEND_BASE_DELAY_S * (2**attempt))
+    # ``2**attempt`` types as Any (int**int may be float for negative exponents),
+    # so pin the result to float via the annotated local before returning.
+    delay: float = min(DISCORD_SEND_MAX_DELAY_S, DISCORD_SEND_BASE_DELAY_S * (2**attempt))
+    return delay
 
 
 def retry_delay_seconds(exc: BaseException, attempt: int) -> float:

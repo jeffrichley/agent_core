@@ -41,7 +41,29 @@ class CredentialStore:
         return result
 
     def _open(self) -> PyKeePass:
-        """Open the vault, creating it if it doesn't exist."""
+        """Open the existing vault; raise ``FileNotFoundError`` if it's absent.
+
+        Reads and deletes must NOT create a vault — silently creating an empty
+        ``.kdbx`` on a read masks a missing or misconfigured vault (and can
+        shadow the real one). Only the write path may create; see
+        :meth:`_open_or_create`.
+        """
+        # Validate the master-password config first (a config error is more
+        # fundamental), then require the vault to already exist.
+        password = self._get_password()
+        if not self.vault_path.exists():
+            raise FileNotFoundError(
+                f"credentials vault not found at {self.vault_path}; "
+                "set a credential (or run the init command) to create it"
+            )
+        return PyKeePass(str(self.vault_path), password=password)
+
+    def _open_or_create(self) -> PyKeePass:
+        """Open the vault, creating an empty one if it's absent.
+
+        Only the explicit write path (:meth:`set`) may call this — a missing
+        vault on first write is expected.
+        """
         password = self._get_password()
         if not self.vault_path.exists():
             return create_database(str(self.vault_path), password=password)
@@ -70,8 +92,8 @@ class CredentialStore:
         url: str = "",
         notes: str = "",
     ) -> None:
-        """Store or overwrite a credential."""
-        kp = self._open()
+        """Store or overwrite a credential (creates the vault on first write)."""
+        kp = self._open_or_create()
         existing = kp.find_entries(title=service, first=True)
         if existing:
             existing.username = username

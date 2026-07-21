@@ -7,15 +7,12 @@ audit problem never breaks a synthesis call.
 
 from __future__ import annotations
 
-import asyncio
 import json
-import logging
-import sys
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 
-log = logging.getLogger(__name__)
+from agent_core.audit import JsonlAuditLog
 
 
 @dataclass(frozen=True)
@@ -33,35 +30,13 @@ class AuditEvent:
     error: str | None
 
 
-class AuditLog:
+class AuditLog(JsonlAuditLog[AuditEvent]):
     """Append-only JSONL audit log."""
 
     def __init__(self, path: Path) -> None:
-        self._path = Path(path)
+        super().__init__(path)
 
-    @property
-    def path(self) -> Path:
-        return self._path
-
-    async def write(self, event: AuditEvent) -> None:
-        try:
-            line = self._serialize(event)
-            await asyncio.to_thread(self._append_line, self._path, line)
-        except Exception as exc:
-            msg = f"agent_core_voice.audit: write failed for {self._path}: {exc}"
-            log.warning(msg)
-            print(msg, file=sys.stderr)
-
-    @staticmethod
-    def _append_line(path: Path, line: str) -> None:
-        path.parent.mkdir(parents=True, exist_ok=True)
-        with path.open("a", encoding="utf-8") as handle:
-            # Single write() call so POSIX O_APPEND atomicity guarantees
-            # concurrent appends interleave only at line boundaries.
-            handle.write(line + "\n")
-
-    @staticmethod
-    def _serialize(event: AuditEvent) -> str:
+    def _serialize(self, event: AuditEvent) -> str:
         payload = {
             "ts": event.timestamp.isoformat(),
             "agent": event.agent,

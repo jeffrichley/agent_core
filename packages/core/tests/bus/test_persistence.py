@@ -248,3 +248,27 @@ class TestBackoffPersistence:
         row = await store.row(env.id)
         assert row["state"] == "pending"
         assert row["next_attempt_at"] is None
+
+
+async def test_connect_is_atomic_and_closes_connection_on_failure(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """connect() must close the connection if any post-open step raises.
+
+    Otherwise the aiosqlite worker thread leaks; across daemon restarts and the
+    test suite these accumulate until the event loop chokes and a random test
+    times out. Regression sibling of the scheduler-engine leak (agent_core #468).
+    The autouse leak guard additionally asserts no aiosqlite thread survives.
+    """
+    import sqlite3
+
+    import agent_core.bus.persistence as persist_mod
+
+    # Force the first post-open step (schema apply) to fail.
+    monkeypatch.setattr(persist_mod, "_SCHEMA", "THIS IS NOT VALID SQL;")
+    p = Persistence(tmp_path / "bus.sqlite")
+
+    with pytest.raises(sqlite3.OperationalError):
+        await p.connect()
+
+    assert p._conn is None  # connection was closed and cleared on failure

@@ -72,7 +72,7 @@ def register_endpoint_types() -> dict[str, type[Any]]:
     endpoint_types = dict(_ENDPOINT_TYPES)
     if "builtin.discord" not in endpoint_types:
         try:
-            from agent_core_discord.endpoint import DiscordEndpoint  # type: ignore[import-untyped]
+            from agent_core_discord.endpoint import DiscordEndpoint
         except ImportError:
             pass
         else:

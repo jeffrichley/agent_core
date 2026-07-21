@@ -11,7 +11,7 @@ Importable by the hatchery for correct-by-construction config generation
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -108,6 +108,19 @@ class EndpointEntryConfig(BaseModel):
     description: str = ""
 
 
+class LoggingConfig(BaseModel):
+    """Maps to the ``logging:`` YAML block.
+
+    ``format`` selects the log handler: ``'json'`` for structured JSON output
+    (production), ``'pretty'`` for human-readable text (dev, default).
+    An unknown value raises ``pydantic.ValidationError`` at boot.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    format: Literal["json", "pretty"] = "pretty"
+
+
 class DaemonConfig(BaseModel):
     """Root daemon YAML config model.
 
@@ -122,3 +135,4 @@ class DaemonConfig(BaseModel):
     bus_hooks: BusHooksConfig = Field(default_factory=BusHooksConfig)
     mcp_audit: McpAuditConfig = Field(default_factory=McpAuditConfig)
     endpoints: list[EndpointEntryConfig] = Field(default_factory=list)
+    logging: LoggingConfig = Field(default_factory=LoggingConfig)

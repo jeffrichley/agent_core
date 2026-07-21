@@ -5,7 +5,7 @@ from pathlib import Path
 
 import pytest
 from agent_core_hatchery.config import HatchConfig
-from agent_core_hatchery.hatcher import Hatcher, VaultExistsError
+from agent_core_hatchery.hatcher import Hatcher, HatchError, VaultExistsError
 
 
 def _noop_venv_builder(target: str) -> Path:
@@ -167,3 +167,25 @@ def test_no_gendered_pronouns_in_rendered_vault(tmp_path):
         "Gendered pronoun(s) found in rendered vault (fix #81):\n"
         + "\n".join(violations[:20])
     )
+
+
+def test_hatch_without_injected_mcp_gen_fails_clearly(tmp_path):
+    """The real (non-injected) hatch path must fail with a clear HatchError.
+
+    ``_generate_mcp_json`` lazy-imports agent_core.venv.mcp_config (C2-2, #316),
+    which is not yet merged — so a real hatch cannot complete. Every other test
+    injects ``_mcp_json_gen``, hiding this; this drives the real path and pins a
+    clear, actionable error instead of a cryptic post-venv ImportError.
+    Adversarial review finding #5.
+    """
+    cfg = HatchConfig(
+        being_name="TestBeing",
+        primary_human_name="Tester",
+        vault_root=str(tmp_path),
+        daemon_config_dir=str(tmp_path / ".agent-core"),
+    )
+    # Inject only the venv builder to isolate the mcp path; leave _mcp_json_gen
+    # unset so the real generator import is exercised.
+    hatcher = Hatcher(cfg, _venv_builder=_noop_venv_builder)
+    with pytest.raises(HatchError, match="#316"):
+        hatcher.hatch()

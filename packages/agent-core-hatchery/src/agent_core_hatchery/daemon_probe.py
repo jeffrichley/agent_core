@@ -51,17 +51,23 @@ def _stop_daemon(runner=subprocess.run) -> None:
         pass  # agent-core not on PATH or daemon already stopped — probe decides outcome
 
 
-def _start_daemon(runner=subprocess.run) -> None:
-    """Best-effort daemon start. Never raises; failures are absorbed."""
+def _start_daemon(runner=subprocess.run) -> bool:
+    """Start the daemon. Returns True iff the start command exited 0.
+
+    Unlike ``_stop_daemon``, a failed START is NOT best-effort: the daemon was
+    just stopped, so a failure here leaves the whole fleet offline. The result
+    is returned (not swallowed) so the caller can surface it loudly.
+    """
     try:
-        runner(
+        proc = runner(
             ["agent-core", "daemon", "start"],
             check=False,
             capture_output=True,
             timeout=15,
         )
     except (FileNotFoundError, OSError, subprocess.TimeoutExpired, subprocess.SubprocessError):
-        pass
+        return False
+    return proc.returncode == 0
 
 
 def _probe_endpoint(
@@ -119,7 +125,11 @@ def reload_and_probe(
     host, port = read_daemon_http_config(daemon_config_dir)
 
     _stop_daemon(runner)
-    _start_daemon(runner)
+    if not _start_daemon(runner):
+        # The daemon was stopped but could not be brought back up — the whole
+        # fleet is offline. Surface as a hard failure, not a soft "unreachable"
+        # (which reads as "daemon up, endpoint will register shortly").
+        return "start_failed"
 
     return _probe_endpoint(
         host,

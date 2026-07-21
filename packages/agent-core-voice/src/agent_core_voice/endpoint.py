@@ -567,44 +567,65 @@ class VoiceEndpoint:
             )
             return
 
-        # Derive metadata from the madrigal Result. Timings list gives us
-        # per-chunk wall times — sum for elapsed_s, count for chunks.
-        timings = result.timings or []
-        elapsed_s = float(sum(timings))
-        sample_rate = int(result.sample_rate_hz)
-        chunks = max(1, len(timings))  # at least one chunk even on cache hit
+        # Reply-emitting tail. Everything here — stat(), model_dump(), envelope
+        # construction, publish — must still yield a terminal reply on failure:
+        # this runs in a spawned task, so an unhandled exception dies silently
+        # and the requesting agent waits forever. Route any failure through
+        # _publish_failed, and guard (don't assert) a torn-down handle.
+        try:
+            # Derive metadata from the madrigal Result. Timings list gives us
+            # per-chunk wall times — sum for elapsed_s, count for chunks.
+            timings = result.timings or []
+            elapsed_s = float(sum(timings))
+            sample_rate = int(result.sample_rate_hz)
+            chunks = max(1, len(timings))  # at least one chunk even on cache hit
 
-        ready_payload = SynthesisReadyPayload(
-            wav_path=str(wav_path),
-            file_size_bytes=wav_path.stat().st_size,
-            duration_s=duration_s,
-            elapsed_s=elapsed_s,
-            sample_rate_hz=sample_rate,
-            cache_hit=bool(result.cache_hit),
-            chunks=chunks,
-            retain_until=retain_until_iso(retain_s=retain_s),
-        )
+            ready_payload = SynthesisReadyPayload(
+                wav_path=str(wav_path),
+                file_size_bytes=wav_path.stat().st_size,
+                duration_s=duration_s,
+                elapsed_s=elapsed_s,
+                sample_rate_hz=sample_rate,
+                cache_hit=bool(result.cache_hit),
+                chunks=chunks,
+                retain_until=retain_until_iso(retain_s=retain_s),
+            )
 
-        import uuid as _uuid
+            import uuid as _uuid
 
-        from agent_core.bus.envelope import Envelope as BusEnvelope
-        from agent_core.bus.envelope import EventPayload
+            from agent_core.bus.envelope import Envelope as BusEnvelope
+            from agent_core.bus.envelope import EventPayload
 
-        ready = BusEnvelope(
-            id=_uuid.uuid4().hex,
-            correlation_id=envelope.correlation_id,
-            in_reply_to=envelope.id,
-            to=envelope.from_,
-            kind="Event",
-            payload=EventPayload(
-                type="SynthesisReady",
-                data=ready_payload.model_dump(),
-            ),
-            created_at=datetime.now(UTC),
-        )
+            ready = BusEnvelope(
+                id=_uuid.uuid4().hex,
+                correlation_id=envelope.correlation_id,
+                in_reply_to=envelope.id,
+                to=envelope.from_,
+                kind="Event",
+                payload=EventPayload(
+                    type="SynthesisReady",
+                    data=ready_payload.model_dump(),
+                ),
+                created_at=datetime.now(UTC),
+            )
 
-        assert self._handle is not None
-        await self._handle.publish(ready)
+            if self._handle is None:
+                # The endpoint was stopped before we could reply; there is no
+                # channel left to publish on. Log rather than raise.
+                log.warning(
+                    "voice handle torn down before SynthesisReady for %s; cannot reply",
+                    envelope.id,
+                )
+                return
+            await self._handle.publish(ready)
+        except Exception as exc:
+            log.exception("failed to emit SynthesisReady")
+            await self._publish_failed(
+                envelope,
+                reason="INTERNAL_ERROR",
+                message=f"failed to emit SynthesisReady: {type(exc).__name__}: {exc}",
+                retryable=False,
+            )
 
     async def _publish_failed(
         self,
