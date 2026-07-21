@@ -26,6 +26,12 @@ class VaultExistsError(Exception):
     """Raised when default-mode hatch is attempted against an existing vault."""
 
 
+class HatchError(RuntimeError):
+    """Raised when a hatch cannot complete because a required subsystem is
+    unavailable — surfaced as a clear, actionable message rather than a cryptic
+    ImportError deep in the build."""
+
+
 @dataclass
 class HatchResult:
     vault_root: Path
@@ -261,10 +267,22 @@ class Hatcher:
                 daemon_config_dir=self._config.resolved_daemon_config_dir(),
             )
         else:
-            # C2-2 (#316): not yet merged. This lazy import resolves once #316 lands.
+            # C2-2 (#316): not yet merged. Fail with a clear, actionable error
+            # instead of a bare ImportError surfacing after the venv is built —
+            # a real (non-injected) hatch cannot complete until #316 lands.
             # Expected module path: agent_core.venv.mcp_config (confirm on merge).
             # Expected contract: generate_mcp_json(target, *, vault_root, ...) -> Path
-            from agent_core.venv.mcp_config import generate_mcp_json  # type: ignore[import]
+            try:
+                from agent_core.venv.mcp_config import (  # type: ignore[import-not-found]
+                    generate_mcp_json,
+                )
+            except ImportError as exc:
+                raise HatchError(
+                    "Cannot generate the being's .mcp.json: the canonical "
+                    "generator agent_core.venv.mcp_config (C2-2, #316) is not "
+                    "yet available, so a real hatch cannot complete. Inject "
+                    "_mcp_json_gen to hatch before #316 merges."
+                ) from exc
             path = generate_mcp_json(
                 self._config.being_name_lower,
                 vault_root=self._config.resolved_vault_root(),
