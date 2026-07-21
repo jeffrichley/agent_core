@@ -33,6 +33,9 @@ jobs:
             uv build --package "$pkg" --out-dir dist/
           done
 
+      - name: Validate distribution metadata
+        run: uvx twine check dist/*
+
       - name: List built artifacts
         run: ls -la dist/
 
@@ -42,37 +45,16 @@ jobs:
           name: dist
           path: dist/
 
-  publish-testpypi:
+  # Publishes all 12 packages with an account-scoped API token
+  # (secret PYPI_API_TOKEN). A token is used for the initial publish because
+  # PyPI caps an account at 3 pending Trusted Publishers, so a 12-package
+  # monorepo cannot pre-register OIDC publishers for every project. Once the
+  # projects exist, they can be switched to tokenless OIDC (project-scoped
+  # publishers, no cap) and this token removed.
+  publish-pypi:
     needs: build
     runs-on: ubuntu-latest
     timeout-minutes: 10
-    permissions:
-      id-token: write
-    environment:
-      name: testpypi
-      url: https://test.pypi.org/p/agent-core
-    steps:
-      - name: Download build artifacts
-        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093  # v4.3.0
-        with:
-          name: dist
-          path: dist/
-
-      - name: Publish to TestPyPI
-        uses: pypa/gh-action-pypi-publish@cef221092ed1bacb1cc03d23a2d87d1d172e277b  # release/v1
-        with:
-          repository-url: https://test.pypi.org/legacy/
-          packages-dir: dist/
-
-  publish-pypi:
-    needs: publish-testpypi
-    runs-on: ubuntu-latest
-    timeout-minutes: 10
-    permissions:
-      id-token: write
-    environment:
-      name: pypi
-      url: https://pypi.org/p/agent-core
     steps:
       - name: Download build artifacts
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093  # v4.3.0
@@ -84,6 +66,7 @@ jobs:
         uses: pypa/gh-action-pypi-publish@cef221092ed1bacb1cc03d23a2d87d1d172e277b  # release/v1
         with:
           packages-dir: dist/
+          password: ${{ secrets.PYPI_API_TOKEN }}
 
   upload-github-release:
     needs: build
