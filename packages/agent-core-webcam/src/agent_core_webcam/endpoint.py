@@ -151,7 +151,22 @@ class WebcamEndpoint:
         res = _to_tuple(resolution) if resolution is not None else self.default_resolution
         lock = await self._lock_for(idx)
         async with lock:
-            png_bytes = await asyncio.to_thread(self._backend.capture, idx, res)
+            # Enforce capture_timeout_seconds at the async layer: a hung
+            # backend read (OpenCV's cap.read() is uninterruptible) would
+            # otherwise hold this per-camera lock forever, wedging every future
+            # capture on this camera. wait_for releases the lock and surfaces a
+            # ReadTimeoutError; the orphaned worker thread is the lesser evil
+            # than a permanently-stuck endpoint.
+            try:
+                png_bytes = await asyncio.wait_for(
+                    asyncio.to_thread(self._backend.capture, idx, res),
+                    timeout=self.capture_timeout_seconds,
+                )
+            except TimeoutError as exc:
+                raise ReadTimeoutError(
+                    f"camera {idx} did not return a frame within "
+                    f"{self.capture_timeout_seconds}s"
+                ) from exc
         timestamp = datetime.now(UTC).astimezone()
         try:
             all_cams = await asyncio.to_thread(self._backend.list_cameras)
