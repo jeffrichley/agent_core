@@ -2,66 +2,66 @@
 <urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
     <url>
          <loc>https://jeffrichley.github.io/agent_core/</loc>
-         <lastmod>2026-07-20</lastmod>
+         <lastmod>2026-07-21</lastmod>
     </url>
     <url>
          <loc>https://jeffrichley.github.io/agent_core/about/</loc>
-         <lastmod>2026-07-20</lastmod>
+         <lastmod>2026-07-21</lastmod>
     </url>
     <url>
          <loc>https://jeffrichley.github.io/agent_core/concepts/</loc>
-         <lastmod>2026-07-20</lastmod>
+         <lastmod>2026-07-21</lastmod>
     </url>
     <url>
          <loc>https://jeffrichley.github.io/agent_core/concepts/architecture/</loc>
-         <lastmod>2026-07-20</lastmod>
+         <lastmod>2026-07-21</lastmod>
     </url>
     <url>
          <loc>https://jeffrichley.github.io/agent_core/concepts/bus/</loc>
-         <lastmod>2026-07-20</lastmod>
+         <lastmod>2026-07-21</lastmod>
     </url>
     <url>
          <loc>https://jeffrichley.github.io/agent_core/concepts/endpoints/</loc>
-         <lastmod>2026-07-20</lastmod>
+         <lastmod>2026-07-21</lastmod>
     </url>
     <url>
          <loc>https://jeffrichley.github.io/agent_core/concepts/envelopes/</loc>
-         <lastmod>2026-07-20</lastmod>
+         <lastmod>2026-07-21</lastmod>
     </url>
     <url>
          <loc>https://jeffrichley.github.io/agent_core/concepts/extensions/</loc>
-         <lastmod>2026-07-20</lastmod>
+         <lastmod>2026-07-21</lastmod>
     </url>
     <url>
          <loc>https://jeffrichley.github.io/agent_core/getting-started/</loc>
-         <lastmod>2026-07-20</lastmod>
+         <lastmod>2026-07-21</lastmod>
     </url>
     <url>
          <loc>https://jeffrichley.github.io/agent_core/getting-started/daemon/</loc>
-         <lastmod>2026-07-20</lastmod>
+         <lastmod>2026-07-21</lastmod>
     </url>
     <url>
          <loc>https://jeffrichley.github.io/agent_core/getting-started/first-agent/</loc>
-         <lastmod>2026-07-20</lastmod>
+         <lastmod>2026-07-21</lastmod>
     </url>
     <url>
          <loc>https://jeffrichley.github.io/agent_core/guides/</loc>
-         <lastmod>2026-07-20</lastmod>
+         <lastmod>2026-07-21</lastmod>
     </url>
     <url>
          <loc>https://jeffrichley.github.io/agent_core/guides/add-an-endpoint/</loc>
-         <lastmod>2026-07-20</lastmod>
+         <lastmod>2026-07-21</lastmod>
     </url>
     <url>
          <loc>https://jeffrichley.github.io/agent_core/guides/send-and-consume/</loc>
-         <lastmod>2026-07-20</lastmod>
+         <lastmod>2026-07-21</lastmod>
     </url>
     <url>
          <loc>https://jeffrichley.github.io/agent_core/guides/write-an-extension/</loc>
-         <lastmod>2026-07-20</lastmod>
+         <lastmod>2026-07-21</lastmod>
     </url>
     <url>
          <loc>https://jeffrichley.github.io/agent_core/reference/</loc>
-         <lastmod>2026-07-20</lastmod>
+         <lastmod>2026-07-21</lastmod>
     </url>
 </urlset>
