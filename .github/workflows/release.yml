@@ -8,20 +8,7 @@ permissions:
   contents: read
 
 jobs:
-  # Single source of truth for the published package set. Consumed by the build
-  # loop and BOTH publish matrices, so the list can never drift across jobs.
-  prepare:
-    runs-on: ubuntu-latest
-    timeout-minutes: 5
-    outputs:
-      packages: ${{ steps.set.outputs.packages }}
-    steps:
-      - id: set
-        run: |
-          echo 'packages=["agent-core","agent-core-briefs","agent-core-busproxy","agent-core-channel","agent-core-credentials","agent-core-discord","agent-core-hatchery","agent-core-inbound","agent-core-notify","agent-core-qa","agent-core-voice","agent-core-webcam"]' >> "$GITHUB_OUTPUT"
-
   build:
-    needs: prepare
     runs-on: ubuntu-latest
     timeout-minutes: 20
     permissions:
@@ -37,11 +24,17 @@ jobs:
         with:
           python-version: "3.12"
 
-      - name: Build wheels and sdists for all packages
+      - name: Build wheels and sdists for all 12 packages
         run: |
-          for pkg in ${{ join(fromJSON(needs.prepare.outputs.packages), ' ') }}; do
+          for pkg in agent-core agent-core-briefs agent-core-busproxy agent-core-channel \
+                     agent-core-credentials agent-core-discord agent-core-hatchery \
+                     agent-core-inbound agent-core-notify agent-core-qa \
+                     agent-core-voice agent-core-webcam; do
             uv build --package "$pkg" --out-dir dist/
           done
+
+      - name: Validate distribution metadata
+        run: uvx twine check dist/*
 
       - name: List built artifacts
         run: ls -la dist/
@@ -52,90 +45,28 @@ jobs:
           name: dist
           path: dist/
 
-  # Per-package publish: each package runs in its own matrix leg with its OWN
-  # environment (named after the package). PyPI forbids the same
-  # (owner, repo, workflow, environment) tuple from backing more than one
-  # pending Trusted Publisher, so a distinct environment per package is required
-  # for a monorepo. fail-fast: false so one package's failure doesn't cancel the
-  # rest.
-  publish-testpypi:
-    needs: [prepare, build]
-    runs-on: ubuntu-latest
-    timeout-minutes: 10
-    strategy:
-      fail-fast: false
-      matrix:
-        package: ${{ fromJSON(needs.prepare.outputs.packages) }}
-    permissions:
-      id-token: write
-    environment:
-      name: ${{ matrix.package }}
-      url: https://test.pypi.org/p/${{ matrix.package }}
-    steps:
-      - name: Download build artifacts
-        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093  # v4.3.0
-        with:
-          name: dist
-          path: dist/
-
-      - name: Isolate this package's distributions
-        run: |
-          prefix=$(echo "${{ matrix.package }}" | tr '-' '_')
-          mkdir -p pkg_dist
-          find dist -maxdepth 1 -type f \
-            \( -name "${prefix}-*.whl" -o -name "${prefix}-*.tar.gz" \) \
-            -exec cp {} pkg_dist/ \;
-          echo "Isolated distributions for ${{ matrix.package }} (prefix '${prefix}-'):"
-          ls -la pkg_dist/
-          if [ -z "$(ls -A pkg_dist/)" ]; then
-            echo "::error::no distributions found for ${{ matrix.package }}"
-            exit 1
-          fi
-
-      - name: Publish to TestPyPI
-        uses: pypa/gh-action-pypi-publish@cef221092ed1bacb1cc03d23a2d87d1d172e277b  # release/v1
-        with:
-          repository-url: https://test.pypi.org/legacy/
-          packages-dir: pkg_dist/
-
+  # Publishes all 12 packages with an account-scoped API token
+  # (secret PYPI_API_TOKEN). A token is used for the initial publish because
+  # PyPI caps an account at 3 pending Trusted Publishers, so a 12-package
+  # monorepo cannot pre-register OIDC publishers for every project. Once the
+  # projects exist, they can be switched to tokenless OIDC (project-scoped
+  # publishers, no cap) and this token removed.
   publish-pypi:
-    needs: [prepare, publish-testpypi]
+    needs: build
     runs-on: ubuntu-latest
     timeout-minutes: 10
-    strategy:
-      fail-fast: false
-      matrix:
-        package: ${{ fromJSON(needs.prepare.outputs.packages) }}
-    permissions:
-      id-token: write
-    environment:
-      name: ${{ matrix.package }}
-      url: https://pypi.org/p/${{ matrix.package }}
     steps:
       - name: Download build artifacts
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093  # v4.3.0
         with:
           name: dist
           path: dist/
-
-      - name: Isolate this package's distributions
-        run: |
-          prefix=$(echo "${{ matrix.package }}" | tr '-' '_')
-          mkdir -p pkg_dist
-          find dist -maxdepth 1 -type f \
-            \( -name "${prefix}-*.whl" -o -name "${prefix}-*.tar.gz" \) \
-            -exec cp {} pkg_dist/ \;
-          echo "Isolated distributions for ${{ matrix.package }} (prefix '${prefix}-'):"
-          ls -la pkg_dist/
-          if [ -z "$(ls -A pkg_dist/)" ]; then
-            echo "::error::no distributions found for ${{ matrix.package }}"
-            exit 1
-          fi
 
       - name: Publish to PyPI
         uses: pypa/gh-action-pypi-publish@cef221092ed1bacb1cc03d23a2d87d1d172e277b  # release/v1
         with:
-          packages-dir: pkg_dist/
+          packages-dir: dist/
+          password: ${{ secrets.PYPI_API_TOKEN }}
 
   upload-github-release:
     needs: build
