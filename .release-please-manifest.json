@@ -1,15 +1,15 @@
 {
-  ".": "0.7.0",
-  "packages/core": "0.7.0",
-  "packages/agent-core-briefs": "0.7.0",
-  "packages/agent-core-busproxy": "0.7.0",
-  "packages/agent-core-channel": "0.7.0",
-  "packages/credentials": "0.7.0",
-  "packages/agent-core-discord": "0.7.0",
-  "packages/agent-core-hatchery": "0.7.0",
-  "packages/agent-core-inbound": "0.7.0",
-  "packages/notify": "0.7.0",
-  "packages/agent-core-qa": "0.7.0",
-  "packages/agent-core-voice": "0.7.0",
-  "packages/agent-core-webcam": "0.7.0"
+  ".": "0.8.0",
+  "packages/core": "0.8.0",
+  "packages/agent-core-briefs": "0.8.0",
+  "packages/agent-core-busproxy": "0.8.0",
+  "packages/agent-core-channel": "0.8.0",
+  "packages/credentials": "0.8.0",
+  "packages/agent-core-discord": "0.8.0",
+  "packages/agent-core-hatchery": "0.8.0",
+  "packages/agent-core-inbound": "0.8.0",
+  "packages/notify": "0.8.0",
+  "packages/agent-core-qa": "0.8.0",
+  "packages/agent-core-voice": "0.8.0",
+  "packages/agent-core-webcam": "0.8.0"
 }
