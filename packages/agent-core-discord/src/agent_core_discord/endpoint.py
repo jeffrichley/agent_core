@@ -13,7 +13,7 @@ import types as _types
 from collections import OrderedDict
 from collections.abc import Callable
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
 from agent_core.bus.protocol import EndpointUnavailable  # noqa: F401 — deliver() globals
 from agent_core_discord._acks import _AcksMixin
@@ -28,10 +28,6 @@ from agent_core_discord.shape_validator import (  # noqa: F401 — deliver() glo
     validate as validate_shape,
 )
 
-if TYPE_CHECKING:
-    from agent_core.bus.envelope import Envelope
-    from agent_core.bus.handle import BusHandle
-
 log = logging.getLogger(__name__)
 
 # Rebind _OutboundMixin.deliver's __globals__ to this module's namespace so that
@@ -40,7 +36,9 @@ log = logging.getLogger(__name__)
 # characterization test patches validate_shape on the endpoint module; the rebinding
 # keeps the patch target working without modifying the test.
 _deliver_orig = _OutboundMixin.__dict__["deliver"]
-_OutboundMixin.deliver = _types.FunctionType(
+# Dynamic method rebind (runtime test seam, see comment above) — mypy can't
+# model reassigning a method, and the behaviour is intentional.
+_OutboundMixin.deliver = _types.FunctionType(  # type: ignore[method-assign]
     _deliver_orig.__code__,
     globals(),
     _deliver_orig.__name__,
@@ -96,11 +94,14 @@ class DiscordEndpoint(_AcksMixin, _LifecycleMixin, _HandlersMixin, _OutboundMixi
         self.target = target
         self.token_env = token_env
         self.outbound_channel_id = outbound_channel_id
-        self.env_file: Path | None = Path(env_file).expanduser() if env_file else None
-        self.access_config_path: Path | None = (
+        # Attribute types are declared once on the shared _EndpointState base;
+        # __init__ only assigns values (no inline annotations) so the mixins and
+        # this class agree on a single source of truth for each attribute's type.
+        self.env_file = Path(env_file).expanduser() if env_file else None
+        self.access_config_path = (
             Path(access_config_path).expanduser() if access_config_path else None
         )
-        self.attachments_dir: Path = (
+        self.attachments_dir = (
             Path(attachments_dir).expanduser().resolve()
             if attachments_dir
             else _default_attachments_dir(name)
@@ -119,52 +120,52 @@ class DiscordEndpoint(_AcksMixin, _LifecycleMixin, _HandlersMixin, _OutboundMixi
         # mirrors _user_display_name_cache: first-miss-then-hit, instance-scoped).
         # Not pre-loaded at start() to avoid adding startup latency for endpoints
         # that never see voice messages.
-        self._transcription_model: Any | None = None
+        self._transcription_model = None
         self._client_factory = _client_factory  # test seam
-        self._handle: BusHandle | None = None
-        self._client: Any = None
+        self._handle = None
+        self._client = None
         # Sticky cache of ``user_id → display_name`` so raw events that
         # only carry IDs (poll votes, future engagement events) don't
         # have to re-do the get_user / fetch_user dance on every fire.
         # First miss → HTTP fetch; every subsequent vote from the same
         # user → cache hit. Failures are deliberately NOT cached so a
         # transient HTTP error doesn't lock the user at empty forever.
-        self._user_display_name_cache: dict[str, str] = {}
-        self._client_task: asyncio.Task | None = None
-        self._sweep_task: asyncio.Task | None = None
-        self._attachment_sweep_task: asyncio.Task | None = None
-        self._ready_event: asyncio.Event = asyncio.Event()
-        self._access: AccessConfig = AccessConfig()
+        self._user_display_name_cache = {}
+        self._client_task = None
+        self._sweep_task = None
+        self._attachment_sweep_task = None
+        self._ready_event = asyncio.Event()
+        self._access = AccessConfig()
         # message_id → (ack_emoji, channel_id, monotonic_inserted_at).
         # OrderedDict so the head is the oldest entry — used for both LRU
         # eviction at the cap and TTL eviction in the sweep loop.
-        self._pending_acks: OrderedDict[str, tuple[str, str, float]] = OrderedDict()
+        self._pending_acks = OrderedDict()
         # Inbound bus envelope id → (Discord message id, channel id) for
         # outbound TextMessage replies that set in_reply_to but omit metadata.
-        self._inbound_envelope_discord: OrderedDict[str, tuple[str, str]] = OrderedDict()
+        self._inbound_envelope_discord = OrderedDict()
         # Cache of recently-published inbounds keyed by envelope_id, for
         # _resolve_channel_id auto-echo (#83). Mirrors claude_code_mcp.py's
         # _recent_inbounds pattern at N=2 of this shape; extract to shared
         # utility when a third endpoint needs it (rule-of-three).
-        self._recent_inbounds: OrderedDict[str, Envelope] = OrderedDict()
+        self._recent_inbounds = OrderedDict()
         self._recent_inbounds_max = recent_inbounds_max
         self._recent_inbounds_ttl_seconds = recent_inbounds_ttl_seconds
-        self._recent_inbounds_timestamps: dict[str, float] = {}
+        self._recent_inbounds_timestamps = {}
         # Discord message ids we published to the bus and have not "finished"
         # yet (cleared when ack reaction is removed or TTL/LRU evicts).
-        self._awaiting_reply_ids: set[str] = set()
+        self._awaiting_reply_ids = set()
         # Sibling timestamps map — same insertion/deletion pairs as
         # `_awaiting_reply_ids`. Per-task lazy TTL safety net inside
         # `_typing_while_pending` evicts orphan entries after
         # `_TYPING_TTL_SECONDS`. See spec doc for the pair-management
         # discipline (#84).
-        self._awaiting_reply_ids_timestamps: dict[str, float] = {}
-        self._typing_tasks: set[asyncio.Task] = set()
+        self._awaiting_reply_ids_timestamps = {}
+        self._typing_tasks = set()
         self.access_config_reload_interval = access_config_reload_interval
-        self._access_reload_task: asyncio.Task | None = None
+        self._access_reload_task = None
         # Stored as (st_mtime, st_size) so we detect changes even on
         # filesystems with coarse mtime granularity (e.g. overlay in CI).
-        self._access_config_mtime: tuple[float, int] | None = None
+        self._access_config_mtime = None
 
 
 # ---------------------------------------------------------------------------

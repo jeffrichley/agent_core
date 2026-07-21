@@ -15,6 +15,7 @@ from typing import TYPE_CHECKING, Any
 
 from agent_core_credentials.secrets import SecretNotFoundError
 from agent_core_credentials.secrets import get as get_secret
+from agent_core_discord._state import _EndpointState
 from agent_core_discord.access import AccessConfig, _build_access_config, load_access_config
 
 if TYPE_CHECKING:
@@ -24,7 +25,7 @@ log = logging.getLogger(__name__)
 _active_endpoints: dict[str, Any] = {}
 
 
-class _LifecycleMixin:
+class _LifecycleMixin(_EndpointState):
     def _sweep_recent_inbounds_once(self) -> int:
         """Evict entries older than TTL; return count evicted.
 
@@ -61,6 +62,7 @@ class _LifecycleMixin:
             self._pending_acks.pop(head_id)
             self._awaiting_reply_ids.discard(head_id)
             self._awaiting_reply_ids_timestamps.pop(head_id, None)
+            assert self._handle is not None
             self._handle.spawn(
                 self._remote_remove_ack(head_id, emoji, channel_id),
                 name=f"discord-endpoint-{self.name}-ttl-ack",

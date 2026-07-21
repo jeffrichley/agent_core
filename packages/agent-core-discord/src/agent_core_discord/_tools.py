@@ -16,6 +16,7 @@ from typing import Any
 from urllib.parse import unquote, urlparse
 
 from agent_core_discord._exceptions import _PersistError, _ToolError
+from agent_core_discord._state import _EndpointState
 from agent_core_discord.args import (
     _CancelScheduledEventArgs,
     _CreatePollArgs,
@@ -72,7 +73,7 @@ def _safe_filename(url: str) -> str:
     return clean
 
 
-class _ToolsMixin:
+class _ToolsMixin(_EndpointState):
     async def _download_url(self, url: str) -> tuple[bytes, str]:
         """Fetch a URL's bytes + Content-Type header.
 
@@ -118,10 +119,10 @@ class _ToolsMixin:
         path.write_bytes(data)
         return path, len(data)
 
-    async def _download_attachments(self, args: _DownloadAttachmentsArgs) -> dict:
+    async def _download_attachments(self, args: _DownloadAttachmentsArgs) -> dict[str, Any]:
         if not args.attachment_urls:
             return {"saved": []}
-        saved: list[dict] = []
+        saved: list[dict[str, Any]] = []
         for url in args.attachment_urls:
             try:
                 path, nbytes = await self._persist_attachment(
@@ -147,8 +148,8 @@ class _ToolsMixin:
             )
         return {"saved": saved}
 
-    async def _list_channels(self, args: _ListChannelsArgs) -> list[dict]:
-        out: list[dict] = []
+    async def _list_channels(self, args: _ListChannelsArgs) -> list[dict[str, Any]]:
+        out: list[dict[str, Any]] = []
         if self._client is None:
             return out
         for g in self._client.guilds:
@@ -170,7 +171,7 @@ class _ToolsMixin:
                 )
         return out
 
-    async def _get_channel_info(self, args: _GetChannelInfoArgs) -> dict:
+    async def _get_channel_info(self, args: _GetChannelInfoArgs) -> dict[str, Any]:
         ch = await self._resolve_channel(args.channel_id)
         # discord.py text channels expose ``.guild`` (a Guild object), NOT a
         # flat ``.guild_id`` attribute. Reading ``getattr(ch, "guild_id", "")``
@@ -209,7 +210,7 @@ class _ToolsMixin:
                 return g
         raise _ToolError(f"guild '{guild_id}' not found")
 
-    async def _send_briefing(self, args: _SendBriefingArgs) -> dict:
+    async def _send_briefing(self, args: _SendBriefingArgs) -> dict[str, Any]:
         embeds = build_briefing_embeds(
             date_line=args.date_line,
             focus=args.focus,
@@ -226,9 +227,9 @@ class _ToolsMixin:
             )
         )
 
-    async def _create_poll(self, args: _CreatePollArgs) -> dict:
+    async def _create_poll(self, args: _CreatePollArgs) -> dict[str, Any]:
         try:
-            import discord  # type: ignore
+            import discord
         except ImportError as exc:
             raise _ToolError("create_poll requires discord.py") from exc
         ch = await self._resolve_channel(args.channel_id)
@@ -246,9 +247,9 @@ class _ToolsMixin:
         mid = str(new_msg.id)
         return {"status": "sent", "message_id": mid, "message_ids": [mid]}
 
-    async def _create_scheduled_event(self, args: _CreateScheduledEventArgs) -> dict:
+    async def _create_scheduled_event(self, args: _CreateScheduledEventArgs) -> dict[str, Any]:
         try:
-            import discord  # type: ignore
+            import discord
         except ImportError as exc:
             raise _ToolError("create_scheduled_event requires discord.py") from exc
         guild = await self._resolve_guild(args.guild_id)
@@ -289,7 +290,7 @@ class _ToolsMixin:
         ev = await guild.create_scheduled_event(**kwargs)
         return {"status": "created", "event_id": str(ev.id), "name": ev.name}
 
-    async def _cancel_scheduled_event(self, args: _CancelScheduledEventArgs) -> dict:
+    async def _cancel_scheduled_event(self, args: _CancelScheduledEventArgs) -> dict[str, Any]:
         guild = await self._resolve_guild(args.guild_id)
         ev = None
         if hasattr(guild, "get_scheduled_event"):
@@ -302,7 +303,7 @@ class _ToolsMixin:
                     continue
                 seen.add(key)
                 try:
-                    ev = guild.get_scheduled_event(key)  # type: ignore[arg-type]
+                    ev = guild.get_scheduled_event(key)
                 except Exception:
                     ev = None
                 if ev is not None:
@@ -339,7 +340,7 @@ class _ToolsMixin:
             )
         return out
 
-    async def _create_thread(self, args: _CreateThreadArgs) -> dict:
+    async def _create_thread(self, args: _CreateThreadArgs) -> dict[str, Any]:
         """Create a thread in the channel, optionally anchored to a message.
 
         Note on ``thread_id`` vs ``message_id``: when a thread is anchored
@@ -370,7 +371,7 @@ class _ToolsMixin:
             "name": getattr(th, "name", args.name),
         }
 
-    async def _send_typing(self, args: _SendTypingArgs) -> dict:
+    async def _send_typing(self, args: _SendTypingArgs) -> dict[str, Any]:
         ch = await self._resolve_channel(args.channel_id)
         seconds = float(args.duration_seconds)
         typing_factory = getattr(ch, "typing", None)
@@ -389,7 +390,7 @@ class _ToolsMixin:
         task = asyncio.create_task(_pulse())
         self._typing_tasks.add(task)
 
-        def _done(t: asyncio.Task) -> None:
+        def _done(t: asyncio.Task[Any]) -> None:
             self._typing_tasks.discard(task)
 
         task.add_done_callback(_done)
