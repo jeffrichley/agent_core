@@ -45,7 +45,8 @@ def test_set_and_get(vault):
 
 
 def test_get_missing_returns_none(vault):
-    """Getting a nonexistent service returns None."""
+    """Getting a nonexistent service from an existing vault returns None."""
+    vault.set("seed", "u@test.com", "p")  # create the vault first
     assert vault.get("nonexistent") is None
 
 
@@ -79,8 +80,34 @@ def test_delete_existing(vault):
 
 
 def test_delete_missing_returns_false(vault):
-    """Delete on nonexistent service returns False."""
+    """Delete of a nonexistent service in an existing vault returns False."""
+    vault.set("seed", "u@test.com", "p")  # create the vault first
     assert vault.delete("nonexistent") is False
+
+
+def test_reads_do_not_create_vault(tmp_path, monkeypatch):
+    """get/list/delete must NOT create an empty vault when it's absent.
+
+    Silently creating an empty .kdbx on a read masks a missing/misconfigured
+    vault and can shadow the real one. They must raise FileNotFoundError, and no
+    file may appear. Only the write path (set) creates. Adversarial review #8.
+    """
+    monkeypatch.setattr(
+        "agent_core_credentials.store.get_master_password",
+        lambda vault_path: "pw",
+    )
+    vault_path = tmp_path / "credentials.kdbx"
+    store = CredentialStore(vault_path)
+
+    for op in (lambda: store.get("x"), store.list, lambda: store.delete("x")):
+        with pytest.raises(FileNotFoundError):
+            op()
+        assert not vault_path.exists()  # no empty vault was created
+
+    # The write path DOES create it.
+    store.set("apex", "jeff@test.com", "secret")
+    assert vault_path.exists()
+    assert store.get("apex") is not None
 
 
 def test_creates_vault_on_first_set(vault, tmp_path):
