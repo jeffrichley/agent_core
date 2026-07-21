@@ -638,8 +638,11 @@ class ClaudeCodeMCPEndpoint:
             self._debounce_task.cancel()
             try:
                 await self._debounce_task
-            except (asyncio.CancelledError, Exception):
+            except asyncio.CancelledError:
+                # Expected: we just cancelled the debounce task on stop().
                 pass
+            except Exception as exc:  # pragma: no cover - defensive shutdown guard
+                log.warning("debounce task raised during shutdown: %s", exc)
         self._debounce_task = None
         self._debounce_deadline = None
         log.info("ClaudeCodeMCPEndpoint(name=%s) stopped", self.name)

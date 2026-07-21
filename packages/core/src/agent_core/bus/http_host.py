@@ -110,8 +110,11 @@ def _make_lifespan(apps: list[ASGIApp]):
                 task.cancel()
                 try:
                     await task
-                except (asyncio.CancelledError, Exception):
+                except asyncio.CancelledError:  # pragma: no cover - shutdown race
+                    # Expected: we just cancelled this ASGI lifespan task.
                     pass
+                except Exception as exc:  # pragma: no cover - defensive shutdown guard
+                    log.warning("ASGI lifespan task raised during shutdown: %s", exc)
 
     return _lifespan
 
@@ -248,8 +251,11 @@ class HTTPHost:
                 self._serve_task.cancel()
                 try:
                     await self._serve_task
-                except (asyncio.CancelledError, Exception):
+                except asyncio.CancelledError:  # pragma: no cover - shutdown race
+                    # Expected: we just cancelled the serve task after a stop timeout.
                     pass
+                except Exception as exc:  # pragma: no cover - defensive shutdown guard
+                    log.warning("uvicorn serve task raised during shutdown: %s", exc)
         self._server = None
         self._serve_task = None
         self._started = False

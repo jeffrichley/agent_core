@@ -59,6 +59,9 @@ def _sd_notify_watchdog() -> None:
             sock.connect(notify_socket)
             sock.sendall(b"WATCHDOG=1\n")
     except OSError:
+        # Justified: sd_notify is best-effort observability (see docstring);
+        # the self-terminate path never depends on it, so a socket failure
+        # is intentionally silent.
         pass
 
 
@@ -108,6 +111,9 @@ class Watchdog:
                 self._heartbeat_path.parent.mkdir(parents=True, exist_ok=True)
                 self._heartbeat_path.write_text(now.isoformat(), encoding="utf-8")
             except OSError:
+                # Justified: the heartbeat file is auxiliary (systemd/external
+                # liveness); the in-memory `_last_progress` timestamp set above
+                # is authoritative, so a failed write must not disrupt the loop.
                 pass
         _sd_notify_watchdog()
 
