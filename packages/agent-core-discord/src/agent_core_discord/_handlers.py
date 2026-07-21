@@ -11,13 +11,14 @@ import logging
 import re
 import time
 import uuid
-from collections.abc import Callable
+from collections.abc import Callable, Coroutine
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
 from agent_core.bus.envelope import Envelope, EventPayload, TextMessagePayload
 from agent_core_discord._exceptions import _ToolError
+from agent_core_discord._state import _EndpointState
 from agent_core_discord.access import InboundContext, gate_message
 from agent_core_discord.sigil import parse_sigil
 from agent_core_discord.text_sanitize import scrub_surrogates
@@ -32,7 +33,7 @@ def _redact_url_qs(text: str) -> str:
     return re.sub(r"(https?://[^\s?]+)\?\S*", r"\1?<redacted>", text)
 
 
-class _HandlersMixin:
+class _HandlersMixin(_EndpointState):
     def _add_listener(self, handler: Callable[..., Any], event_name: str) -> None:
         """Register an event handler against the discord.py client.
 
@@ -45,7 +46,7 @@ class _HandlersMixin:
         else:
             # Older fakes / minimal stubs: rebind the handler's name and use
             # the @client.event protocol as a fallback.
-            handler.__name__ = event_name  # type: ignore[attr-defined]
+            handler.__name__ = event_name
             self._client.event(handler)
 
     def _remember_inbound_mapping(
@@ -82,7 +83,7 @@ class _HandlersMixin:
         # 1. Explicit always wins.
         discord_meta = (outbound.metadata or {}).get("discord") or {}
         if explicit := discord_meta.get("channel_id"):
-            return explicit
+            return str(explicit)
 
         # 2. Auto-echo via in_reply_to cache lookup.
         if outbound.in_reply_to:
@@ -90,7 +91,7 @@ class _HandlersMixin:
             if inbound:
                 inbound_discord = (inbound.metadata or {}).get("discord") or {}
                 if cid := inbound_discord.get("channel_id"):
-                    return cid
+                    return str(cid)
                 log.warning(
                     "channel_id resolution failed: cached_inbound_missing_channel_id, "
                     "in_reply_to=%s", outbound.in_reply_to,
@@ -148,7 +149,7 @@ class _HandlersMixin:
                 exc_info=True,
             )
 
-    def _make_on_message_handler(self):
+    def _make_on_message_handler(self) -> Callable[[Any], Coroutine[Any, Any, None]]:
         async def on_message(message: Any) -> None:
             # 1. Filter our OWN messages only — self-loops would feed the
             # bot its own posts. Other bots are NOT pre-filtered here:
@@ -364,7 +365,9 @@ class _HandlersMixin:
             return True
         return channel_id in self._access.channels
 
-    def _make_on_reaction_add_handler(self):
+    def _make_on_reaction_add_handler(
+        self,
+    ) -> Callable[[Any, Any], Coroutine[Any, Any, None]]:
         async def on_reaction_add(reaction: Any, user: Any) -> None:
             # 1. Drop the bot's own reactions.
             if user == self._client.user or user.bot:
@@ -440,7 +443,9 @@ class _HandlersMixin:
             self._user_display_name_cache[user_id_str] = name
         return name
 
-    def _make_on_raw_poll_vote_handler(self, event_type: str):
+    def _make_on_raw_poll_vote_handler(
+        self, event_type: str
+    ) -> Callable[[Any], Coroutine[Any, Any, None]]:
         """Build a handler for ``on_raw_poll_vote_add`` / ``on_raw_poll_vote_remove``.
 
         Both events have identical payload shape (``RawPollVoteActionEvent``
@@ -495,7 +500,9 @@ class _HandlersMixin:
 
         return on_raw_poll_vote
 
-    def _make_on_raw_message_lifecycle_handler(self, event_type: str):
+    def _make_on_raw_message_lifecycle_handler(
+        self, event_type: str
+    ) -> Callable[[Any], Coroutine[Any, Any, None]]:
         """Build a handler for ``on_raw_message_edit`` / ``on_raw_message_delete``.
 
         Both raw events expose ``message_id``, ``channel_id``, ``guild_id``

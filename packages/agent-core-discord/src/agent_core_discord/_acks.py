@@ -9,11 +9,14 @@ from __future__ import annotations
 import contextlib
 import logging
 import time
+from typing import Any
+
+from agent_core_discord._state import _EndpointState
 
 log = logging.getLogger(__name__)
 
 
-class _AcksMixin:
+class _AcksMixin(_EndpointState):
     def _track_pending_ack(self, message_id: str, emoji: str, channel_id: str) -> None:
         """Record a pending ack and evict the oldest entry if we hit the cap.
 
@@ -26,6 +29,7 @@ class _AcksMixin:
             old_id, (old_emoji, old_ch, _ts) = self._pending_acks.popitem(last=False)
             self._awaiting_reply_ids.discard(old_id)
             self._awaiting_reply_ids_timestamps.pop(old_id, None)
+            assert self._handle is not None
             self._handle.spawn(
                 self._remote_remove_ack(old_id, old_emoji, old_ch),
                 name=f"discord-endpoint-{self.name}-evict-ack",
@@ -51,7 +55,7 @@ class _AcksMixin:
                 exc_info=True,
             )
 
-    async def _clear_pending_ack(self, channel, message_id: str) -> None:
+    async def _clear_pending_ack(self, channel: Any, message_id: str) -> None:
         mid = str(message_id)
         self._awaiting_reply_ids.discard(mid)
         self._awaiting_reply_ids_timestamps.pop(mid, None)

@@ -48,7 +48,7 @@ def _build_access_config(raw: dict[str, Any], source: str = "<unknown>") -> Acce
         )
         raw_allowed_bot_ids = []
     return AccessConfig(
-        dm_policy=dm_policy,  # type: ignore[arg-type]
+        dm_policy=dm_policy,
         allow_from=list(raw.get("allowFrom", [])),
         channels=dict(raw.get("channels", {})),
         ack_reaction=raw.get("ackReaction", "👀"),

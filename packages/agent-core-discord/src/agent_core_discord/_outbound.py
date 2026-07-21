@@ -17,6 +17,7 @@ from pydantic import ValidationError
 from agent_core.bus.envelope import AcknowledgmentPayload, Envelope, TextMessagePayload
 from agent_core.bus.protocol import EndpointUnavailable
 from agent_core_discord._exceptions import _ToolError
+from agent_core_discord._state import _EndpointState
 from agent_core_discord.args import (
     _CancelScheduledEventArgs,
     _CreatePollArgs,
@@ -146,7 +147,7 @@ def _serialize_poll(poll: Any) -> dict[str, Any] | None:
     }
 
 
-class _OutboundMixin:
+class _OutboundMixin(_EndpointState):
     async def deliver(self, envelope: Envelope) -> None:
         """Handle ToolInvocation and TextMessage envelopes."""
         if self._handle is None:
@@ -257,7 +258,7 @@ class _OutboundMixin:
 
         await self._handle.ack(envelope.id)
 
-    async def _deliver_text_message(self, envelope: Envelope) -> dict:
+    async def _deliver_text_message(self, envelope: Envelope) -> dict[str, Any]:
         """Route a bus TextMessage to Discord send.
 
         If ``metadata.discord.embeds`` is set, the embed dicts ride along
@@ -335,10 +336,10 @@ class _OutboundMixin:
         )
         return await self._send(args)
 
-    async def _dispatch(self, tool: str, args: dict, env: Envelope) -> Any:
+    async def _dispatch(self, tool: str, args: dict[str, Any], env: Envelope) -> Any:
         tool = _canonical_tool(tool)
 
-        def _v(model: Any, raw: dict) -> Any:
+        def _v(model: Any, raw: dict[str, Any]) -> Any:
             try:
                 return model(**raw)
             except ValidationError as exc:
@@ -346,7 +347,7 @@ class _OutboundMixin:
 
         # For tools that require channel_id, inject it via _resolve_channel_id
         # when the caller omitted it (auto-echo via in_reply_to cache).
-        def _inject_channel_id(raw: dict) -> dict:
+        def _inject_channel_id(raw: dict[str, Any]) -> dict[str, Any]:
             if "channel_id" not in raw or not raw["channel_id"]:
                 raw = dict(raw)
                 raw["channel_id"] = self._resolve_channel_id(env)
@@ -420,7 +421,7 @@ class _OutboundMixin:
         except Exception:
             log.exception("discord reply publish failed for %s", incoming.id)
 
-    async def _resolve_channel(self, channel_id: str):
+    async def _resolve_channel(self, channel_id: str) -> Any:
         ch = self._client.get_channel(channel_id) if self._client else None
         if ch is None and self._client is not None:
             try:
@@ -431,7 +432,7 @@ class _OutboundMixin:
             raise _ToolError(f"channel '{channel_id}' not found")
         return ch
 
-    async def _send(self, args: _SendArgs) -> dict:
+    async def _send(self, args: _SendArgs) -> dict[str, Any]:
         if args.text is None and not args.embeds and not args.files:
             raise _ToolError(
                 "send: one of 'text', 'embeds', or 'files' is required"
@@ -439,11 +440,13 @@ class _OutboundMixin:
         ch = await self._resolve_channel(args.channel_id)
 
         # Build embeds list (validate via discord.Embed.from_dict).
-        embeds = None
+        # Holds discord.Embed objects on the real path or raw dicts on the
+        # fake-client fallback, so the element type is intentionally Any.
+        embeds: list[Any] | None = None
         if args.embeds:
             _check_embeds_within_caps(args.embeds)
             try:
-                import discord  # type: ignore
+                import discord
 
                 embeds = [discord.Embed.from_dict(e) for e in args.embeds]
             except ImportError:
@@ -462,14 +465,16 @@ class _OutboundMixin:
             if target is None:
                 raise _ToolError(f"send: reply_to message '{args.reply_to}' not found")
             try:
-                import discord  # type: ignore
+                import discord
 
                 reference = discord.MessageReference.from_message(target)
             except (ImportError, AttributeError):
                 # Fakes don't need a real reference; pass the message itself as a marker.
                 reference = target
 
-        files = None
+        # Holds discord.File objects on the real path or raw path strings on
+        # the fake-client fallback, so the element type is intentionally Any.
+        files: list[Any] | None = None
         if args.files:
             # discord.File accepts a local path or a binary file-like object —
             # not an HTTP URL. Reject URL strings upfront with a clear message
@@ -481,7 +486,7 @@ class _OutboundMixin:
                         "Use download_attachments first if you need URL bytes."
                     )
             try:
-                import discord  # type: ignore
+                import discord
 
                 files = [discord.File(f) for f in args.files]
             except ImportError:
@@ -565,7 +570,7 @@ class _OutboundMixin:
             out["message_id"] = message_ids[-1]
         return out
 
-    async def _edit(self, args: _EditArgs) -> dict:
+    async def _edit(self, args: _EditArgs) -> dict[str, Any]:
         if args.text is None and not args.embeds:
             raise _ToolError("edit: one of 'text' or 'embeds' is required")
         ch = await self._resolve_channel(args.channel_id)
@@ -576,11 +581,12 @@ class _OutboundMixin:
         if msg is None:
             raise _ToolError(f"edit: message '{args.message_id}' not found")
 
-        embeds = None
+        # Embed objects on the real path or raw dicts on the fake fallback.
+        embeds: list[Any] | None = None
         if args.embeds:
             _check_embeds_within_caps(args.embeds)
             try:
-                import discord  # type: ignore
+                import discord
 
                 embeds = [discord.Embed.from_dict(e) for e in args.embeds]
             except ImportError:
@@ -601,7 +607,7 @@ class _OutboundMixin:
             await self._clear_pending_ack(ch, args.cleanup_inbound_message_id)
         return {"status": "edited", "message_id": args.message_id}
 
-    async def _react(self, args: _ReactArgs) -> dict:
+    async def _react(self, args: _ReactArgs) -> dict[str, Any]:
         ch = await self._resolve_channel(args.channel_id)
         try:
             msg = await ch.fetch_message(args.message_id)
@@ -616,9 +622,9 @@ class _OutboundMixin:
             await self._clear_pending_ack(ch, args.cleanup_inbound_message_id)
         return {"status": "reacted", "emoji": args.emoji}
 
-    async def _fetch(self, args: _FetchArgs) -> list[dict]:
+    async def _fetch(self, args: _FetchArgs) -> list[dict[str, Any]]:
         ch = await self._resolve_channel(args.channel_id)
-        out: list[dict] = []
+        out: list[dict[str, Any]] = []
         # discord.py's history() returns an async iterator; the fake provides one.
         before = None
         if args.before is not None:

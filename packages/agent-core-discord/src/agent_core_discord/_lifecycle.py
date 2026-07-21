@@ -15,7 +15,8 @@ from typing import TYPE_CHECKING, Any
 
 from agent_core_credentials.secrets import SecretNotFoundError
 from agent_core_credentials.secrets import get as get_secret
-from agent_core_discord.access import AccessConfig, _build_access_config, load_access_config
+from agent_core_discord._state import _EndpointState
+from agent_core_discord.access import _build_access_config, load_access_config
 
 if TYPE_CHECKING:
     from agent_core.bus.handle import BusHandle
@@ -24,7 +25,7 @@ log = logging.getLogger(__name__)
 _active_endpoints: dict[str, Any] = {}
 
 
-class _LifecycleMixin:
+class _LifecycleMixin(_EndpointState):
     def _sweep_recent_inbounds_once(self) -> int:
         """Evict entries older than TTL; return count evicted.
 
@@ -61,6 +62,7 @@ class _LifecycleMixin:
             self._pending_acks.pop(head_id)
             self._awaiting_reply_ids.discard(head_id)
             self._awaiting_reply_ids_timestamps.pop(head_id, None)
+            assert self._handle is not None
             self._handle.spawn(
                 self._remote_remove_ack(head_id, emoji, channel_id),
                 name=f"discord-endpoint-{self.name}-ttl-ack",
@@ -109,9 +111,7 @@ class _LifecycleMixin:
         for d in entries:
             try:
                 mtime = d.stat().st_mtime
-                size = sum(
-                    f.stat().st_size for f in d.rglob("*") if f.is_file()
-                )
+                size = sum(f.stat().st_size for f in d.rglob("*") if f.is_file())
             except OSError:
                 continue
             if mtime < cutoff:
@@ -382,7 +382,10 @@ class _LifecycleMixin:
                 try:
                     await self._sweep_task
                 except asyncio.CancelledError:
-                    pass
+                    log.debug(
+                        "discord endpoint '%s': sweep task cancelled cleanly during start rollback",
+                        self.name,
+                    )
                 except Exception:
                     log.exception(
                         "discord endpoint '%s': sweep task raised during start rollback",
@@ -393,7 +396,10 @@ class _LifecycleMixin:
                 try:
                     await self._attachment_sweep_task
                 except asyncio.CancelledError:
-                    pass
+                    log.debug(
+                        "discord endpoint '%s': attachment sweep cancelled cleanly during start rollback",
+                        self.name,
+                    )
                 except Exception:
                     log.exception(
                         "discord endpoint '%s': attachment sweep raised during start rollback",
@@ -404,7 +410,10 @@ class _LifecycleMixin:
                 try:
                     await self._access_reload_task
                 except asyncio.CancelledError:
-                    pass
+                    log.debug(
+                        "discord endpoint '%s': access reload task cancelled cleanly during start rollback",
+                        self.name,
+                    )
                 except Exception:
                     log.exception(
                         "discord endpoint '%s': access reload task raised during start rollback",
@@ -416,7 +425,10 @@ class _LifecycleMixin:
                 try:
                     await self._client_task
                 except asyncio.CancelledError:
-                    pass
+                    log.debug(
+                        "discord endpoint '%s': gateway task cancelled cleanly during start rollback",
+                        self.name,
+                    )
                 except Exception:
                     log.exception(
                         "discord endpoint '%s': gateway task raised during start rollback",
@@ -468,7 +480,10 @@ class _LifecycleMixin:
             try:
                 await self._sweep_task
             except asyncio.CancelledError:
-                pass
+                log.debug(
+                    "discord endpoint '%s': sweep task cancelled cleanly during stop",
+                    self.name,
+                )
             except Exception:
                 log.exception(
                     "discord endpoint '%s': sweep task raised during stop",
@@ -479,7 +494,10 @@ class _LifecycleMixin:
             try:
                 await self._attachment_sweep_task
             except asyncio.CancelledError:
-                pass
+                log.debug(
+                    "discord endpoint '%s': attachment sweep cancelled cleanly during stop",
+                    self.name,
+                )
             except Exception:
                 log.exception(
                     "discord endpoint '%s': attachment sweep raised during stop",
@@ -490,7 +508,10 @@ class _LifecycleMixin:
             try:
                 await self._access_reload_task
             except asyncio.CancelledError:
-                pass
+                log.debug(
+                    "discord endpoint '%s': access reload task cancelled cleanly during stop",
+                    self.name,
+                )
             except Exception:
                 log.exception(
                     "discord endpoint '%s': access reload task raised during stop",
@@ -502,7 +523,10 @@ class _LifecycleMixin:
             try:
                 await self._client_task
             except asyncio.CancelledError:
-                pass
+                log.debug(
+                    "discord endpoint '%s': gateway task cancelled cleanly during stop",
+                    self.name,
+                )
             except Exception:
                 log.exception(
                     "discord endpoint '%s': gateway task raised during stop",

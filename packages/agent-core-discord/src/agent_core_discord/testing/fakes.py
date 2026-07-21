@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import asyncio
 import uuid
-from collections.abc import Callable
+from collections.abc import AsyncIterator, Callable
 from types import SimpleNamespace
 from typing import Any
 
@@ -124,7 +124,7 @@ class FakeMessage:
         id: str,
         channel_id: str,
         content: str = "",
-        author=None,
+        author: Any = None,
         poll: FakePoll | None = None,
         attachments: list[FakeAttachment] | None = None,
     ):
@@ -183,15 +183,15 @@ class FakeChannel:
         self.threads_created: list[dict[str, Any]] = []
         self._fake_client: FakeDiscordClient | None = None
 
-    def typing(self):
+    def typing(self) -> Any:
         ch = self
 
         class _T:
-            async def __aenter__(self):
+            async def __aenter__(self) -> None:
                 ch._typing_count += 1
                 return None
 
-            async def __aexit__(self, *exc):
+            async def __aexit__(self, *exc: Any) -> None:
                 ch._typing_count -= 1
                 return None
 
@@ -201,9 +201,9 @@ class FakeChannel:
         self,
         content: str | None = None,
         *,
-        embeds: list | None = None,
+        embeds: list[Any] | None = None,
         reference: Any = None,
-        files: list | None = None,
+        files: list[Any] | None = None,
         poll: Any = None,
     ) -> FakeMessage:
         new_id = f"new-{len(self.sent) + 1}"
@@ -260,8 +260,8 @@ class FakeChannel:
     async def fetch_message(self, message_id: str) -> FakeMessage | None:
         return self._messages.get(message_id)
 
-    def history(self, limit: int = 50, before: Any = None):
-        async def _gen():
+    def history(self, limit: int = 50, before: Any = None) -> AsyncIterator[FakeMessage]:
+        async def _gen() -> AsyncIterator[FakeMessage]:
             for m in list(self._messages.values())[:limit]:
                 yield m
 
@@ -387,17 +387,17 @@ class FakeDiscordClient:
         self.fetch_user_call_count = 0
         self._closed = False
         self._logged_in = False
-        self._handlers: dict[str, Callable] = {}
+        self._handlers: dict[str, Callable[..., Any]] = {}
         self._on_ready_event = asyncio.Event()
         self._closed_event: asyncio.Event | None = None
-        self._on_ready_task: asyncio.Task | None = None
+        self._on_ready_task: asyncio.Task[Any] | None = None
 
-    def event(self, fn: Callable) -> Callable:
+    def event(self, fn: Callable[..., Any]) -> Callable[..., Any]:
         """Decorator @client.event — registers the handler by function name."""
         self._handlers[fn.__name__] = fn
         return fn
 
-    def add_listener(self, fn: Callable, name: str | None = None) -> None:
+    def add_listener(self, fn: Callable[..., Any], name: str | None = None) -> None:
         """Mirrors discord.Client.add_listener — register by explicit event name."""
         self._handlers[name or fn.__name__] = fn
 
@@ -443,7 +443,7 @@ class FakeDiscordClient:
         return self._channels.get(str(channel_id))
 
     @property
-    def guilds(self):
+    def guilds(self) -> list[FakeGuild]:
         return list(self._guilds.values())
 
     async def login(self, token: str) -> None:
@@ -470,7 +470,7 @@ class FakeDiscordClient:
         if self._closed_event is not None:
             self._closed_event.set()
 
-    async def fire(self, event_name: str, *args) -> None:
+    async def fire(self, event_name: str, *args: Any) -> None:
         """Test helper: invoke a registered handler."""
         h = self._handlers.get(event_name)
         if h is not None:
@@ -495,13 +495,13 @@ class FakeDiscordClient:
 class FakeBusHandle:
     """Minimal BusHandle stub for endpoint lifecycle tests."""
 
-    async def publish(self, *a, **kw): ...
-    async def ack(self, *a, **kw): ...
-    async def nack(self, *a, **kw): ...
-    def endpoints(self):
+    async def publish(self, *a: Any, **kw: Any) -> None: ...
+    async def ack(self, *a: Any, **kw: Any) -> None: ...
+    async def nack(self, *a: Any, **kw: Any) -> None: ...
+    def endpoints(self) -> list[Any]:
         return []
 
-    def spawn(self, coro, *, name=None):
+    def spawn(self, coro: Any, *, name: str | None = None) -> asyncio.Task[Any]:
         import asyncio
 
         return asyncio.create_task(coro, name=name)
