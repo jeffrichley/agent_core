@@ -96,27 +96,37 @@ class Persistence:
         self.path.parent.mkdir(parents=True, exist_ok=True)
         existed = self.path.exists()
         self._conn = await aiosqlite.connect(self.path)
-        await self._conn.execute("PRAGMA journal_mode=WAL")
-        await self._conn.execute("PRAGMA foreign_keys=ON")
-        await self._conn.executescript(_SCHEMA)
-        # Migrate legacy DBs that pre-date the urgency column. Using a
-        # PRAGMA-driven check keeps this idempotent without try/except
-        # OperationalError.
-        self._conn.row_factory = aiosqlite.Row
-        cur = await self._conn.execute("PRAGMA table_info(envelopes)")
-        cols = {row["name"] async for row in cur}
-        await cur.close()
-        if "urgency" not in cols:
-            await self._conn.execute(
-                "ALTER TABLE envelopes ADD COLUMN urgency TEXT NOT NULL DEFAULT 'green'"
-            )
-        if "next_attempt_at" not in cols:
-            await self._conn.execute(
-                "ALTER TABLE envelopes ADD COLUMN next_attempt_at TIMESTAMP"
-            )
-        await self._conn.commit()
-        if not existed and sys.platform != "win32":
-            os.chmod(self.path, 0o600)
+        # connect() must be atomic: any failure after the connection opens
+        # (locked/full/corrupt DB, migration error) must close it, else the
+        # aiosqlite worker thread leaks. Across daemon restarts and the test
+        # suite these accumulate until the event loop chokes and a random test
+        # times out. See the scheduler-engine leak (agent_core #468).
+        try:
+            await self._conn.execute("PRAGMA journal_mode=WAL")
+            await self._conn.execute("PRAGMA foreign_keys=ON")
+            await self._conn.executescript(_SCHEMA)
+            # Migrate legacy DBs that pre-date the urgency column. Using a
+            # PRAGMA-driven check keeps this idempotent without try/except
+            # OperationalError.
+            self._conn.row_factory = aiosqlite.Row
+            cur = await self._conn.execute("PRAGMA table_info(envelopes)")
+            cols = {row["name"] async for row in cur}
+            await cur.close()
+            if "urgency" not in cols:
+                await self._conn.execute(
+                    "ALTER TABLE envelopes ADD COLUMN urgency TEXT NOT NULL DEFAULT 'green'"
+                )
+            if "next_attempt_at" not in cols:
+                await self._conn.execute(
+                    "ALTER TABLE envelopes ADD COLUMN next_attempt_at TIMESTAMP"
+                )
+            await self._conn.commit()
+            if not existed and sys.platform != "win32":
+                os.chmod(self.path, 0o600)
+        except BaseException:
+            await self._conn.close()
+            self._conn = None
+            raise
 
     async def close(self) -> None:
         if self._conn is not None:
