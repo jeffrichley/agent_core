@@ -9,7 +9,13 @@ from typing import Literal
 from agent_core_hatchery.config import HatchConfig
 from agent_core_hatchery.hatcher import HatchResult
 
-DaemonCheckStatus = Literal["reachable_and_registered", "reachable_but_missing", "unreachable", "skipped"]
+DaemonCheckStatus = Literal[
+    "reachable_and_registered",
+    "reachable_but_missing",
+    "unreachable",
+    "start_failed",
+    "skipped",
+]
 
 
 def write_hatching_report(
@@ -36,6 +42,11 @@ def write_hatching_report(
         parts.append("- ⚠ Daemon reachable but endpoint NOT visible — fragment merge may have failed. Check daemon logs.\n")
     elif daemon_check_status == "unreachable":
         parts.append("- ⚠ Daemon healthcheck unreachable — endpoint will register on next daemon start.\n")
+    elif daemon_check_status == "start_failed":
+        parts.append(
+            "- ✗ Daemon FAILED to restart after hatch — the fleet may be OFFLINE. "
+            "Run `agent-core daemon start` now and check the daemon logs.\n"
+        )
     else:
         parts.append("- — daemon check skipped.\n")
 
@@ -56,7 +67,7 @@ def write_hatching_report(
         )
         step_idx += 1
 
-    if daemon_check_status in ("unreachable", "reachable_but_missing"):
+    if daemon_check_status in ("unreachable", "reachable_but_missing", "start_failed"):
         parts.append(
             f"{step_idx}. **ACTION REQUIRED.** Restart the agent-core daemon and verify the new endpoint registers. "
             f"`agent-core endpoints list` should include `{config.endpoint_name}`.\n\n"

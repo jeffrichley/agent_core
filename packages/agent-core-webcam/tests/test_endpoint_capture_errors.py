@@ -158,3 +158,42 @@ async def test_invalid_resolution_returns_clean_error(tmp_path, fake_backend):
     assert "invalid resolution" in result.message.lower()
     line = json.loads(ep.audit_log.path.read_text(encoding="utf-8").strip().splitlines()[-1])
     assert line["data"]["error"].startswith("invalid resolution")
+
+
+async def test_capture_timeout_releases_lock_and_raises(tmp_path):
+    """A hung backend read must time out and release the per-camera lock.
+
+    OpenCV's cap.read() is uninterruptible; without wait_for a hung read holds
+    the per-camera lock forever, wedging every future capture on that camera.
+    Adversarial review finding #4.
+    """
+    import threading
+
+    import pytest
+
+    from agent_core_webcam.protocol import ReadTimeoutError
+
+    release = threading.Event()
+
+    class _HangingBackend:
+        def list_cameras(self):
+            return []
+
+        def capture(self, index, resolution):
+            release.wait(timeout=5.0)  # block until released (safety-capped)
+            return b"never"
+
+    ep = WebcamEndpoint(
+        name="webcam-test",
+        captures_root=tmp_path / "captures",
+        audit_log_path=tmp_path / "audit.jsonl",
+        camera_backend=_HangingBackend(),
+        capture_timeout_seconds=0.05,
+    )
+    try:
+        with pytest.raises(ReadTimeoutError):
+            await ep.capture_frame(camera_index=0, save=False)
+        lock = await ep._lock_for(0)
+        assert not lock.locked()  # lock released despite the hung read
+    finally:
+        release.set()  # let the orphaned worker thread exit

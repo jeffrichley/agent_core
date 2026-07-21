@@ -629,3 +629,61 @@ async def test_for_test_backend_skips_construction(
     assert construct_calls == [], (
         "for_test() path must not call QwenTTSBackend even when start() is invoked"
     )
+
+
+async def test_reply_tail_failure_still_publishes_synthesis_failed(
+    tmp_path: Path, ref_wav: Path
+) -> None:
+    """If publishing the SynthesisReady fails, the handler must still emit a
+    terminal SynthesisFailed — not die silently in its spawned task and hang
+    the requesting agent forever. Adversarial review finding #7.
+    """
+    import uuid
+    from datetime import UTC, datetime
+
+    from agent_core.bus.envelope import Envelope, EventPayload
+    from agent_core_voice.envelopes import SynthesisRequestPayload
+
+    class _FailFirstPublishHandle:
+        def __init__(self) -> None:
+            self.published: list[Any] = []
+            self._calls = 0
+
+        async def ack(self, env_id: str) -> None:
+            pass
+
+        async def publish(self, env: Any, to: Any = None) -> None:
+            self._calls += 1
+            if self._calls == 1:
+                raise RuntimeError("bus publish exploded")  # the SynthesisReady
+            self.published.append(env)  # the recovery SynthesisFailed
+
+    ep = VoiceEndpoint.for_test(
+        backend=FakeTTSBackend(),
+        voices={"alice": VoiceInfo(voice_id="alice", ref_wav=ref_wav, ref_text="r")},
+        output_dir=tmp_path / "out",
+        audit_path=tmp_path / "audit.jsonl",
+    )
+    await ep.start(_minimal_handle())
+    handle = _FailFirstPublishHandle()
+    ep._handle = handle  # type: ignore[assignment]
+    ep.register_agent("alice", "alice")
+
+    env_id = str(uuid.uuid4())
+    req_payload = SynthesisRequestPayload(text="hello world")
+    env = Envelope(
+        id=env_id,
+        correlation_id=env_id,
+        to="voice_test",
+        from_="alice",
+        kind="Event",
+        payload=EventPayload(type="SynthesisRequest", data=req_payload.model_dump()),
+        created_at=datetime.now(UTC),
+    )
+
+    # Must not raise despite the reply publish exploding.
+    await ep._handle_synthesis_request(env, req_payload)
+
+    # The caller still got a terminal reply.
+    assert len(handle.published) == 1
+    assert handle.published[0].payload.type == "SynthesisFailed"
