@@ -208,3 +208,56 @@ class TestReloadAndProbe:
 
         result = reload_and_probe(cfg)
         assert result == "unreachable"
+
+
+class TestStartFailureSurfacing:
+    """Adversarial review #6: a failed daemon start (fleet offline) must be a
+    hard, distinct outcome — not swallowed like a best-effort stop."""
+
+    def test_start_returns_false_on_nonzero_returncode(self) -> None:
+        def runner(cmd, **kw):
+            class _R:
+                returncode = 3
+
+            return _R()
+
+        assert _start_daemon(runner=runner) is False
+
+    def test_start_returns_true_on_success(self) -> None:
+        def runner(cmd, **kw):
+            class _R:
+                returncode = 0
+
+            return _R()
+
+        assert _start_daemon(runner=runner) is True
+
+    def test_start_returns_false_on_exception(self) -> None:
+        def runner(cmd, **kw):
+            raise FileNotFoundError("agent-core not on PATH")
+
+        assert _start_daemon(runner=runner) is False
+
+    def test_reload_and_probe_reports_start_failed_when_start_fails(self, tmp_path) -> None:
+        from agent_core_hatchery.config import HatchConfig
+
+        cfg_dir = tmp_path / ".agent-core"
+        cfg_dir.mkdir()
+        (cfg_dir / "agent_core.yaml").write_text(
+            "http:\n  bind_host: 127.0.0.1\n  bind_port: 8789\n"
+        )
+        cfg = HatchConfig(
+            being_name="TestBeing",
+            primary_human_name="Tester",
+            vault_root=str(tmp_path),
+            daemon_config_dir=str(cfg_dir),
+        )
+
+        def runner(cmd, **kw):
+            # stop succeeds, start fails — daemon left down.
+            class _R:
+                returncode = 0 if cmd[-1] == "stop" else 1
+
+            return _R()
+
+        assert reload_and_probe(cfg, runner=runner) == "start_failed"

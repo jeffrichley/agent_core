@@ -79,6 +79,15 @@ def hatch_being(
     typer.echo(f"Report: {report_path}")
     typer.echo("🐣")
 
+    if daemon_check_status == "start_failed":
+        typer.secho(
+            "✗  Daemon FAILED to restart after hatch — the fleet may be OFFLINE. "
+            "Run `agent-core daemon start` now.",
+            fg=typer.colors.RED,
+            err=True,
+        )
+        raise typer.Exit(code=1)
+
     if daemon_check_status == "reachable_but_missing":
         typer.secho(
             "⚠  Daemon probe: endpoint not registered after reload. See HATCHING-REPORT.md.",
