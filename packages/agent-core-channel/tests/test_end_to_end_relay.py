@@ -30,6 +30,7 @@ from agent_core.bus.http_host import HTTPHost
 from agent_core.bus.notify_broker import NotificationBroker
 from agent_core.endpoints.claude_code_mcp import ClaudeCodeMCPEndpoint
 from agent_core.endpoints.stub import StubEndpoint
+from agent_core.testing import wait_until
 
 
 @pytest.mark.asyncio
@@ -83,7 +84,10 @@ async def test_bus_arrival_reaches_relay_stdio_stream(tmp_path: Path) -> None:
             try:
                 # Give the relay a moment to subscribe to /notify/agent
                 # before we publish, so the broker fan-out has a target.
-                await asyncio.sleep(0.3)
+                await wait_until(
+                    lambda: broker._subs.get("agent"),
+                    message="relay subscribed to /notify/agent before publish",
+                )
 
                 # 4. Publish via the stub. BusHandle.publish stamps `from_`.
                 env = Envelope(

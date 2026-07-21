@@ -10,6 +10,7 @@ import pytest
 
 from agent_core.bus.http_host import HTTPHost
 from agent_core.bus.notify_broker import NotificationBroker
+from agent_core.testing import wait_until
 
 
 @pytest.mark.asyncio
@@ -24,7 +25,10 @@ async def test_notify_route_streams_published_events():
             async with client.stream("GET", url) as resp:
                 # Drive a publish on a background task once the stream is open.
                 async def push_after_delay():
-                    await asyncio.sleep(0.2)
+                    await wait_until(
+                        lambda: broker._subs.get("agent-a"),
+                        message="notify route subscribed to agent-a before publish",
+                    )
                     await broker.publish("agent-a", {"meta": {"count": 1}})
 
                 pump = asyncio.create_task(push_after_delay())
@@ -131,7 +135,10 @@ async def test_notify_route_unsubscribes_on_disconnect():
                 # Open and close immediately.
                 pass
         # Give the server a moment to run the unsubscribe finally block.
-        await asyncio.sleep(0.2)
+        await wait_until(
+            lambda: "agent-a" not in broker._subs,
+            message="agent-a subscriber set cleaned up after disconnect",
+        )
         # The agent-a subscriber set should be cleaned up.
         assert "agent-a" not in broker._subs
     finally:
