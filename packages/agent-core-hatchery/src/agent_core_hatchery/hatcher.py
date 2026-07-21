@@ -302,4 +302,6 @@ class Hatcher:
                 elif path.is_dir() and not any(path.iterdir()):
                     path.rmdir()
             except OSError:
+                # Justified: rollback is best-effort cleanup; if one path can't
+                # be removed we continue unwinding the rest rather than abort.
                 pass

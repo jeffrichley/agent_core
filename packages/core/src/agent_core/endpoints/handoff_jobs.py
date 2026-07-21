@@ -175,6 +175,7 @@ class HandoffJobsEndpoint:
             try:
                 await self._worker_task
             except asyncio.CancelledError:
+                # Expected: we just cancelled our own worker task on stop().
                 pass
             self._worker_task = None
         self._handle = None

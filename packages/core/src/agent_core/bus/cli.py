@@ -118,6 +118,8 @@ async def _run_bus(config_path: Path) -> None:
                 try:
                     await asyncio.wait_for(stop_event.wait(), timeout=bus.config.ttl_sweep_seconds)
                 except TimeoutError:
+                    # Justified: the timeout is the loop's normal cadence — the
+                    # sweep interval elapsed without a stop signal, so loop again.
                     pass
 
         async def _redelivery_loop():
@@ -136,6 +138,8 @@ async def _run_bus(config_path: Path) -> None:
                         stop_event.wait(), timeout=bus.config.redelivery_sweep_seconds
                     )
                 except TimeoutError:
+                    # Justified: the timeout is the loop's normal cadence — the
+                    # sweep interval elapsed without a stop signal, so loop again.
                     pass
 
         async def _backup_loop():  # pragma: no cover
@@ -153,6 +157,8 @@ async def _run_bus(config_path: Path) -> None:
                         stop_event.wait(), timeout=bus.config.backup_interval_seconds
                     )
                 except TimeoutError:
+                    # Justified: the timeout is the loop's normal cadence — the
+                    # backup interval elapsed without a stop signal, so loop again.
                     pass
 
         sweeps = [asyncio.create_task(_ttl_loop()), asyncio.create_task(_redelivery_loop())]

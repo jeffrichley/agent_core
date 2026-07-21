@@ -214,12 +214,17 @@ class DaemonClient:
                     try:
                         data = json.loads(result[0].text)
                     except (json.JSONDecodeError, AttributeError):
+                        # Justified: a malformed tool payload is treated as "no
+                        # data" and the poll loop retries on the next tick.
                         data = None
                 if isinstance(data, dict):
                     for item in data.get("items", []):
                         if predicate(item):
                             return item
             except Exception:
+                # Justified: this is a best-effort poll loop over a flaky MCP
+                # connection; transient errors are swallowed so it keeps retrying
+                # until the deadline, then returns None below.
                 pass
             await asyncio.sleep(interval)
         return None
@@ -242,8 +247,12 @@ class DaemonClient:
                 try:
                     return json.loads(result[0].text)
                 except (json.JSONDecodeError, AttributeError):
+                    # Justified: a malformed payload falls through to the empty
+                    # snapshot returned below.
                     pass
         except Exception:
+            # Justified: list_pending is best-effort; any MCP/transport failure
+            # degrades to the documented empty snapshot returned below.
             pass
         return {"meta": {}, "items": []}
 

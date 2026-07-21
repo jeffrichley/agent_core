@@ -53,6 +53,8 @@ def _save_state(state: dict) -> None:
         _STATE_FILE.parent.mkdir(parents=True, exist_ok=True)
         _STATE_FILE.write_text(json.dumps(state), encoding="utf-8")
     except OSError:
+        # Justified: time-state persistence is best-effort; a failed write just
+        # means the next run recomputes from scratch — no correctness impact.
         pass
 
 

@@ -45,6 +45,8 @@ def _debug(msg: str) -> None:
             ts = datetime.now(UTC).astimezone().strftime("%Y-%m-%d %H:%M:%S")
             f.write(f"[{ts}] [bg] {msg}\n")
     except Exception:
+        # Justified: this IS the debug-logging path; a failure here has no
+        # meaningful place to be reported, so it is intentionally swallowed.
         pass
 
 
@@ -62,6 +64,8 @@ def _load_state(state_file: Path) -> dict:
         try:
             return json.loads(state_file.read_text(encoding="utf-8"))
         except (json.JSONDecodeError, OSError):
+            # Justified: a missing/corrupt dedup-state file safely degrades to
+            # "no prior handoff" ({}); worst case is one duplicate note.
             pass
     return {}
 

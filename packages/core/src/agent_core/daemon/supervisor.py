@@ -47,10 +47,14 @@ def kill_tree(pid: int) -> None:
             try:
                 child.kill()
             except psutil.NoSuchProcess:
+                # Justified: the child died between enumeration and kill —
+                # already gone, nothing to do.
                 pass
         try:
             parent.kill()
         except psutil.NoSuchProcess:
+            # Justified: the parent died between enumeration and kill —
+            # already gone, nothing to do.
             pass
         psutil.wait_procs([*children, parent], timeout=5)
     except psutil.NoSuchProcess:

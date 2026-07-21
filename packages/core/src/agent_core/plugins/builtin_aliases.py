@@ -74,6 +74,8 @@ def register_endpoint_types() -> dict[str, type[Any]]:
         try:
             from agent_core_discord.endpoint import DiscordEndpoint
         except ImportError:
+            # Justified: agent-core-discord is an optional extra; when it is
+            # not installed the builtin.discord endpoint is simply unavailable.
             pass
         else:
             endpoint_types["builtin.discord"] = DiscordEndpoint
