@@ -5,7 +5,7 @@ from pathlib import Path
 
 import pytest
 from agent_core_hatchery.config import HatchConfig
-from agent_core_hatchery.hatcher import HatchError, Hatcher, VaultExistsError
+from agent_core_hatchery.hatcher import Hatcher, HatchError, VaultExistsError
 
 
 def _noop_venv_builder(target: str) -> Path:

@@ -260,13 +260,15 @@ async def test_connect_is_atomic_and_closes_connection_on_failure(
     times out. Regression sibling of the scheduler-engine leak (agent_core #468).
     The autouse leak guard additionally asserts no aiosqlite thread survives.
     """
+    import sqlite3
+
     import agent_core.bus.persistence as persist_mod
 
     # Force the first post-open step (schema apply) to fail.
     monkeypatch.setattr(persist_mod, "_SCHEMA", "THIS IS NOT VALID SQL;")
     p = Persistence(tmp_path / "bus.sqlite")
 
-    with pytest.raises(Exception):
+    with pytest.raises(sqlite3.OperationalError):
         await p.connect()
 
     assert p._conn is None  # connection was closed and cleared on failure
