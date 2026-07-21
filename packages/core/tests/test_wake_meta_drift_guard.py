@@ -8,7 +8,6 @@ fields would re-introduce the original race.
 
 from __future__ import annotations
 
-import asyncio
 import uuid
 from datetime import UTC, datetime
 
@@ -16,8 +15,13 @@ import pytest
 
 from agent_core.bus.envelope import Envelope, TextMessagePayload
 from agent_core.endpoints.claude_code_mcp import ClaudeCodeMCPEndpoint
+from agent_core.testing import wait_until
 
 ALLOWED_WAKE_META_KEYS = frozenset({"endpoint", "fired_at"})
+
+
+def _speed_up_debounce(ep: ClaudeCodeMCPEndpoint) -> None:
+    ep._notify_debounce_seconds_by_urgency = {"red": 0.01, "yellow": 0.03, "green": 0.05}
 
 
 def _envelope(idx: int, urgency: str = "green", from_: str = "alice") -> Envelope:
@@ -61,10 +65,10 @@ async def test_published_wake_has_no_queue_state_meta() -> None:
 
     endpoint = ClaudeCodeMCPEndpoint(name="agent", mount="/mcp/agent")
     endpoint._notify_broker = CaptureBroker()  # type: ignore[assignment]
+    _speed_up_debounce(endpoint)
     endpoint.queue_for_pickup(_envelope(0, urgency="green"))
     await endpoint._notify_mail_arrived(urgency="green")
-    # Wait long enough for the debounce to fire (green = 1.0s in defaults).
-    await asyncio.sleep(1.2)
+    await wait_until(lambda: published, message="debounced wake published")
     assert published, "expected at least one published wake event"
     event = published[-1]
     assert set(event["meta"].keys()) == ALLOWED_WAKE_META_KEYS
