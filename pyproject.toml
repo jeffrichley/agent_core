@@ -14,7 +14,7 @@ url = "https://download.pytorch.org/whl/cu130"
 explicit = true
 
 [tool.uv.sources]
-agent-core = { workspace = true }
+agent-core-bus = { workspace = true }
 agent-core-notify = { workspace = true }
 agent-core-credentials = { workspace = true }
 agent-core-discord = { workspace = true }

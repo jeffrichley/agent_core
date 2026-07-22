@@ -14,6 +14,6 @@ Modules:
 from importlib.metadata import PackageNotFoundError, version
 
 try:
-    __version__: str = version("agent-core")
+    __version__: str = version("agent-core-bus")
 except PackageNotFoundError:  # pragma: no cover
     __version__ = "unknown"

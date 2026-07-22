@@ -15,7 +15,7 @@ dependencies = [
     "rich>=13.0",
     "pyyaml>=6.0",
     "pydantic>=2.0",
-    "agent-core>=0.7,<0.8",
+    "agent-core-bus>=0.8,<0.9",
 ]
 
 [project.scripts]

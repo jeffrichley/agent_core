@@ -26,7 +26,7 @@ jobs:
 
       - name: Build wheels and sdists for all 12 packages
         run: |
-          for pkg in agent-core agent-core-briefs agent-core-busproxy agent-core-channel \
+          for pkg in agent-core-bus agent-core-briefs agent-core-busproxy agent-core-channel \
                      agent-core-credentials agent-core-discord agent-core-hatchery \
                      agent-core-inbound agent-core-notify agent-core-qa \
                      agent-core-voice agent-core-webcam; do
