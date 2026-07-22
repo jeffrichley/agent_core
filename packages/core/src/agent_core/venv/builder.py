@@ -226,7 +226,7 @@ def build_being_venv(
     Raises UvNotFoundError, SidecarVerifyError, or subprocess.CalledProcessError.
     """
     uv = resolve_uv()
-    version = _metadata_version("agent-core")
+    version = _metadata_version("agent-core-bus")
 
     home = home_for_target(target)
     venv_dir = versioned_venv_dir(home, version, target=target)

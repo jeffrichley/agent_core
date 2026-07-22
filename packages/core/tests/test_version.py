@@ -7,7 +7,7 @@ from importlib.metadata import version
 def test_version_matches_importlib_metadata() -> None:
     import agent_core
 
-    assert agent_core.__version__ == version("agent-core")
+    assert agent_core.__version__ == version("agent-core-bus")
 
 
 def test_version_is_not_hardcoded_sentinel() -> None:
