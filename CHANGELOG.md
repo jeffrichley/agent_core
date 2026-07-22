@@ -8,6 +8,13 @@ This project uses [*towncrier*](https://towncrier.readthedocs.io/); unreleased c
 
 <!-- towncrier release notes start -->
 
+## [0.8.1](https://github.com/jeffrichley/agent_core/compare/v0.8.0...v0.8.1) (2026-07-22)
+
+
+### Bug Fixes
+
+* rename flagship dist to agent-core-bus + bump inter-package pins to 0.8.x ([#474](https://github.com/jeffrichley/agent_core/issues/474)) ([48426e7](https://github.com/jeffrichley/agent_core/commit/48426e7ff753d8f35d4a4626308546e9d0f331f7))
+
 ## [0.8.0](https://github.com/jeffrichley/agent_core/compare/v0.7.0...v0.8.0) (2026-07-21)
 
 
