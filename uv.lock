@@ -50,8 +50,8 @@ conflicts = [[
 
 [manifest]
 members = [
-    "agent-core",
     "agent-core-briefs",
+    "agent-core-bus",
     "agent-core-busproxy",
     "agent-core-channel",
     "agent-core-credentials",
@@ -112,7 +112,29 @@ wheels = [
 ]
 
 [[package]]
-name = "agent-core"
+name = "agent-core-briefs"
+source = { editable = "packages/agent-core-briefs" }
+dependencies = [
+    { name = "agent-core-bus" },
+    { name = "pluggy" },
+    { name = "pydantic" },
+    { name = "pyyaml" },
+    { name = "simpleeval" },
+    { name = "typer" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "agent-core-bus", editable = "packages/core" },
+    { name = "pluggy", specifier = ">=1.6" },
+    { name = "pydantic", specifier = ">=2.7" },
+    { name = "pyyaml", specifier = ">=6.0" },
+    { name = "simpleeval", specifier = ">=1.0" },
+    { name = "typer", specifier = ">=0.12" },
+]
+
+[[package]]
+name = "agent-core-bus"
 source = { editable = "packages/core" }
 dependencies = [
     { name = "agent-core-credentials" },
@@ -157,28 +179,6 @@ requires-dist = [
     { name = "typer", specifier = ">=0.12" },
     { name = "tzdata", specifier = ">=2024.1" },
     { name = "uvicorn", specifier = ">=0.30" },
-]
-
-[[package]]
-name = "agent-core-briefs"
-source = { editable = "packages/agent-core-briefs" }
-dependencies = [
-    { name = "agent-core" },
-    { name = "pluggy" },
-    { name = "pydantic" },
-    { name = "pyyaml" },
-    { name = "simpleeval" },
-    { name = "typer" },
-]
-
-[package.metadata]
-requires-dist = [
-    { name = "agent-core", editable = "packages/core" },
-    { name = "pluggy", specifier = ">=1.6" },
-    { name = "pydantic", specifier = ">=2.7" },
-    { name = "pyyaml", specifier = ">=6.0" },
-    { name = "simpleeval", specifier = ">=1.0" },
-    { name = "typer", specifier = ">=0.12" },
 ]
 
 [[package]]
@@ -245,7 +245,7 @@ requires-dist = [
 name = "agent-core-discord"
 source = { editable = "packages/agent-core-discord" }
 dependencies = [
-    { name = "agent-core" },
+    { name = "agent-core-bus" },
     { name = "agent-core-credentials" },
     { name = "discord-py" },
     { name = "pydantic" },
@@ -259,7 +259,7 @@ voice = [
 
 [package.metadata]
 requires-dist = [
-    { name = "agent-core", editable = "packages/core" },
+    { name = "agent-core-bus", editable = "packages/core" },
     { name = "agent-core-credentials", editable = "packages/credentials" },
     { name = "discord-py", specifier = ">=2.4" },
     { name = "faster-whisper", marker = "extra == 'voice'", specifier = ">=1.1" },
@@ -272,7 +272,7 @@ provides-extras = ["voice"]
 name = "agent-core-hatchery"
 source = { editable = "packages/agent-core-hatchery" }
 dependencies = [
-    { name = "agent-core" },
+    { name = "agent-core-bus" },
     { name = "jinja2" },
     { name = "pydantic" },
     { name = "pyyaml" },
@@ -289,7 +289,7 @@ dev = [
 
 [package.metadata]
 requires-dist = [
-    { name = "agent-core", editable = "packages/core" },
+    { name = "agent-core-bus", editable = "packages/core" },
     { name = "jinja2", specifier = ">=3.1" },
     { name = "pydantic", specifier = ">=2.0" },
     { name = "pyyaml", specifier = ">=6.0" },
@@ -308,7 +308,7 @@ dev = [
 name = "agent-core-inbound"
 source = { editable = "packages/agent-core-inbound" }
 dependencies = [
-    { name = "agent-core" },
+    { name = "agent-core-bus" },
     { name = "agent-core-credentials" },
     { name = "fastapi" },
     { name = "pydantic" },
@@ -325,7 +325,7 @@ test = [
 
 [package.metadata]
 requires-dist = [
-    { name = "agent-core", editable = "packages/core" },
+    { name = "agent-core-bus", editable = "packages/core" },
     { name = "agent-core-credentials", editable = "packages/credentials" },
     { name = "fastapi", specifier = ">=0.110" },
     { name = "httpx", marker = "extra == 'test'" },
@@ -373,7 +373,7 @@ requires-dist = [
 name = "agent-core-voice"
 source = { editable = "packages/agent-core-voice" }
 dependencies = [
-    { name = "agent-core" },
+    { name = "agent-core-bus" },
     { name = "fastmcp" },
     { name = "madrigal" },
     { name = "pluggy" },
@@ -394,7 +394,7 @@ cu130 = [
 
 [package.metadata]
 requires-dist = [
-    { name = "agent-core", editable = "packages/core" },
+    { name = "agent-core-bus", editable = "packages/core" },
     { name = "fastmcp", specifier = ">=2.0" },
     { name = "madrigal", specifier = ">=0.2.0" },
     { name = "pluggy", specifier = ">=1.6" },
@@ -410,7 +410,7 @@ provides-extras = ["cpu", "cu130"]
 name = "agent-core-webcam"
 source = { editable = "packages/agent-core-webcam" }
 dependencies = [
-    { name = "agent-core" },
+    { name = "agent-core-bus" },
     { name = "fastmcp" },
     { name = "opencv-python" },
     { name = "pluggy" },
@@ -419,7 +419,7 @@ dependencies = [
 
 [package.metadata]
 requires-dist = [
-    { name = "agent-core", editable = "packages/core" },
+    { name = "agent-core-bus", editable = "packages/core" },
     { name = "fastmcp", specifier = ">=2.0" },
     { name = "opencv-python", specifier = ">=5.0.0.93" },
     { name = "pluggy", specifier = ">=1.6" },
