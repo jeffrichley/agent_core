@@ -67,6 +67,10 @@ jobs:
         with:
           packages-dir: dist/
           password: ${{ secrets.PYPI_API_TOKEN }}
+          # PyPI rate-limits NEW-project creation, so a 12-package first publish
+          # can 429 partway. skip-existing makes re-runs idempotent: already-
+          # published versions are skipped, so a retry only creates the rest.
+          skip-existing: true
 
   upload-github-release:
     needs: build
