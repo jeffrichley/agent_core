@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.8.1](https://github.com/jeffrichley/agent_core/compare/v0.8.0...agent-core-notify-v0.8.1) (2026-07-22)
+
+
+### Bug Fixes
+
+* republish package family to complete rate-limited first publish ([#477](https://github.com/jeffrichley/agent_core/issues/477)) ([32977ac](https://github.com/jeffrichley/agent_core/commit/32977ac78da4a15553329bb4e1fdaa9e894834ad))
+
 ## [0.8.0](https://github.com/jeffrichley/agent_core/compare/v0.7.0...agent-core-notify-v0.8.0) (2026-07-21)
 
 
