@@ -1,11 +1,12 @@
 """Integration test: --config mode renders a complete vault into a tmpdir."""
 
+import json
 import re
 from pathlib import Path
 
 import pytest
 from agent_core_hatchery.config import HatchConfig
-from agent_core_hatchery.hatcher import Hatcher, HatchError, VaultExistsError
+from agent_core_hatchery.hatcher import Hatcher, VaultExistsError
 
 
 def _noop_venv_builder(target: str) -> Path:
@@ -169,14 +170,14 @@ def test_no_gendered_pronouns_in_rendered_vault(tmp_path):
     )
 
 
-def test_hatch_without_injected_mcp_gen_fails_clearly(tmp_path):
-    """The real (non-injected) hatch path must fail with a clear HatchError.
+def test_hatch_without_injected_mcp_gen_uses_real_generator(tmp_path):
+    """The real (non-injected) hatch path writes a canonical .mcp.json.
 
-    ``_generate_mcp_json`` lazy-imports agent_core.venv.mcp_config (C2-2, #316),
-    which is not yet merged — so a real hatch cannot complete. Every other test
-    injects ``_mcp_json_gen``, hiding this; this drives the real path and pins a
-    clear, actionable error instead of a cryptic post-venv ImportError.
-    Adversarial review finding #5.
+    ``_generate_mcp_json`` delegates to C2-2's agent_core.venv.mcp_config
+    (#316, now merged). Every other test injects ``_mcp_json_gen``; this one
+    drives the real generator to prove the wiring end-to-end — a real hatch
+    produces a valid, stable-interpreter .mcp.json (closing the hatchery's
+    "never generates .mcp.json" gap by construction).
     """
     cfg = HatchConfig(
         being_name="TestBeing",
@@ -185,7 +186,14 @@ def test_hatch_without_injected_mcp_gen_fails_clearly(tmp_path):
         daemon_config_dir=str(tmp_path / ".agent-core"),
     )
     # Inject only the venv builder to isolate the mcp path; leave _mcp_json_gen
-    # unset so the real generator import is exercised.
+    # unset so the real generator runs.
     hatcher = Hatcher(cfg, _venv_builder=_noop_venv_builder)
-    with pytest.raises(HatchError, match="#316"):
-        hatcher.hatch()
+    result = hatcher.hatch()
+
+    mcp_path = cfg.resolved_vault_root() / ".mcp.json"
+    assert mcp_path.is_file()
+    assert mcp_path in result.files_written
+    doc = json.loads(mcp_path.read_text(encoding="utf-8"))
+    assert set(doc["mcpServers"]) == {"agent-core", "agent-core-channel", "notify"}
+    # The C2-2 P0 regression guard: stable interpreter, never version-stamped.
+    assert ".venv-" not in doc["mcpServers"]["agent-core"]["command"]

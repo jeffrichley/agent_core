@@ -26,12 +26,6 @@ class VaultExistsError(Exception):
     """Raised when default-mode hatch is attempted against an existing vault."""
 
 
-class HatchError(RuntimeError):
-    """Raised when a hatch cannot complete because a required subsystem is
-    unavailable — surfaced as a clear, actionable message rather than a cryptic
-    ImportError deep in the build."""
-
-
 @dataclass
 class HatchResult:
     vault_root: Path
@@ -194,10 +188,7 @@ class Hatcher:
         """Rename the placeholder `_being_/` segment to <being_name_lower>/."""
         parts = list(rel.parts)
         if "_being_" in parts:
-            parts = [
-                self._config.being_name_lower if p == "_being_" else p
-                for p in parts
-            ]
+            parts = [self._config.being_name_lower if p == "_being_" else p for p in parts]
         return Path(*parts) if parts else rel
 
     def _copy_skills_tree(self, result: HatchResult) -> None:
@@ -205,9 +196,7 @@ class Hatcher:
         if not skills_src.is_dir():
             return
 
-        skills_dest = (
-            self._config.resolved_vault_root() / ".claude" / "skills"
-        )
+        skills_dest = self._config.resolved_vault_root() / ".claude" / "skills"
         for src in sorted(skills_src.rglob("*")):
             rel = src.relative_to(skills_src)
             dest = skills_dest / rel
@@ -246,6 +235,7 @@ class Hatcher:
             stable = self._venv_builder(self._config.being_name_lower)
         else:
             from agent_core.venv.builder import build_being_venv  # C2-1 (#315)
+
             stable = build_being_venv(self._config.being_name_lower)
 
         self._tracked_writes.append(stable)
@@ -255,8 +245,8 @@ class Hatcher:
         """Write the being's .mcp.json via C2-2's canonical generator (Cβ-3, #327).
 
         Uses the injected _mcp_json_gen callable if set (for tests); otherwise
-        lazy-imports C2-2's generate_mcp_json from agent_core.venv.mcp_config
-        (module path to be confirmed once #316 merges — update here then).
+        delegates to C2-2's generate_mcp_json (agent_core.venv.mcp_config, #316),
+        which writes the stable-interpreter shape the hatchery reuses.
 
         Appends the returned path to _tracked_writes for transactional rollback.
         """
@@ -267,22 +257,8 @@ class Hatcher:
                 daemon_config_dir=self._config.resolved_daemon_config_dir(),
             )
         else:
-            # C2-2 (#316): not yet merged. Fail with a clear, actionable error
-            # instead of a bare ImportError surfacing after the venv is built —
-            # a real (non-injected) hatch cannot complete until #316 lands.
-            # Expected module path: agent_core.venv.mcp_config (confirm on merge).
-            # Expected contract: generate_mcp_json(target, *, vault_root, ...) -> Path
-            try:
-                from agent_core.venv.mcp_config import (  # type: ignore[import-not-found]
-                    generate_mcp_json,
-                )
-            except ImportError as exc:
-                raise HatchError(
-                    "Cannot generate the being's .mcp.json: the canonical "
-                    "generator agent_core.venv.mcp_config (C2-2, #316) is not "
-                    "yet available, so a real hatch cannot complete. Inject "
-                    "_mcp_json_gen to hatch before #316 merges."
-                ) from exc
+            from agent_core.venv.mcp_config import generate_mcp_json
+
             path = generate_mcp_json(
                 self._config.being_name_lower,
                 vault_root=self._config.resolved_vault_root(),
