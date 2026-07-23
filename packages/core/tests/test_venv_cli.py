@@ -86,3 +86,30 @@ class TestVenvUpgradeCommand:
         _patch_build(monkeypatch, raises=UvNotFoundError("uv not found"))
         result = cli_runner.invoke(venv_app, ["upgrade", "daemon"])
         assert result.exit_code == 1
+
+
+class TestRegenMcpCommand:
+    def test_daemon_target_rejected(
+        self, cli_runner: CliRunner
+    ) -> None:
+        result = cli_runner.invoke(venv_app, ["regen-mcp", "daemon"])
+        assert result.exit_code == 2
+        assert "no .mcp.json" in result.output
+
+    def test_regenerates_and_reports(
+        self, cli_runner: CliRunner, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr(Path, "home", staticmethod(lambda: tmp_path))
+        result = cli_runner.invoke(venv_app, ["regen-mcp", "wren"])
+        assert result.exit_code == 0
+        assert "regenerated" in result.output
+        assert (tmp_path / ".wren" / ".mcp.json").is_file()
+
+    def test_canonical_reports_no_change(
+        self, cli_runner: CliRunner, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr(Path, "home", staticmethod(lambda: tmp_path))
+        cli_runner.invoke(venv_app, ["regen-mcp", "wren"])
+        result = cli_runner.invoke(venv_app, ["regen-mcp", "wren"])
+        assert result.exit_code == 0
+        assert "already canonical" in result.output
