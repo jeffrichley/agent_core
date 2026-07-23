@@ -23,20 +23,32 @@ app = typer.Typer(
 @app.callback(invoke_without_command=True)
 def hatch_being(
     config: Path | None = typer.Option(  # noqa: B008
-        None, "--config",
+        None,
+        "--config",
         help="Non-interactive: load HatchConfig from YAML.",
     ),
     vault_root: Path | None = typer.Option(  # noqa: B008
-        None, "--vault-root", "--root",
+        None,
+        "--vault-root",
+        "--root",
         help="Override the resolved vault root. Default: $HOME.",
     ),
     daemon_config_dir: Path | None = typer.Option(  # noqa: B008
-        None, "--daemon-config-dir",
+        None,
+        "--daemon-config-dir",
         help="Override the daemon's config directory. Default: ~/.agent-core/.",
     ),
     init_missing: bool = typer.Option(
-        False, "--init-missing",
+        False,
+        "--init-missing",
         help="Top-up an existing vault with newly-added scaffolding files.",
+    ),
+    no_daemon_reload: bool = typer.Option(
+        False,
+        "--no-daemon-reload",
+        help="Skip the post-hatch daemon reload+probe. Use when hatching without "
+        "a running installed daemon — CI, containers, or an air-gapped first "
+        "hatch. The being is still fully hatched; only the live handoff is skipped.",
     ),
 ) -> None:
     if config is not None:
@@ -64,13 +76,14 @@ def hatch_being(
     if interactive:
         letter_authored = offer_letter_authoring(cfg)
 
-    if not cfg.init_missing:
-        daemon_check_status = reload_and_probe(cfg)
-    else:
+    if cfg.init_missing or no_daemon_reload:
         daemon_check_status = "skipped"
+    else:
+        daemon_check_status = reload_and_probe(cfg)
 
     report_path = write_hatching_report(
-        cfg, result,
+        cfg,
+        result,
         letter_authored=letter_authored,
         daemon_check_status=daemon_check_status,
     )
