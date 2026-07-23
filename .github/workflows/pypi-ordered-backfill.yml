@@ -1,0 +1,81 @@
+name: pypi-ordered-backfill
+
+# Manual, one-purpose companion to release.yml.
+#
+# PyPI rate-limits NEW-project creation, so a 12-package first publish can 429
+# partway (it did on the v0.8.2 release: 4 of 12 created, then blocked). The
+# normal release publish uploads dist/* ALPHABETICALLY with skip-existing,
+# which gives no control over WHICH projects claim a limited daily window.
+#
+# This workflow re-downloads the EXACT artifacts already built by a prior
+# release run (no rebuild -> byte-identical versions, zero version risk) and
+# publishes package-by-package in an EXPLICIT priority order with
+# --skip-existing, so the highest-value projects are created first and a
+# rate-limit 429 only costs the lowest-priority tail. It never aborts on a
+# single failure, so every package gets its attempt in order.
+#
+# Retire once all 12 projects exist (then switch to project-scoped OIDC
+# trusted publishers, which are uncapped, and delete this file).
+
+on:
+  workflow_dispatch:
+    inputs:
+      source_run_id:
+        description: "release run id whose dist/ artifact to publish"
+        required: true
+        default: "29928695500"
+      order:
+        description: "space-separated wheel-name prefixes, highest priority first"
+        required: true
+        default: >-
+          agent_core_notify agent_core_credentials agent_core_hatchery
+          agent_core_discord agent_core_inbound agent_core_qa
+          agent_core_webcam agent_core_voice
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  publish-ordered:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Download dist/ from the source release run
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh run download "${{ inputs.source_run_id }}" \
+            --repo "${{ github.repository }}" \
+            --name dist --dir dist/
+          echo "--- artifacts ---"
+          ls -la dist/
+
+      - uses: astral-sh/setup-uv@fac544c07dec837d0ccb6301d7b5580bf5edae39  # v8.2.0
+        with:
+          python-version: "3.12"
+
+      - name: Publish in priority order (skip-existing; continue past rate limit)
+        env:
+          TWINE_USERNAME: __token__
+          TWINE_PASSWORD: ${{ secrets.PYPI_API_TOKEN }}
+        run: |
+          set -u
+          failed=""
+          for prefix in ${{ inputs.order }}; do
+            files=$(ls dist/${prefix}-* 2>/dev/null || true)
+            if [ -z "$files" ]; then
+              echo "::warning::no dist files matched ${prefix}- ; skipping"
+              continue
+            fi
+            echo "=== publishing ${prefix} ==="
+            if uvx twine upload --skip-existing $files; then
+              echo "OK: ${prefix}"
+            else
+              echo "::warning::upload failed for ${prefix} (likely NEW-project rate limit); continuing"
+              failed="${failed} ${prefix}"
+            fi
+          done
+          if [ -n "${failed}" ]; then
+            echo "::notice::not published this run (retry next window):${failed}"
+          fi
