@@ -1,0 +1,27 @@
+# Isolated staging daemon config — runs INSIDE the container only.
+# Deliberately minimal: no Discord, no claude_code_mcp (brain), no vault.
+# Those are layered in later phases once the substrate boot is proven.
+bus:
+  storage_path: /data/bus.sqlite
+
+http:
+  # Loopback, exactly like prod. The v0.8.x bus refuses a non-loopback bind
+  # without an auth hook (a real security guard — the harness caught this).
+  # We inspect from INSIDE the container via `docker exec`, so nothing needs to
+  # be exposed to the host — stronger isolation anyway.
+  bind_host: 127.0.0.1
+  bind_port: 8789
+
+endpoints:
+  # A no-op endpoint — proves the endpoint registry + supervisor wiring boot.
+  - type: builtin.stub
+    name: stub
+
+  # A real background endpoint with a run-loop — a good supervision target
+  # (the shakedown can kill it and confirm the supervisor restarts it).
+  - type: builtin.scheduler
+    name: scheduler
+  # NOTE: no HTTP-mounted endpoint here on purpose — the v0.8.x config schema
+  # changed (handoff_jobs no longer takes a `config:` block; the live v0.7.0
+  # config would fail v0.8.x validation — a promotion migration item). HTTP-
+  # surface testing moves to Phase 2 with the real MCP/discord endpoints.
