@@ -50,3 +50,33 @@ def test_config_mode_writes_hatching_report(tmp_path):
     report = tmp_path / ".testbeing" / "HATCHING-REPORT.md"
     assert report.is_file()
     assert "TestBeing" in report.read_text(encoding="utf-8")
+
+
+def test_no_daemon_reload_skips_probe_but_still_hatches(tmp_path):
+    """--no-daemon-reload fully hatches but never touches the daemon.
+
+    For CI / containers / air-gapped first hatch, where no installed daemon
+    exists to reload — the hard failure of the daemon handoff would otherwise
+    mask a fully successful hatch.
+    """
+    runner = CliRunner()
+    with (
+        patch("agent_core_hatchery.hatcher.Hatcher._build_being_venv"),
+        patch("agent_core_hatchery.hatcher.Hatcher._generate_mcp_json"),
+        patch("agent_core_hatchery.cli.reload_and_probe") as mock_probe,
+    ):
+        result = runner.invoke(
+            app,
+            [
+                "--config",
+                str(FIXTURES / "hatch-config-test-being.yaml"),
+                "--vault-root",
+                str(tmp_path),
+                "--daemon-config-dir",
+                str(tmp_path / ".agent-core"),
+                "--no-daemon-reload",
+            ],
+        )
+    assert result.exit_code == 0, result.stdout
+    mock_probe.assert_not_called()
+    assert (tmp_path / ".testbeing" / "HATCHING-REPORT.md").is_file()
