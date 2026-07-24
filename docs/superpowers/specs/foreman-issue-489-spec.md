@@ -93,6 +93,7 @@ Add a brief prose comment alongside each if not already present: `# mypy: object
    ```
 
 4. **Fix `packages/agent-core-briefs/src/agent_core_briefs/protocol.py`.**
+   - Add `Any` to the typing import: `from typing import TYPE_CHECKING, Protocol, runtime_checkable` → `from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable`
    - `Fetcher.fetch(self, config: dict, when: datetime) -> dict` → `config: dict[str, Any], -> dict[str, Any]`
    - `Destination.deliver` parameters: `sections: list[dict]` → `list[dict[str, Any]]`; `config: dict` → `dict[str, Any]`
    - Annotate the `# type: ignore[attr-defined]` line with prose: `# type: ignore[attr-defined]  # destination: object has no deliver attr; shape validated at load time by validate_destination_signature`
@@ -101,12 +102,18 @@ Add a brief prose comment alongside each if not already present: `# mypy: object
    - `def _replace(match: re.Match) -> str:` → `def _replace(match: re.Match[str]) -> str:`
 
 6. **Fix `packages/agent-core-briefs/src/agent_core_briefs/engine.py`.**
+   - `FetcherInvocation.config: dict` (dataclass field) → `dict[str, Any]`
+   - `async def _run_one(...) -> tuple[bool, str, dict]:` → `-> tuple[bool, str, dict[str, Any]]:`
    - `_merge_into_namespace(context: dict, namespace: str, payload: dict) -> None` → `context: dict[str, Any]`, `payload: dict[str, Any]`
 
 7. **Fix `packages/agent-core-briefs/src/agent_core_briefs/playbook.py`.**
    - Add `from collections.abc import Iterator` to imports.
+   - `Playbook.destinations: list[dict]` (dataclass field) → `list[dict[str, Any]]`
+   - `destinations: list[dict] = []` (local variable in `parse_playbook`) → `list[dict[str, Any]]`
    - `resolve_colors_for_sections(..., *, context: dict)` → `context: dict[str, Any]`
    - `resolve_conditional_sections(conditional_sections: list[SectionSpec], context: dict)` → `context: dict[str, Any]`
+   - `_classify_block(block: dict) -> str:` → `block: dict[str, Any]`
+   - `_to_section_spec(block: dict) -> SectionSpec:` → `block: dict[str, Any]`
    - `_resolve_color_value(section: SectionSpec, palette: dict[str, int], context: dict)` → `context: dict[str, Any]`
    - `_eval_expr(expr: str, context: dict) -> Any` → `context: dict[str, Any]`
    - `_wrap_context(ctx: dict) -> dict:` → `ctx: dict[str, Any]) -> dict[str, Any]:`
@@ -117,13 +124,17 @@ Add a brief prose comment alongside each if not already present: `# mypy: object
    - `destinations: list[dict]` field → `list[dict[str, Any]]`
 
 9. **Fix `packages/agent-core-briefs/src/agent_core_briefs/validators.py`.**
-   - `sections: list[dict]` → `list[dict[str, Any]]`
+   - Add `from typing import Any` import (the file currently has no `from typing import ...` line).
+   - `sections: list[dict]` (function parameter in `validate_submission`) → `list[dict[str, Any]]`
+   - `submitted_by_id: dict[str, dict] = {}` (local variable) → `dict[str, dict[str, Any]]`
 
 10. **Fix `packages/agent-core-briefs/src/agent_core_briefs/submit.py`.**
+    - Add `Any` to the typing import: `from typing import TYPE_CHECKING` → `from typing import TYPE_CHECKING, Any`
     - Add `ComposeSession` to the import from `agent_core_briefs.session` (currently only `SessionRegistry` is imported).
     - `_audit_deliver(audit_log: AuditLog, session, ...)` → `session: ComposeSession`
     - `submit_brief(*, ..., sections: list[dict], ...)` → `sections: list[dict[str, Any]]`
     - `_enrich_sections_with_spec(submitted: list[dict], *, ..., context: dict,) -> list[dict]:` → `submitted: list[dict[str, Any]]`, `context: dict[str, Any]`, `-> list[dict[str, Any]]:`
+    - `enriched: list[dict] = []` (local variable inside `_enrich_sections_with_spec`) → `list[dict[str, Any]]`
     - Annotate the `# type: ignore[assignment]` line with prose: `# type: ignore[assignment]  # resolve_colors_for_sections always returns int; PlaybookParseError raised otherwise`
 
 11. **Fix `packages/agent-core-briefs/src/agent_core_briefs/tools.py`.**
@@ -161,7 +172,7 @@ Add a brief prose comment alongside each if not already present: `# mypy: object
     - Inner closure `_mounter(bus_handle, *, …) -> None:` → `bus_handle: BusHandle`
 
 18. **Verify: run `uv run mypy packages/agent-core-briefs/src` and fix any remaining errors.**
-    - Expected clean output. If `disallow_untyped_decorators` fires on `@mcp.tool(…)` calls in `mcp.py` (indicating fastmcp stubs are unavailable), add `# type: ignore[misc]  # fastmcp: mcp.tool() resolves to Any without stubs` immediately after each `@mcp.tool(` opening (7 occurrences). Do not add these pre-emptively; check the actual mypy output first.
+    - After completing sub-requests 1–17, run `uv run mypy packages/agent-core-briefs/src`. The above sub-requests enumerate all known annotation gaps; if mypy surfaces additional bare `dict` / `list[dict]` errors not listed above (e.g., further dataclass fields or local variables that were missed during spec review), fix them following the same pattern (`dict` → `dict[str, Any]`, `list[dict]` → `list[dict[str, Any]]`), adding `from typing import Any` to the file's import block if it is not already present. If `disallow_untyped_decorators` fires on `@mcp.tool(…)` calls in `mcp.py` (indicating fastmcp stubs are unavailable), add `# type: ignore[misc]  # fastmcp: mcp.tool() resolves to Any without stubs` immediately after each `@mcp.tool(` opening (7 occurrences). Do not add these pre-emptively; check the actual mypy output first.
     - Confirm with: `uv run mypy packages/agent-core-briefs/src`; expected: `Success: no issues found in N source files`.
     - Confirm the overall gate still passes: `just check`.
 
@@ -170,13 +181,13 @@ Add a brief prose comment alongside each if not already present: `# mypy: object
 | File | Action | What changes |
 |---|---|---|
 | `pyproject.toml` | **Modify** | Add `packages/agent-core-briefs/src` to `[tool.mypy] files`; add `simpleeval`, `fastmcp`, and `agent_core_briefs.*` override blocks |
-| `src/agent_core_briefs/protocol.py` | **Modify** | `dict` → `dict[str, Any]`, `list[dict]` → `list[dict[str, Any]]` in `Fetcher` and `Destination` protocols; annotate existing `# type: ignore[attr-defined]` with prose |
+| `src/agent_core_briefs/protocol.py` | **Modify** | Add `Any` to typing import; `dict` → `dict[str, Any]`, `list[dict]` → `list[dict[str, Any]]` in `Fetcher` and `Destination` protocols; annotate existing `# type: ignore[attr-defined]` with prose |
 | `src/agent_core_briefs/config.py` | **Modify** | `re.Match` → `re.Match[str]` |
-| `src/agent_core_briefs/engine.py` | **Modify** | `dict` → `dict[str, Any]` in `_merge_into_namespace` |
-| `src/agent_core_briefs/playbook.py` | **Modify** | Add `Iterator` import; `dict` → `dict[str, Any]` in six functions; `_AttrDict.__iter__` return type; `__init__` `-> None` |
+| `src/agent_core_briefs/engine.py` | **Modify** | `dict` → `dict[str, Any]` in `FetcherInvocation.config` field, `_run_one` return type, and `_merge_into_namespace` |
+| `src/agent_core_briefs/playbook.py` | **Modify** | Add `Iterator` import; `dict` → `dict[str, Any]` in `Playbook.destinations` field, `parse_playbook` local, six functions, `_classify_block`, and `_to_section_spec`; `_AttrDict.__iter__` return type; `__init__` `-> None` |
 | `src/agent_core_briefs/session.py` | **Modify** | `destinations: list[dict]` → `list[dict[str, Any]]` |
-| `src/agent_core_briefs/validators.py` | **Modify** | `sections: list[dict]` → `list[dict[str, Any]]` |
-| `src/agent_core_briefs/submit.py` | **Modify** | Import `ComposeSession`; type `session` param in `_audit_deliver`; `dict` → `dict[str, Any]` in three functions; annotate existing `# type: ignore[assignment]` with prose |
+| `src/agent_core_briefs/validators.py` | **Modify** | Add `Any` import; `sections: list[dict]` → `list[dict[str, Any]]`; `submitted_by_id: dict[str, dict]` → `dict[str, dict[str, Any]]` |
+| `src/agent_core_briefs/submit.py` | **Modify** | Add `Any` to typing import; import `ComposeSession`; type `session` param in `_audit_deliver`; `dict` → `dict[str, Any]` in three functions and one local variable; annotate existing `# type: ignore[assignment]` with prose |
 | `src/agent_core_briefs/tools.py` | **Modify** | `-> dict:` → `-> dict[str, Any]:` on five public functions; `list[dict]` → `list[dict[str, Any]]` in two functions |
 | `src/agent_core_briefs/fetchers/cli.py` | **Modify** | `dict` → `dict[str, Any]` in `fetch`; add `Any` import |
 | `src/agent_core_briefs/fetchers/filesystem_read.py` | **Modify** | `dict` → `dict[str, Any]` in `fetch`; add `Any` import |
