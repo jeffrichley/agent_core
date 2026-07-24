@@ -10,7 +10,7 @@ import yaml
 from agent_core_hatchery.config import HatchConfig
 from agent_core_hatchery.daemon_probe import reload_and_probe
 from agent_core_hatchery.hatcher import Hatcher, VaultExistsError
-from agent_core_hatchery.report import write_hatching_report
+from agent_core_hatchery.report import DaemonCheckStatus, write_hatching_report
 from agent_core_hatchery.wizard import offer_letter_authoring, run_wizard
 
 app = typer.Typer(
@@ -76,6 +76,7 @@ def hatch_being(
     if interactive:
         letter_authored = offer_letter_authoring(cfg)
 
+    daemon_check_status: DaemonCheckStatus
     if cfg.init_missing or no_daemon_reload:
         daemon_check_status = "skipped"
     else:
