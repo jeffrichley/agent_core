@@ -61,7 +61,9 @@ nav:
       - Add an endpoint: guides/add-an-endpoint.md
       - Send & consume envelopes: guides/send-and-consume.md
       - Write an extension: guides/write-an-extension.md
-  - API Reference: reference/index.md
+  - Reference:
+      - API reference: reference/index.md
+      - Bus config keys: reference/bus-config.md
   - About: about.md
 
 plugins:
