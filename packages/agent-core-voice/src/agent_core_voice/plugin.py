@@ -14,12 +14,14 @@ Three hookimpls:
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 import pluggy
 
 if TYPE_CHECKING:
+    from agent_core.bus.handle import BusHandle
     from agent_core.bus.protocol import Endpoint
+    from agent_core.endpoints.claude_code_mcp import ClaudeCodeMCPEndpoint
     from agent_core.plugins.specs import RunnerServices
 
 hookimpl = pluggy.HookimplMarker("agent_core")
@@ -102,12 +104,17 @@ def wire_endpoints_after_registration(
         # trusting caller-supplied voice ids on the wire.
         voice_ep.register_agent(name, voice_id)
 
+        # endpoint passed the isinstance(claude_code_mcp_cls) gate above; the
+        # dynamic-class check doesn't narrow the static type, so cast for the
+        # closure's ._mcp access.
+        mcp_ep = cast("ClaudeCodeMCPEndpoint", endpoint)
+
         def _mounter(
-            bus_handle,
+            bus_handle: BusHandle,
             *,
             voice_ep: VoiceEndpoint = voice_ep,
             voice_endpoint_name: str = voice_name,
-            mcp_endpoint=endpoint,
+            mcp_endpoint: ClaudeCodeMCPEndpoint = mcp_ep,
             voice_id: str = voice_id,
             agent_name: str = name,
         ) -> None:

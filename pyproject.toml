@@ -101,6 +101,12 @@ files = [
     "packages/agent-core-discord/src",
     "packages/agent-core-hatchery/src",
     "packages/credentials/src",
+    "packages/agent-core-briefs/src",
+    "packages/agent-core-busproxy/src",
+    "packages/agent-core-inbound/src",
+    "packages/agent-core-voice/src",
+    "packages/agent-core-webcam/src",
+    "packages/agent-core-qa/src",
 ]
 warn_unused_ignores = true
 no_implicit_optional = true
@@ -135,6 +141,11 @@ extra_checks = true
 # missing-import noise so strict flags can focus on our own code in wizard.py.
 [[tool.mypy.overrides]]
 module = ["questionary", "questionary.*"]
+ignore_missing_imports = true
+
+# simpleeval (agent-core-briefs playbook evaluator) ships no py.typed / stubs.
+[[tool.mypy.overrides]]
+module = ["simpleeval", "simpleeval.*"]
 ignore_missing_imports = true
 
 # agent-core-hatchery is held to full --strict (issue #491). Individual flags

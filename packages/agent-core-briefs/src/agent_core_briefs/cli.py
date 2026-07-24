@@ -99,7 +99,13 @@ def _load_fetcher_catalog(paths: list[Path]) -> dict[str, type[Fetcher]]:
     """
     resolved = [_BUILTIN_FETCHERS_DIR, *paths]
     try:
-        return discover_implementations(resolved, protocol=Fetcher)
+        # Fetcher is a runtime_checkable Protocol used as an isinstance
+        # discriminator; mypy's type-abstract guard on ``type[T]`` doesn't
+        # model that, so silence it narrowly (see orchestrator for the twin).
+        return discover_implementations(
+            resolved,
+            protocol=Fetcher,  # type: ignore[type-abstract]
+        )
     except LoaderError as exc:
         raise typer.BadParameter(str(exc), param_hint="--fetcher-path") from exc
 
