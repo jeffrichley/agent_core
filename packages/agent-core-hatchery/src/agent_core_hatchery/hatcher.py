@@ -12,6 +12,7 @@ from __future__ import annotations
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import Any
 
 from agent_core_hatchery.config import HatchConfig
 from agent_core_hatchery.file_classes import FileClassManifest
@@ -40,8 +41,8 @@ class Hatcher:
         config: HatchConfig,
         templates_dir: Path | None = None,
         *,
-        _venv_builder: Callable | None = None,
-        _mcp_json_gen: Callable | None = None,
+        _venv_builder: Callable[..., Any] | None = None,
+        _mcp_json_gen: Callable[..., Any] | None = None,
     ) -> None:
         self._config = config
         self._templates_dir = templates_dir or TEMPLATES_DIR

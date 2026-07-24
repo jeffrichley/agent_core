@@ -86,22 +86,22 @@ class HatchConfig(BaseModel):
             self.endpoint_name = self.being_name.lower()
         return self
 
-    @computed_field
+    @computed_field  # type: ignore[prop-decorator]
     @property
     def being_name_lower(self) -> str:
         return self.being_name.lower()
 
-    @computed_field
+    @computed_field  # type: ignore[prop-decorator]
     @property
     def being_name_upper(self) -> str:
         return self.being_name.upper()
 
-    @computed_field
+    @computed_field  # type: ignore[prop-decorator]
     @property
     def hatched_date(self) -> str:
         return date.today().isoformat()
 
-    @computed_field
+    @computed_field  # type: ignore[prop-decorator]
     @property
     def discord_token_env(self) -> str:
         return f"DISCORD_{self.being_name_upper}_TOKEN"

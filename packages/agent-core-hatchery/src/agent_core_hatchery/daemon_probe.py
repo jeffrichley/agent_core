@@ -11,7 +11,9 @@ import subprocess
 import time
 import urllib.error
 import urllib.request
+from collections.abc import Callable
 from pathlib import Path
+from typing import Any
 
 import yaml
 
@@ -38,7 +40,7 @@ def read_daemon_http_config(daemon_config_dir: Path) -> tuple[str, int]:
     return (host, port)
 
 
-def _stop_daemon(runner=subprocess.run) -> None:
+def _stop_daemon(runner: Callable[..., Any] = subprocess.run) -> None:
     """Best-effort daemon stop. Never raises; failures are absorbed."""
     try:
         runner(
@@ -51,7 +53,7 @@ def _stop_daemon(runner=subprocess.run) -> None:
         pass  # agent-core not on PATH or daemon already stopped — probe decides outcome
 
 
-def _start_daemon(runner=subprocess.run) -> bool:
+def _start_daemon(runner: Callable[..., Any] = subprocess.run) -> bool:
     """Start the daemon. Returns True iff the start command exited 0.
 
     Unlike ``_stop_daemon``, a failed START is NOT best-effort: the daemon was
@@ -67,7 +69,7 @@ def _start_daemon(runner=subprocess.run) -> bool:
         )
     except (FileNotFoundError, OSError, subprocess.TimeoutExpired, subprocess.SubprocessError):
         return False
-    return proc.returncode == 0
+    return bool(proc.returncode == 0)
 
 
 def _probe_endpoint(
@@ -109,7 +111,7 @@ def reload_and_probe(
     config: HatchConfig,
     *,
     timeout: float = 15.0,
-    runner=subprocess.run,
+    runner: Callable[..., Any] = subprocess.run,
 ) -> DaemonCheckStatus:
     """Stop the daemon, start it, then probe the new being's endpoint.
 
@@ -131,10 +133,12 @@ def reload_and_probe(
         # (which reads as "daemon up, endpoint will register shortly").
         return "start_failed"
 
+    endpoint_name = config.endpoint_name
+    assert endpoint_name is not None  # guaranteed by HatchConfig model_validator
     return _probe_endpoint(
         host,
         port,
-        config.endpoint_name,
+        endpoint_name,
         timeout=timeout,
         poll_interval=0.5,
     )
