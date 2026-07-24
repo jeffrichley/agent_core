@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import sys
 import threading
-import time
 from collections.abc import Iterator
 
 import pytest
@@ -95,14 +94,20 @@ def fail_on_leaked_aiosqlite_connection() -> Iterator[None]:
     """
     before = {id(t) for t in _live_aiosqlite_threads()}
     yield
-    # aiosqlite joins its worker thread asynchronously after ``close()``; allow
-    # a brief grace so a properly-closed connection mid-teardown is not flagged.
-    leaked: list[threading.Thread] = []
-    for _ in range(100):  # up to ~1s
-        leaked = [t for t in _live_aiosqlite_threads() if id(t) not in before]
-        if not leaked:
-            break
-        time.sleep(0.01)
+    # aiosqlite terminates its worker thread asynchronously after ``close()``.
+    # A properly-closed connection's thread *does* terminate, but the join can
+    # lag well past a fixed sleep-grace under CI CPU-starvation (observed:
+    # scheduler start/stop tests false-flagged on loaded ubuntu runners even
+    # though `stop()` disposes the engine and the threads die instantly in
+    # isolation). So actively ``join`` each new thread with a generous timeout:
+    # ``join`` returns the instant the thread dies (no cost for clean tests),
+    # and a genuine leak (an unclosed connection) never terminates, so it still
+    # trips the guard. This distinguishes "slow to terminate" from "leaked"
+    # without a load-sensitive sleep.
+    new_threads = [t for t in _live_aiosqlite_threads() if id(t) not in before]
+    for t in new_threads:
+        t.join(timeout=10.0)
+    leaked = [t for t in new_threads if t.is_alive()]
     if leaked:
         pytest.fail(
             f"leaked {len(leaked)} aiosqlite connection thread(s) — the test "
