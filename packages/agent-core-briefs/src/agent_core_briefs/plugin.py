@@ -31,6 +31,7 @@ import pluggy
 if TYPE_CHECKING:
     import typer
 
+    from agent_core.bus.handle import BusHandle
     from agent_core.bus.protocol import Endpoint
     from agent_core.plugins.specs import RunnerServices
 
@@ -147,7 +148,7 @@ def wire_endpoints_after_registration(
         # mounter doesn't pick up a late-bound loop variable if the
         # caller iterates more than one MCP endpoint in this pass.
         def _mounter(
-            bus_handle,
+            bus_handle: BusHandle,
             *,
             orch: BriefsOrchestratorEndpoint = orch,
             mcp_endpoint: ClaudeCodeMCPEndpoint = endpoint,

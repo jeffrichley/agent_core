@@ -27,9 +27,7 @@ def transcode_audio(wav_bytes: bytes, *, target_format: str) -> bytes:
         return wav_bytes
 
     if target_format == "ogg":
-        import soundfile as sf
-
-        import numpy as np
+        import soundfile as sf  # type: ignore[import-untyped]  # soundfile ships no stubs
 
         with sf.SoundFile(io.BytesIO(wav_bytes)) as f:
             audio_data = f.read(dtype="float32")

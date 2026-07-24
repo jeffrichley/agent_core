@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import json
 from datetime import datetime
+from typing import Any
 
 import yaml
 
@@ -29,7 +30,7 @@ class FilesystemReadFetcher:
     type_id = "filesystem_read"
     namespace = ""  # set per-invocation by the gather config
 
-    async def fetch(self, config: dict, when: datetime) -> dict:
+    async def fetch(self, config: dict[str, Any], when: datetime) -> dict[str, Any]:
         path = expand_path(config["path"])
         fmt = config.get("format", "text")
         text = await asyncio.to_thread(path.read_text, encoding="utf-8")

@@ -12,12 +12,13 @@ import logging
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from agent_core_webcam.audit import AuditEvent, AuditLog
 from agent_core_webcam.protocol import (
     CameraBackend,
     CameraBusyError,
+    CameraInfo,
     CameraNotFoundError,
     ReadTimeoutError,
 )
@@ -45,7 +46,7 @@ class CaptureSuccess:
 
     png_bytes: bytes
     file_path: Path | None
-    metadata: dict
+    metadata: dict[str, Any]
 
 
 @dataclass(frozen=True)
@@ -59,7 +60,7 @@ class CaptureError:
 class ListCamerasSuccess:
     """list_cameras_safe success."""
 
-    cameras: list  # list[CameraInfo] — avoid forward-ref import dance
+    cameras: list[CameraInfo]
 
 
 @dataclass(frozen=True)
@@ -140,7 +141,7 @@ class WebcamEndpoint:
         resolution: tuple[int, int] | list[int] | None = None,
         save: bool = True,
         note: str | None = None,
-    ) -> tuple[bytes, Path | None, dict]:
+    ) -> tuple[bytes, Path | None, dict[str, Any]]:
         """Capture one frame; return (png_bytes, file_path, metadata).
 
         Returns ``file_path=None`` when ``save=False``. Always appends an

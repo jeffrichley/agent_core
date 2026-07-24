@@ -14,6 +14,7 @@ is always exactly what the gather config asked for.
 from __future__ import annotations
 
 from datetime import datetime
+from typing import Any
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 _DAY_NAMES = ("monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday")
@@ -54,7 +55,7 @@ class NowFetcher:
     type_id = "now"
     namespace = ""  # set per-invocation by the gather config
 
-    async def fetch(self, config: dict, when: datetime) -> dict:
+    async def fetch(self, config: dict[str, Any], when: datetime) -> dict[str, Any]:
         tz_name = config.get("timezone", "UTC")
         try:
             tz = ZoneInfo(tz_name)
@@ -79,7 +80,7 @@ class NowFetcher:
         weekday_index = local.weekday()  # 0=Monday, 6=Sunday
         day_name = _DAY_NAMES[weekday_index]
 
-        result: dict = {
+        result: dict[str, Any] = {
             "date": local.strftime("%Y-%m-%d"),
             "iso_datetime": local.isoformat(),
             "day_of_week": day_name.capitalize(),

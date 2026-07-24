@@ -35,9 +35,9 @@ import logging
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
-import soundfile as sf
+import soundfile as sf  # type: ignore[import-untyped]  # soundfile ships no stubs
 
 from agent_core.bus.protocol import EndpointUnavailable
 from agent_core_voice.audit import AuditEvent, AuditLog
@@ -53,7 +53,7 @@ from agent_core_voice.protocol import (
 )
 
 if TYPE_CHECKING:
-    from agent_core.bus.envelope import Envelope
+    from agent_core.bus.envelope import Envelope, EventPayload
     from agent_core.bus.handle import BusHandle
 
 log = logging.getLogger(__name__)
@@ -96,7 +96,7 @@ class VoiceEndpoint:
         *,
         name: str,
         backend: TTSBackend | None = None,
-        voices: dict[str, VoiceInfo] | dict[str, dict] | None = None,
+        voices: dict[str, VoiceInfo] | dict[str, dict[str, Any]] | None = None,
         output_dir: Path | str,
         audit_path: Path | str,
         max_text_len: int = 2000,
@@ -234,7 +234,7 @@ class VoiceEndpoint:
         # Lazy-import to keep module import cheap and to honor the
         # backend-swap boundary: madrigal is the runtime dep, not a hard
         # import-time dep for tests that only touch protocol/audit code.
-        from madrigal import Spec, generate
+        from madrigal import Spec, generate  # type: ignore[import-untyped]  # no stubs
 
         now = datetime.now(UTC)
 
@@ -387,7 +387,7 @@ class VoiceEndpoint:
             # Production path: build the GPU/CPU backend off the event loop thread.
             # asyncio.to_thread keeps the loop responsive during the (potentially
             # multi-second) model load.
-            from madrigal.engine import QwenTTSBackend
+            from madrigal.engine import QwenTTSBackend  # type: ignore[import-untyped]  # no stubs
 
             self._backend = await asyncio.to_thread(
                 QwenTTSBackend,
@@ -397,9 +397,11 @@ class VoiceEndpoint:
             )
         # Warm all configured voices (no-op cost for fake backends; off-thread
         # for real backends so WAV encoding doesn't block the loop).
+        backend = self._backend  # non-None: set in the branch above when it was None
+        assert backend is not None
         for voice_id, info in self._voices.items():
             await asyncio.to_thread(
-                self._backend.prepare_voice, voice_id, Path(info.ref_wav), info.ref_text
+                backend.prepare_voice, voice_id, Path(info.ref_wav), info.ref_text
             )
             log.info("voice %r prepared (ref_wav=%s)", voice_id, info.ref_wav)
         log.info("VoiceEndpoint(name=%s) started; output_dir=%s", self._name, self._output_dir)
@@ -436,7 +438,11 @@ class VoiceEndpoint:
         from agent_core_voice.envelopes import SynthesisRequestPayload
 
         try:
-            req = SynthesisRequestPayload.model_validate(envelope.payload.data)
+            # Guarded above: kind == "Event" with payload.type == "SynthesisRequest"
+            # means payload is an EventPayload carrying a `.data` mapping.
+            req = SynthesisRequestPayload.model_validate(
+                cast("EventPayload", envelope.payload).data
+            )
         except Exception as exc:
             log.warning(
                 "VoiceEndpoint(name=%s) rejected malformed SynthesisRequest %s: %s",
@@ -462,6 +468,8 @@ class VoiceEndpoint:
             await self._handle.ack(envelope.id)
 
         # Spawn-and-forget — synthesis can take ~60s; the bus must not block.
+        # _handle is set in start(), which the bus awaits before draining mail.
+        assert self._handle is not None
         self._handle.spawn(
             self._handle_synthesis_request(envelope, req),
             name=f"voice-synthesis-{envelope.id}",

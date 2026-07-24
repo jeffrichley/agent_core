@@ -115,6 +115,15 @@ log = logging.getLogger(__name__)
 __all__ = ["BriefsOrchestratorEndpoint", "ComposeSession"]
 
 
+def _make_destination_factory(cls: type[Destination]) -> Callable[[], Destination]:
+    """Bind a discovered destination class into a zero-arg factory closure.
+
+    Extracted from an inline dict-comprehension lambda so the closure's
+    type is inferable (a bare ``lambda cls=cls: cls()`` defeats inference).
+    """
+    return lambda: cls()
+
+
 class BriefsOrchestratorEndpoint:
     """Bus endpoint: receives ``BriefRequest`` events, runs gather, publishes
     ``ComposeBrief`` to the target agent.
@@ -217,8 +226,12 @@ class BriefsOrchestratorEndpoint:
             # silently). Catalog-mode callers (in-process tests, the briefs
             # CLI) build the full catalog explicitly and bypass discovery.
             resolved_paths = [_BUILTIN_FETCHERS_DIR, *(Path(p) for p in fetcher_paths)]
+            # Fetcher is a runtime_checkable Protocol used purely as an
+            # isinstance discriminator here; mypy's type-abstract guard on
+            # ``type[T]`` doesn't model that intent, so silence it narrowly.
             resolved_catalog: dict[str, type[Fetcher]] = discover_implementations(
-                resolved_paths, protocol=Fetcher
+                resolved_paths,
+                protocol=Fetcher,  # type: ignore[type-abstract]
             )
         else:
             assert fetcher_catalog is not None  # pyright narrowing
@@ -244,11 +257,16 @@ class BriefsOrchestratorEndpoint:
         resolved_dest_paths: list[Path] = [_BUILTIN_DESTINATIONS_DIR]
         if destination_paths is not None:
             resolved_dest_paths.extend(Path(p) for p in destination_paths)
+        # Destination is a runtime_checkable Protocol used as an isinstance
+        # discriminator; see the Fetcher call above for why type-abstract is
+        # silenced here.
         discovered_destinations: dict[str, type[Destination]] = discover_implementations(
-            resolved_dest_paths, protocol=Destination
+            resolved_dest_paths,
+            protocol=Destination,  # type: ignore[type-abstract]
         )
         self._destination_factories: dict[str, Callable[[], Destination]] = {
-            type_id: (lambda cls=cls: cls()) for type_id, cls in discovered_destinations.items()
+            type_id: _make_destination_factory(cls)
+            for type_id, cls in discovered_destinations.items()
         }
 
         # Audit log location is configurable for hermetic tests; the
@@ -332,7 +350,12 @@ class BriefsOrchestratorEndpoint:
 
         # Only act on BriefRequest events. Everything else (TextMessage,
         # other Event types) is silently ignored beyond the ack.
-        if envelope.kind != "Event" or envelope.payload.type != "BriefRequest":
+        payload = envelope.payload
+        if (
+            envelope.kind != "Event"
+            or not isinstance(payload, EventPayload)
+            or payload.type != "BriefRequest"
+        ):
             return
 
         try:
@@ -352,6 +375,9 @@ class BriefsOrchestratorEndpoint:
     # ---- BriefRequest handling ----
     async def _handle_brief_request(self, envelope: Envelope) -> None:
         assert self._handle is not None  # caller guarantees via deliver()
+        # deliver() only routes BriefRequest events here, so the payload is
+        # always an EventPayload; assert to narrow the Envelope.payload union.
+        assert isinstance(envelope.payload, EventPayload)
 
         data = dict(envelope.payload.data or {})
         brief_type = data.get("brief_type")

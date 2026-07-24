@@ -219,7 +219,7 @@ class Router:
         # expose rule_id_for(); the router falls back to "unknown" when
         # the connector doesn't provide one. This keeps Connector's
         # required surface minimal (just name + classify).
-        rule_id_for = getattr(connector, "rule_id_for", None)
+        rule_id_for: Callable[..., str] | None = getattr(connector, "rule_id_for", None)
         if callable(rule_id_for):
             try:
                 return rule_id_for(event_id=event_id, target_being=target_being)
