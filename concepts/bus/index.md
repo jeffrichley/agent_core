@@ -68,7 +68,7 @@ SQLite gives the bus durability with zero external dependencies. The mailbox is 
 | Quarantine      | `restarts_before_quarantine`, `probe_interval_seconds`                                                    |
 | Circuit breaker | `delivery_backoff_base_seconds/factor/cap`, `deliver_failures_before_breaker`                             |
 
-For exact field names and defaults, see the [API Reference](https://jeffrichley.github.io/agent_core/reference/index.md).
+For the complete key list with types and defaults, see [Bus config keys](https://jeffrichley.github.io/agent_core/reference/bus-config/index.md).
 
 Fan-out is atomic
 

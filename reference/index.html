@@ -18,7 +18,7 @@
         <link rel="prev" href="../guides/write-an-extension/">
       
       
-        <link rel="next" href="../about/">
+        <link rel="next" href="bus-config/">
       
       
         
@@ -29,7 +29,7 @@
     
     
       
-        <title>API Reference - agent-core</title>
+        <title>API reference - agent-core</title>
       
     
     
@@ -118,7 +118,7 @@
         <div class="md-header__topic" data-md-component="header-topic">
           <span class="md-ellipsis">
             
-              API Reference
+              API reference
             
           </span>
         </div>
@@ -835,6 +835,60 @@
   
   
   
+    
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--active md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_5" checked>
+        
+          
+          <label class="md-nav__link" for="__nav_5" id="__nav_5_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Reference
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_5_label" aria-expanded="true">
+          <label class="md-nav__title" for="__nav_5">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Reference
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+    
+  
+  
+  
     <li class="md-nav__item md-nav__item--active">
       
       <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
@@ -850,7 +904,7 @@
   <span class="md-ellipsis">
     
   
-    API Reference
+    API reference
   
 
     
@@ -868,7 +922,7 @@
   <span class="md-ellipsis">
     
   
-    API Reference
+    API reference
   
 
     
@@ -1300,6 +1354,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#config-reference" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Config reference
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#extensions" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -1313,6 +1378,42 @@
     </ul>
   
 </nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="bus-config/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Bus config keys
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
       
     </li>
   
@@ -1774,6 +1875,17 @@
         
       </ul>
     </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#config-reference" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Config reference
+      
+    </span>
+  </a>
   
 </li>
       
@@ -5258,7 +5370,11 @@ Only quarantined (degraded) endpoints have rows.</p>
 
     </div>
 
-</div><h2 id="extensions">Extensions<a class="headerlink" href="#extensions" title="Permanent link">&para;</a></h2>
+</div><h2 id="config-reference">Config reference<a class="headerlink" href="#config-reference" title="Permanent link">&para;</a></h2>
+<ul>
+<li><a href="bus-config/">Bus config keys</a> — every <code>bus:</code> and <code>bus.supervisor:</code> YAML key with type, default, and effect description.</li>
+</ul>
+<h2 id="extensions">Extensions<a class="headerlink" href="#extensions" title="Permanent link">&para;</a></h2>
 <p>The extension system is built on <a href="https://pluggy.readthedocs.io/">pluggy</a> hook
 specifications. The hookspecs live in <code>agent_core.plugins.specs.AgentCoreSpecs</code>;
 because that module is an implicit namespace package, its members are documented
@@ -5317,13 +5433,13 @@ guide for the plugin-author recipe.</p>
         
         
           
-          <a href="../about/" class="md-footer__link md-footer__link--next" aria-label="Next: About">
+          <a href="bus-config/" class="md-footer__link md-footer__link--next" aria-label="Next: Bus config keys">
             <div class="md-footer__title">
               <span class="md-footer__direction">
                 Next
               </span>
               <div class="md-ellipsis">
-                About
+                Bus config keys
               </div>
             </div>
             <div class="md-footer__button md-icon">
