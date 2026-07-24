@@ -15,6 +15,7 @@
 
 # Example bus config for development. Real use overrides via per-agent
 # config or env vars.
+# Full key reference: docs/reference/bus-config.md
 bus:
   storage_path: ~/.agent-core/bus.sqlite
   redelivery_timeout_seconds: 300
