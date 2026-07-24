@@ -221,9 +221,12 @@ def find_superseded_venvs(venvs_dir: Path, stable: Path) -> list[Path]:
             keep.append(d)
             break  # one additional (N-1)
 
-    # Fallback: if keep is still empty, keep top-2.
-    if not keep:
-        keep = list(all_dirs[:2])
+    # When current is unknown (broken/absent stable), keep top-2 by version.
+    if current_dir is None:
+        for d in all_dirs:
+            if d not in keep:
+                keep.append(d)
+                break
 
     keep_set = set(keep)
     return sorted(d for d in all_dirs if d not in keep_set)
@@ -740,12 +743,6 @@ class TestFindDriftedMcpJson:
     ) -> None:
         being_home = tmp_path / ".wren"
         being_home.mkdir()
-        monkeypatch.setattr(
-            "agent_core.daemon.venv_gc.mcp_json_needs_repair",
-            lambda *a, **kw: True,
-        )
-        # Need to patch via the imported reference in the module namespace
-        import agent_core.daemon.venv_gc as venv_gc_mod
         monkeypatch.setattr(
             "agent_core.venv.mcp_config.mcp_json_needs_repair",
             lambda *a, **kw: True,
