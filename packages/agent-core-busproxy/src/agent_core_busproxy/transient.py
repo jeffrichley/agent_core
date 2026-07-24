@@ -28,7 +28,7 @@ import asyncio
 import logging
 import re
 from enum import Enum
-from typing import Any
+from typing import Any, cast
 from urllib.parse import urlparse
 
 import httpx
@@ -135,7 +135,7 @@ class TransientErrorMiddleware(Middleware):
 
     async def on_call_tool(self, context: Any, call_next: Any) -> ToolResult:
         try:
-            return await call_next(context)
+            return cast(ToolResult, await call_next(context))
         except BaseException as exc:  # triage then re-raise (never swallow)
             disposition = classify_backend_error(exc)
             if disposition is Disposition.TRANSIENT:
