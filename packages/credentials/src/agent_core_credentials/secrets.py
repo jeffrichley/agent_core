@@ -13,6 +13,10 @@ from __future__ import annotations
 
 import logging
 import os
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from agent_core_credentials.store import CredentialStore
 
 log = logging.getLogger(__name__)
 
@@ -21,7 +25,7 @@ class SecretNotFoundError(Exception):
     """Raised when neither the vault nor os.environ contains the named secret."""
 
 
-def _open_store():
+def _open_store() -> CredentialStore:
     """Open the credential store against the default vault path.
 
     Isolated into its own function so tests can monkeypatch it without

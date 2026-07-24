@@ -100,6 +100,7 @@ files = [
     "packages/agent-core-channel/src",
     "packages/agent-core-discord/src",
     "packages/agent-core-hatchery/src",
+    "packages/credentials/src",
 ]
 warn_unused_ignores = true
 no_implicit_optional = true
@@ -140,6 +141,28 @@ ignore_missing_imports = true
 # rather than `strict = true` for the same scoping reason as discord above.
 [[tool.mypy.overrides]]
 module = ["agent_core_hatchery.*"]
+disallow_any_generics = true
+disallow_subclassing_any = true
+disallow_untyped_calls = true
+disallow_untyped_defs = true
+disallow_incomplete_defs = true
+disallow_untyped_decorators = true
+warn_return_any = true
+no_implicit_reexport = true
+strict_equality = true
+extra_checks = true
+
+# pykeepass publishes no type stubs — silence the missing-import noise so the
+# strict override below can focus on our own code.
+[[tool.mypy.overrides]]
+module = ["pykeepass", "pykeepass.*"]
+ignore_missing_imports = true
+
+# agent-core-credentials is held to full --strict (issue #496). Individual flags
+# are used (not the `strict = true` umbrella) for the same scoping reason as
+# the discord override above.
+[[tool.mypy.overrides]]
+module = ["agent_core_credentials.*"]
 disallow_any_generics = true
 disallow_subclassing_any = true
 disallow_untyped_calls = true
