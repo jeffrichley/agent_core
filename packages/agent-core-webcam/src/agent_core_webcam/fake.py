@@ -11,7 +11,7 @@ from __future__ import annotations
 import struct
 import zlib
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, cast
 
 from agent_core_webcam.protocol import (
     CameraBusyError,
@@ -51,7 +51,7 @@ class _FluentMode:
             # Called on an instance: fake.with_busy(0)
             def instance_call(index: int) -> FakeCameraBackend:
                 getattr(obj, attr).add(index)
-                return obj
+                return cast(FakeCameraBackend, obj)
 
             return instance_call
 

@@ -7,6 +7,8 @@ are mapped onto our protocol exception taxonomy.
 
 from __future__ import annotations
 
+from typing import Any
+
 from agent_core_webcam.protocol import (
     CameraBackend,
     CameraBusyError,
@@ -53,7 +55,7 @@ class OpenCVCameraBackend:
         return out
 
     @staticmethod
-    def _best_effort_name(cap, idx: int) -> str:
+    def _best_effort_name(cap: Any, idx: int) -> str:
         # cv2 doesn't expose device names cross-platform. On Windows
         # CAP_DSHOW we could probe via WMI but that's a rabbit hole.
         # Fall back to a generic label.
