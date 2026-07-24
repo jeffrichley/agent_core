@@ -27,8 +27,9 @@ from mcp.types import TextContent
 from agent_core_voice.envelopes import SynthesisRequestPayload
 
 if TYPE_CHECKING:
-    from agent_core.bus.handle import BusHandle
     from fastmcp import FastMCP
+
+    from agent_core.bus.handle import BusHandle
 
 
 def register_voice_tools(
@@ -69,7 +70,7 @@ def register_voice_tools(
         text: str,
         timeout_s: float | None = None,
         retain_s: float | None = None,
-        options: dict | None = None,
+        options: dict[str, Any] | None = None,
         format: str = "wav",
     ) -> list[Any]:
         from agent_core.bus.envelope import Envelope, EventPayload

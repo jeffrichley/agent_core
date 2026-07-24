@@ -81,11 +81,11 @@ class DiscordEmbedDestination:
 
     async def deliver(
         self,
-        sections: list[dict],
+        sections: list[dict[str, Any]],
         playbook: PlaybookRef,
         scope: str | None,
         when: datetime,
-        config: dict,
+        config: dict[str, Any],
         bus_handle: BusHandle,
     ) -> DeliveryResult:
         """Build embed dicts, publish a TextMessage envelope to the endpoint.
@@ -159,7 +159,7 @@ class DiscordEmbedDestination:
         return DeliveryResult(success=True, ref=envelope.id)
 
     @staticmethod
-    def _render_section_to_embed_dict(section: dict) -> dict[str, Any]:
+    def _render_section_to_embed_dict(section: dict[str, Any]) -> dict[str, Any]:
         """Convert a filled section dict to a serializable embed dict.
 
         Section dict shape (as built by the agent via ``tools.py``)::

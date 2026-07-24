@@ -20,6 +20,7 @@ from typing import TYPE_CHECKING, Any
 import pluggy
 
 if TYPE_CHECKING:
+    from agent_core.bus.handle import BusHandle
     from agent_core.bus.protocol import Endpoint
     from agent_core.plugins.specs import RunnerServices
 
@@ -76,7 +77,7 @@ def wire_endpoints_after_registration(
             )
 
         def _mounter(
-            bus_handle,
+            bus_handle: BusHandle,
             *,
             webcam: WebcamEndpoint = webcam,
             mcp_endpoint: ClaudeCodeMCPEndpoint = endpoint,

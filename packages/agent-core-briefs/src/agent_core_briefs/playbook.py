@@ -16,12 +16,19 @@ context with :class:`_AttrDict` so expressions can use ``foo.bar`` instead of
 from __future__ import annotations
 
 import re
+from collections.abc import Iterator
 from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Any
 
 import yaml
-from simpleeval import AttributeDoesNotExist, EvalWithCompoundTypes, NameNotDefined
+
+# simpleeval ships no py.typed marker / stubs (see [tool.mypy.overrides]).
+from simpleeval import (
+    AttributeDoesNotExist,
+    EvalWithCompoundTypes,
+    NameNotDefined,
+)
 
 from agent_core_briefs.config import substitute_vars
 from agent_core_briefs.protocol import FieldSpec, SectionSpec
@@ -45,7 +52,7 @@ class Playbook:
     schedule_cron: str | None
     gather_config_path: str | None
     colors: dict[str, int]
-    destinations: list[dict] = field(default_factory=list)
+    destinations: list[dict[str, Any]] = field(default_factory=list)
     sections: list[SectionSpec] = field(default_factory=list)
     conditional_sections: list[SectionSpec] = field(default_factory=list)
 
@@ -61,7 +68,7 @@ def parse_playbook(path: Path, *, vars_map: dict[str, str]) -> Playbook:
     raw_blocks = _extract_yaml_blocks(text)
 
     metadata: dict[str, Any] | None = None
-    destinations: list[dict] = []
+    destinations: list[dict[str, Any]] = []
     colors: dict[str, int] = {}
     sections: list[SectionSpec] = []
     conditional_sections: list[SectionSpec] = []
@@ -134,7 +141,7 @@ def resolve_colors_for_sections(
     sections: list[SectionSpec],
     colors_palette: dict[str, int],
     *,
-    context: dict,
+    context: dict[str, Any],
 ) -> list[SectionSpec]:
     """Return new SectionSpec list with ``color`` resolved to int decimal.
 
@@ -151,7 +158,7 @@ def resolve_colors_for_sections(
 
 def resolve_conditional_sections(
     conditional_sections: list[SectionSpec],
-    context: dict,
+    context: dict[str, Any],
 ) -> list[str]:
     """Evaluate each conditional section's ``when.expr`` via simpleeval.
 
@@ -177,7 +184,7 @@ def _extract_yaml_blocks(text: str) -> list[str]:
     return _YAML_BLOCK_PATTERN.findall(text)
 
 
-def _classify_block(block: dict) -> str:
+def _classify_block(block: dict[str, Any]) -> str:
     """Discriminate a parsed YAML block by its keys.
 
     Order matters: metadata is detected first because a stray ``brief_type``
@@ -195,7 +202,7 @@ def _classify_block(block: dict) -> str:
     return "unknown"
 
 
-def _to_section_spec(block: dict) -> SectionSpec:
+def _to_section_spec(block: dict[str, Any]) -> SectionSpec:
     """Convert a substituted YAML mapping into a :class:`SectionSpec`."""
     section_id = block.get("section_id")
     if not isinstance(section_id, str) or not section_id:
@@ -236,7 +243,7 @@ def _to_field_spec(raw: Any, section_id: str) -> FieldSpec:
 def _resolve_color_value(
     section: SectionSpec,
     palette: dict[str, int],
-    context: dict,
+    context: dict[str, Any],
 ) -> int:
     color = section.color
     if isinstance(color, str):
@@ -276,7 +283,7 @@ def _resolve_color_value(
     )
 
 
-def _eval_expr(expr: str, context: dict) -> Any:
+def _eval_expr(expr: str, context: dict[str, Any]) -> Any:
     """Evaluate ``expr`` via simpleeval against ``context``.
 
     Wraps top-level dict values in :class:`_AttrDict` so expressions can use
@@ -296,7 +303,7 @@ def _eval_expr(expr: str, context: dict) -> Any:
         raise PlaybookParseError(f"expression failed: {expr!r}: {exc}") from exc
 
 
-def _wrap_context(ctx: dict) -> dict:
+def _wrap_context(ctx: dict[str, Any]) -> dict[str, Any]:
     """Top-level keys map directly to names; values are wrapped recursively."""
     wrapped: dict[str, Any] = {}
     for key, value in ctx.items():
@@ -318,7 +325,7 @@ class _AttrDict:
 
     __slots__ = ("_data",)
 
-    def __init__(self, data: dict):
+    def __init__(self, data: dict[str, Any]):
         object.__setattr__(self, "_data", data)
 
     def __getattr__(self, name: str) -> Any:
@@ -343,7 +350,7 @@ class _AttrDict:
             return [_AttrDict(v) if isinstance(v, dict) else v for v in value]
         return value
 
-    def __iter__(self):
+    def __iter__(self) -> Iterator[str]:
         return iter(object.__getattribute__(self, "_data"))
 
     def __contains__(self, key: object) -> bool:

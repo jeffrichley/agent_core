@@ -218,7 +218,8 @@ class DaemonClient:
                         # data" and the poll loop retries on the next tick.
                         data = None
                 if isinstance(data, dict):
-                    for item in data.get("items", []):
+                    items: list[dict[str, Any]] = data.get("items", [])
+                    for item in items:
                         if predicate(item):
                             return item
             except Exception:
@@ -245,7 +246,8 @@ class DaemonClient:
 
             if result and hasattr(result[0], "text"):
                 try:
-                    return json.loads(result[0].text)
+                    snapshot: dict[str, Any] = json.loads(result[0].text)
+                    return snapshot
                 except (json.JSONDecodeError, AttributeError):
                     # Justified: a malformed payload falls through to the empty
                     # snapshot returned below.

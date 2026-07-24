@@ -54,7 +54,7 @@ import asyncio
 import re
 from datetime import datetime
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from agent_core_briefs.protocol import DeliveryResult, PlaybookRef
 
@@ -80,11 +80,11 @@ class MarkdownFileDestination:
 
     async def deliver(
         self,
-        sections: list[dict],
+        sections: list[dict[str, Any]],
         playbook: PlaybookRef,
         scope: str | None,
         when: datetime,
-        config: dict,
+        config: dict[str, Any],
         bus_handle: BusHandle,  # not used; included for protocol conformance
     ) -> DeliveryResult:
         """Resolve the path template, render markdown, write to disk.
@@ -161,7 +161,7 @@ class MarkdownFileDestination:
 
     @staticmethod
     def _render_markdown(
-        sections: list[dict],
+        sections: list[dict[str, Any]],
         *,
         playbook: PlaybookRef,
         scope: str | None,

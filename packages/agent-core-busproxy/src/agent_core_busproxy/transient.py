@@ -135,7 +135,8 @@ class TransientErrorMiddleware(Middleware):
 
     async def on_call_tool(self, context: Any, call_next: Any) -> ToolResult:
         try:
-            return await call_next(context)
+            result: ToolResult = await call_next(context)
+            return result
         except BaseException as exc:  # triage then re-raise (never swallow)
             disposition = classify_backend_error(exc)
             if disposition is Disposition.TRANSIENT:
