@@ -161,10 +161,10 @@ async def build_bus_from_config(path: Path) -> tuple[Bus, HTTPHost | None]:
         mcp_audit_skip_tools=mcp_audit_skip_tools,
     )
 
-    # Hooks (no auth-aware filtering yet — Phase 2 will add it).
-    # TODO(Phase 2): scan loaded hooks for auth-hook interface and set True.
-    # Until then, non-loopback bind is always refused. See BACKLOG.md.
-    has_auth_hook = False
+    # bus_auth_mode controls both the ASGI auth middleware (Dβ-2b) and the
+    # loopback-only guard: a non-loopback bind is permitted only when auth is
+    # active (mode != "off"), making the two decisions a single coupled invariant.
+    has_auth_hook = daemon_cfg.bus_auth_mode != "off"
     for stage in ("pre_publish", "pre_deliver"):
         for entry in getattr(daemon_cfg.bus_hooks, stage):
             hook_type = entry.type
@@ -277,6 +277,7 @@ async def build_bus_from_config(path: Path) -> tuple[Bus, HTTPHost | None]:
             notify_broker=notify_broker,
             notify_snapshot=bus.snapshot_for_agent,
             pubkey_registry=pubkey_registry,
+            bus_auth_mode=daemon_cfg.bus_auth_mode,
         )
         for h in hostable:
             http_host.mount(h)

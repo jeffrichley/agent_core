@@ -137,3 +137,4 @@ class DaemonConfig(BaseModel):
     mcp_audit: McpAuditConfig = Field(default_factory=McpAuditConfig)
     endpoints: list[EndpointEntryConfig] = Field(default_factory=list)
     logging: LoggingConfig = Field(default_factory=LoggingConfig)
+    bus_auth_mode: Literal["off", "warn", "enforce"] = "off"
