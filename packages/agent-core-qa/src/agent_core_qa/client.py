@@ -36,7 +36,7 @@ import socket
 import time
 import urllib.parse
 from collections.abc import Callable
-from typing import Any
+from typing import Any, cast
 
 try:
     from fastmcp.client import Client as _FastMCPClient
@@ -44,6 +44,8 @@ try:
     _HAS_FASTMCP = True
 except ImportError:  # pragma: no cover
     _HAS_FASTMCP = False
+
+from mcp.types import TextContent
 
 
 class _FakeTCPResponse:
@@ -168,13 +170,14 @@ class DaemonClient:
                         "expires_at": envelope.get("expires_at"),
                     },
                 )
-            # fastmcp returns a list of content items; unwrap the first text block.
+            # fastmcp 3.x returns a CallToolResult; text content lives in .content.
             data: Any = None
-            if result and hasattr(result[0], "text"):
+            if result.content and isinstance(result.content[0], TextContent):
+                first = result.content[0]
                 try:
-                    data = json.loads(result[0].text)
-                except (json.JSONDecodeError, AttributeError):
-                    data = result[0].text if hasattr(result[0], "text") else str(result)
+                    data = json.loads(first.text)
+                except json.JSONDecodeError:
+                    data = first.text
             return _MCPToolResult(status_code=200, data=data, text=str(data))
         except Exception as exc:
             return _MCPToolResult(status_code=500, text=str(exc))
@@ -210,17 +213,17 @@ class DaemonClient:
                     result = await mcp.call_tool("list_pending", arguments={})
 
                 data: Any = None
-                if result and hasattr(result[0], "text"):
+                if result.content and isinstance(result.content[0], TextContent):
                     try:
-                        data = json.loads(result[0].text)
-                    except (json.JSONDecodeError, AttributeError):
+                        data = json.loads(result.content[0].text)
+                    except json.JSONDecodeError:
                         # Justified: a malformed tool payload is treated as "no
                         # data" and the poll loop retries on the next tick.
                         data = None
                 if isinstance(data, dict):
                     for item in data.get("items", []):
                         if predicate(item):
-                            return item
+                            return cast(dict[str, Any], item)
             except Exception:
                 # Justified: this is a best-effort poll loop over a flaky MCP
                 # connection; transient errors are swallowed so it keeps retrying
@@ -243,10 +246,10 @@ class DaemonClient:
             async with _FastMCPClient(self._mcp_url, timeout=self._timeout) as mcp:
                 result = await mcp.call_tool("list_pending", arguments={})
 
-            if result and hasattr(result[0], "text"):
+            if result.content and isinstance(result.content[0], TextContent):
                 try:
-                    return json.loads(result[0].text)
-                except (json.JSONDecodeError, AttributeError):
+                    return cast(dict[str, Any], json.loads(result.content[0].text))
+                except json.JSONDecodeError:
                     # Justified: a malformed payload falls through to the empty
                     # snapshot returned below.
                     pass
@@ -284,11 +287,12 @@ class DaemonClient:
                 result = await mcp.call_tool(tool_name, arguments=arguments or {})
 
             data: Any = None
-            if result and hasattr(result[0], "text"):
+            if result.content and isinstance(result.content[0], TextContent):
+                first = result.content[0]
                 try:
-                    data = json.loads(result[0].text)
-                except (json.JSONDecodeError, AttributeError):
-                    data = result[0].text if hasattr(result[0], "text") else str(result)
+                    data = json.loads(first.text)
+                except json.JSONDecodeError:
+                    data = first.text
             return _MCPToolResult(status_code=200, data=data, text=str(data))
         except Exception as exc:
             return _MCPToolResult(status_code=500, text=str(exc))
