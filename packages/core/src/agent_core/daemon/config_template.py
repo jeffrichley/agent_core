@@ -49,5 +49,9 @@ def build_default_config(*, instance: Instance, home: Path) -> str:
             "    name: qa\n"
             "    params:\n"
             "      mount: /mcp/qa\n"
+            "  - type: builtin.scheduler\n"
+            "    name: scheduler\n"
+            "  - type: builtin.stub\n"
+            "    name: discord\n"
         )
     return base
