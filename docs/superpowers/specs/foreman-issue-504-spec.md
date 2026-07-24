@@ -472,6 +472,7 @@ Implement the ASGI authentication middleware for the bus HTTP host (`http_host.p
            with caplog.at_level(logging.WARNING):
                status = await _call(mw, "/mcp/wren/", bearer=pepper_token)
            assert status == 200
+           assert any(caplog.records)  # warning was emitted by verify_bearer_jwt
 
        @pytest.mark.asyncio
        async def test_warn_no_registered_key_passes_and_logs(self, caplog):
