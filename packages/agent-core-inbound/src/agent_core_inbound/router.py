@@ -9,7 +9,7 @@ the audit log.
 from collections import OrderedDict, deque
 from collections.abc import Callable
 from datetime import UTC, datetime
-from typing import Any
+from typing import Any, cast
 
 from agent_core_inbound.audit import AuditLog
 from agent_core_inbound.protocol import Connector
@@ -222,7 +222,7 @@ class Router:
         rule_id_for = getattr(connector, "rule_id_for", None)
         if callable(rule_id_for):
             try:
-                return rule_id_for(event_id=event_id, target_being=target_being)
+                return cast(str, rule_id_for(event_id=event_id, target_being=target_being))
             except Exception:
                 return "unknown"
         return "unknown"

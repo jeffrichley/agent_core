@@ -32,7 +32,7 @@ import logging
 import uuid
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Literal, cast
 
 import uvicorn
 
@@ -90,7 +90,7 @@ class InboundEndpoint:
         # the BusHandle for bus_publish_adapter.
         self._handle: BusHandle | None = None
         self._server: uvicorn.Server | None = None
-        self._serve_task: asyncio.Task | None = None
+        self._serve_task: asyncio.Task[None] | None = None
 
     async def start(self, bus: BusHandle) -> None:
         """Bus is ready — build the Router/app and start uvicorn."""
@@ -208,7 +208,7 @@ class InboundEndpoint:
             to=to,
             kind=kind,
             payload=notification,
-            urgency=urgency,
+            urgency=cast(Literal["green", "yellow", "red"], urgency),
             created_at=datetime.now(UTC),
         )
         self._handle.spawn(self._handle.publish(envelope), name="inbound-bus-publish")
