@@ -106,6 +106,7 @@ class EndpointEntryConfig(BaseModel):
     name: str
     params: dict[str, Any] = Field(default_factory=dict)
     description: str = ""
+    pubkey_pem: str | None = None
 
 
 class LoggingConfig(BaseModel):
