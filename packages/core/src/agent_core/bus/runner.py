@@ -15,6 +15,7 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 import yaml
 
+from agent_core.bus.auth.pubkey_registry import build_pubkey_registry
 from agent_core.bus.config import (
     BusBootError,
     DaemonConfig,
@@ -90,6 +91,7 @@ async def build_bus_from_config(path: Path) -> tuple[Bus, HTTPHost | None]:
     plugin_manager = create_plugin_manager()
     plugin_manager.hook.validate_config(raw_config=raw)
     daemon_cfg = DaemonConfig.model_validate(raw)  # named daemon_cfg to avoid collision with cfg = BusConfig(...) below
+    pubkey_registry = build_pubkey_registry(daemon_cfg.endpoints)
     endpoint_types = get_endpoint_types(plugin_manager)
     bus_hook_types = get_bus_hook_types(plugin_manager)
 
@@ -274,6 +276,7 @@ async def build_bus_from_config(path: Path) -> tuple[Bus, HTTPHost | None]:
             bind_port=daemon_cfg.http.bind_port,
             notify_broker=notify_broker,
             notify_snapshot=bus.snapshot_for_agent,
+            pubkey_registry=pubkey_registry,
         )
         for h in hostable:
             http_host.mount(h)

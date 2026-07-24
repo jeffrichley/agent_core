@@ -24,6 +24,7 @@ from starlette.requests import Request
 from starlette.responses import StreamingResponse
 from starlette.routing import Mount, Route, Router
 
+from agent_core.bus.auth.pubkey_registry import PubkeyRegistry
 from agent_core.bus.notify_broker import NotificationBroker
 
 log = logging.getLogger(__name__)
@@ -133,6 +134,7 @@ class HTTPHost:
         bind_port: int = 8788,
         notify_broker: NotificationBroker | None = None,
         notify_snapshot: Callable[[str], dict | None] | None = None,
+        pubkey_registry: PubkeyRegistry | None = None,
     ):
         self._bind_host = bind_host
         self._requested_port = bind_port
@@ -142,6 +144,7 @@ class HTTPHost:
         self._started = False
         self._notify_broker = notify_broker
         self._notify_snapshot = notify_snapshot
+        self._pubkey_registry = pubkey_registry   # consumed by auth middleware (Dβ-2b)
 
     def mount(self, hostable: MCPHostable) -> None:
         if self._started:
