@@ -100,6 +100,7 @@ files = [
     "packages/agent-core-channel/src",
     "packages/agent-core-discord/src",
     "packages/agent-core-hatchery/src",
+    "packages/agent-core-voice/src",
 ]
 warn_unused_ignores = true
 no_implicit_optional = true
@@ -140,6 +141,32 @@ ignore_missing_imports = true
 # rather than `strict = true` for the same scoping reason as discord above.
 [[tool.mypy.overrides]]
 module = ["agent_core_hatchery.*"]
+disallow_any_generics = true
+disallow_subclassing_any = true
+disallow_untyped_calls = true
+disallow_untyped_defs = true
+disallow_incomplete_defs = true
+disallow_untyped_decorators = true
+warn_return_any = true
+no_implicit_reexport = true
+strict_equality = true
+extra_checks = true
+
+# madrigal 0.2.0 ships no py.typed marker — silence missing-import noise so
+# the strict override below can focus on our own code.
+[[tool.mypy.overrides]]
+module = ["madrigal", "madrigal.*"]
+ignore_missing_imports = true
+
+# soundfile 0.13.1 ships as a single .py file with no stubs and no py.typed.
+[[tool.mypy.overrides]]
+module = ["soundfile"]
+ignore_missing_imports = true
+
+# agent-core-voice is held to full --strict (issue #493). Individual flags
+# rather than `strict = true` for the same scoping reason as discord above.
+[[tool.mypy.overrides]]
+module = ["agent_core_voice.*"]
 disallow_any_generics = true
 disallow_subclassing_any = true
 disallow_untyped_calls = true

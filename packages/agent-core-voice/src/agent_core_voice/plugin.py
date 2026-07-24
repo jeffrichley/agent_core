@@ -19,7 +19,9 @@ from typing import TYPE_CHECKING, Any
 import pluggy
 
 if TYPE_CHECKING:
+    from agent_core.bus.handle import BusHandle
     from agent_core.bus.protocol import Endpoint
+    from agent_core.endpoints.claude_code_mcp import ClaudeCodeMCPEndpoint
     from agent_core.plugins.specs import RunnerServices
 
 hookimpl = pluggy.HookimplMarker("agent_core")
@@ -103,11 +105,11 @@ def wire_endpoints_after_registration(
         voice_ep.register_agent(name, voice_id)
 
         def _mounter(
-            bus_handle,
+            bus_handle: BusHandle,
             *,
             voice_ep: VoiceEndpoint = voice_ep,
             voice_endpoint_name: str = voice_name,
-            mcp_endpoint=endpoint,
+            mcp_endpoint: ClaudeCodeMCPEndpoint = endpoint,
             voice_id: str = voice_id,
             agent_name: str = name,
         ) -> None:

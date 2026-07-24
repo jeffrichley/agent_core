@@ -69,7 +69,7 @@ def register_voice_tools(
         text: str,
         timeout_s: float | None = None,
         retain_s: float | None = None,
-        options: dict | None = None,
+        options: dict[str, Any] | None = None,
         format: str = "wav",
     ) -> list[Any]:
         from agent_core.bus.envelope import Envelope, EventPayload

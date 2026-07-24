@@ -39,6 +39,7 @@ from typing import TYPE_CHECKING, Any
 
 import soundfile as sf
 
+from agent_core.bus.envelope import EventPayload
 from agent_core.bus.protocol import EndpointUnavailable
 from agent_core_voice.audit import AuditEvent, AuditLog
 from agent_core_voice.lifecycle import transcode_audio
@@ -96,7 +97,7 @@ class VoiceEndpoint:
         *,
         name: str,
         backend: TTSBackend | None = None,
-        voices: dict[str, VoiceInfo] | dict[str, dict] | None = None,
+        voices: dict[str, VoiceInfo] | dict[str, dict[str, Any]] | None = None,
         output_dir: Path | str,
         audit_path: Path | str,
         max_text_len: int = 2000,
@@ -378,7 +379,7 @@ class VoiceEndpoint:
     @staticmethod
     def _wav_duration(wav_bytes: bytes) -> tuple[float, int]:
         with sf.SoundFile(io.BytesIO(wav_bytes)) as f:
-            return f.frames / float(f.samplerate), int(f.samplerate)
+            return float(f.frames) / float(f.samplerate), int(f.samplerate)
 
     # Endpoint protocol implementation.
     async def start(self, bus: BusHandle) -> None:
@@ -395,6 +396,7 @@ class VoiceEndpoint:
                 device=self._device,
                 attn_implementation=self._attn_implementation,
             )
+        assert self._backend is not None  # set above or pre-set via constructor
         # Warm all configured voices (no-op cost for fake backends; off-thread
         # for real backends so WAV encoding doesn't block the loop).
         for voice_id, info in self._voices.items():
@@ -419,7 +421,7 @@ class VoiceEndpoint:
             )
         if (
             envelope.kind != "Event"
-            or not hasattr(envelope.payload, "type")
+            or not isinstance(envelope.payload, EventPayload)
             or envelope.payload.type != "SynthesisRequest"
         ):
             log.debug(
@@ -460,12 +462,11 @@ class VoiceEndpoint:
         # correlated via in_reply_to=<request.id>, not the same envelope.
         if self._handle is not None:
             await self._handle.ack(envelope.id)
-
-        # Spawn-and-forget — synthesis can take ~60s; the bus must not block.
-        self._handle.spawn(
-            self._handle_synthesis_request(envelope, req),
-            name=f"voice-synthesis-{envelope.id}",
-        )
+            # Spawn-and-forget — synthesis can take ~60s; the bus must not block.
+            self._handle.spawn(
+                self._handle_synthesis_request(envelope, req),
+                name=f"voice-synthesis-{envelope.id}",
+            )
 
     async def stop(self) -> None:
         self._handle = None
