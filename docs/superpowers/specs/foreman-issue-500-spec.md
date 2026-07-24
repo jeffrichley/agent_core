@@ -61,7 +61,9 @@ No GoF pattern applies. Guiding principle: **SRP** — `venv_gc.py` is a pure-fu
 
 3. **Create `packages/core/tests/test_daemon_venv_gc.py`** — unit tests for all functions in `venv_gc.py`. See File-level changes for exact content.
 
-4. **Add one test to `packages/core/tests/test_daemon_cli.py`** — `test_doctor_reports_venv_gc_section` — monkeypatching `run_venv_doctor` to return a report with findings and asserting the command output contains venv GC findings and exits 1.
+4. **Modify `packages/core/tests/test_daemon_cli.py`**:
+   - Add one new test `test_doctor_reports_venv_gc_section`: monkeypatches `run_venv_doctor` to return a report with findings and asserts the command output contains venv GC findings and exits 1. See File-level changes for exact content.
+   - Update the three existing doctor tests (`test_doctor_reports_config_hygiene`, `test_doctor_clean_config_exits_zero`, `test_doctor_fix_shows_removed_debris`) to each add `from agent_core.daemon.venv_gc import VenvGcReport` and `monkeypatch.setattr("agent_core.daemon.cli.run_venv_doctor", lambda daemon_home, home_root, daemon_config_dir: VenvGcReport())` before the `runner.invoke` call. This keeps them hermetic: the modified CLI calls `run_venv_doctor(home_root=Path.home())`, which would otherwise scan the developer's real home directory for being homes and cause non-deterministic failures on any machine where being homes with drifted `.mcp.json` exist (e.g. `test_doctor_clean_config_exits_zero` would see `venv_report.has_issues == True` and exit 1 instead of 0).
 
 ## File-level changes
 
@@ -70,7 +72,7 @@ No GoF pattern applies. Guiding principle: **SRP** — `venv_gc.py` is a pure-fu
 | `packages/core/src/agent_core/daemon/venv_gc.py` | **New** — `VenvGcReport`, all detector functions, `run_venv_doctor` orchestrator |
 | `packages/core/src/agent_core/daemon/cli.py` | **Modify** — add `run_venv_doctor` import; remove `# TODO #317` comment; add venv GC doctor section; update `has_issues` guard |
 | `packages/core/tests/test_daemon_venv_gc.py` | **New** — unit tests for `venv_gc.py` using `tmp_path` fixture layouts |
-| `packages/core/tests/test_daemon_cli.py` | **Modify** — add one test: `test_doctor_reports_venv_gc_section` |
+| `packages/core/tests/test_daemon_cli.py` | **Modify** — add one test: `test_doctor_reports_venv_gc_section`; update three existing doctor tests to monkeypatch `run_venv_doctor` (keeps them hermetic when `home_root=Path.home()` is hardcoded in the CLI) |
 
 ### Exact content: `packages/core/src/agent_core/daemon/venv_gc.py`
 
@@ -887,7 +889,9 @@ class TestRunVenvDoctor:
         assert not report.has_issues
 ```
 
-### Addition to `packages/core/tests/test_daemon_cli.py`
+### Changes to `packages/core/tests/test_daemon_cli.py`
+
+#### New test
 
 ```python
 def test_doctor_reports_venv_gc_section(
@@ -919,6 +923,52 @@ def test_doctor_reports_venv_gc_section(
     assert "dead corpse" in output.lower() or ".venv-v0.7.0" in output
     assert "superseded" in output.lower() or "0.6.0" in output
 ```
+
+#### Updates to existing doctor tests
+
+Add the following two lines to each of the three existing doctor tests
+(`test_doctor_reports_config_hygiene`, `test_doctor_clean_config_exits_zero`,
+`test_doctor_fix_shows_removed_debris`) **before** the `runner.invoke` call:
+
+```python
+from agent_core.daemon.venv_gc import VenvGcReport
+monkeypatch.setattr(
+    "agent_core.daemon.cli.run_venv_doctor",
+    lambda daemon_home, home_root, daemon_config_dir: VenvGcReport(),
+)
+```
+
+For example, the updated `test_doctor_clean_config_exits_zero` (the most critical
+to fix because it asserts `exit_code == 0`) becomes:
+
+```python
+def test_doctor_clean_config_exits_zero(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """daemon doctor exits 0 and shows clean report when no issues found."""
+    monkeypatch.setenv("AGENT_CORE_HOME", str(tmp_path))
+
+    from agent_core.daemon.config_hygiene import HygieneReport
+    from agent_core.daemon.venv_gc import VenvGcReport
+
+    monkeypatch.setattr(
+        "agent_core.daemon.cli.run_config_hygiene",
+        lambda config_dir, fix: HygieneReport(),
+    )
+    monkeypatch.setattr(
+        "agent_core.daemon.cli.run_venv_doctor",
+        lambda daemon_home, home_root, daemon_config_dir: VenvGcReport(),
+    )
+
+    result = runner.invoke(daemon_app, ["doctor"])
+    assert result.exit_code == 0
+    assert "no debris" in result.stdout.lower()
+    assert "no drift" in result.stdout.lower()
+```
+
+Apply the same pattern (add `from agent_core.daemon.venv_gc import VenvGcReport`
+and the `run_venv_doctor` monkeypatch) to `test_doctor_reports_config_hygiene`
+and `test_doctor_fix_shows_removed_debris`.
 
 ## Alternatives considered
 
