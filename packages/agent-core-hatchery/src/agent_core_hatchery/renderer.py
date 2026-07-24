@@ -38,7 +38,7 @@ class Renderer:
             or "(role to be defined by your primary human and you)",
             "primary_human_name": cfg.primary_human_name,
             "hatched_date": cfg.hatched_date,
-            "endpoint_name": cfg.endpoint_name,
+            "endpoint_name": cfg.endpoint_name or cfg.being_name_lower,
             "vault_root": cfg.resolved_vault_root().as_posix(),
             "vault_memory_path": cfg.resolved_vault_memory_path().as_posix(),
             "daemon_handoff_url": "http://127.0.0.1:8789/internal/handoff-jobs",

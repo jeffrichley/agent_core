@@ -99,6 +99,7 @@ files = [
     "packages/core/src",
     "packages/agent-core-channel/src",
     "packages/agent-core-discord/src",
+    "packages/agent-core-hatchery/src",
 ]
 warn_unused_ignores = true
 no_implicit_optional = true
@@ -118,6 +119,27 @@ ignore_missing_imports = true
 # packages/core + agent-core-channel on their lighter flag set.
 [[tool.mypy.overrides]]
 module = ["agent_core_discord.*"]
+disallow_any_generics = true
+disallow_subclassing_any = true
+disallow_untyped_calls = true
+disallow_untyped_defs = true
+disallow_incomplete_defs = true
+disallow_untyped_decorators = true
+warn_return_any = true
+no_implicit_reexport = true
+strict_equality = true
+extra_checks = true
+
+# questionary ships no py.typed marker and no type stubs on PyPI — silence
+# missing-import noise so strict flags can focus on our own code in wizard.py.
+[[tool.mypy.overrides]]
+module = ["questionary", "questionary.*"]
+ignore_missing_imports = true
+
+# agent-core-hatchery is held to full --strict (issue #491). Individual flags
+# rather than `strict = true` for the same scoping reason as discord above.
+[[tool.mypy.overrides]]
+module = ["agent_core_hatchery.*"]
 disallow_any_generics = true
 disallow_subclassing_any = true
 disallow_untyped_calls = true
