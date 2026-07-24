@@ -10,6 +10,7 @@ Outputs (under <daemon_config_dir>):
 from __future__ import annotations
 
 from pathlib import Path
+from typing import Any
 
 import yaml
 
@@ -38,7 +39,7 @@ class DaemonConfigWriter:
             encoding="utf-8"
         )
         always_on_yaml = self._renderer.render_string(always_on_template)
-        merged: dict = yaml.safe_load(always_on_yaml) or {}
+        merged: dict[str, Any] = yaml.safe_load(always_on_yaml) or {}
         merged.setdefault("endpoints", [])
 
         for scaffold in (scaffold_discord, scaffold_webcam):
@@ -64,7 +65,7 @@ class DaemonConfigWriter:
             encoding="utf-8"
         )
         always_on_yaml = self._renderer.render_string(always_on_template)
-        merged: dict = yaml.safe_load(always_on_yaml) or {}
+        merged: dict[str, Any] = yaml.safe_load(always_on_yaml) or {}
 
         github_job = scaffold_github_backup(self._config)
         if github_job:
