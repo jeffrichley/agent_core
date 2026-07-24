@@ -7,7 +7,7 @@ import os
 from pathlib import Path
 
 import typer
-from pykeepass import create_database  # type: ignore[import-untyped]
+from pykeepass import create_database
 from rich import print as rprint
 
 from agent_core_credentials import default_vault_path

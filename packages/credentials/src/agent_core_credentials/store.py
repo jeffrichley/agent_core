@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from pykeepass import PyKeePass, create_database  # type: ignore[import-untyped]
+from pykeepass import PyKeePass, create_database
 
 from agent_core_credentials.master_password import get_master_password
 from agent_core_credentials.models import Credential, CredentialSummary
