@@ -53,7 +53,7 @@ from agent_core.daemon.release import (
     resolve_version,
 )
 from agent_core.daemon.supervisor import is_alive, kill_tree, read_pid, remove_pid, write_pid
-from agent_core.daemon.venv_gc import run_venv_doctor
+from agent_core.daemon.venv_gc import remove_dead_central_corpses, run_venv_doctor
 
 RELEASE_REPO = "jeffrichley/agent_core"
 
@@ -416,20 +416,31 @@ def doctor(
 
     console.print("\nVenv GC")
     if venv_report.dead_central_corpses:
-        for path in venv_report.dead_central_corpses:
-            console.print(f"  dead corpse: {path}")
-        console.print("  → run with --fix (C2-3b) to remove")
+        if fix:
+            removed_corpses = remove_dead_central_corpses(venv_report.dead_central_corpses)
+            removed_set = set(removed_corpses)
+            for path in venv_report.dead_central_corpses:
+                if path in removed_set:
+                    console.print(f"  dead corpse (removed): {path}")
+                else:
+                    console.print(f"  dead corpse (removal failed): {path}")
+            if removed_corpses:
+                console.print(f"  → removed {len(removed_corpses)} corpse(s)")
+        else:
+            for path in venv_report.dead_central_corpses:
+                console.print(f"  dead corpse: {path}")
+            console.print("  → run with --fix to remove")
     if venv_report.superseded_venvs:
         for path in venv_report.superseded_venvs:
             console.print(f"  superseded venv: {path}")
-        console.print("  → run with --fix (C2-3b) to prune (keeps current + N-1)")
+        console.print("  → run with --fix to prune (keeps current + N-1)")
     if venv_report.broken_stable_links:
         for path in venv_report.broken_stable_links:
             console.print(f"  broken stable link: {path}")
     if venv_report.orphaned_partial_builds:
         for path in venv_report.orphaned_partial_builds:
             console.print(f"  orphaned partial build: {path}")
-        console.print("  → run with --fix (C2-3b) to remove")
+        console.print("  → run with --fix to remove")
     if venv_report.drifted_mcp_jsons:
         for path in venv_report.drifted_mcp_jsons:
             console.print(f"  drifted .mcp.json: {path}")
