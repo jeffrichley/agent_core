@@ -153,6 +153,22 @@ class TestDaemonConfigValidMinimal:
         cfg = DaemonConfig.model_validate({})
         assert cfg.endpoints == []
 
+    def test_defaults_bus_auth_mode(self):
+        cfg = DaemonConfig.model_validate({})
+        assert cfg.bus_auth_mode == "off"
+
+    def test_bus_auth_mode_warn_accepted(self):
+        cfg = DaemonConfig.model_validate({"bus_auth_mode": "warn"})
+        assert cfg.bus_auth_mode == "warn"
+
+    def test_bus_auth_mode_enforce_accepted(self):
+        cfg = DaemonConfig.model_validate({"bus_auth_mode": "enforce"})
+        assert cfg.bus_auth_mode == "enforce"
+
+    def test_bus_auth_mode_invalid_value_raises(self):
+        with pytest.raises(pydantic.ValidationError):
+            DaemonConfig.model_validate({"bus_auth_mode": "enforced"})
+
 
 class TestExtraForbidRoot:
     def test_typo_in_top_level_key_raises(self):
