@@ -24,6 +24,7 @@
 #   "command": "uv run agent-core hooks run PreCompact"
 #   "command": "uv run agent-core hooks run SessionEnd"
 
+# Full key reference: docs/reference/bus-config.md
 bus:
   # Single shared bus database across all agents on this daemon — NOT
   # one per agent. Tilde expansion is supported.
