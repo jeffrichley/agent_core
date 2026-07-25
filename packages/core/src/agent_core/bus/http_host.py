@@ -24,6 +24,7 @@ from starlette.requests import Request
 from starlette.responses import StreamingResponse
 from starlette.routing import Mount, Route, Router
 
+from agent_core.bus.auth.middleware import BusAuthMiddleware
 from agent_core.bus.auth.pubkey_registry import PubkeyRegistry
 from agent_core.bus.notify_broker import NotificationBroker
 
@@ -135,6 +136,7 @@ class HTTPHost:
         notify_broker: NotificationBroker | None = None,
         notify_snapshot: Callable[[str], dict | None] | None = None,
         pubkey_registry: PubkeyRegistry | None = None,
+        bus_auth_mode: str = "off",
     ):
         self._bind_host = bind_host
         self._requested_port = bind_port
@@ -145,6 +147,7 @@ class HTTPHost:
         self._notify_broker = notify_broker
         self._notify_snapshot = notify_snapshot
         self._pubkey_registry = pubkey_registry   # consumed by auth middleware (Dβ-2b)
+        self._bus_auth_mode = bus_auth_mode
 
     def mount(self, hostable: MCPHostable) -> None:
         if self._started:
@@ -199,6 +202,15 @@ class HTTPHost:
             lifespan=_make_lifespan(sub_apps),
         )
 
+        # Auth middleware wraps the router. Path normalization in _app runs first
+        # (before the middleware) so bare /mcp/<being> → /mcp/<being>/ happens
+        # before the being name is extracted.
+        _auth_inner = BusAuthMiddleware(
+            router,
+            pubkey_registry=self._pubkey_registry,
+            bus_auth_mode=self._bus_auth_mode,
+        )
+
         # Thin ASGI shim: Starlette's Mount requires a trailing slash to match a
         # bare prefix path (e.g. GET /mcp/foo → regex ^/mcp/foo/.*$ → no match).
         # Rather than issuing a 307 redirect (redirect_slashes=True) we normalise
@@ -209,7 +221,7 @@ class HTTPHost:
                 path: str = scope.get("path", "")
                 if path in mount_prefixes and not path.endswith("/"):
                     scope = {**scope, "path": path + "/"}
-            await router(scope, receive, send)
+            await _auth_inner(scope, receive, send)
 
         config = uvicorn.Config(
             _app,
