@@ -57,7 +57,26 @@ class GreeterEndpoint:
 
 Return promptly from deliver()
 
-The bus awaits `deliver()` before dispatching to any other endpoint. If you need to do model calls, network I/O, or anything slow, spawn a background task, ack immediately, and publish a follow-up envelope when the work completes.
+The bus awaits `deliver()` before dispatching to any other endpoint. For slow work — model calls, network I/O, heavy computation — ack immediately and hand off to a tracked background task via `handle.spawn()`. `spawn()` wraps `asyncio.create_task()` with task registration and failure routing so exceptions are not silently lost.
+
+```
+async def deliver(self, envelope: Envelope) -> None:
+    assert self._handle is not None
+    # Ack first so the bus can move on; do the slow work in the background.
+    await self._handle.ack(envelope.id)
+    self._handle.spawn(
+        self._process(envelope),
+        name=f"greeter-process-{envelope.id[:8]}",
+    )
+
+async def _process(self, envelope: Envelope) -> None:
+    """Slow work goes here — model calls, HTTP requests, etc."""
+    if envelope.kind == "TextMessage":
+        text = envelope.payload.text  # type: ignore[union-attr]
+        print(f"{self._prefix} (processed): {text}")
+```
+
+Use `asyncio.create_task()` only if you are inside a method that does not have access to the `BusHandle` (e.g. a utility helper). For endpoint `deliver()` implementations, always prefer `handle.spawn()`.
 
 ### Error table
 
