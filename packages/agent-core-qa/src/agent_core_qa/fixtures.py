@@ -20,6 +20,7 @@ Design per spec §B3:
 
 from __future__ import annotations
 
+import asyncio
 import socket
 import subprocess
 import sys
@@ -27,6 +28,8 @@ import time
 from collections.abc import Generator
 
 import pytest
+
+from agent_core_qa.client import DaemonClient
 
 _DAEMON_HOST = "127.0.0.1"
 _DAEMON_PORT = 8787
@@ -44,6 +47,28 @@ def _tcp_probe(host: str, port: int, *, timeout: float = 1.0) -> bool:
         return True
     except OSError:
         return False
+
+
+async def _qa_endpoint_ready(url: str, *, deadline: float) -> bool:
+    """Poll the ``qa`` MCP endpoint until it answers a tool call, or ``deadline`` passes.
+
+    The TCP probe only confirms the daemon's HTTP port is bound —
+    Starlette/Uvicorn opens the socket before the daemon's endpoints finish
+    their ``start()``. A test that fires a ``send`` tool call into that window
+    gets ``500 endpoint 'qa' is not started`` — a startup race that surfaces
+    non-deterministically (it depends on how fast the endpoints come up relative
+    to the first test; it passed on the impl PR and failed on ``main``).
+    ``list_pending`` is a read-only tool on the ``qa`` ``ClaudeCodeMCPEndpoint``;
+    a ``200`` from it means the endpoint is genuinely started and serving. Gate
+    on that, not just the open port, so tests never race a half-started daemon.
+    """
+    client = DaemonClient(url)
+    while time.monotonic() < deadline:
+        result = await client.call_tool("list_pending", arguments={})
+        if result.status_code == 200:
+            return True
+        await asyncio.sleep(_POLL_INTERVAL)
+    return False
 
 
 def _run(args: list[str]) -> subprocess.CompletedProcess[str]:
@@ -86,7 +111,18 @@ def source_daemon() -> Generator[str, None, None]:
 
     if not already_live:
         # Regenerate the config from the current template (--force overwrites).
-        _run([sys.executable, "-m", "agent_core.cli", "daemon", "init", "--force", "--instance", "test"])
+        _run(
+            [
+                sys.executable,
+                "-m",
+                "agent_core.cli",
+                "daemon",
+                "init",
+                "--force",
+                "--instance",
+                "test",
+            ]
+        )
 
         # Start the daemon (detached; returns immediately after writing PID).
         _run([sys.executable, "-m", "agent_core.cli", "daemon", "start", "--instance", "test"])
@@ -101,6 +137,19 @@ def source_daemon() -> Generator[str, None, None]:
                     "Check ~/.agent-core-test/daemon.log for details."
                 )
             time.sleep(_POLL_INTERVAL)
+
+    # TCP-open is necessary but not sufficient: the daemon binds its HTTP port
+    # before its endpoints finish starting. Gate on the qa endpoint actually
+    # serving tool calls so tests never race a half-started daemon (the
+    # `endpoint 'qa' is not started` flake). Runs for BOTH the cold-start and
+    # already-live paths.
+    endpoint_deadline = time.monotonic() + _POLL_TIMEOUT
+    if not asyncio.run(_qa_endpoint_ready(_DAEMON_URL, deadline=endpoint_deadline)):
+        raise RuntimeError(
+            f"daemon HTTP port {_DAEMON_HOST}:{_DAEMON_PORT} opened but the `qa` "
+            f"endpoint did not start serving tool calls within {_POLL_TIMEOUT:.0f} s. "
+            "Check ~/.agent-core-test/daemon.log for endpoint startup errors."
+        )
 
     try:
         yield _DAEMON_URL
