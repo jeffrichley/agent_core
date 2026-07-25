@@ -538,6 +538,44 @@ def test_doctor_reports_venv_gc_section(
     assert "drifted .mcp.json" in output.lower() or ".mcp.json" in output
 
 
+def test_doctor_fix_removes_dead_corpses(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """daemon doctor --fix calls remove_dead_central_corpses for detected corpses."""
+    monkeypatch.setenv("AGENT_CORE_HOME", str(tmp_path))
+
+    from agent_core.daemon.venv_gc import VenvGcReport
+
+    corpse_path = tmp_path / ".venv-v0.7.0"
+    fake_venv_report = VenvGcReport(dead_central_corpses=[corpse_path])
+    monkeypatch.setattr(
+        "agent_core.daemon.cli.run_venv_doctor",
+        lambda daemon_home, home_root, daemon_config_dir: fake_venv_report,
+    )
+
+    removal_calls: list[list] = []
+
+    def fake_remove(corpses: list) -> list:
+        removal_calls.append(list(corpses))
+        return list(corpses)
+
+    monkeypatch.setattr(
+        "agent_core.daemon.cli.remove_dead_central_corpses",
+        fake_remove,
+    )
+    monkeypatch.setattr(
+        "agent_core.daemon.cli.run_config_hygiene",
+        lambda config_dir, fix: __import__(
+            "agent_core.daemon.config_hygiene", fromlist=["HygieneReport"]
+        ).HygieneReport(),
+    )
+
+    result = runner.invoke(daemon_app, ["doctor", "--fix"])
+    assert result.exit_code == 1  # has_issues remains True (corpses were found)
+    assert removal_calls == [[corpse_path]]  # called exactly once with the detected corpse
+    assert "removed" in result.stdout.lower()
+
+
 def test_status_shows_venv_path_when_present(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

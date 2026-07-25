@@ -412,3 +412,56 @@ class TestRunVenvDoctor:
             daemon_config_dir=daemon_home,
         )
         assert not report.has_issues
+
+
+# ---------------------------------------------------------------------------
+# remove_dead_central_corpses
+# ---------------------------------------------------------------------------
+
+class TestRemoveDeadCentralCorpses:
+    def test_removes_versioned_dir(self, tmp_path: Path) -> None:
+        from agent_core.daemon.venv_gc import remove_dead_central_corpses
+
+        corpse = tmp_path / ".venv-v0.7.0"
+        corpse.mkdir()
+        (corpse / "pyvenv.cfg").write_text("home = /usr")
+
+        removed = remove_dead_central_corpses([corpse])
+        assert removed == [corpse]
+        assert not corpse.exists()
+
+    def test_removes_plain_venv_dir(self, tmp_path: Path) -> None:
+        from agent_core.daemon.venv_gc import remove_dead_central_corpses
+
+        plain_venv = tmp_path / ".venv"
+        plain_venv.mkdir()
+
+        removed = remove_dead_central_corpses([plain_venv])
+        assert removed == [plain_venv]
+        assert not plain_venv.exists()
+
+    def test_removes_multiple_corpses(self, tmp_path: Path) -> None:
+        from agent_core.daemon.venv_gc import remove_dead_central_corpses
+
+        c1 = tmp_path / ".venv-v0.6.1"
+        c2 = tmp_path / ".venv-v0.7.0"
+        c1.mkdir()
+        c2.mkdir()
+
+        removed = remove_dead_central_corpses([c1, c2])
+        assert c1 in removed
+        assert c2 in removed
+        assert not c1.exists()
+        assert not c2.exists()
+
+    def test_empty_list_returns_empty(self) -> None:
+        from agent_core.daemon.venv_gc import remove_dead_central_corpses
+
+        assert remove_dead_central_corpses([]) == []
+
+    def test_already_absent_is_silently_skipped(self, tmp_path: Path) -> None:
+        from agent_core.daemon.venv_gc import remove_dead_central_corpses
+
+        phantom = tmp_path / ".venv-v0.9.0"  # never created
+        removed = remove_dead_central_corpses([phantom])
+        assert removed == []  # not counted as removed since it was never there

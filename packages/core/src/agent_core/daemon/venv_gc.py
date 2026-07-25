@@ -14,6 +14,7 @@ touching the real filesystem. Pruning (--fix) is C2-3b.
 from __future__ import annotations
 
 import os
+import shutil
 import sys
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -244,6 +245,37 @@ def find_dead_central_corpses(daemon_home: Path) -> list[Path]:
         found.append(plain_venv)
 
     return sorted(found)
+
+
+def remove_dead_central_corpses(corpses: list[Path]) -> list[Path]:
+    """Remove dead central corpse paths returned by find_dead_central_corpses.
+
+    Uses shutil.rmtree for real directories (including Windows junctions on
+    Python 3.12+, where rmtree treats junctions as files and does not follow
+    their targets). Non-directory paths are removed with Path.unlink. Paths
+    already absent are silently skipped (idempotent). OSError (e.g. permission
+    denied) is caught per path; that path is not included in the returned list.
+
+    Safety: callers must pass only paths returned by find_dead_central_corpses,
+    which structurally excludes live stable symlinks/junctions (.venv that is
+    currently in use is a symlink/junction, not a plain directory, so the
+    detector never returns it).
+
+    Returns the paths actually removed, in input order.
+    """
+    removed: list[Path] = []
+    for p in corpses:
+        try:
+            if p.is_dir() and not p.is_symlink():
+                shutil.rmtree(p)
+            elif p.exists() or p.is_symlink():
+                p.unlink()
+            else:
+                continue  # already absent — idempotent; don't count as removed
+        except OSError:
+            continue
+        removed.append(p)
+    return removed
 
 
 def run_venv_doctor(
