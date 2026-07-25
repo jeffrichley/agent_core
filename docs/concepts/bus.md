@@ -68,7 +68,7 @@ SQLite gives the bus durability with zero external dependencies. The mailbox is 
 | Quarantine | `restarts_before_quarantine`, `probe_interval_seconds` |
 | Circuit breaker | `delivery_backoff_base_seconds/factor/cap`, `deliver_failures_before_breaker` |
 
-For exact field names and defaults, see the [API Reference](../reference/index.md).
+For the complete key list with types and defaults, see [Bus config keys](../reference/bus-config.md).
 
 !!! note "Fan-out is atomic"
     When you publish to multiple recipients (via `BusHandle.publish(envelope, to=[...])`) the bus pre-validates all recipients and mailbox capacities before writing any envelope. Either all recipients accept the envelope, or none do.

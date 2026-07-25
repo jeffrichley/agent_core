@@ -261,6 +261,22 @@ class TestEndpointEntryConfig:
         with pytest.raises(pydantic.ValidationError):
             EndpointEntryConfig.model_validate({"type": "builtin.stub"})
 
+    def test_pubkey_pem_defaults_to_none(self):
+        entry = EndpointEntryConfig.model_validate({"type": "builtin.stub", "name": "ep"})
+        assert entry.pubkey_pem is None
+
+    def test_pubkey_pem_accepts_string(self):
+        entry = EndpointEntryConfig.model_validate(
+            {"type": "builtin.stub", "name": "ep", "pubkey_pem": "-----BEGIN PUBLIC KEY-----\n...\n-----END PUBLIC KEY-----\n"}
+        )
+        assert entry.pubkey_pem is not None
+
+    def test_extra_field_still_rejected_with_pubkey_pem_present(self):
+        with pytest.raises(pydantic.ValidationError):
+            EndpointEntryConfig.model_validate(
+                {"type": "builtin.stub", "name": "ep", "pubkey_pem": "x", "unknown_extra": "oops"}
+            )
+
 
 class TestDaemonConfigRoundTrip:
     def test_full_bus_section_round_trips(self):

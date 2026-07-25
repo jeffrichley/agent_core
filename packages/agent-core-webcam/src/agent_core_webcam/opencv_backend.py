@@ -7,6 +7,8 @@ are mapped onto our protocol exception taxonomy.
 
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
+
 from agent_core_webcam.protocol import (
     CameraBackend,
     CameraBusyError,
@@ -14,6 +16,9 @@ from agent_core_webcam.protocol import (
     CameraNotFoundError,
     WebcamError,
 )
+
+if TYPE_CHECKING:
+    import cv2
 
 # Probe up to this many camera indices when listing. Most consumer hosts
 # have 0–2 cameras; 8 is a generous ceiling without making list_cameras
@@ -53,7 +58,7 @@ class OpenCVCameraBackend:
         return out
 
     @staticmethod
-    def _best_effort_name(cap, idx: int) -> str:
+    def _best_effort_name(cap: cv2.VideoCapture, idx: int) -> str:
         # cv2 doesn't expose device names cross-platform. On Windows
         # CAP_DSHOW we could probe via WMI but that's a rabbit hole.
         # Fall back to a generic label.

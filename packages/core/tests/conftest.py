@@ -16,9 +16,7 @@ closed — inside the test's own event loop.
 from __future__ import annotations
 
 import sys
-import threading
-import time
-from collections.abc import AsyncIterator, Awaitable, Callable, Iterator
+from collections.abc import AsyncIterator, Awaitable, Callable
 from pathlib import Path
 
 import pytest
@@ -81,56 +79,7 @@ async def build_bus() -> AsyncIterator[BusFactory]:
         await bus.stop()
 
 
-def _live_aiosqlite_threads() -> list[threading.Thread]:
-    """Return the currently-alive ``aiosqlite`` connection worker threads.
-
-    ``aiosqlite.Connection`` runs one ``threading.Thread`` per open connection
-    (``target=_connection_worker_thread``) until the connection is closed. The
-    thread is matched by its target function name — robust across aiosqlite
-    versions — with the auto-generated thread name as a fallback.
-    """
-    threads: list[threading.Thread] = []
-    for t in threading.enumerate():
-        if not t.is_alive():
-            continue
-        target = getattr(t, "_target", None)
-        target_name = getattr(target, "__name__", "") if target is not None else ""
-        if target_name == "_connection_worker_thread" or ("_connection_worker_thread" in t.name):
-            threads.append(t)
-    return threads
-
-
-@pytest.fixture(autouse=True)
-def fail_on_leaked_aiosqlite_connection() -> Iterator[None]:
-    """Fail any test that leaks an ``aiosqlite`` connection thread.
-
-    Each ``aiosqlite.connect`` starts a background ``Connection`` thread that
-    lives until the connection is closed. A test that opens a bus/persistence
-    connection and never closes it leaks that thread; across the suite they
-    accumulate into the thousands until the asyncio selector chokes and a
-    random test hangs (``pytest-timeout`` → "ASGI callable returned without
-    completing response") — a non-deterministic failure that blocks CI and
-    wedges the merge queue. This guard turns that downstream flake into a
-    deterministic, localized failure at the offending test.
-
-    Fix a flagged test by building buses via the :func:`build_bus` fixture, or
-    by calling ``await store.close()`` / ``await bus.stop()`` in teardown.
-    """
-    before = {id(t) for t in _live_aiosqlite_threads()}
-    yield
-    # aiosqlite joins its worker thread asynchronously after ``close()``; allow
-    # a brief grace so a properly-closed connection mid-teardown is not flagged.
-    leaked: list[threading.Thread] = []
-    for _ in range(100):  # up to ~1s
-        leaked = [t for t in _live_aiosqlite_threads() if id(t) not in before]
-        if not leaked:
-            break
-        time.sleep(0.01)
-    if leaked:
-        pytest.fail(
-            f"leaked {len(leaked)} aiosqlite connection thread(s) — the test "
-            "opened a bus/persistence connection without closing it. Build "
-            "buses via the `build_bus` fixture, or `await store.close()` / "
-            "`await bus.stop()` in teardown.",
-            pytrace=False,
-        )
+# NOTE: the ``fail_on_leaked_aiosqlite_connection`` autouse guard was promoted
+# to the repo-root ``conftest.py`` (2026-07-24, agent_core#535) so it covers
+# every package's tests, not just core. It still applies to these tests via
+# inheritance from the root conftest.

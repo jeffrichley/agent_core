@@ -15,7 +15,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from pathlib import Path
 
-from madrigal.engine.protocol import (
+from madrigal.engine.protocol import (  # type: ignore[import-untyped]  # madrigal (TTS lib) ships no stubs
     EmptyTextError,
     GPUOOMError,
     TextTooLongError,

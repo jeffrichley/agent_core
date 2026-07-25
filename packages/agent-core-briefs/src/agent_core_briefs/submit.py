@@ -34,7 +34,7 @@ import logging
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from agent_core_briefs.audit import AuditEvent, AuditLog
 from agent_core_briefs.playbook import resolve_colors_for_sections
@@ -44,7 +44,7 @@ from agent_core_briefs.protocol import (
     PlaybookRef,
     SectionSpec,
 )
-from agent_core_briefs.session import SessionRegistry
+from agent_core_briefs.session import ComposeSession, SessionRegistry
 from agent_core_briefs.validators import ValidationIssue, validate_submission
 
 if TYPE_CHECKING:
@@ -88,7 +88,7 @@ async def submit_brief(
     *,
     registry: SessionRegistry,
     token: str,
-    sections: list[dict],
+    sections: list[dict[str, Any]],
     destination_factories: dict[str, Callable[[], Destination]],
     bus_handle: BusHandle,
     audit_log: AuditLog,
@@ -294,7 +294,7 @@ async def submit_brief(
 
 async def _audit_deliver(
     audit_log: AuditLog,
-    session,
+    session: ComposeSession,
     token_short: str,
     outcome: DestinationOutcome,
 ) -> None:
@@ -321,12 +321,12 @@ async def _audit_deliver(
 
 
 def _enrich_sections_with_spec(
-    submitted: list[dict],
+    submitted: list[dict[str, Any]],
     *,
     session_specs: list[SectionSpec],
     palette: dict[str, int],
-    context: dict,
-) -> list[dict]:
+    context: dict[str, Any],
+) -> list[dict[str, Any]]:
     """Override title + color on each submitted section with spec authority.
 
     Title and color are owned by the playbook, not the agent. The agent's
@@ -336,7 +336,7 @@ def _enrich_sections_with_spec(
     unchanged — defensive (validation should already reject these).
     """
     spec_by_id = {spec.section_id: spec for spec in session_specs}
-    enriched: list[dict] = []
+    enriched: list[dict[str, Any]] = []
     for raw in submitted:
         section_id = raw.get("section_id")
         spec = spec_by_id.get(section_id) if isinstance(section_id, str) else None
@@ -350,9 +350,7 @@ def _enrich_sections_with_spec(
         if isinstance(spec.color, int):
             color: int = spec.color
         else:
-            [resolved_spec] = resolve_colors_for_sections(
-                [spec], palette, context=context
-            )
+            [resolved_spec] = resolve_colors_for_sections([spec], palette, context=context)
             color = resolved_spec.color  # type: ignore[assignment]
         out = dict(raw)
         out["title"] = spec.title

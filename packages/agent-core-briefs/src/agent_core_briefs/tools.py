@@ -36,7 +36,7 @@ from agent_core_briefs.session import ComposeSession, SessionRegistry
 _DEFAULT_BUDGET_WEIGHT = 500
 
 
-async def list_sections(registry: SessionRegistry, token: str) -> dict:
+async def list_sections(registry: SessionRegistry, token: str) -> dict[str, Any]:
     """Return the section IDs the brief expects.
 
     Returns:
@@ -53,7 +53,9 @@ async def list_sections(registry: SessionRegistry, token: str) -> dict:
     }
 
 
-async def get_section_spec(registry: SessionRegistry, token: str, *, section_id: str) -> dict:
+async def get_section_spec(
+    registry: SessionRegistry, token: str, *, section_id: str
+) -> dict[str, Any]:
     """Return the section's spec (title, color, fields, guidance).
 
     Color is resolved to int decimal (looked up against the playbook's
@@ -84,8 +86,8 @@ async def validate_section(
     token: str,
     *,
     section_id: str,
-    fields: list[dict],
-) -> dict:
+    fields: list[dict[str, Any]],
+) -> dict[str, Any]:
     """Validate the agent's draft for one section.
 
     fields shape: ``[{"name": "Today", "value": "..."}]``
@@ -150,7 +152,7 @@ async def compress_sections(
     *,
     section_ids: list[str],
     target_total_chars: int,
-) -> dict:
+) -> dict[str, Any]:
     """Suggest compression budgets for the given sections.
 
     Strategy: each section's weight is the sum of ``max_chars`` across
@@ -219,8 +221,8 @@ async def add_extension_section(
     section_id: str,
     title: str,
     color: int | str,
-    fields: list[dict],
-) -> dict:
+    fields: list[dict[str, Any]],
+) -> dict[str, Any]:
     """Add an ad-hoc extension section to the in-flight session.
 
     Used when the agent decides a brief needs a section the playbook

@@ -20,6 +20,7 @@ part of the :class:`agent_core_briefs.submit.SubmitResult`.
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import Any
 
 from agent_core_briefs.session import ComposeSession
 
@@ -42,7 +43,7 @@ class ValidationIssue:
 def validate_submission(
     *,
     session: ComposeSession,
-    sections: list[dict],
+    sections: list[dict[str, Any]],
 ) -> list[ValidationIssue]:
     """Validate the agent's submitted sections against the session's spec.
 
@@ -80,7 +81,7 @@ def validate_submission(
             )
         )
 
-    submitted_by_id: dict[str, dict] = {}
+    submitted_by_id: dict[str, dict[str, Any]] = {}
     for entry in sections:
         sid = entry.get("section_id") if isinstance(entry, dict) else None
         if isinstance(sid, str) and sid:

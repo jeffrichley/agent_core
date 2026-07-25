@@ -6,6 +6,7 @@ import asyncio
 import json
 import os
 from datetime import datetime
+from typing import Any
 
 import yaml
 
@@ -43,7 +44,7 @@ class CliFetcher:
     type_id = "cli"
     namespace = ""  # set per-invocation by the gather config
 
-    async def fetch(self, config: dict, when: datetime) -> dict:
+    async def fetch(self, config: dict[str, Any], when: datetime) -> dict[str, Any]:
         command = list(config["command"])
         cwd = expand_path(config["cwd"]) if config.get("cwd") else None
         parse = config.get("parse", "text")
