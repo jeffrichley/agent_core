@@ -58,3 +58,33 @@ def daemon_url(request: pytest.FixtureRequest) -> str:
 def client(daemon_url: str) -> DaemonClient:
     """Per-test DaemonClient — no session sharing."""
     return DaemonClient(daemon_url)
+
+
+@pytest.fixture(autouse=True)
+async def _drain_qa_inbox(client: DaemonClient):
+    """Drain the ``qa`` endpoint inbox before each scenario (shared-daemon isolation).
+
+    Every scenario runs against one session-scoped daemon, so envelopes one
+    scenario leaves in the ``qa`` inbox are visible to the next. In particular
+    the scheduler round-trip (Scenario 5) deliberately provokes two *error*
+    Acknowledgments ("already exists" / "not found") as its proof mechanism;
+    error Acks are NOT auto-cleared and stay in the inbox. Without isolation
+    they leak into ``test_envelope_roundtrip``'s ``count == 0`` assertion — a
+    failure whose appearance depends on ``pytest-randomly``'s ordering (green
+    locally, red in CI). Draining before each test makes every scenario start
+    from a clean inbox, so the suite is order-independent.
+
+    Bounded loop in case a scenario's residue exceeds one snapshot page. A down
+    daemon makes ``list_pending`` return an empty snapshot, so this no-ops and
+    the ``daemon_liveness_required`` fixture handles the skip.
+    """
+    for _ in range(20):
+        snapshot = await client.list_pending()
+        items = snapshot.get("items", [])
+        if not items:
+            break
+        for item in items:
+            env_id = item.get("id")
+            if env_id:
+                await client.call_tool("handle", arguments={"envelope_id": env_id})
+    yield
