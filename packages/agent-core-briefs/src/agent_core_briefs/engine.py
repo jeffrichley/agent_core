@@ -29,7 +29,7 @@ class FetcherInvocation:
     """
 
     fetcher: Fetcher
-    config: dict
+    config: dict[str, Any]
     timeout_seconds: float
     namespace_override: str | None = None
 
@@ -69,7 +69,7 @@ async def gather_context(
     return context
 
 
-async def _run_one(inv: FetcherInvocation, when: datetime) -> tuple[bool, str, dict]:
+async def _run_one(inv: FetcherInvocation, when: datetime) -> tuple[bool, str, dict[str, Any]]:
     """Execute one fetcher; never re-raise.
 
     Returns ``(is_error, key, payload)``. On success ``key`` is the
@@ -109,7 +109,7 @@ async def _run_one(inv: FetcherInvocation, when: datetime) -> tuple[bool, str, d
         )
 
 
-def _merge_into_namespace(context: dict, namespace: str, payload: dict) -> None:
+def _merge_into_namespace(context: dict[str, Any], namespace: str, payload: dict[str, Any]) -> None:
     """Merge ``payload`` into ``context`` at ``namespace`` (dot-separated path).
 
     ``namespace="streaks.eod_log"`` creates nested dicts. Existing keys at

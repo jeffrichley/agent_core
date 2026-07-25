@@ -82,7 +82,7 @@ class ComposeSession:
     # session-build time so the submit handler can fan out without re-parsing
     # the playbook. Each entry is a raw dict with at least ``type`` and
     # optionally ``config`` (matches Playbook.destinations shape).
-    destinations: list[dict] = field(default_factory=list)
+    destinations: list[dict[str, Any]] = field(default_factory=list)
     # T13/C1: full SectionSpec for every conditional section that gated
     # truthy at session-build time. Without this, the submit-time validator
     # (validators.validate_submission) only sees ids in

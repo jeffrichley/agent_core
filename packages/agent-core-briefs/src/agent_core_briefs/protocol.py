@@ -11,7 +11,7 @@ import inspect
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
-from typing import TYPE_CHECKING, Protocol, runtime_checkable
+from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
 
 if TYPE_CHECKING:
     from agent_core.bus.handle import BusHandle
@@ -25,7 +25,7 @@ class Fetcher(Protocol):
     type_id: str
     namespace: str
 
-    async def fetch(self, config: dict, when: datetime) -> dict: ...
+    async def fetch(self, config: dict[str, Any], when: datetime) -> dict[str, Any]: ...
 
 
 @dataclass(frozen=True)
@@ -53,11 +53,11 @@ class Destination(Protocol):
 
     async def deliver(
         self,
-        sections: list[dict],
+        sections: list[dict[str, Any]],
         playbook: PlaybookRef,
         scope: str | None,
         when: datetime,
-        config: dict,
+        config: dict[str, Any],
         bus_handle: BusHandle,
     ) -> DeliveryResult: ...
 
@@ -103,19 +103,20 @@ class FieldSpec:
     name: str
     required: bool = False
     max_chars: int | None = None
-    guidance: str | dict | None = None  # str or {"file": "path-relative-to-playbook"}
+    guidance: str | dict[str, Any] | None = None  # str or {"file": "path-relative-to-playbook"}
 
 
 @dataclass(frozen=True)
 class SectionSpec:
     section_id: str
     title: str
-    color: str | dict  # palette name or {dynamic, expr, if_true, if_false}
+    # palette name, {dynamic, expr, if_true, if_false}, or a resolved int decimal
+    color: str | dict[str, Any] | int
     required: bool = False
     required_context: list[str] = field(default_factory=list)
     allow_compression: bool = False
     fields: list[FieldSpec] = field(default_factory=list)
-    when: dict | None = None  # {expr: "..."} for conditional sections
+    when: dict[str, Any] | None = None  # {expr: "..."} for conditional sections
     required_when_active: bool = False
 
 

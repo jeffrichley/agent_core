@@ -39,7 +39,7 @@ def substitute_vars(value: Any, vars_map: dict[str, str]) -> Any:
 
 
 def _substitute_string(s: str, vars_map: dict[str, str]) -> str:
-    def _replace(match: re.Match) -> str:
+    def _replace(match: re.Match[str]) -> str:
         name = match.group(1)
         if not _VALID_VAR_NAME.match(name):
             raise ConfigSubstitutionError(
