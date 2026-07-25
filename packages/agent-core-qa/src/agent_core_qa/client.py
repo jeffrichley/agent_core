@@ -168,13 +168,19 @@ class DaemonClient:
                         "expires_at": envelope.get("expires_at"),
                     },
                 )
-            # fastmcp returns a list of content items; unwrap the first text block.
+            # fastmcp 3.x returns a CallToolResult; the content blocks live on
+            # ``.content`` (the object itself is not subscriptable). Unwrap the
+            # first text block.
             data: Any = None
-            if result and hasattr(result[0], "text"):
+            if result.content and hasattr(result.content[0], "text"):
                 try:
-                    data = json.loads(result[0].text)
+                    data = json.loads(result.content[0].text)
                 except (json.JSONDecodeError, AttributeError):
-                    data = result[0].text if hasattr(result[0], "text") else str(result)
+                    data = (
+                        result.content[0].text
+                        if hasattr(result.content[0], "text")
+                        else str(result)
+                    )
             return _MCPToolResult(status_code=200, data=data, text=str(data))
         except Exception as exc:
             return _MCPToolResult(status_code=500, text=str(exc))
@@ -210,9 +216,9 @@ class DaemonClient:
                     result = await mcp.call_tool("list_pending", arguments={})
 
                 data: Any = None
-                if result and hasattr(result[0], "text"):
+                if result.content and hasattr(result.content[0], "text"):
                     try:
-                        data = json.loads(result[0].text)
+                        data = json.loads(result.content[0].text)
                     except (json.JSONDecodeError, AttributeError):
                         # Justified: a malformed tool payload is treated as "no
                         # data" and the poll loop retries on the next tick.
@@ -244,9 +250,9 @@ class DaemonClient:
             async with _FastMCPClient(self._mcp_url, timeout=self._timeout) as mcp:
                 result = await mcp.call_tool("list_pending", arguments={})
 
-            if result and hasattr(result[0], "text"):
+            if result.content and hasattr(result.content[0], "text"):
                 try:
-                    snapshot: dict[str, Any] = json.loads(result[0].text)
+                    snapshot: dict[str, Any] = json.loads(result.content[0].text)
                     return snapshot
                 except (json.JSONDecodeError, AttributeError):
                     # Justified: a malformed payload falls through to the empty
@@ -286,11 +292,15 @@ class DaemonClient:
                 result = await mcp.call_tool(tool_name, arguments=arguments or {})
 
             data: Any = None
-            if result and hasattr(result[0], "text"):
+            if result.content and hasattr(result.content[0], "text"):
                 try:
-                    data = json.loads(result[0].text)
+                    data = json.loads(result.content[0].text)
                 except (json.JSONDecodeError, AttributeError):
-                    data = result[0].text if hasattr(result[0], "text") else str(result)
+                    data = (
+                        result.content[0].text
+                        if hasattr(result.content[0], "text")
+                        else str(result)
+                    )
             return _MCPToolResult(status_code=200, data=data, text=str(data))
         except Exception as exc:
             return _MCPToolResult(status_code=500, text=str(exc))
