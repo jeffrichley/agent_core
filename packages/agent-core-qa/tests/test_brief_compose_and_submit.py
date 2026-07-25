@@ -60,6 +60,18 @@ from __future__ import annotations
 import pytest
 
 
+# agent_core#545: the briefs tools (compose_brief/submit_brief) are not yet wired
+# into the TEST daemon config — the qa endpoint carries no
+# ``params.briefs_orchestrator``, so ``compose_brief`` returns "Unknown tool" and
+# this scenario cannot pass. The test's own skip path only catches
+# playbook-not-found, not a missing tool, so mark it xfail until #545 plumbs the
+# briefs orchestrator into the test daemon. Non-strict so an env that DOES have it
+# wired still passes green. Remove this marker when #545 lands.
+@pytest.mark.xfail(
+    reason="agent_core#545: briefs tools not wired into TEST daemon config "
+    "(compose_brief -> 'Unknown tool'); remove when #545 lands",
+    strict=False,
+)
 async def test_brief_compose_and_submit(client):
     """Invoke compose_brief then submit_brief via the qa MCP endpoint.
 
@@ -80,7 +92,11 @@ async def test_brief_compose_and_submit(client):
         # Tool raised — could be playbook-not-found (operator config issue)
         # or a genuine framework crash. Surface the error text for diagnosis.
         error_text = compose_result.text[:400]
-        if "playbook" in error_text.lower() or "not found" in error_text.lower() or "unknown brief_type" in error_text.lower():
+        if (
+            "playbook" in error_text.lower()
+            or "not found" in error_text.lower()
+            or "unknown brief_type" in error_text.lower()
+        ):
             pytest.skip(
                 f"compose_brief: playbook 'morning_brief' not found in the test daemon's "
                 f"configured playbooks_path; ensure the daemon is configured with a "
@@ -148,9 +164,7 @@ async def test_brief_compose_and_submit(client):
 
     # The structured result must have these keys regardless of success.
     for key in ("success", "validation_issues", "deliveries"):
-        assert key in submit_data, (
-            f"submit_brief result missing key {key!r}; got: {submit_data!r}"
-        )
+        assert key in submit_data, f"submit_brief result missing key {key!r}; got: {submit_data!r}"
 
     # Both True (all destinations delivered) and False (validation issues
     # or destination failures) are acceptable smoke outcomes — the brief
