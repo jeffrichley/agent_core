@@ -49,6 +49,10 @@ are internal and omitted.
     options:
       heading_level: 3
 
+## Config reference
+
+- [Bus config keys](bus-config.md) — every `bus:` and `bus.supervisor:` YAML key with type, default, and effect description.
+
 ## Extensions
 
 The extension system is built on [pluggy](https://pluggy.readthedocs.io/) hook

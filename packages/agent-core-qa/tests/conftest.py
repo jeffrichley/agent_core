@@ -1,7 +1,8 @@
 """Shared fixtures for agent-core-qa scenarios.
 
-Tool-shaped: each fixture is per-test; no module/session-scoped state
-beyond what pytest itself manages.
+Daemon lifecycle is managed by the session-scoped `source_daemon` fixture
+(defined in `agent_core_qa.fixtures`, loaded via `pytest_plugins`). Tests
+run against a running daemon without any manual pre-start step.
 """
 
 from __future__ import annotations
@@ -11,10 +12,12 @@ import os
 import pytest
 from agent_core_qa.client import DaemonClient
 
+pytest_plugins = ["agent_core_qa.fixtures"]
+
 DEFAULT_DAEMON_URL = "http://127.0.0.1:8787"
 
 
-def pytest_addoption(parser):
+def pytest_addoption(parser: pytest.Parser) -> None:
     parser.addoption(
         "--daemon-url",
         action="store",
@@ -24,12 +27,27 @@ def pytest_addoption(parser):
     )
 
 
-@pytest.fixture
-def daemon_url(request) -> str:
-    """Resolve the daemon URL from CLI flag, env var, or default."""
+@pytest.fixture(scope="session", autouse=True)
+def auto_daemon(source_daemon: str) -> None:
+    """Opt the whole session into the source_daemon lifecycle.
+
+    Depends on `source_daemon` (from agent_core_qa.fixtures) so the daemon is
+    started and torn down exactly once per session before any test runs.
+    Track A (#394) can declare its own autouse wrapper that calls
+    `agent-core daemon install` before yielding to `source_daemon`.
+    """
+
+
+@pytest.fixture(scope="session")
+def daemon_url(request: pytest.FixtureRequest) -> str:
+    """Resolve the daemon URL from CLI flag, env var, or default.
+
+    Promoted to session scope: the URL is a constant string resolved once per
+    session (avoids one redundant resolution call per test).
+    """
     flag = request.config.getoption("--daemon-url")
     if flag:
-        return flag
+        return str(flag)
     env = os.environ.get("AGENT_CORE_QA_DAEMON_URL")
     if env:
         return env
@@ -43,29 +61,30 @@ def client(daemon_url: str) -> DaemonClient:
 
 
 @pytest.fixture(autouse=True)
-def daemon_liveness_required(request, client: DaemonClient):
-    """Skip all scenarios if the test daemon isn't reachable.
+async def _drain_qa_inbox(client: DaemonClient):
+    """Drain the ``qa`` endpoint inbox before each scenario (shared-daemon isolation).
 
-    Phase 2.7 failure-class catch: "does the daemon actually start after
-    install." If the daemon is down, dependent scenarios skip with a clear
-    reason instead of failing with cryptic connection errors.
+    Every scenario runs against one session-scoped daemon, so envelopes one
+    scenario leaves in the ``qa`` inbox are visible to the next. In particular
+    the scheduler round-trip (Scenario 5) deliberately provokes two *error*
+    Acknowledgments ("already exists" / "not found") as its proof mechanism;
+    error Acks are NOT auto-cleared and stay in the inbox. Without isolation
+    they leak into ``test_envelope_roundtrip``'s ``count == 0`` assertion — a
+    failure whose appearance depends on ``pytest-randomly``'s ordering (green
+    locally, red in CI). Draining before each test makes every scenario start
+    from a clean inbox, so the suite is order-independent.
+
+    Bounded loop in case a scenario's residue exceeds one snapshot page. A down
+    daemon makes ``list_pending`` return an empty snapshot, so this no-ops and
+    the ``daemon_liveness_required`` fixture handles the skip.
     """
-    # Tests that do their own daemon management bypass the liveness check.
-    BYPASS_LIVENESS = {
-        "test_daemon_liveness",
-        "test_install_identity_dynamic_keystone",
-    }
-    if request.node.name in BYPASS_LIVENESS:
-        return
-    try:
-        response = client.health_check()
-        if response.status_code != 200:
-            pytest.skip(
-                f"test daemon at {client.base_url} returned "
-                f"{response.status_code}; run `agent-core daemon start --instance test` first"
-            )
-    except Exception as exc:
-        pytest.skip(
-            f"test daemon not reachable at {client.base_url}: {exc!r}; "
-            f"run `agent-core daemon start --instance test` first"
-        )
+    for _ in range(20):
+        snapshot = await client.list_pending()
+        items = snapshot.get("items", [])
+        if not items:
+            break
+        for item in items:
+            env_id = item.get("id")
+            if env_id:
+                await client.call_tool("handle", arguments={"envelope_id": env_id})
+    yield
