@@ -53,6 +53,7 @@ from agent_core.daemon.release import (
     resolve_version,
 )
 from agent_core.daemon.supervisor import is_alive, kill_tree, read_pid, remove_pid, write_pid
+from agent_core.daemon.venv_gc import run_venv_doctor
 
 RELEASE_REPO = "jeffrichley/agent_core"
 
@@ -402,14 +403,43 @@ def doctor(
         False, "--fix", help="Remove detected debris files (drift warnings are always report-only)."
     ),
 ) -> None:
-    """Check config hygiene: detect debris files and reserved-key drift in fragments."""
-    # TODO #317: venv GC section goes here
+    """Check config hygiene and venv health: detect debris, stale venvs, drifted .mcp.json."""
     inst = _resolve(instance)
     home = home_for(inst)
 
+    # Venv GC section (C2-3a: report-only, --fix is not yet wired here)
+    venv_report = run_venv_doctor(
+        daemon_home=home,
+        home_root=Path.home(),
+        daemon_config_dir=home,
+    )
+
+    console.print("\nVenv GC")
+    if venv_report.dead_central_corpses:
+        for path in venv_report.dead_central_corpses:
+            console.print(f"  dead corpse: {path}")
+        console.print("  → run with --fix (C2-3b) to remove")
+    if venv_report.superseded_venvs:
+        for path in venv_report.superseded_venvs:
+            console.print(f"  superseded venv: {path}")
+        console.print("  → run with --fix (C2-3b) to prune (keeps current + N-1)")
+    if venv_report.broken_stable_links:
+        for path in venv_report.broken_stable_links:
+            console.print(f"  broken stable link: {path}")
+    if venv_report.orphaned_partial_builds:
+        for path in venv_report.orphaned_partial_builds:
+            console.print(f"  orphaned partial build: {path}")
+        console.print("  → run with --fix (C2-3b) to remove")
+    if venv_report.drifted_mcp_jsons:
+        for path in venv_report.drifted_mcp_jsons:
+            console.print(f"  drifted .mcp.json: {path}")
+        console.print("  → run [bold]agent-core venv regen-mcp <being>[/bold] to repair")
+    if not venv_report.has_issues:
+        console.print("  no venv issues found")
+
+    # Config hygiene section (existing, from #321)
     report = run_config_hygiene(home, fix=fix)
 
-    # Config hygiene section
     console.print("\nConfig hygiene")
     if report.debris_found:
         for path in report.debris_found:
@@ -424,7 +454,6 @@ def doctor(
     else:
         console.print("  no debris found")
 
-    # Config drift section
     console.print("\nConfig drift")
     if report.drift_messages:
         for msg in report.drift_messages:
@@ -432,7 +461,7 @@ def doctor(
     else:
         console.print("  no drift detected")
 
-    if report.has_issues:
+    if report.has_issues or venv_report.has_issues:
         raise typer.Exit(code=1)
 
 

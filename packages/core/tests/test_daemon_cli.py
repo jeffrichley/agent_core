@@ -425,6 +425,7 @@ def test_doctor_reports_config_hygiene(
     monkeypatch.setenv("AGENT_CORE_HOME", str(tmp_path))
 
     from agent_core.daemon.config_hygiene import HygieneReport
+    from agent_core.daemon.venv_gc import VenvGcReport
 
     fake_report = HygieneReport(
         debris_found=[tmp_path / "agent_core.yaml.bak"],
@@ -434,6 +435,10 @@ def test_doctor_reports_config_hygiene(
     monkeypatch.setattr(
         "agent_core.daemon.cli.run_config_hygiene",
         lambda config_dir, fix: fake_report,
+    )
+    monkeypatch.setattr(
+        "agent_core.daemon.cli.run_venv_doctor",
+        lambda daemon_home, home_root, daemon_config_dir: VenvGcReport(),
     )
 
     result = runner.invoke(daemon_app, ["doctor"])
@@ -450,10 +455,15 @@ def test_doctor_clean_config_exits_zero(
     monkeypatch.setenv("AGENT_CORE_HOME", str(tmp_path))
 
     from agent_core.daemon.config_hygiene import HygieneReport
+    from agent_core.daemon.venv_gc import VenvGcReport
 
     monkeypatch.setattr(
         "agent_core.daemon.cli.run_config_hygiene",
         lambda config_dir, fix: HygieneReport(),
+    )
+    monkeypatch.setattr(
+        "agent_core.daemon.cli.run_venv_doctor",
+        lambda daemon_home, home_root, daemon_config_dir: VenvGcReport(),
     )
 
     result = runner.invoke(daemon_app, ["doctor"])
@@ -469,6 +479,7 @@ def test_doctor_fix_shows_removed_debris(
     monkeypatch.setenv("AGENT_CORE_HOME", str(tmp_path))
 
     from agent_core.daemon.config_hygiene import HygieneReport
+    from agent_core.daemon.venv_gc import VenvGcReport
 
     bak = tmp_path / "agent_core.yaml.bak"
     fake_report = HygieneReport(
@@ -480,10 +491,51 @@ def test_doctor_fix_shows_removed_debris(
         "agent_core.daemon.cli.run_config_hygiene",
         lambda config_dir, fix: fake_report,
     )
+    monkeypatch.setattr(
+        "agent_core.daemon.cli.run_venv_doctor",
+        lambda daemon_home, home_root, daemon_config_dir: VenvGcReport(),
+    )
 
     result = runner.invoke(daemon_app, ["doctor", "--fix"])
     assert result.exit_code == 1  # has_issues is True (debris_found is populated)
     assert "removed" in result.stdout.lower()
+
+
+def test_doctor_reports_venv_gc_section(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """daemon doctor runs the venv GC pass and prints all five finding categories."""
+    monkeypatch.setenv("AGENT_CORE_HOME", str(tmp_path))
+
+    from agent_core.daemon.venv_gc import VenvGcReport
+
+    # Populate all five finding categories so every branch in the venv GC section is covered.
+    fake_venv_report = VenvGcReport(
+        dead_central_corpses=[tmp_path / ".venv-v0.7.0"],
+        superseded_venvs=[tmp_path / "venvs" / "0.6.0"],
+        broken_stable_links=[tmp_path / ".venv"],
+        orphaned_partial_builds=[tmp_path / "venvs" / "0.5.0"],
+        drifted_mcp_jsons=[tmp_path / ".wren" / ".mcp.json"],
+    )
+    monkeypatch.setattr(
+        "agent_core.daemon.cli.run_venv_doctor",
+        lambda daemon_home, home_root, daemon_config_dir: fake_venv_report,
+    )
+    monkeypatch.setattr(
+        "agent_core.daemon.cli.run_config_hygiene",
+        lambda config_dir, fix: __import__(
+            "agent_core.daemon.config_hygiene", fromlist=["HygieneReport"]
+        ).HygieneReport(),
+    )
+
+    result = runner.invoke(daemon_app, ["doctor"])
+    assert result.exit_code == 1  # has_issues → non-zero
+    output = result.stdout
+    assert "dead corpse" in output.lower() or ".venv-v0.7.0" in output
+    assert "superseded" in output.lower() or "0.6.0" in output
+    assert "broken stable link" in output.lower() or ".venv" in output
+    assert "orphaned partial build" in output.lower() or "0.5.0" in output
+    assert "drifted .mcp.json" in output.lower() or ".mcp.json" in output
 
 
 def test_status_shows_venv_path_when_present(
