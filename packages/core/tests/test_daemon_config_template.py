@@ -92,3 +92,41 @@ def test_build_default_config_source_has_no_qa_endpoint(tmp_path: Path) -> None:
     endpoints = data.get("endpoints", [])
     qa_present = any(e.get("name") == "qa" for e in endpoints)
     assert not qa_present, f"SOURCE scaffold unexpectedly registers qa endpoint: {endpoints}"
+
+
+def test_build_default_config_test_has_scheduler_endpoint(tmp_path: Path) -> None:
+    """TEST scaffold includes a builtin.scheduler endpoint named 'scheduler'.
+
+    Scenario 5 (scheduler CRUD) requires this endpoint to be present in the
+    TEST daemon config so `daemon init --instance test` produces a QA-ready
+    config without manual post-install editing.
+    """
+    text = build_default_config(instance=Instance.TEST, home=tmp_path)
+    data = yaml.safe_load(text)
+    endpoints = data.get("endpoints", [])
+    scheduler = next(
+        (e for e in endpoints if e.get("type") == "builtin.scheduler" and e.get("name") == "scheduler"),
+        None,
+    )
+    assert scheduler is not None, (
+        f"TEST scaffold missing builtin.scheduler endpoint named 'scheduler'; got {endpoints}"
+    )
+
+
+def test_build_default_config_test_has_discord_endpoint(tmp_path: Path) -> None:
+    """TEST scaffold includes a builtin.stub endpoint named 'discord'.
+
+    Scenario 6 (discord routing) requires a second stub endpoint named 'discord'
+    in the TEST daemon config so `daemon init --instance test` produces a
+    QA-ready config without manual post-install editing.
+    """
+    text = build_default_config(instance=Instance.TEST, home=tmp_path)
+    data = yaml.safe_load(text)
+    endpoints = data.get("endpoints", [])
+    discord = next(
+        (e for e in endpoints if e.get("type") == "builtin.stub" and e.get("name") == "discord"),
+        None,
+    )
+    assert discord is not None, (
+        f"TEST scaffold missing builtin.stub endpoint named 'discord'; got {endpoints}"
+    )

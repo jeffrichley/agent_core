@@ -39,6 +39,8 @@ import sys
 import uuid
 from pathlib import Path
 
+import pytest
+
 EXPECTED_PACKAGES = [
     "agent_core",
     "agent_core_briefs",
@@ -54,6 +56,7 @@ EXPECTED_PACKAGES = [
 ]
 
 
+@pytest.mark.slow
 def test_install_identity_dynamic_keystone():
     """Invoke `agent-core daemon install --instance test --release v0.3.0`
     against a clean sandbox; assert install completes; assert venv has
