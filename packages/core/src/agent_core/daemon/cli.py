@@ -53,7 +53,14 @@ from agent_core.daemon.release import (
     resolve_version,
 )
 from agent_core.daemon.supervisor import is_alive, kill_tree, read_pid, remove_pid, write_pid
-from agent_core.daemon.venv_gc import remove_dead_central_corpses, run_venv_doctor
+from agent_core.daemon.venv_gc import (
+    prune_superseded_venvs,
+    remove_broken_stable_link,
+    remove_dead_central_corpses,
+    remove_orphaned_partial_builds,
+    run_venv_doctor,
+)
+from agent_core.venv.mcp_config import repair_mcp_json
 
 RELEASE_REPO = "jeffrichley/agent_core"
 
@@ -407,7 +414,7 @@ def doctor(
     inst = _resolve(instance)
     home = home_for(inst)
 
-    # Venv GC section (C2-3a: report-only, --fix is not yet wired here)
+    # Venv GC section (C2-3a detectors; C2-3b --fix actions wired)
     venv_report = run_venv_doctor(
         daemon_home=home,
         home_root=Path.home(),
@@ -431,20 +438,65 @@ def doctor(
                 console.print(f"  dead corpse: {path}")
             console.print("  → run with --fix to remove")
     if venv_report.superseded_venvs:
-        for path in venv_report.superseded_venvs:
-            console.print(f"  superseded venv: {path}")
-        console.print("  → run with --fix to prune (keeps current + N-1)")
+        if fix:
+            removed = prune_superseded_venvs(venv_report.superseded_venvs)
+            removed_set = set(removed)
+            for path in venv_report.superseded_venvs:
+                label = "(removed)" if path in removed_set else "(removal failed)"
+                console.print(f"  superseded venv {label}: {path}")
+            if removed:
+                console.print(f"  → pruned {len(removed)} superseded venv(s)")
+        else:
+            for path in venv_report.superseded_venvs:
+                console.print(f"  superseded venv: {path}")
+            console.print("  → run with --fix to prune (keeps current + N-1)")
     if venv_report.broken_stable_links:
-        for path in venv_report.broken_stable_links:
-            console.print(f"  broken stable link: {path}")
+        if fix:
+            for path in venv_report.broken_stable_links:
+                if remove_broken_stable_link(path):
+                    console.print(f"  broken stable link (removed): {path}")
+                    console.print(
+                        "  → rebuild with [bold]agent-core venv build <being>[/bold]"
+                    )
+                else:
+                    console.print(f"  broken stable link (removal failed): {path}")
+        else:
+            for path in venv_report.broken_stable_links:
+                console.print(f"  broken stable link: {path}")
+            console.print(
+                "  → run with --fix to remove; then rebuild with "
+                "[bold]agent-core venv build <being>[/bold]"
+            )
     if venv_report.orphaned_partial_builds:
-        for path in venv_report.orphaned_partial_builds:
-            console.print(f"  orphaned partial build: {path}")
-        console.print("  → run with --fix to remove")
+        if fix:
+            removed = remove_orphaned_partial_builds(venv_report.orphaned_partial_builds)
+            removed_set = set(removed)
+            for path in venv_report.orphaned_partial_builds:
+                label = "(removed)" if path in removed_set else "(removal failed)"
+                console.print(f"  orphaned partial build {label}: {path}")
+            if removed:
+                console.print(f"  → removed {len(removed)} orphaned partial build(s)")
+        else:
+            for path in venv_report.orphaned_partial_builds:
+                console.print(f"  orphaned partial build: {path}")
+            console.print("  → run with --fix to remove")
     if venv_report.drifted_mcp_jsons:
-        for path in venv_report.drifted_mcp_jsons:
-            console.print(f"  drifted .mcp.json: {path}")
-        console.print("  → run [bold]agent-core venv regen-mcp <being>[/bold] to repair")
+        if fix:
+            for path in venv_report.drifted_mcp_jsons:
+                being_name = path.parent.name.lstrip(".")
+                _, changed = repair_mcp_json(
+                    being_name,
+                    vault_root=path.parent,
+                    daemon_config_dir=home,
+                )
+                label = "(repaired)" if changed else "(already canonical)"
+                console.print(f"  drifted .mcp.json {label}: {path}")
+        else:
+            for path in venv_report.drifted_mcp_jsons:
+                console.print(f"  drifted .mcp.json: {path}")
+            console.print(
+                "  → run [bold]agent-core venv regen-mcp <being>[/bold] to repair"
+            )
     if not venv_report.has_issues:
         console.print("  no venv issues found")
 

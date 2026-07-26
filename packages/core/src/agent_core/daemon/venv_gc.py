@@ -278,6 +278,65 @@ def remove_dead_central_corpses(corpses: list[Path]) -> list[Path]:
     return removed
 
 
+def prune_superseded_venvs(paths: list[Path]) -> list[Path]:
+    """Remove superseded versioned venv directories.
+
+    Uses shutil.rmtree. Already-absent paths are silently skipped (idempotent).
+    A per-path OSError (e.g. permission denied) is caught; that path is excluded
+    from the returned list. Returns paths actually removed, in input order.
+    """
+    removed: list[Path] = []
+    for p in paths:
+        try:
+            if p.exists():
+                shutil.rmtree(p)
+            else:
+                continue  # already absent — idempotent, not counted
+        except OSError:
+            continue
+        removed.append(p)
+    return removed
+
+
+def remove_broken_stable_link(stable: Path) -> bool:
+    """Remove a broken (dangling) stable symlink or junction.
+
+    Only removes if stable is a symlink/junction AND its target does not exist.
+    Returns True if removed; False if the path is absent, is a plain directory,
+    points to an existing target, or if removal raised OSError.
+    """
+    is_link = stable.is_symlink() or (sys.platform == "win32" and stable.is_junction())
+    if not is_link:
+        return False
+    if stable.exists():
+        return False  # target exists — healthy link, do not touch
+    try:
+        os.unlink(stable)
+        return True
+    except OSError:
+        return False
+
+
+def remove_orphaned_partial_builds(paths: list[Path]) -> list[Path]:
+    """Remove orphaned partial build directories.
+
+    Identical contract to prune_superseded_venvs: shutil.rmtree per path,
+    already-absent paths silently skipped (idempotent), per-path OSError silently
+    skipped. Returns paths actually removed, in input order.
+    """
+    removed: list[Path] = []
+    for p in paths:
+        try:
+            if p.exists():
+                shutil.rmtree(p)
+            else:
+                continue
+        except OSError:
+            continue
+        removed.append(p)
+    return removed
+
+
 def run_venv_doctor(
     daemon_home: Path,
     *,

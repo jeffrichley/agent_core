@@ -465,3 +465,125 @@ class TestRemoveDeadCentralCorpses:
         phantom = tmp_path / ".venv-v0.9.0"  # never created
         removed = remove_dead_central_corpses([phantom])
         assert removed == []  # not counted as removed since it was never there
+
+
+# ---------------------------------------------------------------------------
+# prune_superseded_venvs
+# ---------------------------------------------------------------------------
+
+class TestPruneSupersededVenvs:
+    def test_removes_single_dir(self, tmp_path: Path) -> None:
+        from agent_core.daemon.venv_gc import prune_superseded_venvs
+
+        d = tmp_path / "0.6.0"
+        d.mkdir()
+        (d / "pyvenv.cfg").write_text("home = /usr")
+        removed = prune_superseded_venvs([d])
+        assert removed == [d]
+        assert not d.exists()
+
+    def test_removes_multiple_dirs(self, tmp_path: Path) -> None:
+        from agent_core.daemon.venv_gc import prune_superseded_venvs
+
+        d1 = tmp_path / "0.5.0"
+        d2 = tmp_path / "0.6.0"
+        d1.mkdir()
+        d2.mkdir()
+        removed = prune_superseded_venvs([d1, d2])
+        assert d1 in removed
+        assert d2 in removed
+        assert not d1.exists()
+        assert not d2.exists()
+
+    def test_already_absent_is_idempotent(self, tmp_path: Path) -> None:
+        from agent_core.daemon.venv_gc import prune_superseded_venvs
+
+        phantom = tmp_path / "0.5.0"  # never created
+        assert prune_superseded_venvs([phantom]) == []
+
+    def test_empty_list_returns_empty(self) -> None:
+        from agent_core.daemon.venv_gc import prune_superseded_venvs
+
+        assert prune_superseded_venvs([]) == []
+
+    @pytest.mark.skipif(sys.platform == "win32", reason="POSIX symlink test")
+    def test_idempotent_second_pass(self, tmp_path: Path) -> None:
+        """After pruning, detector returns [] on a second pass (keep-set invariant)."""
+        from agent_core.daemon.venv_gc import find_superseded_venvs, prune_superseded_venvs
+
+        venvs_dir = tmp_path / "venvs"
+        for v in ("0.6.0", "0.7.0", "0.8.0"):
+            (venvs_dir / v).mkdir(parents=True)
+        stable = tmp_path / ".venv"
+        os.symlink(venvs_dir / "0.8.0", stable)
+
+        superseded = find_superseded_venvs(venvs_dir, stable)
+        assert superseded == [venvs_dir / "0.6.0"]
+        prune_superseded_venvs(superseded)
+        # Only 0.7.0 and 0.8.0 remain — ≤2 dirs, so nothing more to prune.
+        assert find_superseded_venvs(venvs_dir, stable) == []
+
+
+# ---------------------------------------------------------------------------
+# remove_broken_stable_link (pruner)
+# ---------------------------------------------------------------------------
+
+@pytest.mark.skipif(sys.platform == "win32", reason="POSIX symlink test")
+class TestRemoveBrokenStableLinkPruner:
+    def test_removes_dangling_symlink(self, tmp_path: Path) -> None:
+        from agent_core.daemon.venv_gc import remove_broken_stable_link
+
+        stable = tmp_path / ".venv"
+        os.symlink(tmp_path / "nonexistent", stable)
+        result = remove_broken_stable_link(stable)
+        assert result is True
+        assert not stable.is_symlink()
+
+    def test_does_not_remove_healthy_symlink(self, tmp_path: Path) -> None:
+        from agent_core.daemon.venv_gc import remove_broken_stable_link
+
+        target = tmp_path / "venvs" / "0.8.0"
+        target.mkdir(parents=True)
+        stable = tmp_path / ".venv"
+        os.symlink(target, stable)
+        result = remove_broken_stable_link(stable)
+        assert result is False
+        assert stable.exists()
+
+    def test_returns_false_for_plain_dir(self, tmp_path: Path) -> None:
+        from agent_core.daemon.venv_gc import remove_broken_stable_link
+
+        plain = tmp_path / ".venv"
+        plain.mkdir()
+        assert remove_broken_stable_link(plain) is False
+
+    def test_returns_false_when_absent(self, tmp_path: Path) -> None:
+        from agent_core.daemon.venv_gc import remove_broken_stable_link
+
+        assert remove_broken_stable_link(tmp_path / ".venv") is False
+
+
+# ---------------------------------------------------------------------------
+# remove_orphaned_partial_builds
+# ---------------------------------------------------------------------------
+
+class TestRemoveOrphanedPartialBuilds:
+    def test_removes_single_dir(self, tmp_path: Path) -> None:
+        from agent_core.daemon.venv_gc import remove_orphaned_partial_builds
+
+        d = tmp_path / "0.8.0"
+        d.mkdir()
+        removed = remove_orphaned_partial_builds([d])
+        assert removed == [d]
+        assert not d.exists()
+
+    def test_already_absent_is_idempotent(self, tmp_path: Path) -> None:
+        from agent_core.daemon.venv_gc import remove_orphaned_partial_builds
+
+        phantom = tmp_path / "0.7.0"  # never created
+        assert remove_orphaned_partial_builds([phantom]) == []
+
+    def test_empty_list_returns_empty(self) -> None:
+        from agent_core.daemon.venv_gc import remove_orphaned_partial_builds
+
+        assert remove_orphaned_partial_builds([]) == []
