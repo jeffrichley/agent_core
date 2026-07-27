@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import numpy as np
-from agent_core_presence.motion import MotionGate
+from agent_core_webcam.presence.motion import MotionGate
 
 
 def _blank(value: int = 0) -> np.ndarray:

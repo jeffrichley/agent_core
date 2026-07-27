@@ -5,7 +5,7 @@ from __future__ import annotations
 import time
 from pathlib import Path
 
-from agent_core_presence.state import PresenceState, read_state, write_state
+from agent_core_webcam.presence.state import PresenceState, read_state, write_state
 
 
 def test_write_then_read_roundtrips(tmp_path: Path) -> None:

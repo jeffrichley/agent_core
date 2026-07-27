@@ -6,8 +6,8 @@ import time
 from pathlib import Path
 from typing import Any
 
-from agent_core_presence.injector import PresenceInjector
-from agent_core_presence.state import PresenceState, write_state
+from agent_core_webcam.presence.injector import PresenceInjector
+from agent_core_webcam.presence.state import PresenceState, write_state
 
 
 def _write(tmp_path: Path, **kwargs: Any) -> Path:

@@ -15,7 +15,7 @@ import time
 from pathlib import Path
 
 from agent_core.models import ToolResult
-from agent_core_presence.state import PresenceState, read_state
+from agent_core_webcam.presence.state import PresenceState, read_state
 
 _DEFAULT_STATE_PATH = Path.home() / ".agent-core" / "presence" / "state.json"
 _DEFAULT_MAX_AGE_SECONDS = 30.0
