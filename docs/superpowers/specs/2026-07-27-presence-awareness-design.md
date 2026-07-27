@@ -111,7 +111,7 @@ There is **no failure that makes a being *less* careful**; the worst case is alw
 | Recognition uncertain | Bayesian belief stays below the bar → **unknown** |
 | Hook itself errors | hook catches its own error, emits **unknown** (never raises) |
 
-**Watcher supervision:** the watcher is a long-running camera-owner and must stay up. It runs as a **supervised background service** (a Windows scheduled task that relaunches on crash, mirroring the existing `AgentCoreDaemon`). If it dies, the staleness guard covers the gap until it restarts.
+**Watcher lifecycle (v1 = manual start):** the watcher is started **by hand** — a CLI command (e.g. `agent-core-webcam watch`) that Jeff runs. The hook never spawns it; it only reads the state file. If the watcher isn't running, the state goes stale/missing → the staleness guard → "unknown" → safe. Single-instance is trivially guaranteed by "Jeff starts one." *Deferred:* lazy hook-spin-up with a single-instance lock (named mutex / exclusive lockfile / port-bind), idle self-shutdown, and/or a supervised background service — all future refinements, not v1.
 
 ---
 
@@ -145,3 +145,4 @@ An earlier `agent-core-presence` package (the `state.py` contract, the `presence
 - Liveness / anti-spoof detection (future hardening)
 - Device/channel cross-check for the phone case (being judgment instead)
 - Family enrollment (designed-for, not built in v1)
+- Auto-spin-up / single-instance lock / supervised service / idle self-shutdown — v1 is **manual start** (`agent-core-webcam watch` by hand)
