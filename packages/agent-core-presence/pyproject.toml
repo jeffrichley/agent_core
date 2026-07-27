@@ -10,6 +10,13 @@ dependencies = [
     "pydantic>=2.7",
 ]
 
+[project.optional-dependencies]
+# The continuous CV watcher (Phase 2) — kept optional so the hook install stays
+# tiny. opencv + a face-detection model get added here once approved.
+cv = [
+    "numpy>=1.26",
+]
+
 [project.entry-points."agent_core"]
 presence_aliases = "agent_core_presence.plugin"
 
