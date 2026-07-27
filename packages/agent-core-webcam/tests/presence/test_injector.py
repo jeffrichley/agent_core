@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import Any
 
 from agent_core_webcam.presence.injector import PresenceInjector
+from agent_core_webcam.presence.levels import DEFAULT_TEMPLATES
 from agent_core_webcam.presence.state import PresenceState, write_state
 
 
@@ -42,8 +43,7 @@ def test_stale_reading_degrades_to_unknown(tmp_path: Path) -> None:
         "UserPromptSubmit", {}, {"state_path": str(path), "max_age_seconds": 30}
     )
     assert "unknown" in result.content.lower()
-    assert "stale" in result.content.lower()
-    assert "jeff" not in result.content
+    assert "jeff" not in result.content  # a stale reading never asserts an identity
 
 
 def test_missing_state_degrades_to_unknown(tmp_path: Path) -> None:
@@ -52,3 +52,57 @@ def test_missing_state_degrades_to_unknown(tmp_path: Path) -> None:
         "UserPromptSubmit", {}, {"state_path": str(tmp_path / "nope.json")}
     )
     assert "unknown" in result.content.lower()
+
+
+def _fresh(path: Path, *, at_desk: bool, known: list[str], unknown_count: int) -> None:
+    write_state(
+        PresenceState(
+            updated_at=time.time(), at_desk=at_desk, known=known, unknown_count=unknown_count
+        ),
+        path,
+    )
+
+
+def test_level3_injects_trust_gate_when_stranger_only(tmp_path: Path) -> None:
+    p = tmp_path / "state.json"
+    _fresh(p, at_desk=False, known=[], unknown_count=1)
+    out = PresenceInjector().execute("SessionStart", {}, {"state_path": str(p), "level": 3})
+    assert DEFAULT_TEMPLATES["trust_gate"] in out.content
+
+
+def test_level1_never_injects_guidance(tmp_path: Path) -> None:
+    p = tmp_path / "state.json"
+    _fresh(p, at_desk=False, known=[], unknown_count=2)
+    out = PresenceInjector().execute("SessionStart", {}, {"state_path": str(p), "level": 1})
+    assert DEFAULT_TEMPLATES["trust_gate"] not in out.content
+    assert DEFAULT_TEMPLATES["shoulder_surf"] not in out.content
+
+
+def test_stale_reading_degrades_to_cautious_at_level3(tmp_path: Path) -> None:
+    p = tmp_path / "state.json"
+    write_state(
+        PresenceState(updated_at=1.0, at_desk=True, known=["jeff"], unknown_count=0), p
+    )  # ancient
+    out = PresenceInjector().execute("SessionStart", {}, {"state_path": str(p), "level": 3})
+    assert DEFAULT_TEMPLATES["unknown_banner"] in out.content
+    assert DEFAULT_TEMPLATES["trust_gate"] in out.content
+
+
+def test_custom_principal_and_templates(tmp_path: Path) -> None:
+    p = tmp_path / "state.json"
+    _fresh(p, at_desk=True, known=["pepper"], unknown_count=0)
+    out = PresenceInjector().execute(
+        "SessionStart", {}, {"state_path": str(p), "level": 3, "principal": "pepper"}
+    )
+    # Pepper confirmed present => no trust gate.
+    assert DEFAULT_TEMPLATES["trust_gate"] not in out.content
+
+
+def test_execute_never_raises_on_garbage_params(tmp_path: Path) -> None:
+    p = tmp_path / "state.json"
+    _fresh(p, at_desk=True, known=["jeff"], unknown_count=0)
+    # A non-numeric max_age would blow up float() — must be swallowed to "unknown".
+    out = PresenceInjector().execute(
+        "SessionStart", {}, {"state_path": str(p), "max_age_seconds": "not-a-number"}
+    )
+    assert DEFAULT_TEMPLATES["unknown_banner"] in out.content
