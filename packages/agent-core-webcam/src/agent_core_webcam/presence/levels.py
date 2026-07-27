@@ -64,3 +64,36 @@ def classify(state: PresenceState | None, *, principal: str) -> PresenceReading:
         principal_present=principal_present,
         unknown_present=state.unknown_count > 0,
     )
+
+
+def render(
+    reading: PresenceReading,
+    state: PresenceState | None,
+    *,
+    level: int,
+    templates: dict[str, str],
+) -> str:
+    """Select the injected guidance text for a reading at a being's level.
+
+    Levels are cumulative: level 2 adds shoulder-surf caution when an unknown is
+    present; level 3 additionally trust-gates whenever the principal is not
+    confirmed present. Level comparisons use ``>=`` so any out-of-range high
+    value simply yields maximum caution (safe) and any low value yields
+    facts-only (ambient) — no clamping needed.
+    """
+    parts: list[str] = []
+    if reading.have_reading and state is not None:
+        parts.append(
+            templates["facts"].format(
+                at_desk="yes" if state.at_desk else "no",
+                recognized=", ".join(state.known) if state.known else "nobody enrolled-recognized",
+                unknown_count=state.unknown_count,
+            )
+        )
+    else:
+        parts.append(templates["unknown_banner"])
+    if level >= 2 and reading.unknown_present:
+        parts.append(templates["shoulder_surf"])
+    if level >= 3 and not reading.principal_present:
+        parts.append(templates["trust_gate"])
+    return "\n".join(parts)
