@@ -106,3 +106,30 @@ def test_execute_never_raises_on_garbage_params(tmp_path: Path) -> None:
         "SessionStart", {}, {"state_path": str(p), "max_age_seconds": "not-a-number"}
     )
     assert DEFAULT_TEMPLATES["unknown_banner"] in out.content
+
+
+def test_level3_error_path_still_trust_gates(tmp_path: Path) -> None:
+    """An internal error at level 3 must NOT drop the trust-gate — the error path
+    is level-appropriate, never less cautious than a normal missing reading."""
+    p = tmp_path / "state.json"
+    _fresh(p, at_desk=True, known=["jeff"], unknown_count=0)  # Jeff confirmed present
+    out = PresenceInjector().execute(
+        "SessionStart",
+        {},
+        # garbage max_age forces the except path; level stays 3
+        {"state_path": str(p), "level": 3, "max_age_seconds": object()},
+    )
+    assert DEFAULT_TEMPLATES["unknown_banner"] in out.content
+    assert DEFAULT_TEMPLATES["trust_gate"] in out.content  # de-escalation preserved
+
+
+def test_unparseable_level_defaults_to_max_caution(tmp_path: Path) -> None:
+    """If even ``level`` is unusable on the error path, default to level 3."""
+    p = tmp_path / "state.json"
+    _fresh(p, at_desk=True, known=["jeff"], unknown_count=0)
+    out = PresenceInjector().execute(
+        "SessionStart",
+        {},
+        {"state_path": str(p), "level": object(), "max_age_seconds": object()},
+    )
+    assert DEFAULT_TEMPLATES["trust_gate"] in out.content

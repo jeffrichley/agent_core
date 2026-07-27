@@ -68,4 +68,19 @@ class PresenceInjector:
             return ToolResult(heading=heading, content=content)
         except Exception:  # never raise into the session — degrade to cautious
             log.exception("presence_injector failed; degrading to unknown")
-            return ToolResult(heading=heading, content=templates["unknown_banner"])
+            return ToolResult(heading=heading, content=self._fallback(params, templates))
+
+    @staticmethod
+    def _fallback(params: dict, templates: dict[str, str]) -> str:
+        """Render the level-appropriate no-reading guidance after an internal error.
+
+        The error path must be no *less* cautious than a normal missing reading:
+        a level-3 being still gets its trust-gate. ``level`` is re-parsed
+        defensively — if even that is unusable, default to maximum caution.
+        """
+        try:
+            level = int(params.get("level", _DEFAULT_LEVEL))
+        except (TypeError, ValueError):
+            level = 3  # unparseable config => be maximally cautious
+        reading = classify(None, principal="")  # None => no reading, cautious
+        return render(reading, None, level=level, templates=templates)
