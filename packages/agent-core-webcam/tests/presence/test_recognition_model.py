@@ -15,7 +15,7 @@ import pytest
 
 pytest.importorskip("insightface")
 
-from agent_core_webcam.presence.recognition import (  # noqa: E402
+from agent_core_webcam.presence.recognition import (
     cosine,
     embed_faces,
     load_analyzer,

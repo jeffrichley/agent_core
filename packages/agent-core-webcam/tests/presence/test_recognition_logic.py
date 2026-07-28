@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import numpy as np
-
 from agent_core_webcam.presence.recognition import cosine, decide, match_embedding
 
 
@@ -49,8 +48,6 @@ def test_match_embedding_picks_best_of_several() -> None:
 
 
 def test_match_embedding_empty_gallery_is_unknown() -> None:
-    verdict, score = match_embedding(
-        np.array([1.0, 0.0]), [], principal="jeff", threshold=0.5
-    )
+    verdict, score = match_embedding(np.array([1.0, 0.0]), [], principal="jeff", threshold=0.5)
     assert verdict == "unknown"
     assert score == 0.0

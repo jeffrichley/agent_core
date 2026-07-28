@@ -61,7 +61,7 @@ def decode_frame(png_bytes: bytes) -> npt.NDArray[np.uint8]:
     img = cv2.imdecode(arr, cv2.IMREAD_COLOR)
     if img is None:
         raise ValueError("could not decode PNG bytes into an image")
-    return img
+    return np.asarray(img, dtype=np.uint8)
 
 
 def load_analyzer(model_name: str = "buffalo_s") -> object:
@@ -70,7 +70,7 @@ def load_analyzer(model_name: str = "buffalo_s") -> object:
     Imported lazily so this module stays importable without the heavy stack.
     The model pack downloads to ``~/.insightface/models`` on first use.
     """
-    from insightface.app import FaceAnalysis
+    from insightface.app import FaceAnalysis  # type: ignore[import-untyped]
 
     app = FaceAnalysis(name=model_name, providers=["CPUExecutionProvider"])
     app.prepare(ctx_id=-1)  # -1 => CPU

@@ -57,11 +57,7 @@ def _cmd_enroll(args: argparse.Namespace) -> int:
 
 
 def _cmd_recognize(args: argparse.Namespace) -> int:
-    tpath = (
-        Path(args.template)
-        if args.template
-        else DEFAULT_ENROLLMENT_DIR / f"{args.name}.json"
-    )
+    tpath = Path(args.template) if args.template else DEFAULT_ENROLLMENT_DIR / f"{args.name}.json"
     if not tpath.exists():
         print(f"error: no template at {tpath}. Run `enroll` first.", file=sys.stderr)
         return 2

@@ -6,7 +6,6 @@ from pathlib import Path
 
 import cv2
 import numpy as np
-
 from agent_core_webcam.presence.enrollment import (
     Template,
     load_template,
