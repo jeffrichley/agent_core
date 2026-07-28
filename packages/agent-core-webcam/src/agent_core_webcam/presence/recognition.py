@@ -47,3 +47,18 @@ def match_embedding(
         return "unknown", 0.0
     best = max(cosine(embedding, g) for g in gallery)
     return decide(best, threshold=threshold, principal=principal), best
+
+
+def decode_frame(png_bytes: bytes) -> npt.NDArray[np.uint8]:
+    """Decode PNG bytes (as produced by the webcam backend) to a BGR array.
+
+    Returns an ``H x W x 3`` uint8 array in cv2's BGR channel order — exactly
+    what ``insightface``'s ``FaceAnalysis.get`` expects.
+    """
+    import cv2  # local: cv2 is a webcam dep but keep this module's top light
+
+    arr = np.frombuffer(png_bytes, dtype=np.uint8)
+    img = cv2.imdecode(arr, cv2.IMREAD_COLOR)
+    if img is None:
+        raise ValueError("could not decode PNG bytes into an image")
+    return img
