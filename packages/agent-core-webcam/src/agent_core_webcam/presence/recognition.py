@@ -62,3 +62,34 @@ def decode_frame(png_bytes: bytes) -> npt.NDArray[np.uint8]:
     if img is None:
         raise ValueError("could not decode PNG bytes into an image")
     return img
+
+
+def load_analyzer(model_name: str = "buffalo_s") -> object:
+    """Load a CPU InsightFace analyzer (SCRFD detect + ArcFace embed).
+
+    Imported lazily so this module stays importable without the heavy stack.
+    The model pack downloads to ``~/.insightface/models`` on first use.
+    """
+    from insightface.app import FaceAnalysis
+
+    app = FaceAnalysis(name=model_name, providers=["CPUExecutionProvider"])
+    app.prepare(ctx_id=-1)  # -1 => CPU
+    return app
+
+
+def embed_faces(
+    analyzer: object,
+    frame: npt.NDArray[np.uint8],
+) -> list[tuple[Vector, tuple[int, int, int, int], float]]:
+    """Detect + embed every face in a BGR frame.
+
+    Returns one ``(normed_embedding, bbox, det_score)`` per detected face; an
+    empty list when none are found. ``bbox`` is ``(x1, y1, x2, y2)`` ints.
+    """
+    faces = analyzer.get(frame)  # type: ignore[attr-defined]
+    out: list[tuple[Vector, tuple[int, int, int, int], float]] = []
+    for f in faces:
+        emb = np.asarray(f.normed_embedding, dtype=np.float32)
+        x1, y1, x2, y2 = (int(v) for v in f.bbox[:4])
+        out.append((emb, (x1, y1, x2, y2), float(f.det_score)))
+    return out

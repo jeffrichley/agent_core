@@ -46,3 +46,30 @@ def load_template(path: Path) -> Template:
     raw = json.loads(path.read_text(encoding="utf-8"))
     embeddings = [np.asarray(e, dtype=np.float32) for e in raw["embeddings"]]
     return Template(name=str(raw["name"]), embeddings=embeddings)
+
+
+def build_template(
+    analyzer: object,
+    frames: list[npt.NDArray[np.uint8]],
+    *,
+    name: str,
+) -> Template:
+    """Build a template from enrollment frames — the largest face per frame.
+
+    Raises ValueError if no face is found in any frame.
+    """
+    from agent_core_webcam.presence.recognition import embed_faces
+
+    embeddings: list[Vector] = []
+    for frame in frames:
+        faces = embed_faces(analyzer, frame)
+        if not faces:
+            continue
+        # Largest detected face (bbox area) — the person being enrolled.
+        emb, _bbox, _score = max(
+            faces, key=lambda t: (t[1][2] - t[1][0]) * (t[1][3] - t[1][1])
+        )
+        embeddings.append(emb)
+    if not embeddings:
+        raise ValueError("no face detected in any enrollment frame")
+    return Template(name=name, embeddings=embeddings)
