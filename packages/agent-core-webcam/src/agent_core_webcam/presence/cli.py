@@ -17,6 +17,7 @@ from pathlib import Path
 import numpy as np
 import numpy.typing as npt
 
+from agent_core_webcam.presence.camera_session import CameraSession
 from agent_core_webcam.presence.enrollment import (
     DEFAULT_ENROLLMENT_DIR,
     build_template,
@@ -24,7 +25,6 @@ from agent_core_webcam.presence.enrollment import (
     save_template,
 )
 from agent_core_webcam.presence.recognition import (
-    decode_frame,
     embed_faces,
     load_analyzer,
     match_embedding,
@@ -33,12 +33,9 @@ from agent_core_webcam.presence.recognition import (
 _DEFAULT_THRESHOLD = 0.5
 
 
-def _grab_frame(camera_index: int) -> npt.NDArray[np.uint8]:
-    """Grab a single BGR frame from the webcam backend (seam for tests)."""
-    from agent_core_webcam.opencv_backend import OpenCVCameraBackend
-
-    png = OpenCVCameraBackend().capture(camera_index, (1280, 720))
-    return decode_frame(png)
+def _open_session(camera_index: int) -> CameraSession:
+    """Open a camera session held for the whole command (seam for tests)."""
+    return CameraSession(camera_index, (1280, 720))
 
 
 def _countdown(seconds: float, *, shot: int, total: int) -> None:
@@ -57,10 +54,12 @@ def _cmd_enroll(args: argparse.Namespace) -> int:
         f"Enrolling {args.name}: {args.frames} shots with a {secs}s countdown each. "
         f"Look at the camera; shift a little between shots."
     )
-    for i in range(args.frames):
-        _countdown(args.interval, shot=i + 1, total=args.frames)
-        frames.append(_grab_frame(args.camera_index))
-        print(f"  snap — shot {i + 1}/{args.frames} captured", flush=True)
+    with _open_session(args.camera_index) as cam:
+        cam.warmup()  # settle exposure once so the first shot isn't dark/slow
+        for i in range(args.frames):
+            _countdown(args.interval, shot=i + 1, total=args.frames)
+            frames.append(cam.read_bgr())
+            print(f"  snap — shot {i + 1}/{args.frames} captured", flush=True)
     try:
         template = build_template(analyzer, frames, name=args.name)
     except ValueError:
@@ -82,7 +81,9 @@ def _cmd_recognize(args: argparse.Namespace) -> int:
         return 2
     template = load_template(tpath)
     analyzer = load_analyzer()
-    frame = _grab_frame(args.camera_index)
+    with _open_session(args.camera_index) as cam:
+        cam.warmup(2)
+        frame = cam.read_bgr()
     faces = embed_faces(analyzer, frame)
     if not faces:
         print("no face detected")

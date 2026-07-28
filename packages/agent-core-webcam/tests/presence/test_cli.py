@@ -1,4 +1,4 @@
-"""CLI wiring — recognize path exercised with monkeypatched model + frame."""
+"""CLI wiring — enroll/recognize exercised with a fake camera session + model."""
 
 from __future__ import annotations
 
@@ -7,13 +7,29 @@ from agent_core_webcam.presence import cli
 from agent_core_webcam.presence.enrollment import Template, save_template
 
 
+class _FakeSession:
+    """Stand-in for CameraSession: a context manager yielding blank frames."""
+
+    def __enter__(self) -> _FakeSession:
+        return self
+
+    def __exit__(self, *_exc: object) -> bool:
+        return False
+
+    def warmup(self, n: int = 3) -> None:
+        return None
+
+    def read_bgr(self) -> np.ndarray:
+        return np.zeros((2, 2, 3), np.uint8)
+
+
 def test_recognize_prints_verdict(tmp_path, monkeypatch, capsys) -> None:  # type: ignore[no-untyped-def]
     # A template whose only embedding matches our fake face embedding exactly.
     emb = np.array([1.0, 0.0, 0.0], dtype=np.float32)
     tpath = tmp_path / "jeff.json"
     save_template(Template(name="jeff", embeddings=[emb]), tpath)
 
-    monkeypatch.setattr(cli, "_grab_frame", lambda camera_index: np.zeros((2, 2, 3), np.uint8))
+    monkeypatch.setattr(cli, "_open_session", lambda _idx: _FakeSession())
     monkeypatch.setattr(cli, "load_analyzer", lambda: object())
     monkeypatch.setattr(cli, "embed_faces", lambda analyzer, frame: [(emb, (1, 2, 3, 4), 0.99)])
 
@@ -34,7 +50,7 @@ def test_recognize_no_face_prints_message(tmp_path, monkeypatch, capsys) -> None
     emb = np.array([1.0, 0.0], dtype=np.float32)
     tpath = tmp_path / "jeff.json"
     save_template(Template(name="jeff", embeddings=[emb]), tpath)
-    monkeypatch.setattr(cli, "_grab_frame", lambda camera_index: np.zeros((2, 2, 3), np.uint8))
+    monkeypatch.setattr(cli, "_open_session", lambda _idx: _FakeSession())
     monkeypatch.setattr(cli, "load_analyzer", lambda: object())
     monkeypatch.setattr(cli, "embed_faces", lambda analyzer, frame: [])
 
@@ -47,7 +63,7 @@ def test_enroll_counts_down_and_writes_template(tmp_path, monkeypatch, capsys) -
     emb = np.array([1.0, 0.0], dtype=np.float32)
     out = tmp_path / "jeff.json"
     monkeypatch.setattr(cli.time, "sleep", lambda _s: None)  # don't actually wait
-    monkeypatch.setattr(cli, "_grab_frame", lambda camera_index: np.zeros((2, 2, 3), np.uint8))
+    monkeypatch.setattr(cli, "_open_session", lambda _idx: _FakeSession())
     monkeypatch.setattr(cli, "load_analyzer", lambda: object())
     monkeypatch.setattr(
         cli,
