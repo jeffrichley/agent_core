@@ -80,3 +80,37 @@ def test_enroll_counts_down_and_writes_template(tmp_path, monkeypatch, capsys) -
     assert "3..." in text and "2..." in text and "1..." in text  # countdown shown
     assert "shot 1 of 2" in text
     assert "usable" in text
+
+
+def test_watch_loads_template_and_runs(tmp_path, monkeypatch, capsys) -> None:  # type: ignore[no-untyped-def]
+    emb = np.array([1.0, 0.0], dtype=np.float32)
+    tpath = tmp_path / "jeff.json"
+    save_template(Template(name="jeff", embeddings=[emb]), tpath)
+    spath = tmp_path / "state.json"
+
+    captured: dict = {}
+
+    def fake_run_watch(**kwargs):  # type: ignore[no-untyped-def]
+        captured.update(kwargs)
+
+    monkeypatch.setattr(cli, "run_watch", fake_run_watch)
+    rc = cli.main(
+        [
+            "watch",
+            "--template", str(tpath),
+            "--state-path", str(spath),
+            "--interval", "5",
+            "--threshold", "0.6",
+        ]
+    )
+    assert rc == 0
+    assert captured["template"].name == "jeff"
+    assert captured["state_path"] == spath
+    assert captured["interval"] == 5.0
+    assert captured["threshold"] == 0.6
+
+
+def test_watch_no_template_errors(tmp_path, capsys) -> None:  # type: ignore[no-untyped-def]
+    rc = cli.main(["watch", "--template", str(tmp_path / "missing.json")])
+    assert rc != 0
+    assert "enroll" in capsys.readouterr().err.lower()

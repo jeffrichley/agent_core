@@ -29,6 +29,7 @@ from agent_core_webcam.presence.recognition import (
     load_analyzer,
     match_embedding,
 )
+from agent_core_webcam.presence.watcher import run_watch
 
 _DEFAULT_THRESHOLD = 0.5
 
@@ -96,6 +97,32 @@ def _cmd_recognize(args: argparse.Namespace) -> int:
     return 0
 
 
+def _cmd_watch(args: argparse.Namespace) -> int:
+    tpath = Path(args.template) if args.template else DEFAULT_ENROLLMENT_DIR / f"{args.name}.json"
+    if not tpath.exists():
+        print(f"error: no template at {tpath}. Run `enroll` first.", file=sys.stderr)
+        return 2
+    template = load_template(tpath)
+    state_path = (
+        Path(args.state_path)
+        if args.state_path
+        else Path.home() / ".agent-core" / "presence" / "state.json"
+    )
+    print(
+        f"Watching camera {args.camera_index} every {args.interval}s -> {state_path}\n"
+        f"(Ctrl-C to stop.)"
+    )
+    run_watch(
+        template=template,
+        state_path=state_path,
+        principal=template.name,
+        threshold=args.threshold,
+        interval=args.interval,
+        camera_index=args.camera_index,
+    )
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     """Entry point. Returns a process exit code."""
     parser = argparse.ArgumentParser(prog="presence")
@@ -114,6 +141,14 @@ def main(argv: list[str] | None = None) -> int:
     r.add_argument("--template", default=None)
     r.add_argument("--threshold", type=float, default=_DEFAULT_THRESHOLD)
     r.set_defaults(func=_cmd_recognize)
+
+    w = sub.add_parser("watch", help="continuously write presence state.json")
+    w.add_argument("--name", default="jeff")
+    w.add_argument("--template", default=None)
+    w.add_argument("--state-path", default=None)
+    w.add_argument("--threshold", type=float, default=_DEFAULT_THRESHOLD)
+    w.add_argument("--interval", type=float, default=2.0)
+    w.set_defaults(func=_cmd_watch)
 
     args = parser.parse_args(argv)
     result: int = args.func(args)
