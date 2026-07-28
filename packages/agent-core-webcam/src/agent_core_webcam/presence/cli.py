@@ -41,18 +41,37 @@ def _grab_frame(camera_index: int) -> npt.NDArray[np.uint8]:
     return decode_frame(png)
 
 
+def _countdown(seconds: float, *, shot: int, total: int) -> None:
+    """Print a per-second countdown before a shot so the human can get ready."""
+    print(f"Get ready — shot {shot} of {total}:", flush=True)
+    for n in range(int(round(seconds)), 0, -1):
+        print(f"  {n}...", flush=True)
+        time.sleep(1)
+
+
 def _cmd_enroll(args: argparse.Namespace) -> int:
-    analyzer = load_analyzer()
+    analyzer = load_analyzer()  # load the model first so the countdown reflects real timing
     frames: list[npt.NDArray[np.uint8]] = []
-    print(f"Capturing {args.frames} frames — look at the camera, move a little between shots.")
+    secs = int(round(args.interval))
+    print(
+        f"Enrolling {args.name}: {args.frames} shots with a {secs}s countdown each. "
+        f"Look at the camera; shift a little between shots."
+    )
     for i in range(args.frames):
+        _countdown(args.interval, shot=i + 1, total=args.frames)
         frames.append(_grab_frame(args.camera_index))
-        print(f"  captured {i + 1}/{args.frames}")
-        time.sleep(args.interval)
-    template = build_template(analyzer, frames, name=args.name)
+        print(f"  snap — shot {i + 1}/{args.frames} captured", flush=True)
+    try:
+        template = build_template(analyzer, frames, name=args.name)
+    except ValueError:
+        print(
+            "error: no face detected in any shot. Try again with better lighting/framing.",
+            file=sys.stderr,
+        )
+        return 1
     out = Path(args.out) if args.out else DEFAULT_ENROLLMENT_DIR / f"{args.name}.json"
     save_template(template, out)  # SECURITY TODO: plaintext — encrypt before live
-    print(f"Enrolled {args.name}: {len(template.embeddings)} embedding(s) -> {out}")
+    print(f"Enrolled {args.name}: {len(template.embeddings)}/{args.frames} shots usable -> {out}")
     return 0
 
 
@@ -85,7 +104,7 @@ def main(argv: list[str] | None = None) -> int:
     e = sub.add_parser("enroll", help="capture frames and build a template")
     e.add_argument("--name", default="jeff")
     e.add_argument("--frames", type=int, default=5)
-    e.add_argument("--interval", type=float, default=0.6)
+    e.add_argument("--interval", type=float, default=3.0)
     e.add_argument("--out", default=None)
     e.set_defaults(func=_cmd_enroll)
 

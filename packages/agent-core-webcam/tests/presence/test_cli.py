@@ -41,3 +41,26 @@ def test_recognize_no_face_prints_message(tmp_path, monkeypatch, capsys) -> None
     rc = cli.main(["recognize", "--template", str(tpath)])
     assert rc == 0
     assert "no face" in capsys.readouterr().out.lower()
+
+
+def test_enroll_counts_down_and_writes_template(tmp_path, monkeypatch, capsys) -> None:  # type: ignore[no-untyped-def]
+    emb = np.array([1.0, 0.0], dtype=np.float32)
+    out = tmp_path / "jeff.json"
+    monkeypatch.setattr(cli.time, "sleep", lambda _s: None)  # don't actually wait
+    monkeypatch.setattr(cli, "_grab_frame", lambda camera_index: np.zeros((2, 2, 3), np.uint8))
+    monkeypatch.setattr(cli, "load_analyzer", lambda: object())
+    monkeypatch.setattr(
+        cli,
+        "build_template",
+        lambda analyzer, frames, name: Template(name=name, embeddings=[emb, emb]),
+    )
+
+    rc = cli.main(
+        ["enroll", "--name", "jeff", "--frames", "2", "--interval", "3", "--out", str(out)]
+    )
+    text = capsys.readouterr().out
+    assert rc == 0
+    assert out.exists()
+    assert "3..." in text and "2..." in text and "1..." in text  # countdown shown
+    assert "shot 1 of 2" in text
+    assert "usable" in text
