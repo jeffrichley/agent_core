@@ -97,10 +97,14 @@ def test_watch_loads_template_and_runs(tmp_path, monkeypatch, capsys) -> None:  
     rc = cli.main(
         [
             "watch",
-            "--template", str(tpath),
-            "--state-path", str(spath),
-            "--interval", "5",
-            "--threshold", "0.6",
+            "--template",
+            str(tpath),
+            "--state-path",
+            str(spath),
+            "--interval",
+            "5",
+            "--threshold",
+            "0.6",
         ]
     )
     assert rc == 0

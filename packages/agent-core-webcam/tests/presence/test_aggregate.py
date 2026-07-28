@@ -25,9 +25,7 @@ def test_jeff_alone_at_desk() -> None:
 
 
 def test_jeff_at_desk_plus_stranger_behind() -> None:
-    s = aggregate(
-        [("jeff", _BIG), ("unknown", _SMALL)], principal="jeff", source="d", now=1.0
-    )
+    s = aggregate([("jeff", _BIG), ("unknown", _SMALL)], principal="jeff", source="d", now=1.0)
     assert s.at_desk is True and s.known == ["jeff"] and s.unknown_count == 1
 
 
@@ -38,16 +36,12 @@ def test_stranger_at_desk_jeff_away() -> None:
 
 def test_stranger_at_desk_jeff_small_in_background() -> None:
     # Largest face is the stranger -> not at desk, but Jeff IS seen -> known.
-    s = aggregate(
-        [("unknown", _BIG), ("jeff", _SMALL)], principal="jeff", source="d", now=1.0
-    )
+    s = aggregate([("unknown", _BIG), ("jeff", _SMALL)], principal="jeff", source="d", now=1.0)
     assert s.at_desk is False  # Jeff isn't the one driving the desk
     assert s.known == ["jeff"]  # but he's present
     assert s.unknown_count == 1
 
 
 def test_two_strangers() -> None:
-    s = aggregate(
-        [("unknown", _BIG), ("unknown", _SMALL)], principal="jeff", source="d", now=1.0
-    )
+    s = aggregate([("unknown", _BIG), ("unknown", _SMALL)], principal="jeff", source="d", now=1.0)
     assert s.at_desk is False and s.known == [] and s.unknown_count == 2

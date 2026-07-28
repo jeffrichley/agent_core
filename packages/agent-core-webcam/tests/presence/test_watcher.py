@@ -5,7 +5,6 @@ from __future__ import annotations
 from pathlib import Path
 
 import numpy as np
-
 from agent_core_webcam.presence.enrollment import Template
 from agent_core_webcam.presence.state import read_state
 from agent_core_webcam.presence.watcher import run_watch
@@ -17,7 +16,7 @@ _SMALL = (10, 10, 40, 50)
 
 
 class _FakeSession:
-    def __enter__(self) -> "_FakeSession":
+    def __enter__(self) -> _FakeSession:
         return self
 
     def __exit__(self, *_exc: object) -> bool:
@@ -71,9 +70,7 @@ def test_jeff_alone_writes_trusted_state(tmp_path) -> None:  # type: ignore[no-u
 
 
 def test_stranger_present_raises_unknown_count(tmp_path) -> None:  # type: ignore[no-untyped-def]
-    path = _run(
-        tmp_path, frames=[[(_JEFF, _BIG, 0.9), (_STRANGER, _SMALL, 0.9)]], iterations=1
-    )
+    path = _run(tmp_path, frames=[[(_JEFF, _BIG, 0.9), (_STRANGER, _SMALL, 0.9)]], iterations=1)
     s = read_state(path)
     assert s is not None
     assert s.at_desk is True and s.known == ["jeff"] and s.unknown_count == 1
