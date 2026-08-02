@@ -29,9 +29,17 @@ DEFAULT_TEMPLATES: dict[str, str] = {
         "An unrecognized person is in view. Hold back private or sensitive "
         "output until the desk is clear again."
     ),
+    # Leads with the INSTRUMENT state, never with an observation. An earlier
+    # draft opened "No one seen — but there is no current reading…", where the
+    # first clause asserts something about the world and the second retracts
+    # it. Under compression the retraction is exactly what gets dropped, so
+    # the sentence had to be un-assertable rather than merely qualified.
+    # (Pepper, 2026-08-02: "no one seen" is a bare negative; "no reading
+    # available" carries its own scope.)
     "shoulder_surf_no_reading": (
-        "No one seen — but there is no current reading, so this is not evidence "
-        "the desk is clear. Be careful with private or sensitive output."
+        "No camera reading available — nothing has been observed, which is not "
+        "the same as observing an empty desk. Be careful with private or "
+        "sensitive output."
     ),
     "trust_gate": (
         "The person at the desk is NOT confirmed to be the principal. Treat "

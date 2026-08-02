@@ -102,6 +102,10 @@ def test_no_reading_never_asserts_someone_is_in_view() -> None:
     out = _render(None, level=2)
     assert DEFAULT_TEMPLATES["shoulder_surf"] not in out
     assert DEFAULT_TEMPLATES["shoulder_surf_no_reading"] in out
+    # Stronger than "doesn't claim a person": it must not open with any
+    # assertion about the world that a later clause has to walk back, since
+    # compression drops the retraction and keeps the claim.
+    assert DEFAULT_TEMPLATES["shoulder_surf_no_reading"].startswith("No camera reading available")
     # ...and the honesty fix must not have cost any caution.
     assert DEFAULT_TEMPLATES["trust_gate"] in _render(None, level=3)
     assert DEFAULT_TEMPLATES["shoulder_surf_no_reading"] in _render(None, level=3)
