@@ -90,6 +90,30 @@ def test_no_reading_uses_unknown_banner_and_gates_at_level3() -> None:
     assert DEFAULT_TEMPLATES["trust_gate"] in out  # uncertainty => cautious
 
 
+def test_no_reading_never_asserts_someone_is_in_view() -> None:
+    """With no reading, level 2 must caution without claiming an observation.
+
+    Caught 2026-08-02 in live validation against an empty desk: the single
+    ``shoulder_surf`` fragment fired on the no-reading path and stated "An
+    unrecognized person is in view" when nothing had been seen at all. It
+    failed safe, but a safety mechanism that asserts a fact it does not have
+    is exactly what stops being believed.
+    """
+    out = _render(None, level=2)
+    assert DEFAULT_TEMPLATES["shoulder_surf"] not in out
+    assert DEFAULT_TEMPLATES["shoulder_surf_no_reading"] in out
+    # ...and the honesty fix must not have cost any caution.
+    assert DEFAULT_TEMPLATES["trust_gate"] in _render(None, level=3)
+    assert DEFAULT_TEMPLATES["shoulder_surf_no_reading"] in _render(None, level=3)
+
+
+def test_observed_unknown_still_states_the_observation() -> None:
+    """The real-detection wording must survive: a seen stranger is a fact."""
+    out = _render(_state(at_desk=True, known=["jeff"], unknown_count=2), level=2)
+    assert DEFAULT_TEMPLATES["shoulder_surf"] in out
+    assert DEFAULT_TEMPLATES["shoulder_surf_no_reading"] not in out
+
+
 def test_templates_are_overridable() -> None:
     custom = {**DEFAULT_TEMPLATES, "trust_gate": "STRANGER — LOCK DOWN."}
     out = render(

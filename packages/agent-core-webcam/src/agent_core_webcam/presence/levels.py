@@ -19,9 +19,19 @@ from agent_core_webcam.presence.state import PresenceState
 DEFAULT_TEMPLATES: dict[str, str] = {
     "facts": "At desk: {at_desk}. Recognized: {recognized}. Unknown faces: {unknown_count}.",
     "unknown_banner": "Presence unknown — no current reading from the desk camera.",
+    # Two fragments, because the same caution has two very different warrants.
+    # `shoulder_surf` states an observed fact and may only be used when a
+    # reading actually detected an unrecognized face. With no reading nothing
+    # has been seen at all, so asserting a person is present would be false —
+    # `shoulder_surf_no_reading` carries the identical caution without the
+    # claim. Caution is unchanged either way; only the honesty differs.
     "shoulder_surf": (
         "An unrecognized person is in view. Hold back private or sensitive "
         "output until the desk is clear again."
+    ),
+    "shoulder_surf_no_reading": (
+        "No one seen — but there is no current reading, so this is not evidence "
+        "the desk is clear. Be careful with private or sensitive output."
     ),
     "trust_gate": (
         "The person at the desk is NOT confirmed to be the principal. Treat "
@@ -80,6 +90,12 @@ def render(
     confirmed present. Level comparisons use ``>=`` so any out-of-range high
     value simply yields maximum caution (safe) and any low value yields
     facts-only (ambient) — no clamping needed.
+
+    The level-2 fragment is chosen by ``have_reading``, not by caution level:
+    without a reading nothing has been observed, so the wording must not assert
+    that someone is present. Both variants fire under exactly the same
+    condition — this changes what is *claimed*, never how cautious the output
+    is.
     """
     parts: list[str] = []
     if reading.have_reading and state is not None:
@@ -93,7 +109,8 @@ def render(
     else:
         parts.append(templates["unknown_banner"])
     if level >= 2 and reading.unknown_present:
-        parts.append(templates["shoulder_surf"])
+        key = "shoulder_surf" if reading.have_reading else "shoulder_surf_no_reading"
+        parts.append(templates[key])
     if level >= 3 and not reading.principal_present:
         parts.append(templates["trust_gate"])
     return "\n".join(parts)

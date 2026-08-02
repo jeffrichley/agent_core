@@ -46,7 +46,7 @@ class PresenceInjector:
             Default ``"jeff"``.
         templates (dict): Per-being overrides for any of the ``levels`` text
             fragments (``facts``, ``unknown_banner``, ``shoulder_surf``,
-            ``trust_gate``).
+            ``shoulder_surf_no_reading``, ``trust_gate``).
     """
 
     def execute(self, event: str, hook_input: dict, params: dict) -> ToolResult:
