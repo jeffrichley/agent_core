@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.9.0](https://github.com/jeffrichley/agent_core/compare/v0.8.2...agent-core-webcam-v0.9.0) (2026-08-03)
+
+
+### Features
+
+* **mypy:** enable --strict for briefs, busproxy, inbound, voice, webcam, qa ([#532](https://github.com/jeffrichley/agent_core/issues/532)) ([9663d87](https://github.com/jeffrichley/agent_core/commit/9663d8783176116a7ae352b2ba07933bf056fbe7))
+* **presence:** camera-derived presence awareness with multi-class identification ([#557](https://github.com/jeffrichley/agent_core/issues/557)) ([00e79c6](https://github.com/jeffrichley/agent_core/commit/00e79c636b7aab4e102d45a70cc2164c8eed483e))
+
 ## [0.8.2](https://github.com/jeffrichley/agent_core/compare/v0.8.1...agent-core-webcam-v0.8.2) (2026-07-22)
 
 
