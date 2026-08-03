@@ -1,5 +1,25 @@
 # Presence v2 — per-track multi-class identity
 
+> ⚠️ **SUPERSEDED IN PART, SAME DAY — read this before acting on the design below.**
+>
+> This spec argues for a per-track temporal filter as the fix for flapping.
+> **It was not needed.** Flapping was an artifact of the absolute threshold, and
+> replacing that threshold with multi-class `identify()` removed it entirely:
+> the live flap rate went `33% -> 92% -> 100%` across (old threshold) ->
+> (pose-matched re-enrollment) -> (multi-class). **37/37 ticks correct, zero
+> smoothing.**
+>
+> Tracks, association and the log-odds accumulator are therefore **NOT BUILT and
+> not currently justified.** The measurements in the Design section are real and
+> worth keeping — IoU is ~0.94 at a 2s gap, so tracking would work — but "would
+> work" is not "is needed".
+>
+> What shipped instead: multi-class identification with two-gate open-set
+> rejection (score + margin), wired at level 3 for Wren and level 2 for Pepper.
+>
+> **Revisit this design only if flapping returns** — e.g. with more enrolled
+> identities, or if ID-switching between two present people becomes a real case.
+
 **Author:** Wren · **Date:** 2026-08-03 · **Status:** design, not approved
 **Supersedes:** the single-template / scene-level-threshold model in
 `2026-07-27-presence-awareness-design.md` and `2026-07-28-presence-state-loop.md`
