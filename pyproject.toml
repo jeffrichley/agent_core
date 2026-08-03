@@ -148,6 +148,16 @@ ignore_missing_imports = true
 module = ["simpleeval", "simpleeval.*"]
 ignore_missing_imports = true
 
+# insightface is an OPTIONAL extra (agent-core-webcam[recognition]) and ships no
+# stubs. It is therefore missing entirely in CI and present-but-untyped on a dev
+# box that installed the extra — two different mypy error codes for the same
+# line. An inline `type: ignore` can only satisfy one of them, so the fix has to
+# live here. Caught by CI 2026-08-03 after `just check` passed locally purely
+# because the dev machine had the extra installed.
+[[tool.mypy.overrides]]
+module = ["insightface", "insightface.*"]
+ignore_missing_imports = true
+
 # agent-core-hatchery is held to full --strict (issue #491). Individual flags
 # rather than `strict = true` for the same scoping reason as discord above.
 [[tool.mypy.overrides]]

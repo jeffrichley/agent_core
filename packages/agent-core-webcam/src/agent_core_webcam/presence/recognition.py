@@ -150,7 +150,10 @@ def load_analyzer(model_name: str = "buffalo_s") -> object:
     Only the detection and recognition heads are loaded — see
     ``_NEEDED_MODULES``.
     """
-    from insightface.app import FaceAnalysis  # type: ignore[import-untyped]
+    # No inline ignore: insightface is an optional extra, so it is MISSING in CI
+    # and UNTYPED on a box with the extra installed — different error codes for
+    # the same line. Handled by a mypy override in the root pyproject.
+    from insightface.app import FaceAnalysis
 
     app = FaceAnalysis(
         name=model_name,
