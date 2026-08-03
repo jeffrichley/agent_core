@@ -49,6 +49,70 @@ def match_embedding(
     return decide(best, threshold=threshold, principal=principal), best
 
 
+#: Open-set rejection floors, calibrated 2026-08-03 by leave-one-PERSON-out over
+#: 5 enrolled identities (93 faces / 64 images). Holding each person out in turn
+#: gives genuine "not in the gallery" observations:
+#:
+#:                best score                     margin to runner-up
+#:   STRANGER     median 0.185  p95 0.267  max 0.312      ~0.05
+#:   ENROLLED     median 0.695  p05 0.456  min 0.282      ~0.50
+#:
+#: Best-score alone CANNOT separate them — the distributions overlap in the tails
+#: (stranger reached 0.312, an enrolled person dipped to 0.282). The MARGIN
+#: separates by an order of magnitude, because a stranger resembles everyone
+#: equally badly while an enrolled person resembles exactly one person
+#: distinctively. Hence two gates, with the margin carrying the weight.
+#:
+#: SCOPE (these numbers are only valid inside it): photo-domain galleries,
+#: five identities, one household. Cross-domain (webcam query vs photo gallery)
+#: measured 9/10 with margins shrinking ~2.7x — re-derive after enrolling
+#: people at the camera. See docs/superpowers/specs/2026-08-03-presence-multiclass-tracks.md
+MIN_BEST_SCORE = 0.35
+MIN_MARGIN = 0.15
+
+UNKNOWN = "unknown"
+
+
+def identify(
+    embedding: Vector,
+    galleries: dict[str, Sequence[Vector]],
+    *,
+    min_best: float = MIN_BEST_SCORE,
+    min_margin: float = MIN_MARGIN,
+) -> tuple[str, list[tuple[str, float]]]:
+    """Identify ``embedding`` against several named galleries.
+
+    Returns ``(verdict, ranked)`` where ``ranked`` is every gallery's best cosine,
+    highest first, and ``verdict`` is the winning name or ``UNKNOWN``.
+
+    Unlike a single-gallery threshold, this asks "which of these people is it?"
+    rather than "is this above a line" — a comparison that survives the
+    photo-vs-webcam domain shift, which moves every class together and so leaves
+    the ranking intact even when absolute scores collapse.
+
+    Rejection needs BOTH gates. The runner-up gap is the load-bearing one; see
+    ``MIN_MARGIN``. With fewer than two galleries there is no margin to measure,
+    so the score gate alone decides.
+    """
+    ranked = sorted(
+        (
+            (name, max((cosine(embedding, g) for g in gal), default=0.0))
+            for name, gal in galleries.items()
+            if gal
+        ),
+        key=lambda kv: kv[1],
+        reverse=True,
+    )
+    if not ranked:
+        return UNKNOWN, []
+    best_name, best_score = ranked[0]
+    if best_score < min_best:
+        return UNKNOWN, ranked
+    if len(ranked) > 1 and (best_score - ranked[1][1]) < min_margin:
+        return UNKNOWN, ranked
+    return best_name, ranked
+
+
 def decode_frame(png_bytes: bytes) -> npt.NDArray[np.uint8]:
     """Decode PNG bytes (as produced by the webcam backend) to a BGR array.
 
