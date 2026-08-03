@@ -15,6 +15,15 @@ dependencies = [
 [project.entry-points."agent_core"]
 webcam_aliases = "agent_core_webcam.plugin"
 
+[project.optional-dependencies]
+# Heavy CV recognition stack — kept OUT of the base install so the presence
+# hook stays tiny. Imported lazily; never pulled in by the hook path.
+recognition = [
+    "insightface>=0.7",
+    "onnxruntime>=1.17",
+    "numpy>=1.26",
+]
+
 [build-system]
 requires = ["hatchling", "uv-dynamic-versioning"]
 build-backend = "hatchling.build"

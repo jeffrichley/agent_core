@@ -36,6 +36,14 @@ def register_endpoint_types() -> dict[str, type[Any]]:
 
 
 @hookimpl
+def register_hook_tool_types() -> dict[str, type[Any]]:
+    """Register ``builtin.presence_injector`` as an agent_core hook-tool type."""
+    from agent_core_webcam.presence.injector import PresenceInjector
+
+    return {"builtin.presence_injector": PresenceInjector}
+
+
+@hookimpl
 def reserved_endpoint_params() -> list[str]:
     """The runner pops these keys from each endpoint's params before constructing."""
     return ["webcam"]
