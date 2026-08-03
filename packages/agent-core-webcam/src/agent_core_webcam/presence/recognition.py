@@ -64,15 +64,35 @@ def decode_frame(png_bytes: bytes) -> npt.NDArray[np.uint8]:
     return np.asarray(img, dtype=np.uint8)
 
 
+#: The only two heads presence needs. ``FaceAnalysis`` otherwise globs every
+#: ``.onnx`` in the pack and runs each one per frame — for ``buffalo_s`` that
+#: silently adds the 137 MB 3D-landmark model and gender/age estimation to
+#: every tick. Measured 2026-08-03 on one 1280x720 frame, CPU:
+#:
+#:     all modules            rss=+188.4 MB   141.0 ms/frame
+#:     detection+recognition  rss=+ 27.0 MB    24.9 ms/frame
+#:
+#: 5.7x faster, 7x smaller, identical bboxes and embeddings. ``allowed_modules``
+#: filters at load (the extra model is constructed then ``del``'d), so the
+#: saving is real resident memory, not just skipped work.
+_NEEDED_MODULES = ["detection", "recognition"]
+
+
 def load_analyzer(model_name: str = "buffalo_s") -> object:
     """Load a CPU InsightFace analyzer (SCRFD detect + ArcFace embed).
 
     Imported lazily so this module stays importable without the heavy stack.
     The model pack downloads to ``~/.insightface/models`` on first use.
+    Only the detection and recognition heads are loaded — see
+    ``_NEEDED_MODULES``.
     """
     from insightface.app import FaceAnalysis  # type: ignore[import-untyped]
 
-    app = FaceAnalysis(name=model_name, providers=["CPUExecutionProvider"])
+    app = FaceAnalysis(
+        name=model_name,
+        providers=["CPUExecutionProvider"],
+        allowed_modules=_NEEDED_MODULES,
+    )
     app.prepare(ctx_id=-1)  # -1 => CPU
     return app
 
