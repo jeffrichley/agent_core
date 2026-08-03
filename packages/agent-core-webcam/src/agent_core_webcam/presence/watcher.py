@@ -25,13 +25,15 @@ from agent_core_webcam.presence.aggregate import Bbox, aggregate
 from agent_core_webcam.presence.camera_session import CameraSession
 from agent_core_webcam.presence.enrollment import Template
 from agent_core_webcam.presence.recognition import (
+    MIN_BEST_SCORE,
+    MIN_MARGIN,
+    identify,
+)
+from agent_core_webcam.presence.recognition import (
     embed_faces as _real_embed_faces,
 )
 from agent_core_webcam.presence.recognition import (
     load_analyzer as _real_load_analyzer,
-)
-from agent_core_webcam.presence.recognition import (
-    match_embedding,
 )
 from agent_core_webcam.presence.state import write_state
 
@@ -42,10 +44,11 @@ _EmbedFn = Callable[[object, npt.NDArray[Any]], list[tuple[Any, Bbox, float]]]
 
 def run_watch(
     *,
-    template: Template,
+    templates: dict[str, Template],
     state_path: Path,
     principal: str = "jeff",
-    threshold: float = 0.75,  # calibrated 2026-08-03; see cli._DEFAULT_THRESHOLD
+    min_best: float = MIN_BEST_SCORE,
+    min_margin: float = MIN_MARGIN,
     interval: float = 2.0,
     source: str = "desk-cam",
     camera_index: int = 0,
@@ -58,9 +61,17 @@ def run_watch(
 ) -> None:
     """Run the presence watch loop, writing ``state_path`` every ~``interval`` s.
 
+    Each face is identified against ALL enrolled templates rather than tested
+    against the principal's alone. That is a different question — "which of these
+    people is this?" instead of "is this above a line" — and it is the one that
+    survives lighting and camera changes, because a domain shift moves every
+    gallery's score together and leaves the ranking intact. It also names
+    bystanders instead of reporting them as strangers.
+
     ``iterations=None`` loops until interrupted; an int runs exactly that many
     cycles (used by tests). All heavy collaborators are injectable seams.
     """
+    galleries = {name: t.embeddings for name, t in templates.items()}
     analyzer = analyzer_factory()
     with session_factory(camera_index) as cam:
         cam.warmup()
@@ -71,8 +82,8 @@ def run_watch(
                 frame = cam.read_bgr()
                 faces: list[tuple[str, Bbox]] = []
                 for emb, bbox, _det in embed_faces_fn(analyzer, frame):
-                    verdict, _score = match_embedding(
-                        emb, template.embeddings, principal=principal, threshold=threshold
+                    verdict, _ranked = identify(
+                        emb, galleries, min_best=min_best, min_margin=min_margin
                     )
                     faces.append((verdict, bbox))
                 state = aggregate(faces, principal=principal, source=source, now=clock())

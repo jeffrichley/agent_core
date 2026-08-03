@@ -21,11 +21,14 @@ from agent_core_webcam.presence.camera_session import CameraSession
 from agent_core_webcam.presence.enrollment import (
     DEFAULT_ENROLLMENT_DIR,
     build_template,
+    load_all_templates,
     load_template,
     merge_templates,
     save_template,
 )
 from agent_core_webcam.presence.recognition import (
+    MIN_BEST_SCORE,
+    MIN_MARGIN,
     embed_faces,
     load_analyzer,
     match_embedding,
@@ -125,25 +128,32 @@ def _cmd_recognize(args: argparse.Namespace) -> int:
 
 
 def _cmd_watch(args: argparse.Namespace) -> int:
-    tpath = Path(args.template) if args.template else DEFAULT_ENROLLMENT_DIR / f"{args.name}.json"
-    if not tpath.exists():
-        print(f"error: no template at {tpath}. Run `enroll` first.", file=sys.stderr)
+    directory = Path(args.enrollment_dir) if args.enrollment_dir else DEFAULT_ENROLLMENT_DIR
+    templates = load_all_templates(directory)
+    if args.name not in templates:
+        print(
+            f"error: no template for principal {args.name!r} in {directory}. "
+            f"Found: {sorted(templates) or 'none'}. Run `enroll` first.",
+            file=sys.stderr,
+        )
         return 2
-    template = load_template(tpath)
     state_path = (
         Path(args.state_path)
         if args.state_path
         else Path.home() / ".agent-core" / "presence" / "state.json"
     )
+    roster = ", ".join(f"{n}({len(t.embeddings)})" for n, t in sorted(templates.items()))
     print(
         f"Watching camera {args.camera_index} every {args.interval}s -> {state_path}\n"
+        f"Enrolled: {roster}   principal={args.name}\n"
         f"(Ctrl-C to stop.)"
     )
     run_watch(
-        template=template,
+        templates=templates,
         state_path=state_path,
-        principal=template.name,
-        threshold=args.threshold,
+        principal=args.name,
+        min_best=args.min_best,
+        min_margin=args.min_margin,
         interval=args.interval,
         camera_index=args.camera_index,
     )
@@ -175,10 +185,15 @@ def main(argv: list[str] | None = None) -> int:
     r.set_defaults(func=_cmd_recognize)
 
     w = sub.add_parser("watch", help="continuously write presence state.json")
-    w.add_argument("--name", default="jeff")
-    w.add_argument("--template", default=None)
+    w.add_argument("--name", default="jeff", help="the principal (whose presence sets at_desk)")
+    w.add_argument(
+        "--enrollment-dir",
+        default=None,
+        help="directory of templates; ALL are loaded and identified against",
+    )
     w.add_argument("--state-path", default=None)
-    w.add_argument("--threshold", type=float, default=_DEFAULT_THRESHOLD)
+    w.add_argument("--min-best", type=float, default=MIN_BEST_SCORE)
+    w.add_argument("--min-margin", type=float, default=MIN_MARGIN)
     w.add_argument("--interval", type=float, default=2.0)
     w.set_defaults(func=_cmd_watch)
 

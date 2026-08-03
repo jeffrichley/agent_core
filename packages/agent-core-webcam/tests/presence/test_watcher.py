@@ -10,7 +10,11 @@ from agent_core_webcam.presence.state import read_state
 from agent_core_webcam.presence.watcher import run_watch
 
 _JEFF = np.array([1.0, 0.0, 0.0], dtype=np.float32)
-_STRANGER = np.array([0.0, 1.0, 0.0], dtype=np.float32)
+_CINDY = np.array([0.0, 1.0, 0.0], dtype=np.float32)
+#: Equidistant from both galleries: a decent best score with NO runner-up gap.
+#: That is the stranger signature the margin gate exists to catch, and the case
+#: a single threshold cannot see at all.
+_STRANGER = np.array([0.7071, 0.7071, 0.0], dtype=np.float32)
 _BIG = (100, 100, 300, 400)
 _SMALL = (10, 10, 40, 50)
 
@@ -29,8 +33,16 @@ class _FakeSession:
         return np.zeros((2, 2, 3), np.uint8)
 
 
-def _template() -> Template:
-    return Template(name="jeff", embeddings=[_JEFF])
+def _templates() -> dict[str, Template]:
+    """Jeff plus a second enrolled person, so the margin gate is actually exercised.
+
+    With a single gallery there is no runner-up and identify() falls back to the
+    score gate alone — which would silently not test the multi-class path.
+    """
+    return {
+        "jeff": Template(name="jeff", embeddings=[_JEFF]),
+        "cindy": Template(name="cindy", embeddings=[_CINDY]),
+    }
 
 
 def _run(tmp_path: Path, frames: list, iterations: int) -> Path:
@@ -44,10 +56,11 @@ def _run(tmp_path: Path, frames: list, iterations: int) -> Path:
         return out
 
     run_watch(
-        template=_template(),
+        templates=_templates(),
         state_path=state_path,
         principal="jeff",
-        threshold=0.5,
+        min_best=0.35,
+        min_margin=0.15,
         interval=0.0,
         source="test-cam",
         camera_index=0,
@@ -97,10 +110,11 @@ def test_cycle_error_skips_write_and_continues(tmp_path) -> None:  # type: ignor
         return [(_JEFF, _BIG, 0.9)]
 
     run_watch(
-        template=_template(),
+        templates=_templates(),
         state_path=state_path,
         principal="jeff",
-        threshold=0.5,
+        min_best=0.35,
+        min_margin=0.15,
         interval=0.0,
         source="test-cam",
         camera_index=0,

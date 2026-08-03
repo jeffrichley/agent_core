@@ -9,6 +9,7 @@ past the proof.
 from __future__ import annotations
 
 import json
+import logging
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -16,6 +17,8 @@ import numpy as np
 import numpy.typing as npt
 
 Vector = npt.NDArray[np.floating]
+
+log = logging.getLogger(__name__)
 
 DEFAULT_ENROLLMENT_DIR = Path.home() / ".agent-core" / "presence" / "enrollment"
 
@@ -68,6 +71,29 @@ def load_template(path: Path) -> Template:
         embeddings=embeddings,
         sources=[str(s) for s in raw.get("sources", [])],
     )
+
+
+def load_all_templates(directory: Path | None = None) -> dict[str, Template]:
+    """Load every ``*.json`` template in ``directory``, keyed by template name.
+
+    Backup files (``*.json.bak-*``) do not match ``*.json`` and are skipped.
+    An unreadable or malformed template is skipped rather than raising: one bad
+    file must not take down recognition for everyone else. A missing directory
+    yields an empty mapping — the caller degrades to "recognize nobody", which
+    the presence contract already treats as unknown-therefore-cautious.
+    """
+    directory = directory or DEFAULT_ENROLLMENT_DIR
+    out: dict[str, Template] = {}
+    if not directory.is_dir():
+        return out
+    for path in sorted(directory.glob("*.json")):
+        try:
+            t = load_template(path)
+        except (OSError, ValueError, KeyError, TypeError):
+            log.warning("skipping unreadable enrollment template: %s", path, exc_info=True)
+            continue
+        out[t.name] = t
+    return out
 
 
 def merge_templates(base: Template, extra: Template) -> Template:

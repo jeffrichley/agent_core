@@ -82,10 +82,20 @@ def test_enroll_counts_down_and_writes_template(tmp_path, monkeypatch, capsys) -
     assert "usable" in text
 
 
-def test_watch_loads_template_and_runs(tmp_path, monkeypatch, capsys) -> None:  # type: ignore[no-untyped-def]
-    emb = np.array([1.0, 0.0], dtype=np.float32)
-    tpath = tmp_path / "jeff.json"
-    save_template(Template(name="jeff", embeddings=[emb]), tpath)
+def test_watch_loads_every_template_and_runs(tmp_path, monkeypatch, capsys) -> None:  # type: ignore[no-untyped-def]
+    """watch must load the WHOLE roster, not just the principal's template.
+
+    Identification is relative — a query is scored against every enrolled person
+    — so loading only the principal would silently collapse it back to a
+    single-threshold decision and reinstate the bug this replaced.
+    """
+    save_template(
+        Template(name="jeff", embeddings=[np.array([1.0, 0.0], np.float32)]), tmp_path / "jeff.json"
+    )
+    save_template(
+        Template(name="cindy", embeddings=[np.array([0.0, 1.0], np.float32)]),
+        tmp_path / "cindy.json",
+    )
     spath = tmp_path / "state.json"
 
     captured: dict = {}
@@ -97,24 +107,32 @@ def test_watch_loads_template_and_runs(tmp_path, monkeypatch, capsys) -> None:  
     rc = cli.main(
         [
             "watch",
-            "--template",
-            str(tpath),
+            "--enrollment-dir",
+            str(tmp_path),
             "--state-path",
             str(spath),
             "--interval",
             "5",
-            "--threshold",
-            "0.6",
+            "--min-margin",
+            "0.2",
         ]
     )
     assert rc == 0
-    assert captured["template"].name == "jeff"
+    assert sorted(captured["templates"]) == ["cindy", "jeff"]
+    assert captured["principal"] == "jeff"
     assert captured["state_path"] == spath
     assert captured["interval"] == 5.0
-    assert captured["threshold"] == 0.6
+    assert captured["min_margin"] == 0.2
 
 
-def test_watch_no_template_errors(tmp_path, capsys) -> None:  # type: ignore[no-untyped-def]
-    rc = cli.main(["watch", "--template", str(tmp_path / "missing.json")])
+def test_watch_without_principal_template_errors(tmp_path, capsys) -> None:  # type: ignore[no-untyped-def]
+    """Others enrolled but not the principal: refuse rather than watch for nobody."""
+    save_template(
+        Template(name="cindy", embeddings=[np.array([0.0, 1.0], np.float32)]),
+        tmp_path / "cindy.json",
+    )
+    rc = cli.main(["watch", "--enrollment-dir", str(tmp_path), "--name", "jeff"])
     assert rc != 0
-    assert "enroll" in capsys.readouterr().err.lower()
+    err = capsys.readouterr().err.lower()
+    assert "enroll" in err
+    assert "cindy" in err, "name who WAS found — an empty-handed error hides a typo'd --name"
