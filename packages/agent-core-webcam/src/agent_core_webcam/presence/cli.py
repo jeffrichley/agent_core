@@ -32,7 +32,25 @@ from agent_core_webcam.presence.recognition import (
 )
 from agent_core_webcam.presence.watcher import run_watch
 
-_DEFAULT_THRESHOLD = 0.5
+#: Calibrated live 2026-08-03 against 111 real faces (Jeff's own family photos,
+#: identified by him) rather than the generic ~0.5 ArcFace figure the Phase-2
+#: spec parked here "to be calibrated live". That 0.5 was never measured and sat
+#: BELOW the range an impostor can reach.
+#:
+#:   Jeff, live webcam, 17-shot template : 0.890 .. 0.947
+#:   highest true impostor, in photos    : 0.243  (one specific family member)
+#:
+#: Photo and webcam are different domains, so the raw impostor figure flatters
+#: us. Jeff appears in BOTH domains, which makes him the bridge: his own photos
+#: score 0.523 against a live 0.914, so this camera is worth ~0.391 more than a
+#: phone photo. Applying that offset, the worst impostor is estimated to reach
+#: ~0.635 sitting at this desk — above 0.5. At the old default they would have
+#: been accepted as Jeff.
+#:
+#: 0.75 sits ~0.12 above that estimate and ~0.14 below Jeff's observed floor.
+#: The offset is an inference from one person's photos, NOT a measurement —
+#: re-derive it from live captures of other people when that becomes possible.
+_DEFAULT_THRESHOLD = 0.75
 
 
 def _open_session(camera_index: int) -> CameraSession:

@@ -45,7 +45,7 @@ def run_watch(
     template: Template,
     state_path: Path,
     principal: str = "jeff",
-    threshold: float = 0.5,
+    threshold: float = 0.75,  # calibrated 2026-08-03; see cli._DEFAULT_THRESHOLD
     interval: float = 2.0,
     source: str = "desk-cam",
     camera_index: int = 0,
