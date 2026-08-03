@@ -22,6 +22,7 @@ from agent_core_webcam.presence.enrollment import (
     DEFAULT_ENROLLMENT_DIR,
     build_template,
     load_template,
+    merge_templates,
     save_template,
 )
 from agent_core_webcam.presence.recognition import (
@@ -70,8 +71,16 @@ def _cmd_enroll(args: argparse.Namespace) -> int:
         )
         return 1
     out = Path(args.out) if args.out else DEFAULT_ENROLLMENT_DIR / f"{args.name}.json"
+    fresh = len(template.embeddings)
+    if args.append and out.exists():
+        prior = load_template(out)
+        template = merge_templates(prior, template)
+        print(f"Appending to {len(prior.embeddings)} existing shot(s) in {out}")
     save_template(template, out)  # SECURITY TODO: plaintext — encrypt before live
-    print(f"Enrolled {args.name}: {len(template.embeddings)}/{args.frames} shots usable -> {out}")
+    print(
+        f"Enrolled {args.name}: {fresh}/{args.frames} new shots usable, "
+        f"{len(template.embeddings)} total -> {out}"
+    )
     return 0
 
 
@@ -134,6 +143,11 @@ def main(argv: list[str] | None = None) -> int:
     e.add_argument("--frames", type=int, default=5)
     e.add_argument("--interval", type=float, default=3.0)
     e.add_argument("--out", default=None)
+    e.add_argument(
+        "--append",
+        action="store_true",
+        help="merge these shots into the existing template instead of replacing it",
+    )
     e.set_defaults(func=_cmd_enroll)
 
     r = sub.add_parser("recognize", help="recognize the face in one frame")

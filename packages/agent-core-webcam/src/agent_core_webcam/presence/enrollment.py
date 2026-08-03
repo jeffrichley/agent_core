@@ -48,6 +48,20 @@ def load_template(path: Path) -> Template:
     return Template(name=str(raw["name"]), embeddings=embeddings)
 
 
+def merge_templates(base: Template, extra: Template) -> Template:
+    """Concatenate ``extra``'s embeddings onto ``base``'s, keeping both.
+
+    Matching takes the BEST cosine across a template's whole embedding list, so
+    adding shots can only ever raise a genuine score — a session captured under
+    new lighting or a new seat position adds coverage without discarding the
+    old. Names must agree; merging two people into one template would silently
+    make each recognizable as the other.
+    """
+    if base.name != extra.name:
+        raise ValueError(f"refusing to merge templates for {base.name!r} and {extra.name!r}")
+    return Template(name=base.name, embeddings=[*base.embeddings, *extra.embeddings])
+
+
 def build_template(
     analyzer: object,
     frames: list[npt.NDArray[np.uint8]],
