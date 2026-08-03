@@ -127,3 +127,29 @@ def test_templates_are_overridable() -> None:
         templates=custom,
     )
     assert "STRANGER — LOCK DOWN." in out
+
+
+def test_level3_empty_desk_does_not_claim_a_person() -> None:
+    """An empty desk must not produce "the person at the desk is not confirmed".
+
+    Same gate, same caution — but asserting a person nobody observed is the
+    defect fixed in the level-2 no-reading fragment. Found 2026-08-03 by
+    rendering every scene before wiring the hook.
+    """
+    state = PresenceState(
+        updated_at=1.0, at_desk=False, known=[], unknown_count=0, source="desk-cam"
+    )
+    reading = classify(state, principal="jeff")
+    out = render(reading, state, level=3, templates=DEFAULT_TEMPLATES)
+    assert "Nobody is visible at the desk" in out
+    assert "The person at the desk" not in out
+    assert "unverified" in out, "the caution itself must survive the rewording"
+
+
+def test_level3_occupied_desk_still_names_the_person() -> None:
+    """Someone IS at the desk but isn't the principal — the original wording holds."""
+    state = PresenceState(
+        updated_at=1.0, at_desk=True, known=[], unknown_count=1, source="desk-cam"
+    )
+    out = render(classify(state, principal="jeff"), state, level=3, templates=DEFAULT_TEMPLATES)
+    assert "The person at the desk is NOT confirmed" in out

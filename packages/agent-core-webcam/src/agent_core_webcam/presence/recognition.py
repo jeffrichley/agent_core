@@ -10,7 +10,7 @@ pulls in numpy (already present via opencv-python) but NOT insightface.
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 
 import numpy as np
 import numpy.typing as npt
@@ -75,7 +75,7 @@ UNKNOWN = "unknown"
 
 def identify(
     embedding: Vector,
-    galleries: dict[str, Sequence[Vector]],
+    galleries: Mapping[str, Sequence[Vector]],
     *,
     min_best: float = MIN_BEST_SCORE,
     min_margin: float = MIN_MARGIN,

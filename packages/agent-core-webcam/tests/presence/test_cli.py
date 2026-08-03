@@ -33,15 +33,22 @@ def test_recognize_prints_verdict(tmp_path, monkeypatch, capsys) -> None:  # typ
     monkeypatch.setattr(cli, "load_analyzer", lambda: object())
     monkeypatch.setattr(cli, "embed_faces", lambda analyzer, frame: [(emb, (1, 2, 3, 4), 0.99)])
 
-    rc = cli.main(["recognize", "--template", str(tpath), "--threshold", "0.5"])
+    save_template(
+        Template(name="cindy", embeddings=[np.array([0.0, 1.0, 0.0], np.float32)]),
+        tmp_path / "cindy.json",
+    )
+
+    rc = cli.main(["recognize", "--enrollment-dir", str(tmp_path)])
     out = capsys.readouterr().out
     assert rc == 0
     assert "jeff" in out
-    assert "cosine=1.0" in out or "cosine=1.00" in out
+    assert "jeff=1.000" in out
+    assert "cindy=" in out, "every gallery's score is printed, not just the winner's"
+    assert "margin=" in out
 
 
-def test_recognize_no_template_errors(tmp_path, capsys) -> None:  # type: ignore[no-untyped-def]
-    rc = cli.main(["recognize", "--template", str(tmp_path / "missing.json")])
+def test_recognize_no_templates_errors(tmp_path, capsys) -> None:  # type: ignore[no-untyped-def]
+    rc = cli.main(["recognize", "--enrollment-dir", str(tmp_path / "empty")])
     assert rc != 0
     assert "enroll" in capsys.readouterr().err.lower()
 
@@ -54,7 +61,7 @@ def test_recognize_no_face_prints_message(tmp_path, monkeypatch, capsys) -> None
     monkeypatch.setattr(cli, "load_analyzer", lambda: object())
     monkeypatch.setattr(cli, "embed_faces", lambda analyzer, frame: [])
 
-    rc = cli.main(["recognize", "--template", str(tpath)])
+    rc = cli.main(["recognize", "--enrollment-dir", str(tmp_path)])
     assert rc == 0
     assert "no face" in capsys.readouterr().out.lower()
 

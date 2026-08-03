@@ -1,10 +1,13 @@
-"""One-shot enroll / recognize CLI — the Phase-2 proof harness.
+"""Enroll / recognize / watch CLI for presence.
 
-    python -m agent_core_webcam.presence.cli enroll  --name jeff --frames 5
-    python -m agent_core_webcam.presence.cli recognize --threshold 0.5
+    python -m agent_core_webcam.presence.cli enroll --name jeff --frames 10 --append
+    python -m agent_core_webcam.presence.cli recognize
+    python -m agent_core_webcam.presence.cli watch --name jeff
 
-No watcher, no state file: `recognize` grabs ONE frame, prints per-face
-`verdict | cosine=.. | bbox=..`, and exits. The raw cosine is always printed.
+`recognize` grabs ONE frame and prints, per face, the verdict plus EVERY
+gallery's score and the runner-up margin — the evidence, not just the answer.
+`watch` runs the state loop. Both identify against every enrolled template
+rather than testing one against a threshold; see ``recognition.identify``.
 """
 
 from __future__ import annotations
@@ -30,30 +33,10 @@ from agent_core_webcam.presence.recognition import (
     MIN_BEST_SCORE,
     MIN_MARGIN,
     embed_faces,
+    identify,
     load_analyzer,
-    match_embedding,
 )
 from agent_core_webcam.presence.watcher import run_watch
-
-#: Calibrated live 2026-08-03 against 111 real faces (Jeff's own family photos,
-#: identified by him) rather than the generic ~0.5 ArcFace figure the Phase-2
-#: spec parked here "to be calibrated live". That 0.5 was never measured and sat
-#: BELOW the range an impostor can reach.
-#:
-#:   Jeff, live webcam, 17-shot template : 0.890 .. 0.947
-#:   highest true impostor, in photos    : 0.243  (one specific family member)
-#:
-#: Photo and webcam are different domains, so the raw impostor figure flatters
-#: us. Jeff appears in BOTH domains, which makes him the bridge: his own photos
-#: score 0.523 against a live 0.914, so this camera is worth ~0.391 more than a
-#: phone photo. Applying that offset, the worst impostor is estimated to reach
-#: ~0.635 sitting at this desk — above 0.5. At the old default they would have
-#: been accepted as Jeff.
-#:
-#: 0.75 sits ~0.12 above that estimate and ~0.14 below Jeff's observed floor.
-#: The offset is an inference from one person's photos, NOT a measurement —
-#: re-derive it from live captures of other people when that becomes possible.
-_DEFAULT_THRESHOLD = 0.75
 
 
 def _open_session(camera_index: int) -> CameraSession:
@@ -106,11 +89,12 @@ def _cmd_enroll(args: argparse.Namespace) -> int:
 
 
 def _cmd_recognize(args: argparse.Namespace) -> int:
-    tpath = Path(args.template) if args.template else DEFAULT_ENROLLMENT_DIR / f"{args.name}.json"
-    if not tpath.exists():
-        print(f"error: no template at {tpath}. Run `enroll` first.", file=sys.stderr)
+    directory = Path(args.enrollment_dir) if args.enrollment_dir else DEFAULT_ENROLLMENT_DIR
+    templates = load_all_templates(directory)
+    if not templates:
+        print(f"error: no templates in {directory}. Run `enroll` first.", file=sys.stderr)
         return 2
-    template = load_template(tpath)
+    galleries = {name: t.embeddings for name, t in templates.items()}
     analyzer = load_analyzer()
     with _open_session(args.camera_index) as cam:
         cam.warmup(2)
@@ -120,10 +104,14 @@ def _cmd_recognize(args: argparse.Namespace) -> int:
         print("no face detected")
         return 0
     for emb, bbox, det in faces:
-        verdict, score = match_embedding(
-            emb, template.embeddings, principal=template.name, threshold=args.threshold
+        verdict, ranked = identify(
+            emb, galleries, min_best=args.min_best, min_margin=args.min_margin
         )
-        print(f"{verdict} | cosine={score:.2f} | bbox={bbox} | det={det:.2f}")
+        # Every gallery's score, always — the ranking IS the evidence, and a
+        # rejection is only interpretable next to what it nearly matched.
+        scores = "  ".join(f"{n}={s:.3f}" for n, s in ranked)
+        margin = (ranked[0][1] - ranked[1][1]) if len(ranked) > 1 else float("nan")
+        print(f"{verdict} | margin={margin:.3f} | {scores} | bbox={bbox} | det={det:.2f}")
     return 0
 
 
@@ -178,10 +166,10 @@ def main(argv: list[str] | None = None) -> int:
     )
     e.set_defaults(func=_cmd_enroll)
 
-    r = sub.add_parser("recognize", help="recognize the face in one frame")
-    r.add_argument("--name", default="jeff")
-    r.add_argument("--template", default=None)
-    r.add_argument("--threshold", type=float, default=_DEFAULT_THRESHOLD)
+    r = sub.add_parser("recognize", help="identify every face in one frame")
+    r.add_argument("--enrollment-dir", default=None)
+    r.add_argument("--min-best", type=float, default=MIN_BEST_SCORE)
+    r.add_argument("--min-margin", type=float, default=MIN_MARGIN)
     r.set_defaults(func=_cmd_recognize)
 
     w = sub.add_parser("watch", help="continuously write presence state.json")
