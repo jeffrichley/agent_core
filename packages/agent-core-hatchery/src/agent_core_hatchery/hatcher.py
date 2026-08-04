@@ -19,8 +19,20 @@ from agent_core_hatchery.file_classes import FileClassManifest
 from agent_core_hatchery.renderer import Renderer
 from agent_core_hatchery.validators import ValidationError, validate_load_bearing_paths
 
-PACKAGE_ROOT = Path(__file__).parent.parent.parent
-TEMPLATES_DIR = PACKAGE_ROOT / "templates"
+# Templates live INSIDE the package so they ship with it. Resolve them
+# relative to this module, never by walking up to a repo-shaped ancestor.
+#
+# This was previously `Path(__file__).parent.parent.parent / "templates"`,
+# which is correct ONLY in a source checkout: three parents up from
+# src/agent_core_hatchery/hatcher.py lands on packages/agent-core-hatchery/,
+# where templates/ used to sit. From an installed package the same arithmetic
+# lands on <env>/lib/pythonX.Y/ — a directory that has nothing to do with this
+# package — and the 48 template files were never in the wheel anyway, because
+# `packages = ["src/agent_core_hatchery"]` cannot include a sibling of src/.
+#
+# Net effect: `hatch-being` had NEVER worked from a PyPI install. It only ever
+# worked from a source tree, which is how every hatch to date was run. See #573.
+TEMPLATES_DIR = Path(__file__).parent / "templates"
 
 
 class VaultExistsError(Exception):
