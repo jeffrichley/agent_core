@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.9.2](https://github.com/jeffrichley/agent_core/compare/v0.9.1...agent-core-v0.9.2) (2026-08-04)
+
+
+### Bug Fixes
+
+* **packaging:** force-include agent_core.venv in all build targets ([#569](https://github.com/jeffrichley/agent_core/issues/569)) ([345cad0](https://github.com/jeffrichley/agent_core/commit/345cad077ac1ea3d1ff540046e46c37c4e1d5007)), closes [#566](https://github.com/jeffrichley/agent_core/issues/566)
+
 ## [0.9.1](https://github.com/jeffrichley/agent_core/compare/v0.9.0...agent-core-v0.9.1) (2026-08-04)
 
 
