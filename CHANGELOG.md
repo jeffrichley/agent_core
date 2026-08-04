@@ -8,6 +8,13 @@ This project uses [*towncrier*](https://towncrier.readthedocs.io/); unreleased c
 
 <!-- towncrier release notes start -->
 
+## [0.9.1](https://github.com/jeffrichley/agent_core/compare/v0.9.0...v0.9.1) (2026-08-04)
+
+
+### Bug Fixes
+
+* **packaging:** force-include agent_core.venv in the wheel ([#567](https://github.com/jeffrichley/agent_core/issues/567)) ([89aabf1](https://github.com/jeffrichley/agent_core/commit/89aabf11a91fea93391941a09ed7190ccf925f91)), closes [#566](https://github.com/jeffrichley/agent_core/issues/566)
+
 ## [0.9.0](https://github.com/jeffrichley/agent_core/compare/v0.8.2...v0.9.0) (2026-08-03)
 
 
