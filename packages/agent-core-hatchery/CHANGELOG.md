@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.9.1](https://github.com/jeffrichley/agent_core/compare/v0.9.0...agent-core-hatchery-v0.9.1) (2026-08-04)
+
+
+### Bug Fixes
+
+* **hatchery:** ship templates inside the package ([#574](https://github.com/jeffrichley/agent_core/issues/574)) ([d339033](https://github.com/jeffrichley/agent_core/commit/d3390335f2ef1c9db82c6625a74b4507782d981e)), closes [#573](https://github.com/jeffrichley/agent_core/issues/573)
+
 ## [0.9.0](https://github.com/jeffrichley/agent_core/compare/v0.8.2...agent-core-hatchery-v0.9.0) (2026-08-03)
 
 
