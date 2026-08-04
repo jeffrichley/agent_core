@@ -42,6 +42,15 @@ build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/agent_core"]
+# Force-include agent_core.venv. It is a SOURCE subpackage whose name collides
+# with the root .gitignore's `venv/` pattern, and the rescue negation there
+# (`!packages/core/src/agent_core/venv/`) is written REPO-root-relative. That
+# path does not exist inside an sdist, whose root is this package — so when the
+# release builds the wheel FROM the sdist (`uv build` without `--wheel`, as
+# .github/workflows/release.yml does), the broad ignore matches and the negation
+# misses. The subpackage is silently dropped and `agent_core.cli` dies at import
+# on every clean install. See #566.
+artifacts = ["src/agent_core/venv/**"]
 
 [tool.hatch.version]
 source = "uv-dynamic-versioning"
