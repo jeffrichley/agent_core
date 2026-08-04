@@ -1,6 +1,6 @@
 {
-  ".": "0.9.0",
-  "packages/core": "0.9.0",
+  ".": "0.9.1",
+  "packages/core": "0.9.1",
   "packages/agent-core-briefs": "0.9.0",
   "packages/agent-core-busproxy": "0.9.0",
   "packages/agent-core-channel": "0.8.2",
