@@ -1,4 +1,5 @@
 """Concurrency: same camera serializes; different cameras parallel."""
+
 from __future__ import annotations
 
 import asyncio
@@ -27,6 +28,7 @@ class _SlowFake:
     def capture(self, index, resolution):
         if index not in self.available_indices:
             from agent_core_webcam.protocol import CameraNotFoundError
+
             raise CameraNotFoundError(f"camera {index} not configured")
         start = time.monotonic()
         time.sleep(self.delay)  # blocking sleep — runs in to_thread
@@ -62,21 +64,27 @@ async def test_different_cameras_run_in_parallel(tmp_path):
         audit_log_path=tmp_path / "audit.jsonl",
         camera_backend=backend,
     )
-    start = time.monotonic()
     await asyncio.gather(
         ep.capture_frame_safe(camera_index=0),
         ep.capture_frame_safe(camera_index=1),
     )
-    elapsed = time.monotonic() - start
-    # Primary correctness proof — the two cameras' busy intervals must
-    # actually overlap in time (threshold-independent; mirrors the sibling
-    # `test_same_camera_calls_serialize`'s use of busy_calls).
+    # Parallelism is proven by OVERLAP, not by elapsed time: the two cameras'
+    # busy intervals must intersect. This is threshold-independent — it holds
+    # however slowly the runner schedules the threads — and mirrors the sibling
+    # `test_same_camera_calls_serialize`'s use of busy_calls.
     (s0, e0) = backend.busy_calls[0][0]
     (s1, e1) = backend.busy_calls[1][0]
     assert max(s0, s1) < min(e0, e1), (
-        f"camera intervals do not overlap (not parallel): "
-        f"cam0=({s0}, {e0}) cam1=({s1}, {e1})"
+        f"camera intervals do not overlap (not parallel): cam0=({s0}, {e0}) cam1=({s1}, {e1})"
     )
-    # Wall-clock sanity bound (0.18 → 0.25 → 0.40 to absorb Windows-runner
-    # scheduling latency); the overlap check above is what proves parallelism.
-    assert elapsed < 0.40
+    # NO WALL-CLOCK BOUND HERE, deliberately. There used to be an
+    # `assert elapsed < X` sanity check. It was widened three times
+    # (0.18 -> 0.25 -> 0.40) chasing Windows-runner scheduling latency and
+    # still failed at 0.61 on 2026-07-26, wedging foreman ticket 33262 at
+    # NeedsHelp for nine days over a PR that does not touch this package.
+    #
+    # A duration threshold measures runner load, not behaviour, so every
+    # widening buys time rather than correctness. The overlap assertion above
+    # already proves the property under test and cannot flake. Re-adding a
+    # timing bound would re-introduce the flake with a bigger number.
+    # See agent_core#564.
