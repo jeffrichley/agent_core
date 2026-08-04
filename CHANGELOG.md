@@ -8,6 +8,13 @@ This project uses [*towncrier*](https://towncrier.readthedocs.io/); unreleased c
 
 <!-- towncrier release notes start -->
 
+## [0.9.3](https://github.com/jeffrichley/agent_core/compare/v0.9.2...v0.9.3) (2026-08-04)
+
+
+### Bug Fixes
+
+* **hatchery:** ship templates inside the package ([#574](https://github.com/jeffrichley/agent_core/issues/574)) ([d339033](https://github.com/jeffrichley/agent_core/commit/d3390335f2ef1c9db82c6625a74b4507782d981e)), closes [#573](https://github.com/jeffrichley/agent_core/issues/573)
+
 ## [0.9.2](https://github.com/jeffrichley/agent_core/compare/v0.9.1...v0.9.2) (2026-08-04)
 
 
