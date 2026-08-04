@@ -36,6 +36,18 @@ jobs:
       - name: Validate distribution metadata
         run: uvx twine check dist/*
 
+      # Fail-closed gate: twine check validates METADATA, not that the wheel
+      # actually imports. 0.9.0 and 0.9.1 both passed twine check and both were
+      # DOA on install — agent_core.venv had been silently dropped from the
+      # sdist the wheel was built from (#566). Install the built wheel into a
+      # clean environment and run the console script. Nothing publishes unless
+      # the entry point a user actually types works.
+      - name: Smoke-test built wheel (must import and run)
+        run: |
+          uv venv /tmp/smoke
+          uv pip install --python /tmp/smoke/bin/python dist/agent_core_bus-*.whl
+          /tmp/smoke/bin/agent-core --help
+
       - name: List built artifacts
         run: ls -la dist/
 
