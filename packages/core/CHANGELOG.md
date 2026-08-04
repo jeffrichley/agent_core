@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.9.3](https://github.com/jeffrichley/agent_core/compare/v0.9.2...agent-core-v0.9.3) (2026-08-04)
+
+
+### Bug Fixes
+
+* **deps:** raise agent-core sibling caps from &lt;0.9 to &lt;0.10 ([#577](https://github.com/jeffrichley/agent_core/issues/577)) ([a8ecc74](https://github.com/jeffrichley/agent_core/commit/a8ecc749efab0d343cab15ab50ba15eb45ea840a))
+
 ## [0.9.2](https://github.com/jeffrichley/agent_core/compare/v0.9.1...agent-core-v0.9.2) (2026-08-04)
 
 

@@ -1,5 +1,20 @@
 # Changelog
 
+## [0.10.0](https://github.com/jeffrichley/agent_core/compare/v0.9.1...agent-core-hatchery-v0.10.0) (2026-08-04)
+
+
+### Features
+
+* enable mypy --strict for agent-core-hatchery ([#519](https://github.com/jeffrichley/agent_core/issues/519)) ([2365ab2](https://github.com/jeffrichley/agent_core/commit/2365ab27de4a450ec2a8c8d6211f7fdb43678a3d))
+* **hatchery:** add --no-daemon-reload to hatch without a live daemon ([#483](https://github.com/jeffrichley/agent_core/issues/483)) ([7bf06c6](https://github.com/jeffrichley/agent_core/commit/7bf06c64519033ffe4b768e1bb0318282f908e77))
+* **venv:** canonical .mcp.json generator (C2-2, [#316](https://github.com/jeffrichley/agent_core/issues/316)) ([#482](https://github.com/jeffrichley/agent_core/issues/482)) ([e376ab2](https://github.com/jeffrichley/agent_core/commit/e376ab2bf4e8130ca8654800a9b3c0034bf68dac))
+
+
+### Bug Fixes
+
+* **deps:** raise agent-core sibling caps from &lt;0.9 to &lt;0.10 ([#577](https://github.com/jeffrichley/agent_core/issues/577)) ([a8ecc74](https://github.com/jeffrichley/agent_core/commit/a8ecc749efab0d343cab15ab50ba15eb45ea840a))
+* **hatchery:** ship templates inside the package ([#574](https://github.com/jeffrichley/agent_core/issues/574)) ([d339033](https://github.com/jeffrichley/agent_core/commit/d3390335f2ef1c9db82c6625a74b4507782d981e)), closes [#573](https://github.com/jeffrichley/agent_core/issues/573)
+
 ## [0.9.1](https://github.com/jeffrichley/agent_core/compare/v0.9.0...agent-core-hatchery-v0.9.1) (2026-08-04)
 
 
