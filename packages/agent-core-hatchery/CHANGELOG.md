@@ -1,5 +1,14 @@
 # Changelog
 
+## [0.9.0](https://github.com/jeffrichley/agent_core/compare/v0.8.2...agent-core-hatchery-v0.9.0) (2026-08-03)
+
+
+### Features
+
+* enable mypy --strict for agent-core-hatchery ([#519](https://github.com/jeffrichley/agent_core/issues/519)) ([2365ab2](https://github.com/jeffrichley/agent_core/commit/2365ab27de4a450ec2a8c8d6211f7fdb43678a3d))
+* **hatchery:** add --no-daemon-reload to hatch without a live daemon ([#483](https://github.com/jeffrichley/agent_core/issues/483)) ([7bf06c6](https://github.com/jeffrichley/agent_core/commit/7bf06c64519033ffe4b768e1bb0318282f908e77))
+* **venv:** canonical .mcp.json generator (C2-2, [#316](https://github.com/jeffrichley/agent_core/issues/316)) ([#482](https://github.com/jeffrichley/agent_core/issues/482)) ([e376ab2](https://github.com/jeffrichley/agent_core/commit/e376ab2bf4e8130ca8654800a9b3c0034bf68dac))
+
 ## [0.8.2](https://github.com/jeffrichley/agent_core/compare/v0.8.1...agent-core-hatchery-v0.8.2) (2026-07-22)
 
 

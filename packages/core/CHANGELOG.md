@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.9.0](https://github.com/jeffrichley/agent_core/compare/v0.8.2...agent-core-v0.9.0) (2026-08-03)
+
+
+### Features
+
+* **bus:** add ASGI auth middleware with bus_auth_mode (off/warn/enforce) ([#544](https://github.com/jeffrichley/agent_core/issues/544)) ([d925501](https://github.com/jeffrichley/agent_core/commit/d9255013a0d50a8e694d0ba98e601970827fd3cf))
+* **bus:** add PubkeyRegistry loader for being → Ed25519 pubkey (Dβ-2a) ([#533](https://github.com/jeffrichley/agent_core/issues/533)) ([20e2f91](https://github.com/jeffrichley/agent_core/commit/20e2f91ae3eb766065964d260dc0e8eb372f4685))
+* **daemon:** add venv GC report engine and detectors to daemon doctor ([#540](https://github.com/jeffrichley/agent_core/issues/540)) ([0c30c78](https://github.com/jeffrichley/agent_core/commit/0c30c787b56e0f262f2464a7e93550869904f12b))
+* **daemon:** wire --fix to remove dead central corpse venvs (C2-3c) ([#550](https://github.com/jeffrichley/agent_core/issues/550)) ([3ee03b7](https://github.com/jeffrichley/agent_core/commit/3ee03b7b601acce0eea0c31013edc4d0c0d6cd16))
+* **qa:** session-scoped auto-start daemon fixture, replace skip-unless-live autouse ([#534](https://github.com/jeffrichley/agent_core/issues/534)) ([407c387](https://github.com/jeffrichley/agent_core/commit/407c3874a0636641b0b546a4c262408c839973d3))
+* **venv:** canonical .mcp.json generator (C2-2, [#316](https://github.com/jeffrichley/agent_core/issues/316)) ([#482](https://github.com/jeffrichley/agent_core/issues/482)) ([e376ab2](https://github.com/jeffrichley/agent_core/commit/e376ab2bf4e8130ca8654800a9b3c0034bf68dac))
+
 ## [0.8.2](https://github.com/jeffrichley/agent_core/compare/v0.8.1...agent-core-v0.8.2) (2026-07-22)
 
 
