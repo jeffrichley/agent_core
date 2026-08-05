@@ -19,9 +19,16 @@ back to a tool that answers before the endpoint is up.
 
 from __future__ import annotations
 
+import time
+
 import pytest
 
 from agent_core.endpoints.claude_code_mcp._endpoint import ClaudeCodeMCPEndpoint
+
+
+def _soon() -> float:
+    """A deadline far enough out that a responsive gate always beats it."""
+    return time.monotonic() + 5.0
 
 
 def _unstarted() -> ClaudeCodeMCPEndpoint:
@@ -51,25 +58,81 @@ def test_handle_requiring_tools_refuse_when_not_started() -> None:
         _unstarted()._require_handle()
 
 
-def test_readiness_gate_probes_a_handle_requiring_tool() -> None:
-    """The gate must not regress to a tool that answers before startup.
+class _FakeResult:
+    def __init__(self, status_code: int) -> None:
+        self.status_code = status_code
 
-    Guards the fixture itself: `consume` calls `_require_handle()` before doing
-    anything, so it fails loudly while unstarted. `list_pending` does not.
+
+class _RecordingClient:
+    """Captures which tool the readiness gate probes, and with what."""
+
+    def __init__(self, url: str, statuses: list[int]) -> None:
+        self.url = url
+        self._statuses = list(statuses)
+        self.calls: list[tuple[str, dict]] = []
+
+    async def call_tool(self, tool: str, arguments: dict) -> _FakeResult:
+        self.calls.append((tool, arguments))
+        status = self._statuses.pop(0) if self._statuses else 200
+        return _FakeResult(status)
+
+
+@pytest.mark.asyncio
+async def test_gate_probes_a_handle_requiring_tool_as_a_pure_read(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The probe must need the handle, and must not mutate the mailbox.
+
+    ``consume`` calls ``_require_handle()`` first, so it 500s while unstarted.
+    ``auto_ack=False`` with ``max_items=0`` acks nothing and drops nothing, so
+    the gate can poll it repeatedly without consuming a being's mail.
     """
     from agent_core_qa import fixtures
 
-    source = fixtures._qa_endpoint_ready.__doc__ or ""
-    import inspect
+    client = _RecordingClient("http://x", [200])
+    monkeypatch.setattr(fixtures, "DaemonClient", lambda url: client)
 
-    body = inspect.getsource(fixtures._qa_endpoint_ready)
+    assert await fixtures._qa_endpoint_ready("http://x", deadline=_soon()) is True
 
-    assert '"consume"' in body, (
-        "the readiness gate must probe a tool that requires the started handle; "
+    tool, args = client.calls[0]
+    assert tool == "consume", (
+        "the gate must probe a tool that requires the started handle; "
         "list_pending answers 200 before the endpoint starts and gates nothing"
     )
-    assert '"list_pending"' not in body.split('"""')[-1], (
-        "list_pending must not be the probe — it does not read _handle"
-    )
-    assert "auto_ack" in body, "the probe must be a pure read (auto_ack=False)"
-    assert source  # docstring explains the reasoning for the next reader
+    assert args["auto_ack"] is False, "probing must not ack the mailbox"
+    assert args["max_items"] == 0, "probing must not drain the mailbox"
+
+
+@pytest.mark.asyncio
+async def test_gate_keeps_polling_while_the_endpoint_is_unstarted(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A 500 means not-started; the gate must wait, not sail through.
+
+    This is the property the old list_pending probe lacked — it accepted the
+    first 200 and returned immediately, every time.
+    """
+    from agent_core_qa import fixtures
+
+    monkeypatch.setattr(fixtures, "_POLL_INTERVAL", 0.001)
+    client = _RecordingClient("http://x", [500, 500, 200])
+    monkeypatch.setattr(fixtures, "DaemonClient", lambda url: client)
+
+    assert await fixtures._qa_endpoint_ready("http://x", deadline=_soon()) is True
+    assert len(client.calls) == 3, "gate must keep polling until the endpoint answers"
+
+
+@pytest.mark.asyncio
+async def test_gate_reports_failure_when_the_endpoint_never_starts(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Deadline with a never-starting endpoint must return False, not True."""
+    from agent_core_qa import fixtures
+
+    monkeypatch.setattr(fixtures, "_POLL_INTERVAL", 0.001)
+    client = _RecordingClient("http://x", [500] * 50)
+    monkeypatch.setattr(fixtures, "DaemonClient", lambda url: client)
+
+    result = await fixtures._qa_endpoint_ready("http://x", deadline=time.monotonic() + 0.05)
+
+    assert result is False, "a never-started endpoint must fail the gate, not pass it"
