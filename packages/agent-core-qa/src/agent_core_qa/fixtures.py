@@ -50,21 +50,34 @@ def _tcp_probe(host: str, port: int, *, timeout: float = 1.0) -> bool:
 
 
 async def _qa_endpoint_ready(url: str, *, deadline: float) -> bool:
-    """Poll the ``qa`` MCP endpoint until it answers a tool call, or ``deadline`` passes.
+    """Poll the ``qa`` MCP endpoint until it is genuinely started, or ``deadline`` passes.
 
     The TCP probe only confirms the daemon's HTTP port is bound —
     Starlette/Uvicorn opens the socket before the daemon's endpoints finish
     their ``start()``. A test that fires a ``send`` tool call into that window
-    gets ``500 endpoint 'qa' is not started`` — a startup race that surfaces
-    non-deterministically (it depends on how fast the endpoints come up relative
-    to the first test; it passed on the impl PR and failed on ``main``).
-    ``list_pending`` is a read-only tool on the ``qa`` ``ClaudeCodeMCPEndpoint``;
-    a ``200`` from it means the endpoint is genuinely started and serving. Gate
-    on that, not just the open port, so tests never race a half-started daemon.
+    gets ``500 endpoint 'qa' is not started``.
+
+    **The probe must call a tool that requires the started handle.** This gate
+    previously polled ``list_pending`` and accepted any ``200``, on the stated
+    reasoning that "a 200 from it means the endpoint is genuinely started and
+    serving". That was false: ``_call_list_pending`` never touches ``_handle``
+    — it reads the in-memory ``_pending`` list and returns — so it answers
+    ``200`` with an empty mailbox whether or not the endpoint has started. The
+    gate therefore passed on its first poll every time and protected nothing,
+    which is why ``endpoint 'qa' is not started`` kept reaching the tests it
+    was written to prevent.
+
+    ``consume`` calls ``_require_handle()`` before doing anything, so it fails
+    loudly while the endpoint is unstarted. With ``auto_ack=False`` and
+    ``max_items=0`` it acks nothing and drops nothing — a pure read, safe to
+    call repeatedly as a probe.
     """
     client = DaemonClient(url)
     while time.monotonic() < deadline:
-        result = await client.call_tool("list_pending", arguments={})
+        result = await client.call_tool(
+            "consume",
+            arguments={"auto_ack": False, "max_items": 0},
+        )
         if result.status_code == 200:
             return True
         await asyncio.sleep(_POLL_INTERVAL)
