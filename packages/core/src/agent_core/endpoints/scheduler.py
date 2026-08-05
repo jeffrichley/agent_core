@@ -21,6 +21,7 @@ Each job carries an `envelope_kind` (default `"TextMessage"`, also supports
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import sqlite3
@@ -31,7 +32,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal, cast
 
 import yaml
-from apscheduler import AsyncScheduler
+from apscheduler import AsyncScheduler, RunState
 from apscheduler.datastores.sqlalchemy import SQLAlchemyDataStore
 from apscheduler.triggers.cron import CronTrigger
 from apscheduler.triggers.date import DateTrigger
@@ -193,6 +194,11 @@ def _default_db_path() -> Path:
 # file, so the two genuinely contend.
 _SQLITE_BUSY_TIMEOUT_SECONDS = 30.0
 
+# How often the liveness watchdog checks that APScheduler is still running.
+# Detection latency, not a correctness knob: a dead scheduler is reported
+# within roughly this long. Cheap (an in-memory enum read), so it is short.
+_LIVENESS_POLL_SECONDS = 5.0
+
 
 def create_scheduler_engine(db_path: Path) -> AsyncEngine:
     """Build the scheduler's aiosqlite engine with contention-safe pragmas.
@@ -309,12 +315,57 @@ class SchedulerEndpoint:
         self.db_path: Path = Path(db_path).expanduser() if db_path else _default_db_path()
         self._handle: BusHandle | None = None
         self._scheduler: AsyncScheduler | None = None
+        # Set by stop() before it tears anything down, so the liveness watchdog
+        # can tell an intentional shutdown from a crash and exit quietly.
+        self._stopping = False
+        # The watchdog task. Owned here rather than left to the handle's drain,
+        # so stop() is self-contained: an endpoint that spawns a non-terminating
+        # task and does not cancel it leaks that task for the life of the loop.
+        self._liveness_task: asyncio.Task[None] | None = None
         # The aiosqlite-backed engine is owned here (not by APScheduler's data
         # store, which never disposes a caller-supplied engine). It MUST be
         # disposed in stop(), else its connection pool's background aiosqlite
         # threads leak on every stop — accumulating across a test suite until
         # the event loop chokes and a random test times out.
         self._engine: AsyncEngine | None = None
+
+    async def _watch_scheduler_liveness(self) -> None:
+        """Raise when APScheduler's background task has died.
+
+        This exists because a dead scheduler is otherwise invisible. APScheduler
+        runs ``run_until_stopped`` inside its own task group; when that task
+        raises (a locked database, say) the group unwinds internally, the
+        library logs "Scheduler crashed", and nothing else happens. ``start()``
+        returned successfully long before, so the endpoint remains registered
+        and ``bus status`` keeps listing it as a healthy endpoint with 0
+        pending — while every scheduled job has stopped firing. The only
+        evidence is one ERROR line and the absence of things that should have
+        happened.
+
+        Raising here routes the death into machinery that already exists but
+        that nothing was feeding: ``BusHandle.spawn`` reports a failed tracked
+        task to the bus, which calls ``EndpointSupervisor.record_failure``,
+        which restarts the endpoint with backoff and quarantines it after
+        ``restarts_before_quarantine`` attempts. Quarantined endpoints show up
+        under "Degraded Endpoints" in ``bus status``.
+
+        Raises:
+            RuntimeError: when the scheduler is no longer running and this
+                endpoint is not deliberately shutting down.
+        """
+        while True:
+            await asyncio.sleep(_LIVENESS_POLL_SECONDS)
+            if self._stopping:
+                return
+            scheduler = self._scheduler
+            if scheduler is None:
+                return  # stop() already tore it down
+            if scheduler.state is not RunState.started:
+                raise RuntimeError(
+                    f"scheduler endpoint {self.name!r} is no longer running "
+                    f"(state={scheduler.state.name}); its background task died. "
+                    "Scheduled jobs have stopped firing."
+                )
 
     async def start(self, bus: BusHandle) -> None:
         self._handle = bus
@@ -327,6 +378,16 @@ class SchedulerEndpoint:
             # Allow concurrent fires per task (APScheduler defaults to max_running_jobs=1).
             await self._scheduler.configure_task(_fire, max_running_jobs=None)
             await self._scheduler.start_in_background()
+            # APScheduler runs run_until_stopped inside its OWN task group, so
+            # when that task dies the exception unwinds there and never reaches
+            # the bus. Without this watchdog the endpoint stays in
+            # _active_endpoints, bus status keeps reporting it healthy, and
+            # every scheduled job silently stops firing. See #586.
+            self._stopping = False
+            self._liveness_task = bus.spawn(
+                self._watch_scheduler_liveness(),
+                name=f"scheduler-liveness:{self.name}",
+            )
             _active_endpoints[self.name] = self
             if self.jobs_path is not None:
                 await self._seed_jobs()
@@ -580,6 +641,32 @@ class SchedulerEndpoint:
             log.exception("scheduler failed to publish Acknowledgment for %s", incoming.id)
 
     async def stop(self) -> None:
+        # Set BEFORE anything is torn down. The liveness watchdog treats a
+        # not-running scheduler as a crash, and a normal shutdown makes the
+        # scheduler not-running — without this flag every clean stop would
+        # report a spurious endpoint failure to the supervisor.
+        self._stopping = True
+        # Cancel the watchdog before the scheduler goes away. The _stopping
+        # flag already makes it exit quietly, but it sleeps between polls, so
+        # without an explicit cancel it would linger for up to one poll
+        # interval past shutdown — long enough to be a leaked task in a test
+        # suite that stops hundreds of endpoints.
+        if self._liveness_task is not None:
+            task, self._liveness_task = self._liveness_task, None
+            task.cancel()
+            try:
+                await task
+            except (asyncio.CancelledError, Exception):
+                # Two cases, both non-fatal here:
+                #   - CancelledError: the normal path, we just cancelled it.
+                #   - the watchdog's own RuntimeError: it already fired and
+                #     spawn()'s done-callback already reported it to the
+                #     supervisor. Awaiting a task that finished with an
+                #     exception re-raises it, so without this stop() would
+                #     abort before disposing the engine below — leaking an
+                #     aiosqlite pool on every supervisor restart, which is the
+                #     failure this endpoint already fought in #468.
+                pass
         _active_endpoints.pop(self.name, None)
         if self._scheduler is not None:
             try:

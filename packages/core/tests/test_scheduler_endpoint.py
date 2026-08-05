@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 import textwrap
 import uuid
@@ -150,9 +151,15 @@ async def test_start_stop_lifecycle(tmp_path):
     """SchedulerEndpoint can start and stop cleanly."""
 
     class _FakeHandle:
+        # spawn mirrors the real BusHandle: the scheduler runs its liveness
+        # watchdog through it. A fake missing a method the real object has
+        # makes the endpoint's use of it untestable (see #586).
         async def publish(self, *a, **kw): ...
         async def ack(self, *a, **kw): ...
         async def nack(self, *a, **kw): ...
+        def spawn(self, coro, *, name=None):
+            return asyncio.create_task(coro, name=name)
+
         def endpoints(self):
             return []
 
@@ -177,9 +184,15 @@ async def test_stop_disposes_engine_leaving_no_leaked_connections(tmp_path):
     """
 
     class _FakeHandle:
+        # spawn mirrors the real BusHandle: the scheduler runs its liveness
+        # watchdog through it. A fake missing a method the real object has
+        # makes the endpoint's use of it untestable (see #586).
         async def publish(self, *a, **kw): ...
         async def ack(self, *a, **kw): ...
         async def nack(self, *a, **kw): ...
+        def spawn(self, coro, *, name=None):
+            return asyncio.create_task(coro, name=name)
+
         def endpoints(self):
             return []
 
@@ -198,9 +211,15 @@ async def test_failed_start_rolls_back_and_disposes_engine(tmp_path, monkeypatch
     """
 
     class _FakeHandle:
+        # spawn mirrors the real BusHandle: the scheduler runs its liveness
+        # watchdog through it. A fake missing a method the real object has
+        # makes the endpoint's use of it untestable (see #586).
         async def publish(self, *a, **kw): ...
         async def ack(self, *a, **kw): ...
         async def nack(self, *a, **kw): ...
+        def spawn(self, coro, *, name=None):
+            return asyncio.create_task(coro, name=name)
+
         def endpoints(self):
             return []
 
@@ -291,9 +310,15 @@ async def test_seed_jobs_are_added_on_start(tmp_path):
     """When jobs_path points at a yaml file, jobs are added at start()."""
 
     class _FakeHandle:
+        # spawn mirrors the real BusHandle: the scheduler runs its liveness
+        # watchdog through it. A fake missing a method the real object has
+        # makes the endpoint's use of it untestable (see #586).
         async def publish(self, *a, **kw): ...
         async def ack(self, *a, **kw): ...
         async def nack(self, *a, **kw): ...
+        def spawn(self, coro, *, name=None):
+            return asyncio.create_task(coro, name=name)
+
         def endpoints(self):
             return []
 
@@ -333,9 +358,15 @@ async def test_seed_jobs_skip_duplicates(tmp_path):
     """Re-running start() with the same yaml does not duplicate jobs."""
 
     class _FakeHandle:
+        # spawn mirrors the real BusHandle: the scheduler runs its liveness
+        # watchdog through it. A fake missing a method the real object has
+        # makes the endpoint's use of it untestable (see #586).
         async def publish(self, *a, **kw): ...
         async def ack(self, *a, **kw): ...
         async def nack(self, *a, **kw): ...
+        def spawn(self, coro, *, name=None):
+            return asyncio.create_task(coro, name=name)
+
         def endpoints(self):
             return []
 
@@ -371,15 +402,40 @@ async def test_seed_jobs_skip_duplicates(tmp_path):
 
 
 class _RecordingHandle:
-    """Test-double BusHandle that records publishes."""
+    """Test-double BusHandle that records publishes.
+
+    ``spawn`` mirrors the real ``BusHandle.spawn``: it tracks the task and
+    routes a non-cancellation exception to a failure hook instead of crashing
+    the loop. It was missing until 2026-08-05, which is part of why #586 went
+    unnoticed — the scheduler's supervision could not have been exercised by
+    any test using this fake, because the method it depends on did not exist
+    here. A fake that silently lacks a method the real object has turns "the
+    endpoint never calls it" into an untestable claim.
+    """
 
     def __init__(self):
         self.published: list = []
+        self.spawned: list[asyncio.Task] = []
+        self.task_failures: list[BaseException] = []
 
     async def publish(self, envelope, to=None) -> None:
         if to is not None:
             envelope = envelope.model_copy(update={"to": to if isinstance(to, str) else to[0]})
         self.published.append(envelope)
+
+    def spawn(self, coro, *, name: str | None = None) -> asyncio.Task:
+        task = asyncio.create_task(coro, name=name)
+        self.spawned.append(task)
+
+        def _done(t: asyncio.Task) -> None:
+            if t.cancelled():
+                return
+            exc = t.exception()
+            if exc is not None:
+                self.task_failures.append(exc)
+
+        task.add_done_callback(_done)
+        return task
 
     async def ack(self, envelope_id: str) -> None: ...
     async def nack(self, envelope_id: str, requeue: bool = True) -> None: ...
