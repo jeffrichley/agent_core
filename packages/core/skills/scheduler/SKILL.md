@@ -97,7 +97,29 @@ The scheduler uses APScheduler v4 with a SQLAlchemyDataStore. Each schedule row'
 Before the tools: every scheduled job uses one of three triggers. Pick by intent, not by familiarity with cron:
 
 - **`interval`** — fires every N seconds/minutes/hours/days. Schedule: `{"seconds": N}` / `{"minutes": N}` / `{"hours": N}` / `{"days": N}`. Use for heartbeats, periodic probes, "every 30 min" patterns. Timezone-agnostic.
-- **`cron`** — fires at specific wall-clock times. Schedule: `{"second": ?, "minute": ?, "hour": ?, "day": ?, "month": ?, "day_of_week": ?, "year": ?}` (omit fields = wildcard; `day_of_week` accepts `mon-fri`, `mon`, etc.). Use for "every weekday at 9 AM", "Thursdays at 4 PM", "1st of the month". **Always set `timezone`** (e.g. `"America/New_York"`) — APScheduler v4 defaults to UTC.
+- **`cron`** — fires at specific wall-clock times. Schedule: `{"second": ?, "minute": ?, "hour": ?, "day": ?, "month": ?, "day_of_week": ?, "year": ?}` (`day_of_week` accepts `mon-fri`, `mon`, etc.). Use for "every weekday at 9 AM", "Thursdays at 4 PM", "1st of the month". **Always set `timezone`** (e.g. `"America/New_York"`) — APScheduler v4 defaults to UTC.
+
+  > ### 🔴 "Omit fields = wildcard" is WRONG, and it silently creates jobs that can never fire
+  >
+  > **Corrected 2026-07-30 after finding three born-dead rows in production.** APScheduler's actual rule: fields **coarser** than the smallest one you specify default to `*`; fields **finer** than it default to their **minimum**.
+  >
+  > So an empty or near-empty `schedule` means *"00:00:00 on 1 January, annually"* — not *"every minute."* Measured evidence from the live store:
+  > ```
+  > pepper-fleet-poll        CronTrigger(year='*', month='1', day='1', hour='0', minute='0')
+  >                          → next fire 2028-01-01 00:00 · NEVER FIRED in its whole life
+  > pepper-wc-live-poll-*    same shape → 2027-01-01 00:00 · NEVER FIRED
+  > ```
+  > Contrast a correctly-built one — specifying `hour`+`minute` correctly wildcards the coarser fields:
+  > ```
+  > pepper-wc-morning-brief  CronTrigger(month='*', day='*', hour='7', minute='15') → daily 07:15 ✅
+  > ```
+  >
+  > **Rules that follow:**
+  > 1. **Always specify `hour` and `minute` explicitly** on any cron job. There is no such thing as a safely-omitted time field.
+  > 2. **A one-shot intent must use `trigger: "date"`, never `cron`.** A cron with `year='*'` and a fixed month/day *recurs annually* instead of firing once — that's how `pepper-war-makeup-2026-06-22` (`month='6', day='22'`) ended up with `next=2027-06-22`. A `DateTrigger` fires once and **auto-deletes**, leaving no corpse.
+  > 3. **After ANY `create_job`, verify `next_fire_time` is when you meant.** A far-future date (`2027-01-01`, `2028-01-01`) is the signature of this bug. The row looks scheduled, reports no error, and cannot fire — it is *born dead*, which is worse than rotting, because it never worked even once.
+  >
+  > This defect is **generative**: it is a property of the creation path, so every future job is exposed until the verify-after-create step becomes habit.
 - **`date`** — fires ONCE at a specific timestamp then auto-deletes. Schedule: `{"run_time": "<ISO-8601-datetime>"}`. Use for one-shot reminders ("at 8:30 AM tomorrow, do X").
 
 ### The six tools
@@ -105,6 +127,8 @@ Before the tools: every scheduled job uses one of three triggers. Pick by intent
 All return either `{"status": "...", "name": "..."}` on success or `"error: <message>"` on failure. The reply arrives as a separate `Acknowledgment` envelope — consume it to read the result.
 
 > **Reply round-trip pattern (same for all six tools):** every send produces an `Acknowledgment` reply from the scheduler. Call `mcp__agent-core__consume()` after each send and look for an envelope `from="scheduler"`, `kind="Acknowledgment"`, with `payload.note` as JSON-stringified result (or `"error: <message>"` prefix on failure). Mutations are transactional — on `error:`, nothing changed; safe to fix args and retry.
+>
+> **Ack fallback:** if the Acknowledgment doesn't arrive within ~10 seconds, the mutation may still have landed — verify via read-only SQLite inspection (see `references/inspect.md`) against `~/.agent-core/scheduler.db` before assuming failure and retrying. Mutations are transactional at the scheduler layer; a missing ack is more likely a bus-routing or consume-timing issue than a failed mutation. Caught 2026-06-02 by Pepper after a `create_job` for `sunday_health_review` mutated cleanly (verified row present + decoded `next_fire_time`) but the ack never reached her inbox.
 
 #### `create_job` — register a new schedule
 
@@ -148,7 +172,62 @@ mcp__agent-core__send(
 )
 ```
 
-Only `name` is required. Every other field is optional — anything you omit is preserved from the current schedule. The endpoint re-validates the merged shape (e.g. switching to `envelope_kind: "Event"` without a `payload` is rejected). Under the hood the operation is `remove_schedule + add_schedule` with the new args, reusing the existing trigger when `schedule` is omitted. **No daemon restart needed.** The job's id and `last_fire_time` are preserved across updates.
+Only `name` is required. Every other field is optional — anything you omit is preserved from the current schedule. The endpoint re-validates the merged shape (e.g. switching to `envelope_kind: "Event"` without a `payload` is rejected). Under the hood the operation is `remove_schedule + add_schedule` with the new args, reusing the existing trigger when `schedule` is omitted. **No daemon restart needed.** The job's id is preserved across updates.
+
+> ### 🔴 `update_job` SKIPS ONE FULL PERIOD AND WIPES `last_fire_time`
+>
+> **CONFIRMED DEFECT — two independent observations, 76 days apart, on
+> different jobs. Corrected 2026-07-31; this section previously claimed
+> `last_fire_time` is preserved. It is not, and neither is the cadence.**
+>
+> **Editing a job advances `next_run` by ONE FULL PERIOD.** Not "a bit later" —
+> the next scheduled occurrence is *skipped entirely*.
+>
+> - **[M] Pepper, 2026-05-16, `weekly_war`** (weekly): editing the prompt moved
+>   `next_run` **Fri May 22 → Fri May 29.** A whole week skipped.
+> - **[M] Wren, 2026-07-31, `wren-heartbeat`** (3-hourly at :09): handled at
+>   09:09 and 12:09 ET, then edited twice that evening. Store showed
+>   `last_fire_time = None` and next fire 3h after the edit; the 15:09 and 18:09
+>   fires never arrived. Every job *not* edited that day had a populated
+>   `last_fire_time`; both edited ones showed `None`.
+>
+> Consistent with `remove_schedule + add_schedule` discarding fire history and
+> recomputing from the moment of the edit.
+>
+> **🔴 `pause_job` + `resume_job` DOES NOT RESET IT.** [M] Pepper tried. The
+> CronTrigger fields stay correct and `next_run` stays advanced. Do not reach
+> for it as the workaround; it isn't one.
+>
+> **Remedies, both imperfect:**
+> 1. **Run the skipped occurrence on demand** and let the following period
+>    self-heal. Lowest risk; preferred.
+> 2. `delete_job` + `create_job` to force a fresh recompute. **Riskier** —
+>    requires re-specifying the whole job from inference on a live schedule.
+>
+> **⇒ THE DANGEROUS CASE IS WEEKLY AND MONTHLY JOBS, where one period is a week
+> or a month, and fixing a job costs exactly the thing the fix was protecting.**
+> Editing `weekly_war` on a Monday means Friday's WAR does not fire. Editing
+> `apex_weekly_slots` costs a week of Apex slots — *the repair and the damage
+> are the same size.*
+>
+> **Required sequence for ANY `update_job` on a job with a period ≥ 1 day:**
+> 1. edit
+> 2. `list_jobs` (or read `next_fire_time` from the store)
+> 3. **verify the next fire is the expected occurrence and not one period
+>    later**
+> 4. if it slipped, plan to run the skipped occurrence manually
+>
+> **Never poke a live job repeatedly to chase the schedule** — each attempt
+> defers it again.
+>
+> **Also:** a job edited more often than its own interval **never fires at
+> all**, silently — no error, no signal, indistinguishable from a quiet job.
+> And **`last_fire_time = None` after an edit means "edited," not "never ran"** —
+> do not use it to judge health.
+>
+> For a job whose *firing* is load-bearing, have it **write a timestamped line
+> to a file on every run** (pattern: `~/.<being>/logs/<job-name>.log`). A
+> passive dated artifact survives edits; scheduler metadata does not.
 
 #### `delete_job` / `pause_job` / `resume_job` — name-only operations
 
@@ -231,3 +310,68 @@ This skill is the canonical multi-being scheduler reference, written 2026-05-28 
 - Treatment of `jobs.yaml` as the only seed source (the daemon merges `jobs.d/*.yaml` fragments too)
 
 If you find a stale file, replace it with this one or ignore it. The canonical source of truth for behavior is the running daemon process + the scheduler endpoint source at `agent_core/endpoints/scheduler.py`.
+
+## Maintenance
+
+If during this skill's invocation you find: (a) stale information (a tool that's been renamed or removed, a path that's moved), (b) a missing pattern (a new tool, a new edge case, a new failure mode), or (c) a contradiction with observed reality — UPDATE this skill BEFORE completing your current task. Use Anthropic's `skill-creator` skill for the SKILL.md shape + frontmatter discipline.
+
+Lightweight updates: add a date-stamped entry to the `## Lessons` section at the bottom AND fold the durable rule into the relevant section in the body.
+
+Subagents: do not edit this skill.
+
+## Lessons
+
+### 2026-07-30 — "Omit fields = wildcard" was wrong; three born-dead rows found (Wren, prompted by Pepper)
+
+Pepper flagged three pepper-targeted rows with far-future `next_fire_time` (`2027-01-01`, `2028-01-01`, `2027-06-22`) and correctly identified the shape as **generative** — a creation-path habit rather than three unrelated bad rows. Unpickling the triggers found the cause: this skill documented cron field omission as defaulting to **wildcard**. It does not. APScheduler defaults coarser-than-specified fields to `*` and **finer-than-specified fields to their minimum**, so a near-empty `schedule` yields `month=1, day=1, hour=0, minute=0` — annually at the first instant of January. `pepper-fleet-poll` had **never fired once** in its existence.
+
+Separately, `pepper-war-makeup-2026-06-22` showed a one-shot intent encoded as `cron` with `year='*'`, which recurs annually rather than firing once and self-deleting.
+
+Rules baked into the trigger section: always specify `hour`+`minute`; one-shots use `trigger: "date"` (auto-deletes, no corpse); **verify `next_fire_time` after every `create_job`** — a far-future date is this bug's signature. All four affected rows paused (reversible) rather than deleted, at Pepper's request, since a dead row that stays inspectable beats one that vanishes.
+
+The wider lesson, which matched a night of similar findings: a job like this **presents as wired**. It reports no error, appears in listings, and cannot fire. Born dead is worse than rotted — it never worked even once, so there is no "it used to work" memory to contradict the appearance.
+
+### 2026-06-02 — Acknowledgment-envelope fallback added (Pepper finding)
+
+Pepper sent `create_job` for `sunday_health_review` and the mutation landed cleanly — row present in `scheduler.db`, `next_fire_time` decoded to 2026-06-07 09:03 ET — but the `Acknowledgment` envelope the round-trip pattern describes never reached her inbox. Verified via direct read of the SQLite store. Either daemon-side dropped envelope, bus routing hiccup, or consume-timing — root cause not isolated, but the workflow shouldn't stall on a flaky ack when the inspect path is always available.
+
+Rule baked into the round-trip callout: if the ack doesn't arrive within ~10s, verify via read-only SQLite inspection before retrying. Mutations are transactional at the scheduler layer; a missing ack signals an envelope-delivery issue more than a failed mutation.
+
+### 2026-07-31 — `update_job` skips one full period (CONFIRMED, 2 observations)
+
+The skill claimed `last_fire_time` is preserved across `update_job`. **It is
+not, and neither is the cadence** — editing advances `next_run` by one full
+period. Confirmed by two independent observations 76 days apart: Pepper on
+`weekly_war` (2026-05-16, Fri May 22 → Fri May 29) and Wren on `wren-heartbeat`
+(2026-07-31). `pause_job`+`resume_job` does NOT reset it. Full evidence, the
+weekly/monthly danger case, and the required verify-after-edit sequence are in
+the 🔴 callout under `update_job` above.
+
+Found while building a peer proof-of-life mechanism: I edited `wren-heartbeat`
+twice in seven minutes to make its liveness check more thorough, and thereby
+**pushed the next run out by three hours** — starving the very check I was
+improving. The log it writes stayed empty, which is indistinguishable from the
+detector being dead. Pepper flagged the empty artifact; the cause turned out to
+be neither of the failure modes either of us had listed.
+
+**The generalisable half — a new shape, distinct from "intention has no trigger
+point":** here the trigger existed and was correct, and *the act of improving it
+deferred it.* **Care was the mechanism of failure, not its absence.** Any
+edit-resets-the-timer system has this property: iterate faster than the interval
+and the thing never runs, silently.
+
+**And the meta-finding, which is the larger one.** Pepper had observed this on
+2026-05-16 and written it down **in her private memory tree**
+(`~/.claude/projects/C--Users-jeffr--pepper/memory/`, which Wren cannot read).
+It never reached this doc — which asserted the opposite — so Wren rediscovered
+it 76 days later by debugging a live outage, while building a mechanism whose
+entire purpose is catching silent failures.
+
+**This is not staleness.** Every other doc failure that week was an artifact
+that had drifted from the truth. **This one was correct the whole time and
+simply in the wrong being's head.** Knowledge that exists does not propagate.
+
+**⇒ RULE: anything either being learns about SHARED INFRASTRUCTURE lands in the
+SHARED ARTIFACT — this skill — not in a private memory.** Private memory is for
+what is true about *you*. A defect in the scheduler is true about the substrate,
+and the being who hits it next will not be the one who found it.
