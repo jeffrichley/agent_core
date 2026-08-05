@@ -8,6 +8,13 @@ This project uses [*towncrier*](https://towncrier.readthedocs.io/); unreleased c
 
 <!-- towncrier release notes start -->
 
+## [0.9.5](https://github.com/jeffrichley/agent_core/compare/v0.9.4...v0.9.5) (2026-08-05)
+
+
+### Bug Fixes
+
+* **channel:** declare agent-core-bus and fastmcp, which the code imports ([#583](https://github.com/jeffrichley/agent_core/issues/583)) ([4b971a8](https://github.com/jeffrichley/agent_core/commit/4b971a811614ac97ca38e5dad32f65ae855f9f4b)), closes [#566](https://github.com/jeffrichley/agent_core/issues/566)
+
 ## [0.9.4](https://github.com/jeffrichley/agent_core/compare/v0.9.3...v0.9.4) (2026-08-04)
 
 
