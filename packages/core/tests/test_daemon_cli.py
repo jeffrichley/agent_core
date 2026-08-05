@@ -1142,3 +1142,146 @@ def test_uninstall_service_source_instance_errors(
     result = runner.invoke(daemon_app, ["uninstall-service", "--instance", "source"])
     assert result.exit_code == 1
     assert "prod-only" in result.stdout.lower()
+
+
+def test_doctor_fix_prunes_superseded_venvs(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """daemon doctor --fix calls prune_superseded_venvs for detected superseded venvs."""
+    monkeypatch.setenv("AGENT_CORE_HOME", str(tmp_path))
+
+    from agent_core.daemon.venv_gc import VenvGcReport
+
+    superseded_path = tmp_path / "venvs" / "0.6.0"
+    fake_venv_report = VenvGcReport(superseded_venvs=[superseded_path])
+    monkeypatch.setattr(
+        "agent_core.daemon.cli.run_venv_doctor",
+        lambda daemon_home, home_root, daemon_config_dir: fake_venv_report,
+    )
+    prune_calls: list[list] = []
+
+    def fake_prune(paths: list) -> list:
+        prune_calls.append(list(paths))
+        return list(paths)  # simulate all removed
+
+    monkeypatch.setattr("agent_core.daemon.cli.prune_superseded_venvs", fake_prune)
+    monkeypatch.setattr(
+        "agent_core.daemon.cli.run_config_hygiene",
+        lambda config_dir, fix: __import__(
+            "agent_core.daemon.config_hygiene", fromlist=["HygieneReport"]
+        ).HygieneReport(),
+    )
+
+    result = runner.invoke(daemon_app, ["doctor", "--fix"])
+    assert result.exit_code == 1  # has_issues remains True
+    assert prune_calls == [[superseded_path]]
+    assert "removed" in result.stdout.lower()
+
+
+def test_doctor_fix_removes_broken_stable_link(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """daemon doctor --fix calls remove_broken_stable_link for each broken link."""
+    monkeypatch.setenv("AGENT_CORE_HOME", str(tmp_path))
+
+    from agent_core.daemon.venv_gc import VenvGcReport
+
+    stable_path = tmp_path / ".venv"
+    fake_venv_report = VenvGcReport(broken_stable_links=[stable_path])
+    monkeypatch.setattr(
+        "agent_core.daemon.cli.run_venv_doctor",
+        lambda daemon_home, home_root, daemon_config_dir: fake_venv_report,
+    )
+    removal_calls: list = []
+
+    def fake_remove(p: Path) -> bool:
+        removal_calls.append(p)
+        return True  # simulate successful removal
+
+    monkeypatch.setattr("agent_core.daemon.cli.remove_broken_stable_link", fake_remove)
+    monkeypatch.setattr(
+        "agent_core.daemon.cli.run_config_hygiene",
+        lambda config_dir, fix: __import__(
+            "agent_core.daemon.config_hygiene", fromlist=["HygieneReport"]
+        ).HygieneReport(),
+    )
+
+    result = runner.invoke(daemon_app, ["doctor", "--fix"])
+    assert result.exit_code == 1
+    assert removal_calls == [stable_path]
+    assert "removed" in result.stdout.lower()
+
+
+def test_doctor_fix_removes_orphaned_partial_builds(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """daemon doctor --fix calls remove_orphaned_partial_builds for orphaned dirs."""
+    monkeypatch.setenv("AGENT_CORE_HOME", str(tmp_path))
+
+    from agent_core.daemon.venv_gc import VenvGcReport
+
+    orphan_path = tmp_path / "venvs" / "0.8.0"
+    fake_venv_report = VenvGcReport(orphaned_partial_builds=[orphan_path])
+    monkeypatch.setattr(
+        "agent_core.daemon.cli.run_venv_doctor",
+        lambda daemon_home, home_root, daemon_config_dir: fake_venv_report,
+    )
+    remove_calls: list[list] = []
+
+    def fake_remove(paths: list) -> list:
+        remove_calls.append(list(paths))
+        return list(paths)
+
+    monkeypatch.setattr("agent_core.daemon.cli.remove_orphaned_partial_builds", fake_remove)
+    monkeypatch.setattr(
+        "agent_core.daemon.cli.run_config_hygiene",
+        lambda config_dir, fix: __import__(
+            "agent_core.daemon.config_hygiene", fromlist=["HygieneReport"]
+        ).HygieneReport(),
+    )
+
+    result = runner.invoke(daemon_app, ["doctor", "--fix"])
+    assert result.exit_code == 1
+    assert remove_calls == [[orphan_path]]
+    assert "removed" in result.stdout.lower()
+
+
+def test_doctor_fix_repairs_drifted_mcp_json(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """daemon doctor --fix calls repair_mcp_json with correct being_name and vault_root."""
+    monkeypatch.setenv("AGENT_CORE_HOME", str(tmp_path))
+
+    from agent_core.daemon.venv_gc import VenvGcReport
+
+    wren_home = tmp_path / ".wren"
+    wren_home.mkdir()
+    mcp_json_path = wren_home / ".mcp.json"
+    fake_venv_report = VenvGcReport(drifted_mcp_jsons=[mcp_json_path])
+    monkeypatch.setattr(
+        "agent_core.daemon.cli.run_venv_doctor",
+        lambda daemon_home, home_root, daemon_config_dir: fake_venv_report,
+    )
+    repair_calls: list[tuple] = []
+
+    def fake_repair(
+        being_name: str, *, vault_root: Path, daemon_config_dir: Path
+    ) -> tuple[Path, bool]:
+        repair_calls.append((being_name, vault_root, daemon_config_dir))
+        return mcp_json_path, True  # simulate repaired
+
+    monkeypatch.setattr("agent_core.daemon.cli.repair_mcp_json", fake_repair)
+    monkeypatch.setattr(
+        "agent_core.daemon.cli.run_config_hygiene",
+        lambda config_dir, fix: __import__(
+            "agent_core.daemon.config_hygiene", fromlist=["HygieneReport"]
+        ).HygieneReport(),
+    )
+
+    result = runner.invoke(daemon_app, ["doctor", "--fix"])
+    assert result.exit_code == 1
+    assert len(repair_calls) == 1
+    being_name_called, vault_root_called, _ = repair_calls[0]
+    assert being_name_called == "wren"
+    assert vault_root_called == wren_home
+    assert "repaired" in result.stdout.lower()
