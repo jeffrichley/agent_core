@@ -6,7 +6,7 @@ license = "MIT"
 requires-python = ">=3.12"
 dependencies = [
     "claude-agent-sdk>=0.1.29",
-    "agent-core-credentials>=0.8,<0.9",
+    "agent-core-credentials>=0.9.2,<0.10",
     "python-dotenv>=1.0.0",
     "tzdata>=2024.1",
     "pydantic>=2.0",
@@ -39,6 +39,28 @@ example = "agent_core.plugins.example_entrypoint"
 [build-system]
 requires = ["hatchling", "uv-dynamic-versioning"]
 build-backend = "hatchling.build"
+
+# Force-include agent_core.venv in EVERY build target. It is a SOURCE
+# subpackage whose name collides with the root .gitignore's `venv/` pattern.
+# The rescue negations there (`!packages/core/src/agent_core/venv/`) are written
+# REPO-root-relative, so git honors them but hatchling — which builds with root
+# = packages/core — cannot resolve them, and drops the subpackage.
+#
+# This MUST be declared here (shared, applies to all targets) rather than under
+# targets.wheel. The release runs `uv build` without `--wheel`
+# (.github/workflows/release.yml), which builds the sdist FIRST and then the
+# wheel from that sdist. A wheel-only force-include is too late: the files are
+# already absent from the sdist the wheel is built against. 0.9.1 shipped with
+# exactly that mistake and was still broken on install.
+#
+# The trap that hid this for two releases: in a git WORKTREE `.git` is a file,
+# not a directory, so hatchling's VCS-ignore detection silently no-ops and the
+# subpackage IS included. Every local build looked correct while every
+# published wheel was broken. Validate packaging from a real clone, never a
+# worktree. release.yml now smoke-tests the built wheel before publishing.
+# See #566.
+[tool.hatch.build]
+artifacts = ["src/agent_core/venv/**"]
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/agent_core"]

@@ -1,5 +1,18 @@
 # Changelog
 
+## [0.9.0](https://github.com/jeffrichley/agent_core/compare/v0.8.1...agent-core-qa-v0.9.0) (2026-08-03)
+
+
+### Features
+
+* **mypy:** enable --strict for briefs, busproxy, inbound, voice, webcam, qa ([#532](https://github.com/jeffrichley/agent_core/issues/532)) ([9663d87](https://github.com/jeffrichley/agent_core/commit/9663d8783176116a7ae352b2ba07933bf056fbe7))
+* **qa:** session-scoped auto-start daemon fixture, replace skip-unless-live autouse ([#534](https://github.com/jeffrichley/agent_core/issues/534)) ([407c387](https://github.com/jeffrichley/agent_core/commit/407c3874a0636641b0b546a4c262408c839973d3))
+
+
+### Bug Fixes
+
+* republish package family to complete rate-limited first publish ([#477](https://github.com/jeffrichley/agent_core/issues/477)) ([32977ac](https://github.com/jeffrichley/agent_core/commit/32977ac78da4a15553329bb4e1fdaa9e894834ad))
+
 ## [0.8.1](https://github.com/jeffrichley/agent_core/compare/v0.8.0...agent-core-qa-v0.8.1) (2026-07-22)
 
 

@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.9.0](https://github.com/jeffrichley/agent_core/compare/v0.8.1...agent-core-credentials-v0.9.0) (2026-08-03)
+
+
+### Features
+
+* **credentials:** enable mypy --strict for agent-core-credentials ([#525](https://github.com/jeffrichley/agent_core/issues/525)) ([361e21c](https://github.com/jeffrichley/agent_core/commit/361e21cb10c515d954c5cfbd679a3ccc8977f251))
+
+
+### Bug Fixes
+
+* republish package family to complete rate-limited first publish ([#477](https://github.com/jeffrichley/agent_core/issues/477)) ([32977ac](https://github.com/jeffrichley/agent_core/commit/32977ac78da4a15553329bb4e1fdaa9e894834ad))
+
 ## [0.8.1](https://github.com/jeffrichley/agent_core/compare/v0.8.0...agent-core-credentials-v0.8.1) (2026-07-22)
 
 
