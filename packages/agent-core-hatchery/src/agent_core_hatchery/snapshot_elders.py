@@ -14,18 +14,20 @@ from pathlib import Path
 import typer
 import yaml
 
+from agent_core_hatchery.hatcher import TEMPLATES_DIR
+
 app = typer.Typer(name="hatchery-snapshot-elders")
 
 
 @app.callback(invoke_without_command=True)
 def snapshot(
     manifest: Path = typer.Option(  # noqa: B008
-        Path(__file__).parent.parent.parent / "templates" / "elder-letters-manifest.yaml",
+        TEMPLATES_DIR / "elder-letters-manifest.yaml",
         "--manifest",
         help="Path to elder-letters-manifest.yaml",
     ),
     bundled_dir: Path = typer.Option(  # noqa: B008
-        Path(__file__).parent.parent.parent / "templates" / "elder-letters" / "bundled",
+        TEMPLATES_DIR / "elder-letters" / "bundled",
         "--bundled-dir",
         help="Path to bundled snapshots directory",
     ),

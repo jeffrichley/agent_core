@@ -8,6 +8,64 @@ This project uses [*towncrier*](https://towncrier.readthedocs.io/); unreleased c
 
 <!-- towncrier release notes start -->
 
+## [0.9.5](https://github.com/jeffrichley/agent_core/compare/v0.9.4...v0.9.5) (2026-08-05)
+
+
+### Bug Fixes
+
+* **channel:** declare agent-core-bus and fastmcp, which the code imports ([#583](https://github.com/jeffrichley/agent_core/issues/583)) ([4b971a8](https://github.com/jeffrichley/agent_core/commit/4b971a811614ac97ca38e5dad32f65ae855f9f4b)), closes [#566](https://github.com/jeffrichley/agent_core/issues/566)
+
+## [0.9.4](https://github.com/jeffrichley/agent_core/compare/v0.9.3...v0.9.4) (2026-08-04)
+
+
+### Bug Fixes
+
+* **deps:** raise agent-core sibling caps from &lt;0.9 to &lt;0.10 ([#577](https://github.com/jeffrichley/agent_core/issues/577)) ([a8ecc74](https://github.com/jeffrichley/agent_core/commit/a8ecc749efab0d343cab15ab50ba15eb45ea840a))
+
+## [0.9.3](https://github.com/jeffrichley/agent_core/compare/v0.9.2...v0.9.3) (2026-08-04)
+
+
+### Bug Fixes
+
+* **hatchery:** ship templates inside the package ([#574](https://github.com/jeffrichley/agent_core/issues/574)) ([d339033](https://github.com/jeffrichley/agent_core/commit/d3390335f2ef1c9db82c6625a74b4507782d981e)), closes [#573](https://github.com/jeffrichley/agent_core/issues/573)
+
+## [0.9.2](https://github.com/jeffrichley/agent_core/compare/v0.9.1...v0.9.2) (2026-08-04)
+
+
+### Bug Fixes
+
+* **packaging:** force-include agent_core.venv in all build targets ([#569](https://github.com/jeffrichley/agent_core/issues/569)) ([345cad0](https://github.com/jeffrichley/agent_core/commit/345cad077ac1ea3d1ff540046e46c37c4e1d5007)), closes [#566](https://github.com/jeffrichley/agent_core/issues/566)
+
+## [0.9.1](https://github.com/jeffrichley/agent_core/compare/v0.9.0...v0.9.1) (2026-08-04)
+
+
+### Bug Fixes
+
+* **packaging:** force-include agent_core.venv in the wheel ([#567](https://github.com/jeffrichley/agent_core/issues/567)) ([89aabf1](https://github.com/jeffrichley/agent_core/commit/89aabf11a91fea93391941a09ed7190ccf925f91)), closes [#566](https://github.com/jeffrichley/agent_core/issues/566)
+
+## [0.9.0](https://github.com/jeffrichley/agent_core/compare/v0.8.2...v0.9.0) (2026-08-03)
+
+
+### Features
+
+* **bus:** add ASGI auth middleware with bus_auth_mode (off/warn/enforce) ([#544](https://github.com/jeffrichley/agent_core/issues/544)) ([d925501](https://github.com/jeffrichley/agent_core/commit/d9255013a0d50a8e694d0ba98e601970827fd3cf))
+* **bus:** add PubkeyRegistry loader for being → Ed25519 pubkey (Dβ-2a) ([#533](https://github.com/jeffrichley/agent_core/issues/533)) ([20e2f91](https://github.com/jeffrichley/agent_core/commit/20e2f91ae3eb766065964d260dc0e8eb372f4685))
+* **ci:** add nightly workflow for install-keystone (scenario 3) ([#552](https://github.com/jeffrichley/agent_core/issues/552)) ([0e4bdb8](https://github.com/jeffrichley/agent_core/commit/0e4bdb806de82ee391558a439ab121660d2c53a7))
+* **credentials:** enable mypy --strict for agent-core-credentials ([#525](https://github.com/jeffrichley/agent_core/issues/525)) ([361e21c](https://github.com/jeffrichley/agent_core/commit/361e21cb10c515d954c5cfbd679a3ccc8977f251))
+* **daemon:** add venv GC report engine and detectors to daemon doctor ([#540](https://github.com/jeffrichley/agent_core/issues/540)) ([0c30c78](https://github.com/jeffrichley/agent_core/commit/0c30c787b56e0f262f2464a7e93550869904f12b))
+* **daemon:** wire --fix to remove dead central corpse venvs (C2-3c) ([#550](https://github.com/jeffrichley/agent_core/issues/550)) ([3ee03b7](https://github.com/jeffrichley/agent_core/commit/3ee03b7b601acce0eea0c31013edc4d0c0d6cd16))
+* enable mypy --strict for agent-core-hatchery ([#519](https://github.com/jeffrichley/agent_core/issues/519)) ([2365ab2](https://github.com/jeffrichley/agent_core/commit/2365ab27de4a450ec2a8c8d6211f7fdb43678a3d))
+* **hatchery:** add --no-daemon-reload to hatch without a live daemon ([#483](https://github.com/jeffrichley/agent_core/issues/483)) ([7bf06c6](https://github.com/jeffrichley/agent_core/commit/7bf06c64519033ffe4b768e1bb0318282f908e77))
+* **mypy:** enable --strict for briefs, busproxy, inbound, voice, webcam, qa ([#532](https://github.com/jeffrichley/agent_core/issues/532)) ([9663d87](https://github.com/jeffrichley/agent_core/commit/9663d8783176116a7ae352b2ba07933bf056fbe7))
+* **presence:** camera-derived presence awareness with multi-class identification ([#557](https://github.com/jeffrichley/agent_core/issues/557)) ([00e79c6](https://github.com/jeffrichley/agent_core/commit/00e79c636b7aab4e102d45a70cc2164c8eed483e))
+* **qa:** session-scoped auto-start daemon fixture, replace skip-unless-live autouse ([#534](https://github.com/jeffrichley/agent_core/issues/534)) ([407c387](https://github.com/jeffrichley/agent_core/commit/407c3874a0636641b0b546a4c262408c839973d3))
+* **venv:** canonical .mcp.json generator (C2-2, [#316](https://github.com/jeffrichley/agent_core/issues/316)) ([#482](https://github.com/jeffrichley/agent_core/issues/482)) ([e376ab2](https://github.com/jeffrichley/agent_core/commit/e376ab2bf4e8130ca8654800a9b3c0034bf68dac))
+
+
+### Bug Fixes
+
+* **tests:** join aiosqlite worker threads in leak-guard instead of fixed sleep ([#543](https://github.com/jeffrichley/agent_core/issues/543)) ([c445cd8](https://github.com/jeffrichley/agent_core/commit/c445cd88ead5566a4927d9292a6325ea698cd176))
+
 ## [0.8.2](https://github.com/jeffrichley/agent_core/compare/v0.8.1...v0.8.2) (2026-07-22)
 
 
