@@ -23,7 +23,9 @@ from __future__ import annotations
 
 import json
 import logging
+import sqlite3
 import uuid
+from contextlib import closing
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal, cast
@@ -185,6 +187,75 @@ def _default_db_path() -> Path:
     return Path("~/.agent-core/scheduler.db").expanduser()
 
 
+# How long SQLite waits for a competing writer's lock before raising
+# "database is locked", in seconds. APScheduler's acquire_jobs loop runs
+# concurrently with bus-driven create/update/delete mutations against the same
+# file, so the two genuinely contend.
+_SQLITE_BUSY_TIMEOUT_SECONDS = 30.0
+
+
+def create_scheduler_engine(db_path: Path) -> AsyncEngine:
+    """Build the scheduler's aiosqlite engine with contention-safe pragmas.
+
+    The default ``sqlite+aiosqlite://`` engine uses SQLite's rollback journal,
+    under which any writer takes an exclusive lock over the whole database and
+    concurrent readers fail immediately with ``SQLITE_BUSY``. APScheduler's
+    ``_process_jobs`` loop calls ``acquire_jobs`` continuously while bus
+    ToolInvocations (``create_job``/``update_job``/``delete_job``) write to the
+    same file, so that contention is routine rather than exceptional.
+
+    When it happens the ``OperationalError`` escapes ``_process_jobs``, unwinds
+    APScheduler's task group, and kills the scheduler outright — every
+    scheduled job silently stops firing. Two settings prevent it:
+
+    - ``journal_mode=WAL`` lets readers and a writer proceed concurrently.
+    - ``busy_timeout`` makes a blocked connection wait and retry rather than
+      fail instantly, covering the WAL write-write case that WAL alone does
+      not.
+
+    The bus's own store already does this (``bus/persistence.py``); the
+    scheduler was the one SQLite store in core without it.
+
+    WAL is applied once, here, over a plain stdlib ``sqlite3`` connection
+    rather than from a SQLAlchemy ``connect`` event listener. Two reasons:
+
+    - It is a persistent property of the *database file*, recorded in its
+      header, so every later connection inherits it. Re-applying per
+      connection buys nothing.
+    - The listener version leaked. Executing a cursor inside the ``connect``
+      event of an aiosqlite engine leaves a connection thread that
+      ``dispose()`` does not reclaim; the suite's leak guard caught it on
+      three scheduler tests. That is the same failure this codebase already
+      hit in #468, so it is worth not re-introducing.
+
+    Args:
+        db_path: Filesystem path to the scheduler's SQLite database. Its
+            parent directory must already exist.
+
+    Returns:
+        An ``AsyncEngine`` pointed at a WAL-mode database, whose connections
+        wait rather than fail when the file is locked.
+    """
+    # Persist WAL on the file itself. sqlite3.connect creates the database if
+    # it does not exist, and journal_mode survives in the header from then on.
+    with closing(sqlite3.connect(db_path)) as conn:
+        mode = conn.execute("PRAGMA journal_mode=WAL").fetchone()[0]
+    if mode.lower() != "wal":  # pragma: no cover - defensive
+        # Never observed on a local file; would mean the database is on a
+        # filesystem that cannot support WAL's shared-memory index (some
+        # network mounts). Loud beats a scheduler that dies under load.
+        raise RuntimeError(
+            f"scheduler database {db_path} refused WAL mode (got {mode!r}); "
+            "concurrent access would crash the scheduler"
+        )
+
+    return create_async_engine(
+        f"sqlite+aiosqlite:///{db_path}",
+        # sqlite3.connect(timeout=...) — sets the busy handler at connect time.
+        connect_args={"timeout": _SQLITE_BUSY_TIMEOUT_SECONDS},
+    )
+
+
 def load_seed_jobs(yaml_path: Path) -> dict[str, JobDef]:
     """Parse a yaml file into validated JobDef entries keyed by name.
 
@@ -248,7 +319,7 @@ class SchedulerEndpoint:
     async def start(self, bus: BusHandle) -> None:
         self._handle = bus
         self.db_path.parent.mkdir(parents=True, exist_ok=True)
-        self._engine = create_async_engine(f"sqlite+aiosqlite:///{self.db_path}")
+        self._engine = create_scheduler_engine(self.db_path)
         data_store = SQLAlchemyDataStore(self._engine)
         self._scheduler = AsyncScheduler(data_store=data_store)
         try:
