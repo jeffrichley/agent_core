@@ -104,6 +104,28 @@ class TestRunner:
         with pytest.raises(BusBootError, match="loopback"):
             await build_bus_from_config(p)
 
+    async def test_non_loopback_bind_warn_mode_permitted(self, tmp_path: Path, build_bus):
+        config = {
+            "http": {"bind_host": "0.0.0.0", "bind_port": 8788},
+            "bus_auth_mode": "warn",
+            "endpoints": [],
+        }
+        p = tmp_path / "warn_cfg.yaml"
+        p.write_text(yaml.dump(config))
+        bus, http = await build_bus(p)  # must not raise BusBootError
+        assert http is None  # no MCPHostable endpoints configured
+
+    async def test_non_loopback_bind_enforce_mode_permitted(self, tmp_path: Path, build_bus):
+        config = {
+            "http": {"bind_host": "0.0.0.0", "bind_port": 8788},
+            "bus_auth_mode": "enforce",
+            "endpoints": [],
+        }
+        p = tmp_path / "enforce_cfg.yaml"
+        p.write_text(yaml.dump(config))
+        bus, http = await build_bus(p)  # must not raise BusBootError
+        assert http is None  # no MCPHostable endpoints configured
+
     async def test_endpoint_missing_name_raises_bus_boot_error(
         self, tmp_path: Path
     ):
