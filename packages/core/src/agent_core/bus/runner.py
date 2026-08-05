@@ -1,8 +1,8 @@
 """Boot sequence — load YAML, instantiate endpoints, register, start.
 
 The runner is the only place that imports endpoint classes by string. It also
-enforces v1 invariants: loopback-only bind unless an auth hook is configured
-(BACKLOG: auth for non-loopback bind).
+enforces v1 invariants: loopback-only bind unless auth is active
+(bus_auth_mode != "off").
 """
 
 from __future__ import annotations
@@ -53,8 +53,8 @@ _LOOPBACK_HOSTS = {"127.0.0.1", "::1", "localhost"}
 def _validate_http(http_cfg: HttpConfig, has_auth_hook: bool) -> None:
     if http_cfg.bind_host not in _LOOPBACK_HOSTS and not has_auth_hook:
         raise BusBootError(
-            f"http.bind_host={http_cfg.bind_host!r} is non-loopback but no auth hook is configured. "
-            "v1 supports loopback only; see BACKLOG for the auth hook trigger."
+            f"http.bind_host={http_cfg.bind_host!r} is non-loopback but bus_auth_mode is 'off'. "
+            "Set bus_auth_mode to 'warn' or 'enforce' in the daemon YAML to permit a non-loopback bind."
         )
 
 
