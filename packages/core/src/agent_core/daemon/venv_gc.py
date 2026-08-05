@@ -301,15 +301,36 @@ def prune_superseded_venvs(paths: list[Path]) -> list[Path]:
 def remove_broken_stable_link(stable: Path) -> bool:
     """Remove a broken (dangling) stable symlink or junction.
 
-    Only removes if stable is a symlink/junction AND its target does not exist.
-    Returns True if removed; False if the path is absent, is a plain directory,
-    points to an existing target, or if removal raised OSError.
+    Only removes if stable is a symlink/junction AND its target is *provably*
+    absent. Returns True if removed; False if the path is absent, is a plain
+    directory, points to an existing target, could not be resolved, or if
+    removal raised OSError.
+
+    Absence must be proven, not inferred from a falsy check. ``Path.exists()``
+    swallows every OSError and returns False, so it reports "does not exist"
+    for a perfectly healthy link whose target is merely unreachable right now —
+    an unmounted drive, a disconnected network path, a permission change on a
+    parent directory. Deleting on that signal destroys a working venv link
+    because a drive was briefly offline. os.stat distinguishes the two:
+    FileNotFoundError (and ENOTDIR, a broken path component) means genuinely
+    dangling; any other OSError means "cannot tell", and cannot-tell must not
+    authorise a delete.
     """
     is_link = stable.is_symlink() or (sys.platform == "win32" and stable.is_junction())
     if not is_link:
         return False
-    if stable.exists():
-        return False  # target exists — healthy link, do not touch
+    try:
+        os.stat(stable)  # follows the link
+    except FileNotFoundError:
+        pass  # genuinely dangling — safe to remove
+    except NotADirectoryError:
+        pass  # a path component is not a directory; the target cannot exist
+    except OSError:
+        # Permission denied, unmounted volume, I/O error, name too long.
+        # The target may well be fine. Leave the link alone.
+        return False
+    else:
+        return False  # target resolved — healthy link, do not touch
     try:
         os.unlink(stable)
         return True
@@ -366,15 +387,11 @@ def run_venv_doctor(
     daemon_venvs_dir = daemon_home / "venvs"
     daemon_stable = daemon_home / ".venv"
 
-    report.superseded_venvs.extend(
-        find_superseded_venvs(daemon_venvs_dir, daemon_stable)
-    )
+    report.superseded_venvs.extend(find_superseded_venvs(daemon_venvs_dir, daemon_stable))
     broken = find_broken_stable_link(daemon_stable)
     if broken is not None:
         report.broken_stable_links.append(broken)
-    report.orphaned_partial_builds.extend(
-        find_orphaned_partial_builds(daemon_venvs_dir)
-    )
+    report.orphaned_partial_builds.extend(find_orphaned_partial_builds(daemon_venvs_dir))
 
     # --- Being-specific checks ---
     for being_home in discover_being_homes(home_root):
@@ -382,15 +399,11 @@ def run_venv_doctor(
         being_venvs_dir = being_home / ".agent-core" / "venvs"
         being_stable = being_home / ".venv"
 
-        report.superseded_venvs.extend(
-            find_superseded_venvs(being_venvs_dir, being_stable)
-        )
+        report.superseded_venvs.extend(find_superseded_venvs(being_venvs_dir, being_stable))
         broken = find_broken_stable_link(being_stable)
         if broken is not None:
             report.broken_stable_links.append(broken)
-        report.orphaned_partial_builds.extend(
-            find_orphaned_partial_builds(being_venvs_dir)
-        )
+        report.orphaned_partial_builds.extend(find_orphaned_partial_builds(being_venvs_dir))
         drifted = find_drifted_mcp_json(
             being_name,
             vault_root=being_home,

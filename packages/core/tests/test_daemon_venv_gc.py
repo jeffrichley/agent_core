@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import os
+import shutil
+import subprocess
 import sys
 from pathlib import Path
 
@@ -25,6 +27,7 @@ from agent_core.daemon.venv_gc import (
 # _version_sort_key
 # ---------------------------------------------------------------------------
 
+
 class TestVersionSortKey:
     def test_simple_semver(self) -> None:
         assert _version_sort_key("0.8.0") == (0, 8, 0)
@@ -44,6 +47,7 @@ class TestVersionSortKey:
 # ---------------------------------------------------------------------------
 # discover_being_homes
 # ---------------------------------------------------------------------------
+
 
 class TestDiscoverBeingHomes:
     def test_empty_dir_returns_empty(self, tmp_path: Path) -> None:
@@ -85,6 +89,7 @@ class TestDiscoverBeingHomes:
 # current_stable_target
 # ---------------------------------------------------------------------------
 
+
 @pytest.mark.skipif(sys.platform == "win32", reason="POSIX symlink test")
 class TestCurrentStableTargetPosix:
     def test_returns_target_for_healthy_symlink(self, tmp_path: Path) -> None:
@@ -113,6 +118,7 @@ class TestCurrentStableTargetPosix:
 # ---------------------------------------------------------------------------
 # find_superseded_venvs
 # ---------------------------------------------------------------------------
+
 
 class TestFindSupersededVenvs:
     def _make_venvs_dir(self, tmp_path: Path) -> Path:
@@ -194,6 +200,7 @@ class TestFindSupersededVenvs:
 # find_broken_stable_link
 # ---------------------------------------------------------------------------
 
+
 @pytest.mark.skipif(sys.platform == "win32", reason="POSIX symlink test")
 class TestFindBrokenStableLinkPosix:
     def test_returns_path_for_dangling_symlink(self, tmp_path: Path) -> None:
@@ -220,6 +227,7 @@ class TestFindBrokenStableLinkPosix:
 # ---------------------------------------------------------------------------
 # find_orphaned_partial_builds
 # ---------------------------------------------------------------------------
+
 
 class TestFindOrphanedPartialBuilds:
     def test_absent_dir_returns_empty(self, tmp_path: Path) -> None:
@@ -264,6 +272,7 @@ class TestFindOrphanedPartialBuilds:
 # find_drifted_mcp_json
 # ---------------------------------------------------------------------------
 
+
 class TestFindDriftedMcpJson:
     def test_returns_path_when_mcp_json_missing(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -294,6 +303,7 @@ class TestFindDriftedMcpJson:
 # ---------------------------------------------------------------------------
 # find_dead_central_corpses
 # ---------------------------------------------------------------------------
+
 
 class TestFindDeadCentralCorpses:
     def test_empty_daemon_home_returns_empty(self, tmp_path: Path) -> None:
@@ -344,6 +354,7 @@ class TestFindDeadCentralCorpses:
 # VenvGcReport
 # ---------------------------------------------------------------------------
 
+
 class TestVenvGcReport:
     def test_has_issues_false_when_empty(self) -> None:
         assert not VenvGcReport().has_issues
@@ -360,6 +371,7 @@ class TestVenvGcReport:
 # ---------------------------------------------------------------------------
 # run_venv_doctor integration (monkeypatched detectors)
 # ---------------------------------------------------------------------------
+
 
 class TestRunVenvDoctor:
     @pytest.mark.skipif(sys.platform == "win32", reason="POSIX symlink test")
@@ -418,6 +430,7 @@ class TestRunVenvDoctor:
 # remove_dead_central_corpses
 # ---------------------------------------------------------------------------
 
+
 class TestRemoveDeadCentralCorpses:
     def test_removes_versioned_dir(self, tmp_path: Path) -> None:
         from agent_core.daemon.venv_gc import remove_dead_central_corpses
@@ -470,6 +483,7 @@ class TestRemoveDeadCentralCorpses:
 # ---------------------------------------------------------------------------
 # prune_superseded_venvs
 # ---------------------------------------------------------------------------
+
 
 class TestPruneSupersededVenvs:
     def test_removes_single_dir(self, tmp_path: Path) -> None:
@@ -528,8 +542,102 @@ class TestPruneSupersededVenvs:
 # remove_broken_stable_link (pruner)
 # ---------------------------------------------------------------------------
 
-@pytest.mark.skipif(sys.platform == "win32", reason="POSIX symlink test")
+
 class TestRemoveBrokenStableLinkPruner:
+    """Platform-agnostic cases — these must run everywhere, Windows included.
+
+    They previously sat under a class-level ``skipif(win32)`` inherited from
+    the symlink cases below, which skipped two tests that touch no symlink at
+    all on the one platform where the junction branch actually executes.
+    """
+
+    def test_returns_false_for_plain_dir(self, tmp_path: Path) -> None:
+        from agent_core.daemon.venv_gc import remove_broken_stable_link
+
+        plain = tmp_path / ".venv"
+        plain.mkdir()
+        assert remove_broken_stable_link(plain) is False
+
+    def test_unreachable_target_is_not_treated_as_broken(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A healthy link whose target is merely unreachable must survive.
+
+        Path.exists() swallows every OSError and returns False, so an
+        unmounted drive, a disconnected network path, or a permission change
+        on a parent directory all look identical to "dangling". Deleting on
+        that signal destroys a working venv link because a volume blipped.
+        Absence has to be proven, not inferred from a falsy check.
+        """
+        from agent_core.daemon import venv_gc
+
+        stable = tmp_path / ".venv"
+        stable.mkdir()  # stand-in; is_symlink is forced below
+
+        monkeypatch.setattr(Path, "is_symlink", lambda self: True)
+
+        def deny(_path: object, *a: object, **k: object) -> object:
+            raise PermissionError(13, "Permission denied")
+
+        monkeypatch.setattr(venv_gc.os, "stat", deny)
+
+        unlinked: list[object] = []
+        monkeypatch.setattr(venv_gc.os, "unlink", lambda p: unlinked.append(p))
+
+        assert venv_gc.remove_broken_stable_link(stable) is False
+        assert unlinked == [], "must not delete a link whose target is merely unreachable"
+
+
+@pytest.mark.skipif(sys.platform != "win32", reason="Windows junction test")
+class TestRemoveBrokenStableLinkJunction:
+    """The win32-only ``is_junction()`` branch.
+
+    Added 2026-08-05: every existing test of this function was skipped on
+    win32, and the junction branch cannot execute anywhere else — so the one
+    path that runs on the platform the daemon is deployed on had no coverage
+    at all. On Windows CI those tests reported as "skipped", which reads
+    identically to "passed".
+
+    ``mklink /J`` creates a directory junction and does not require elevation.
+    """
+
+    @staticmethod
+    def _make_junction(link: Path, target: Path) -> bool:
+        result = subprocess.run(
+            ["cmd", "/c", "mklink", "/J", str(link), str(target)],
+            capture_output=True,
+            check=False,
+        )
+        return result.returncode == 0
+
+    def test_removes_dangling_junction(self, tmp_path: Path) -> None:
+        from agent_core.daemon.venv_gc import remove_broken_stable_link
+
+        target = tmp_path / "venvs" / "0.8.0"
+        target.mkdir(parents=True)
+        stable = tmp_path / ".venv"
+        if not self._make_junction(stable, target):
+            pytest.skip("mklink /J unavailable in this environment")
+        shutil.rmtree(target)  # now dangling
+
+        assert remove_broken_stable_link(stable) is True
+        assert not stable.is_junction()
+
+    def test_does_not_remove_healthy_junction(self, tmp_path: Path) -> None:
+        from agent_core.daemon.venv_gc import remove_broken_stable_link
+
+        target = tmp_path / "venvs" / "0.8.0"
+        target.mkdir(parents=True)
+        stable = tmp_path / ".venv"
+        if not self._make_junction(stable, target):
+            pytest.skip("mklink /J unavailable in this environment")
+
+        assert remove_broken_stable_link(stable) is False
+        assert stable.is_junction()
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="POSIX symlink test")
+class TestRemoveBrokenStableLinkPosix:
     def test_removes_dangling_symlink(self, tmp_path: Path) -> None:
         from agent_core.daemon.venv_gc import remove_broken_stable_link
 
@@ -550,13 +658,6 @@ class TestRemoveBrokenStableLinkPruner:
         assert result is False
         assert stable.exists()
 
-    def test_returns_false_for_plain_dir(self, tmp_path: Path) -> None:
-        from agent_core.daemon.venv_gc import remove_broken_stable_link
-
-        plain = tmp_path / ".venv"
-        plain.mkdir()
-        assert remove_broken_stable_link(plain) is False
-
     def test_returns_false_when_absent(self, tmp_path: Path) -> None:
         from agent_core.daemon.venv_gc import remove_broken_stable_link
 
@@ -566,6 +667,7 @@ class TestRemoveBrokenStableLinkPruner:
 # ---------------------------------------------------------------------------
 # remove_orphaned_partial_builds
 # ---------------------------------------------------------------------------
+
 
 class TestRemoveOrphanedPartialBuilds:
     def test_removes_single_dir(self, tmp_path: Path) -> None:
