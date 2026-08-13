@@ -21,6 +21,21 @@ REPO_URL="{repo_url}"
 # the only useful behaviour, and the SHA check below turns it into a report.
 export GIT_TERMINAL_PROMPT=0
 
+# Operate on THIS vault's repository and no other. Git exports GIT_DIR,
+# GIT_WORK_TREE and GIT_INDEX_FILE into the environment of every hook it
+# invokes, so if this script is ever reached from inside another git command
+# it inherits that repo -- and every command below silently retargets. The
+# observed failure is unambiguous and alarming:
+#
+#   $ GIT_DIR=<caller>/.git bash backup-to-github.sh
+#   Reinitialized existing Git repository in <caller>/.git/...
+#   error: remote origin already exists.
+#
+# That path ends in `git add -A` over someone else's working tree and a push
+# of it to this being's backup remote. Unsetting is cheap; the failure is not.
+unset GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE GIT_OBJECT_DIRECTORY \
+      GIT_ALTERNATE_OBJECT_DIRECTORIES GIT_COMMON_DIR GIT_PREFIX
+
 cd "$VAULT_ROOT"
 if [ ! -d Memory/.git ]; then
   cd Memory

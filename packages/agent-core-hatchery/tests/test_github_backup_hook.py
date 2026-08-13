@@ -50,6 +50,28 @@ _GIT_ENV = {
     "GIT_COMMITTER_EMAIL": "test@example.invalid",
 }
 
+# Git exports these into the environment of every hook it runs. This suite is
+# itself executed from a pre-push hook on this repo, so inheriting them points
+# each git call below at agent_core's own repository -- which is why these
+# tests failed only under the gate and never standalone.
+_LEAKED_GIT_VARS = (
+    "GIT_DIR",
+    "GIT_WORK_TREE",
+    "GIT_INDEX_FILE",
+    "GIT_OBJECT_DIRECTORY",
+    "GIT_ALTERNATE_OBJECT_DIRECTORIES",
+    "GIT_COMMON_DIR",
+    "GIT_PREFIX",
+)
+
+
+def _clean_env(**extra: str) -> dict[str, str]:
+    """Return the ambient environment with git's per-hook variables removed."""
+    env = {**os.environ, **_GIT_ENV, **extra}
+    for leaked in _LEAKED_GIT_VARS:
+        env.pop(leaked, None)
+    return env
+
 
 def _cfg(tmp_path: Path, repo_url: str) -> HatchConfig:
     """Build a hatch config whose vault resolves to ``tmp_path/.deb``."""
@@ -64,7 +86,7 @@ def _cfg(tmp_path: Path, repo_url: str) -> HatchConfig:
 
 def _run_hook(hook: Path, env: dict[str, str]) -> subprocess.CompletedProcess[str]:
     """Execute the generated hook and capture its output."""
-    full_env = {**os.environ, **_GIT_ENV, **env}
+    full_env = _clean_env(**env)
     assert _BASH is not None  # guarded by pytestmark
     # `as_posix()` as well as the absolute interpreter: a native Windows path
     # reaches bash with its backslashes consumed as escapes.
@@ -88,7 +110,12 @@ def _seed_vault(tmp_path: Path) -> Path:
 def test_hook_pushes_and_verifies_against_a_real_remote(tmp_path: Path) -> None:
     """A delivering run exits 0 and leaves remote == local."""
     remote = tmp_path / "remote.git"
-    subprocess.run(["git", "init", "--bare", str(remote)], check=True, capture_output=True)
+    subprocess.run(
+        ["git", "init", "--bare", str(remote)],
+        check=True,
+        capture_output=True,
+        env=_clean_env(),
+    )
     memory = _seed_vault(tmp_path)
 
     scaffold_github_backup(_cfg(tmp_path, remote.as_uri()))
@@ -104,12 +131,14 @@ def test_hook_pushes_and_verifies_against_a_real_remote(tmp_path: Path) -> None:
         capture_output=True,
         text=True,
         check=True,
+        env=_clean_env(),
     ).stdout.strip()
     remote_sha = subprocess.run(
         ["git", "ls-remote", str(remote), "HEAD"],
         capture_output=True,
         text=True,
         check=True,
+        env=_clean_env(),
     ).stdout.split()[0]
     assert local == remote_sha
 
@@ -134,7 +163,12 @@ def test_hook_fails_loudly_when_the_remote_is_unreachable(tmp_path: Path) -> Non
 def test_hook_is_idempotent_on_a_second_run(tmp_path: Path) -> None:
     """Re-running with nothing new still verifies rather than short-circuiting."""
     remote = tmp_path / "remote.git"
-    subprocess.run(["git", "init", "--bare", str(remote)], check=True, capture_output=True)
+    subprocess.run(
+        ["git", "init", "--bare", str(remote)],
+        check=True,
+        capture_output=True,
+        env=_clean_env(),
+    )
     _seed_vault(tmp_path)
     scaffold_github_backup(_cfg(tmp_path, remote.as_uri()))
     hook = tmp_path / ".deb" / "hooks" / "backup-to-github.sh"
