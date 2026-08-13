@@ -12,7 +12,14 @@ import re
 from datetime import date
 from pathlib import Path
 
-from pydantic import BaseModel, ConfigDict, Field, computed_field, model_validator
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    computed_field,
+    field_validator,
+    model_validator,
+)
 
 _ENV_VAR_PATTERN = re.compile(r"\$\{([A-Z_][A-Z0-9_]*)\}")
 
@@ -23,9 +30,7 @@ def _substitute_env_vars(value: str) -> str:
     def repl(match: re.Match[str]) -> str:
         var_name = match.group(1)
         if var_name not in os.environ:
-            raise ValueError(
-                f"Environment variable {var_name!r} referenced in config but not set"
-            )
+            raise ValueError(f"Environment variable {var_name!r} referenced in config but not set")
         return os.environ[var_name]
 
     return _ENV_VAR_PATTERN.sub(repl, value)
@@ -54,6 +59,42 @@ class GitHubBackupConfig(BaseModel):
     repo_url: str = ""
 
     model_config = ConfigDict(extra="forbid")
+
+    @field_validator("repo_url")
+    @classmethod
+    def _reject_embedded_credential(cls, value: str) -> str:
+        """Refuse a repo URL carrying an inline credential.
+
+        The generated backup hook runs ``git remote add origin "$REPO_URL"``,
+        which writes the URL into ``Memory/.git/config`` verbatim and leaves it
+        there. A tokenised URL therefore persists the secret in plaintext on
+        disk for the life of the vault -- strictly worse than passing it on a
+        command line, which at least does not survive the process.
+
+        Failing here makes that unrepresentable, and it fails at hatch time in
+        front of a human rather than at 4 AM inside a scheduled job.
+
+        Args:
+            value: The configured repository URL.
+
+        Returns:
+            The URL unchanged when it carries no inline credential.
+
+        Raises:
+            ValueError: If the URL embeds userinfo with a password/token.
+        """
+        scheme, sep, rest = value.partition("://")
+        if not sep:
+            return value
+        userinfo, at, _ = rest.partition("@")
+        if at and ":" in userinfo:
+            raise ValueError(
+                "repo_url must not embed a credential "
+                f"('{scheme}://<user>:<secret>@...'); the backup hook would "
+                "persist it in Memory/.git/config. Supply a plain URL and "
+                "provide credentials via SSH or a credential helper."
+            )
+        return value
 
 
 class ChannelsConfig(BaseModel):

@@ -16,6 +16,26 @@ set -euo pipefail
 VAULT_ROOT="{vault_root}"
 REPO_URL="{repo_url}"
 
+# Never prompt. This runs headless from the scheduler, where a credential
+# prompt is not a question anyone can answer -- it is a hang. Failing fast is
+# the only useful behaviour, and the SHA check below turns it into a report.
+export GIT_TERMINAL_PROMPT=0
+
+# Operate on THIS vault's repository and no other. Git exports GIT_DIR,
+# GIT_WORK_TREE and GIT_INDEX_FILE into the environment of every hook it
+# invokes, so if this script is ever reached from inside another git command
+# it inherits that repo -- and every command below silently retargets. The
+# observed failure is unambiguous and alarming:
+#
+#   $ GIT_DIR=<caller>/.git bash backup-to-github.sh
+#   Reinitialized existing Git repository in <caller>/.git/...
+#   error: remote origin already exists.
+#
+# That path ends in `git add -A` over someone else's working tree and a push
+# of it to this being's backup remote. Unsetting is cheap; the failure is not.
+unset GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE GIT_OBJECT_DIRECTORY \
+      GIT_ALTERNATE_OBJECT_DIRECTORIES GIT_COMMON_DIR GIT_PREFIX
+
 cd "$VAULT_ROOT"
 if [ ! -d Memory/.git ]; then
   cd Memory
@@ -24,9 +44,50 @@ if [ ! -d Memory/.git ]; then
   cd ..
 fi
 cd Memory
+
+# `symbolic-ref`, not `rev-parse --abbrev-ref HEAD`. On the FIRST run the repo
+# was just `git init`ed and has no commits, and rev-parse errors on an unborn
+# branch -- which under `set -e` aborts the very run that is supposed to
+# establish the backup.
+BRANCH=$(git symbolic-ref --short HEAD)
 git add -A
-git commit -m "backup $(date -Iseconds)" || true  # ok if nothing to commit
-git push -u origin HEAD || true                   # warn-only on first push
+
+# Distinguish "nothing to commit" from "commit failed". The previous
+# `|| true` treated them alike, so a genuinely broken commit read as a quiet
+# no-op.
+if git diff --cached --quiet; then
+  echo "Nothing to commit; pushing anyway (a push is a no-op when current)."
+else
+  git commit -m "backup $(date -Iseconds)"
+fi
+
+# `|| PUSH_RC=$?` rather than `git push` followed by `PUSH_RC=$?`. Under
+# `set -e` a bare failing push aborts the script AT THAT LINE, skipping the
+# verification below -- so the one path that most needs checking is the only
+# path that never reaches it.
+#
+# Not `if ! git push; then PUSH_RC=$?; fi` either: `!` inverts the status, so
+# the captured value is the negation's 0. That form looks repaired and is not.
+PUSH_RC=0
+git push -u origin "$BRANCH" || PUSH_RC=$?
+
+# `|| REMOTE_SHA=""` is load-bearing. Under `pipefail` a failed ls-remote fails
+# this assignment and `set -e` kills the script one line before the check,
+# reintroducing the silent stop for every remote-unreachable case: network
+# down, repo renamed, credential revoked.
+LOCAL_SHA=$(git rev-parse HEAD)
+REMOTE_SHA=$(git ls-remote origin "$BRANCH" 2>/dev/null | cut -f1) || REMOTE_SHA=""
+
+# Verify the OBJECT, not the exit code. `git push` can report success on a path
+# that did not deliver, and a backup that announces success without checking is
+# the highest-stakes version of that failure -- it is the thing protecting the
+# being's memory.
+if [ "$LOCAL_SHA" != "$REMOTE_SHA" ]; then
+  echo "BACKUP FAILED: local $LOCAL_SHA != remote ${{REMOTE_SHA:-<unreachable>}} (push rc=$PUSH_RC)" >&2
+  exit 1
+fi
+
+echo "Backup verified: $BRANCH at $LOCAL_SHA"
 """
 
 
