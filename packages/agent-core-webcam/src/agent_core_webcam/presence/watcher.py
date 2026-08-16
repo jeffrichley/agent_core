@@ -3,9 +3,26 @@
 Owns a single long-lived :class:`CameraSession`, and each cycle: reads a frame,
 detects+embeds faces, recognizes each against the enrolled template, aggregates
 to a :class:`PresenceState`, and atomically writes it. Per-cycle errors are
-caught and the write is skipped so the loop never dies on a transient failure;
-if failures persist, the state file simply ages out and the Phase-1 hook's
-staleness guard degrades to "unknown" (cautious). v1 is started by hand.
+caught and the write is skipped so the loop never dies on a transient failure.
+
+**2026-08-16 — what the 56-hour outage actually taught.** That per-cycle catch
+worked: it swallowed eight consecutive allocation failures and kept going. The
+process stopped anyway, for a reason that was **never established**, and nothing
+brought it back. Three things changed here as a result, and only the first two
+are about this file:
+
+1. A heartbeat is written EVERY cycle regardless of frame outcome, so a reader
+   can tell "camera failing" from "process gone". Before this they were the same
+   observation, and the outage was invisible for 56 hours because of it.
+2. Repeated failures now tear down and reopen the capture, degraded to
+   640x360 — the failure was a HOST-RAM allocation failure and a quarter-size
+   frame is a real mitigation. Full resolution is restored after sustained
+   success, so one bad afternoon does not permanently coarsen the sensor.
+3. Restarting a stopped watcher is NOT this file's job — see ``supervisor.py``.
+   A process cannot supervise its own death.
+
+Every collaborator is an injectable seam (defaulted to the real implementation)
+so the loop is fully testable without a camera or the model.
 
 Every collaborator is an injectable seam (defaulted to the real implementation)
 so the loop is fully testable without a camera or the model.
@@ -14,6 +31,7 @@ so the loop is fully testable without a camera or the model.
 from __future__ import annotations
 
 import logging
+import os
 import time
 from collections.abc import Callable
 from pathlib import Path
@@ -35,11 +53,28 @@ from agent_core_webcam.presence.recognition import (
 from agent_core_webcam.presence.recognition import (
     load_analyzer as _real_load_analyzer,
 )
-from agent_core_webcam.presence.state import write_state
+from agent_core_webcam.presence.state import (
+    WatcherHeartbeat,
+    heartbeat_path_for,
+    write_heartbeat,
+    write_state,
+)
 
 log = logging.getLogger(__name__)
 
 _EmbedFn = Callable[[object, npt.NDArray[Any]], list[tuple[Any, Bbox, float]]]
+
+#: Consecutive failed cycles before the camera handle is torn down and
+#: reopened. A handle can go bad in a way no amount of re-``read()`` fixes, and
+#: the pre-2026-08-16 loop would retry a dead handle forever while looking
+#: perfectly healthy from the outside.
+REOPEN_AFTER_FAILURES = 5
+
+#: Consecutive successful cycles at degraded resolution before trying full size
+#: again. ~10 minutes at the default 2s interval — long enough that a brief
+#: recovery does not flap the camera open and closed, short enough that a
+#: degraded session is not a permanent one.
+RESTORE_AFTER_SUCCESSES = 300
 
 
 def run_watch(
@@ -73,6 +108,11 @@ def run_watch(
     """
     galleries = {name: t.embeddings for name, t in templates.items()}
     analyzer = analyzer_factory()
+    hb_path = heartbeat_path_for(state_path)
+    pid = os.getpid()
+    last_frame_at: float | None = None
+    consecutive_failures = 0
+    consecutive_successes = 0
     with session_factory(camera_index) as cam:
         cam.warmup()
         count = 0
@@ -86,11 +126,63 @@ def run_watch(
                         emb, galleries, min_best=min_best, min_margin=min_margin
                     )
                     faces.append((verdict, bbox))
-                state = aggregate(faces, principal=principal, source=source, now=clock())
+                now = clock()
+                state = aggregate(faces, principal=principal, source=source, now=now)
                 write_state(state, state_path)
+                last_frame_at = now
+                consecutive_failures = 0
+                consecutive_successes += 1
+                # Come back up to full resolution once the box has clearly
+                # recovered. Without this a degraded session never returns, and
+                # the accuracy cost of one bad afternoon becomes permanent and
+                # invisible — the reading stays plausible, just quietly coarser
+                # forever. Only attempted while actually degraded.
+                if consecutive_successes >= RESTORE_AFTER_SUCCESSES and cam.degraded:
+                    consecutive_successes = 0
+                    _try_reopen(cam, degrade=False)
             except Exception:
                 # Skip this cycle's write; the loop survives and the staleness
                 # guard covers persistent failures. Never crash on a bad frame.
-                log.exception("presence watch cycle failed; skipping write")
+                consecutive_failures += 1
+                consecutive_successes = 0
+                log.exception(
+                    "presence watch cycle failed; skipping write (consecutive=%d)",
+                    consecutive_failures,
+                )
+                if consecutive_failures % REOPEN_AFTER_FAILURES == 0:
+                    _try_reopen(cam, degrade=True)
+            # The heartbeat is written on EVERY path, success or failure, and
+            # deliberately outside the try above — it is the one thing that must
+            # not depend on the camera working. Its whole purpose is to say "the
+            # loop is turning" while the reading is stale, so a reader can tell a
+            # failing camera from a dead process. Its own failure is swallowed:
+            # never let bookkeeping kill the loop it exists to observe.
+            try:
+                write_heartbeat(
+                    WatcherHeartbeat(
+                        beat_at=clock(),
+                        last_frame_at=last_frame_at,
+                        consecutive_failures=consecutive_failures,
+                        pid=pid,
+                    ),
+                    hb_path,
+                )
+            except Exception:
+                log.exception("heartbeat write failed; loop continues")
             if iterations is None or count < iterations:
                 sleep_fn(interval)
+
+
+def _try_reopen(cam: CameraSession, *, degrade: bool) -> None:
+    """Tear down and reopen the capture, degraded or restored to full size.
+
+    Best-effort and never raises: if reopening also fails, the loop keeps
+    running and keeps beating, so the reader still sees ALIVE-but-failing
+    rather than silence. Swallowing here is deliberate — the caller's next
+    cycle will fail again and the failure counter keeps climbing, which is the
+    signal we actually want surfaced.
+    """
+    try:
+        cam.reopen(degrade=degrade)
+    except Exception:
+        log.exception("camera reopen failed; continuing with the existing handle")
