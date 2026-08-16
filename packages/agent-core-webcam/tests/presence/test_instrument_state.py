@@ -280,3 +280,42 @@ def test_restart_count_absent_is_none_not_zero(tmp_path: Path) -> None:
     assert _read_restart_count(tmp_path / "state.json") is None
     (tmp_path / "supervisor.json").write_text(json.dumps({"restarts_recent": 0}), encoding="utf-8")
     assert _read_restart_count(tmp_path / "state.json") == 0
+
+
+# --------------------------------------------------------------------------
+# Degraded state must survive a restart (Pepper, 2026-08-16)
+# --------------------------------------------------------------------------
+
+
+def test_degraded_hint_round_trips(tmp_path: Path) -> None:
+    """A restart must not relearn what the last run already paid to discover.
+
+    Without persistence, supervision restarts at full resolution every time, so
+    a box that reliably kills 720p produces an endless fail-degrade-die-restart
+    cycle — motion that looks like recovery and never converges.
+    """
+    from agent_core_webcam.presence.watcher import (
+        _degraded_hint_path,
+        _set_degraded_hint,
+    )
+
+    sp = tmp_path / "state.json"
+    assert not _degraded_hint_path(sp).exists()
+    _set_degraded_hint(sp, degraded=True)
+    assert _degraded_hint_path(sp).exists()
+    _set_degraded_hint(sp, degraded=False)
+    assert not _degraded_hint_path(sp).exists()
+
+
+def test_degraded_hint_never_raises_on_bad_path() -> None:
+    """Bookkeeping that could kill the loop it serves is worse than the bug."""
+    from agent_core_webcam.presence.watcher import _set_degraded_hint
+
+    _set_degraded_hint(Path("\x00:/nonexistent/state.json"), degraded=True)
+
+
+def test_clearing_an_absent_hint_is_not_an_error(tmp_path: Path) -> None:
+    """Restore-when-not-degraded must be a no-op, not a crash."""
+    from agent_core_webcam.presence.watcher import _set_degraded_hint
+
+    _set_degraded_hint(tmp_path / "state.json", degraded=False)

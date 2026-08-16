@@ -15,14 +15,21 @@ are about this file:
    can tell "camera failing" from "process gone". Before this they were the same
    observation, and the outage was invisible for 56 hours because of it.
 2. Repeated failures now tear down and reopen the capture, degraded to
-   640x360 — the failure was a HOST-RAM allocation failure and a quarter-size
-   frame is a real mitigation. Full resolution is restored after sustained
-   success, so one bad afternoon does not permanently coarsen the sensor.
+   640x360, and that degraded state SURVIVES A RESTART — otherwise supervision
+   would restart at full resolution every time and a box that reliably kills
+   720p would loop fail-degrade-die-restart forever, looking like progress.
+   Full resolution is restored after sustained success.
 3. Restarting a stopped watcher is NOT this file's job — see ``supervisor.py``.
    A process cannot supervise its own death.
 
-Every collaborator is an injectable seam (defaulted to the real implementation)
-so the loop is fully testable without a camera or the model.
+**On the degrade: it is insurance, not a targeted fix.** The failing allocation
+was 2 764 800 bytes (one 720p BGR frame) through OpenCV's HOST allocator, which
+invited a memory-starvation story. Measured 2026-08-16 with the suspected
+pressure source resident and active: **15.1 GB free of 63.8 GB.** A 2.6 MB
+allocation cannot fail with that headroom, so whole-box RAM pressure does not
+explain it, and the mechanism behind the eight caught failures is **unknown**
+too — not merely the process's death. Quartering the frame is cheap and helps
+against any allocation failure; do not record it as aimed at a diagnosed cause.
 
 Every collaborator is an injectable seam (defaulted to the real implementation)
 so the loop is fully testable without a camera or the model.
@@ -114,6 +121,16 @@ def run_watch(
     consecutive_failures = 0
     consecutive_successes = 0
     with session_factory(camera_index) as cam:
+        # A restart must not have to relearn what the last run already paid to
+        # discover. Supervision restarts a stopped watcher at full resolution,
+        # so without this the loop would fail its way back down through
+        # REOPEN_AFTER_FAILURES cycles on EVERY restart — the degraded state
+        # would never survive the restart that supervision exists to provide,
+        # and a box that reliably kills 720p would produce an endless
+        # fail-degrade-die-restart cycle that looks like progress and is not.
+        if _degraded_hint_path(state_path).exists():
+            log.info("previous run ended degraded; starting at reduced resolution")
+            _try_reopen(cam, degrade=True)
         cam.warmup()
         count = 0
         while iterations is None or count < iterations:
@@ -140,6 +157,7 @@ def run_watch(
                 if consecutive_successes >= RESTORE_AFTER_SUCCESSES and cam.degraded:
                     consecutive_successes = 0
                     _try_reopen(cam, degrade=False)
+                    _set_degraded_hint(state_path, degraded=False)
             except Exception:
                 # Skip this cycle's write; the loop survives and the staleness
                 # guard covers persistent failures. Never crash on a bad frame.
@@ -151,6 +169,7 @@ def run_watch(
                 )
                 if consecutive_failures % REOPEN_AFTER_FAILURES == 0:
                     _try_reopen(cam, degrade=True)
+                    _set_degraded_hint(state_path, degraded=True)
             # The heartbeat is written on EVERY path, success or failure, and
             # deliberately outside the try above — it is the one thing that must
             # not depend on the camera working. Its whole purpose is to say "the
@@ -186,3 +205,32 @@ def _try_reopen(cam: CameraSession, *, degrade: bool) -> None:
         cam.reopen(degrade=degrade)
     except Exception:
         log.exception("camera reopen failed; continuing with the existing handle")
+
+
+def _degraded_hint_path(state_path: Path) -> Path:
+    """Marker file recording that the last run ended at reduced resolution."""
+    return state_path.with_name("watcher-degraded")
+
+
+def _set_degraded_hint(state_path: Path, *, degraded: bool) -> None:
+    """Create or remove the degraded marker; never raises.
+
+    A hint, deliberately, not authoritative state: if it is wrong the loop
+    self-corrects within RESTORE_AFTER_SUCCESSES cycles either way. Bookkeeping
+    that could kill the loop it serves would be a worse bug than the one it
+    prevents, so every failure here is swallowed.
+    """
+    path = _degraded_hint_path(state_path)
+    try:
+        if degraded:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text("degraded", encoding="utf-8")
+        else:
+            path.unlink(missing_ok=True)
+    except Exception:
+        # Deliberately broader than OSError. An earlier version caught only
+        # OSError and a malformed path raised ValueError straight through the
+        # guard — the docstring promised "never raises" while the code did, and
+        # only a test with a genuinely hostile path found the difference. The
+        # loop must survive ANY failure of its own bookkeeping.
+        log.exception("could not update degraded hint; loop continues")
