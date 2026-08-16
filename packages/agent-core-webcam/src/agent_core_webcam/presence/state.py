@@ -58,12 +58,27 @@ class WatcherHeartbeat(BaseModel):
             a camera degrading before the reading ages out.
         pid: Owning process id, so a reader can distinguish "stale heartbeat"
             from "a heartbeat some other process is still writing".
+        rss_bytes: The watcher's own resident set size, or ``None`` when it
+            could not be sampled. Recorded because the 2026-08-14 death has no
+            established cause and one live hypothesis is accumulation INSIDE
+            this process (a 2.6 MB allocation failed while 15.1 GB was free,
+            which is not a shortage). A monotonic climb across a long run is
+            evidence for that; a flat line is evidence against. Costs one field
+            in a record already written every cycle, so the question answers
+            itself over the next long uptime without anyone having to run an
+            experiment or authorise one.
+        started_at: Epoch seconds when this watcher process began its loop.
+            Paired with ``rss_bytes`` it gives the reader an age to plot the
+            memory against — a big RSS at ten days and at ten minutes mean
+            entirely different things.
     """
 
     beat_at: float
     last_frame_at: float | None = None
     consecutive_failures: int = 0
     pid: int = 0
+    rss_bytes: int | None = None
+    started_at: float | None = None
 
 
 def write_state(state: PresenceState, path: Path) -> None:

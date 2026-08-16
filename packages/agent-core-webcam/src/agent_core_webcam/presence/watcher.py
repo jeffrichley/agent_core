@@ -117,6 +117,7 @@ def run_watch(
     analyzer = analyzer_factory()
     hb_path = heartbeat_path_for(state_path)
     pid = os.getpid()
+    started_at = clock()
     last_frame_at: float | None = None
     consecutive_failures = 0
     consecutive_successes = 0
@@ -183,6 +184,8 @@ def run_watch(
                         last_frame_at=last_frame_at,
                         consecutive_failures=consecutive_failures,
                         pid=pid,
+                        rss_bytes=_sample_rss(),
+                        started_at=started_at,
                     ),
                     hb_path,
                 )
@@ -234,3 +237,22 @@ def _set_degraded_hint(state_path: Path, *, degraded: bool) -> None:
         # only a test with a genuinely hostile path found the difference. The
         # loop must survive ANY failure of its own bookkeeping.
         log.exception("could not update degraded hint; loop continues")
+
+
+def _sample_rss() -> int | None:
+    """This process's resident set size in bytes, or ``None`` if unavailable.
+
+    Best-effort and dependency-free: ``psutil`` is not a hard requirement of
+    this package, so an absent import is a missing field rather than a broken
+    watcher. ``None`` genuinely means "not sampled" and must never be recorded
+    as zero — a zero would plot as a healthy flat line and quietly answer the
+    accumulation question wrongly.
+    """
+    try:
+        import psutil
+    except ImportError:
+        return None
+    try:
+        return int(psutil.Process().memory_info().rss)
+    except Exception:
+        return None
