@@ -8,6 +8,23 @@ This project uses [*towncrier*](https://towncrier.readthedocs.io/); unreleased c
 
 <!-- towncrier release notes start -->
 
+## [0.10.0](https://github.com/jeffrichley/agent_core/compare/v0.9.5...v0.10.0) (2026-08-17)
+
+
+### Features
+
+* **bus:** complete non-loopback bind gate wiring for issue [#505](https://github.com/jeffrichley/agent_core/issues/505) ([#588](https://github.com/jeffrichley/agent_core/issues/588)) ([37d74c8](https://github.com/jeffrichley/agent_core/commit/37d74c8c4b4c26edc992e4bd13b62a1d3cbccdb8))
+* **daemon:** add --fix pruning for superseded venvs, broken links, partial builds, drifted .mcp.json ([#554](https://github.com/jeffrichley/agent_core/issues/554)) ([c7e87ba](https://github.com/jeffrichley/agent_core/commit/c7e87ba879f57c6630fc4c816e1d559383effb94))
+
+
+### Bug Fixes
+
+* **hatchery:** make the generated backup hook able to fail ([#602](https://github.com/jeffrichley/agent_core/issues/602)) ([488edc1](https://github.com/jeffrichley/agent_core/commit/488edc1336fa6ecd5abb36485db360c6270898c3))
+* **presence:** a dead sensor must not read as a quiet one ([#609](https://github.com/jeffrichley/agent_core/issues/609)) ([0414d19](https://github.com/jeffrichley/agent_core/commit/0414d19c1153f02cc05aa252b99cf8befc6ca1df))
+* **qa:** gate daemon readiness on a tool that needs the started handle ([#590](https://github.com/jeffrichley/agent_core/issues/590)) ([b601f65](https://github.com/jeffrichley/agent_core/commit/b601f6568f26638413bdf1c8a69d2b5b9c453c24))
+* **scheduler:** open the SQLite store in WAL mode with a busy timeout ([#587](https://github.com/jeffrichley/agent_core/issues/587)) ([d3a3fec](https://github.com/jeffrichley/agent_core/commit/d3a3fec002e98aae1131371f994f57662bf8870b)), closes [#585](https://github.com/jeffrichley/agent_core/issues/585) [#586](https://github.com/jeffrichley/agent_core/issues/586)
+* **scheduler:** report a dead scheduler to the bus instead of failing silently ([#589](https://github.com/jeffrichley/agent_core/issues/589)) ([8d1e77c](https://github.com/jeffrichley/agent_core/commit/8d1e77ce00102d5aa94de3169dbda9418cfd965d)), closes [#586](https://github.com/jeffrichley/agent_core/issues/586)
+
 ## [0.9.5](https://github.com/jeffrichley/agent_core/compare/v0.9.4...v0.9.5) (2026-08-05)
 
 

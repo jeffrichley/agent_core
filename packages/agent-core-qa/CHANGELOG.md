@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.9.1](https://github.com/jeffrichley/agent_core/compare/v0.9.0...agent-core-qa-v0.9.1) (2026-08-17)
+
+
+### Bug Fixes
+
+* **qa:** gate daemon readiness on a tool that needs the started handle ([#590](https://github.com/jeffrichley/agent_core/issues/590)) ([b601f65](https://github.com/jeffrichley/agent_core/commit/b601f6568f26638413bdf1c8a69d2b5b9c453c24))
+
 ## [0.9.0](https://github.com/jeffrichley/agent_core/compare/v0.8.1...agent-core-qa-v0.9.0) (2026-08-03)
 
 
