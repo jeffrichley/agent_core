@@ -31,16 +31,34 @@ import logging
 from pathlib import Path
 
 import yaml
+from rich.console import Console
 from rich.logging import RichHandler
 
 from agent_core.hooks.protocol import HookTool
 from agent_core.models import PipelineConfig, ToolResult
 from agent_core.plugins.manager import create_plugin_manager, get_hook_tool_types
 
+# Diagnostics go to STDERR, never stdout.
+#
+# Claude Code consumes a hook's STDOUT as the payload — the JSON carrying
+# ``additionalContext``, which is how a being's identity files reach the model.
+# A default ``RichHandler()`` builds a ``Console()`` that writes to stdout, so
+# every INFO line above shared a channel with that payload and was delivered
+# ahead of it.
+#
+# Measured 2026-08-17: ~1,800 bytes of registration and per-tool logging sat in
+# front of the identity payload on every SessionStart. Against the harness's
+# 10,000-byte cap that is 18% of the delivery budget spent announcing that
+# delivery was about to happen — and the being whose SOUL.md sat behind it could
+# not tell from inside whether the file had arrived or been truncated away.
+#
+# The logging is worth keeping: it answers "did my config parse and find my
+# tools?" for whoever is editing hook config. It is simply not payload, so it
+# belongs on stderr, which Claude Code ignores.
 logging.basicConfig(
     level=logging.INFO,
     format="%(message)s",
-    handlers=[RichHandler(rich_tracebacks=True, show_path=False)],
+    handlers=[RichHandler(console=Console(stderr=True), rich_tracebacks=True, show_path=False)],
 )
 logger = logging.getLogger("agent_core.hooks.pipeline")
 
