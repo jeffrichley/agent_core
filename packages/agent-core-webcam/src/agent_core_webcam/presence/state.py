@@ -39,6 +39,48 @@ class PresenceState(BaseModel):
     source: str = "desk-cam"
 
 
+class WatcherHeartbeat(BaseModel):
+    """Proof the watch LOOP is turning, written separately from any reading.
+
+    Deliberately carries no presence data. It answers one question the state
+    file cannot: *is the watcher alive?* Without it, "the reading is old"
+    and "the process is gone" are the same observation — which is exactly how
+    a dead sensor went unnoticed for 56 hours on 2026-08-14.
+
+    Attributes:
+        beat_at: Epoch seconds, written EVERY cycle whether or not the frame
+            read succeeded. A fresh beat beside a stale reading means the
+            watcher is alive and the camera is failing — a different fault,
+            and a different message, from the watcher being gone.
+        last_frame_at: Epoch seconds of the last SUCCESSFUL frame, or ``None``
+            if no frame has ever succeeded this run. Never advanced on failure.
+        consecutive_failures: Cycles since the last success. Lets a reader see
+            a camera degrading before the reading ages out.
+        pid: Owning process id, so a reader can distinguish "stale heartbeat"
+            from "a heartbeat some other process is still writing".
+        rss_bytes: The watcher's own resident set size, or ``None`` when it
+            could not be sampled. Recorded because the 2026-08-14 death has no
+            established cause and one live hypothesis is accumulation INSIDE
+            this process (a 2.6 MB allocation failed while 15.1 GB was free,
+            which is not a shortage). A monotonic climb across a long run is
+            evidence for that; a flat line is evidence against. Costs one field
+            in a record already written every cycle, so the question answers
+            itself over the next long uptime without anyone having to run an
+            experiment or authorise one.
+        started_at: Epoch seconds when this watcher process began its loop.
+            Paired with ``rss_bytes`` it gives the reader an age to plot the
+            memory against — a big RSS at ten days and at ten minutes mean
+            entirely different things.
+    """
+
+    beat_at: float
+    last_frame_at: float | None = None
+    consecutive_failures: int = 0
+    pid: int = 0
+    rss_bytes: int | None = None
+    started_at: float | None = None
+
+
 def write_state(state: PresenceState, path: Path) -> None:
     """Atomically write ``state`` to ``path`` (temp sibling + :func:`os.replace`).
 
@@ -65,5 +107,44 @@ def read_state(path: Path) -> PresenceState | None:
         return None
     try:
         return PresenceState.model_validate_json(raw)
+    except ValidationError:
+        return None
+
+
+def heartbeat_path_for(state_path: Path) -> Path:
+    """Return the heartbeat path that pairs with ``state_path``.
+
+    Single-sourced so the writer and the reader can never disagree about where
+    it lives — the failure this whole change exists to prevent is two halves of
+    a contract drifting apart silently.
+    """
+    return state_path.with_name("watcher-heartbeat.json")
+
+
+def write_heartbeat(beat: WatcherHeartbeat, path: Path) -> None:
+    """Atomically write ``beat`` to ``path`` (temp sibling + :func:`os.replace`).
+
+    Uses a distinct temp suffix from :func:`write_state` so a heartbeat write
+    and a state write can never collide on the same temp name mid-cycle.
+    """
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_name(path.name + ".hb.tmp")
+    tmp.write_text(beat.model_dump_json(), encoding="utf-8")
+    os.replace(tmp, path)
+
+
+def read_heartbeat(path: Path) -> WatcherHeartbeat | None:
+    """Best-effort read of the watcher heartbeat; ``None`` if absent or invalid.
+
+    ``None`` does NOT mean the watcher is dead — it may predate this feature.
+    Callers must treat absent-heartbeat as *unknown liveness*, never as death,
+    or the fix reintroduces the very confusion it removes.
+    """
+    try:
+        raw = path.read_text(encoding="utf-8")
+    except OSError:
+        return None
+    try:
+        return WatcherHeartbeat.model_validate_json(raw)
     except ValidationError:
         return None

@@ -10,8 +10,40 @@ principal not confirmed) resolves to the cautious side.
 from __future__ import annotations
 
 from dataclasses import dataclass
+from enum import Enum
 
 from agent_core_webcam.presence.state import PresenceState
+
+
+class Instrument(Enum):
+    """Why there is (or is not) a usable reading — the SENSOR's own state.
+
+    Orthogonal to what was observed. The observed axis answers "who is at the
+    desk"; this answers "is the thing that would tell me still working". Before
+    2026-08-16 these were one axis, and the result was that a watcher dead for
+    56 hours produced output byte-identical to a camera that had merely not
+    refreshed in the last 30 seconds. Nobody noticed, because nothing could
+    have: the two states were literally the same string.
+
+    Members:
+        FRESH: a reading inside the staleness window. The only unlocking state.
+        STALE: reading is old, but the watch loop is demonstrably still turning
+            (recent heartbeat). The camera is failing; the process is fine.
+        DEAD: reading is old AND no recent heartbeat. The watcher is gone and
+            will not recover on its own. Loudest state.
+        NEVER: no reading has ever been written. Distinct from DEAD because it
+            means "never configured", which is a different repair entirely and
+            must not be reported as a failure of a running system.
+        UNKNOWN: liveness genuinely undeterminable — e.g. a state file from
+            before heartbeats existed. Treated as cautiously as DEAD but must
+            NOT claim the watcher is dead, because that has not been measured.
+    """
+
+    FRESH = "fresh"
+    STALE = "stale"
+    DEAD = "dead"
+    NEVER = "never"
+    UNKNOWN = "unknown"
 
 # Injected-text fragments, all overridable per being via the hook's
 # ``templates`` param. ``facts`` accepts {at_desk}, {recognized},
@@ -19,6 +51,45 @@ from agent_core_webcam.presence.state import PresenceState
 DEFAULT_TEMPLATES: dict[str, str] = {
     "facts": "At desk: {at_desk}. Recognized: {recognized}. Unknown faces: {unknown_count}.",
     "unknown_banner": "Presence unknown — no current reading from the desk camera.",
+    # The instrument banners. Each REPLACES `unknown_banner` and each states the
+    # sensor's condition and the AGE of the last reading, because "no reading"
+    # with no age attached is exactly what hid a 56-hour outage on 2026-08-14 —
+    # it read as "not in the last 30 seconds" every single turn.
+    #
+    # {age} is a human string ("2d 8h"); {restarts} is a count or "unknown".
+    "instrument_stale": (
+        "DESK CAMERA FAILING — the watcher is running but has not produced a "
+        "usable frame for {age}. Presence below is NOT current. Treat this as "
+        "no reading, and note the sensor is degraded rather than merely quiet."
+    ),
+    "instrument_dead": (
+        "DESK CAMERA WATCHER IS DEAD — no reading for {age} and the watch loop "
+        "is not running. This is a broken sensor, not a quiet one; it will not "
+        "recover on its own and presence cannot be established until it is "
+        "restarted. Everything below assumes no reading."
+    ),
+    # Both of these LEAD with "Presence unknown" and only then explain. An
+    # earlier draft opened the NEVER case with "never configured ... not a
+    # failure of a running system", which is true and reads as REASSURANCE — at
+    # level 1 that sentence is the only thing a being sees, and the one thing it
+    # must carry is that nobody knows who is in the room. Explanation is allowed
+    # to follow the uncertainty; it may not replace it.
+    "instrument_never": (
+        "Presence unknown — the desk camera has never produced a reading. "
+        "Presence was never configured on this machine, so this is a gap in "
+        "setup rather than a running system that broke — but nothing has been "
+        "observed either way."
+    ),
+    "instrument_unknown_liveness": (
+        "Presence unknown — no current reading from the desk camera (last: "
+        "{age}). Whether the watcher is still running could not be determined, "
+        "so this may be a slow sensor or a dead one; the difference has not "
+        "been measured."
+    ),
+    "instrument_restarts": (
+        "Note: the watcher has restarted {restarts} time(s) recently — it is "
+        "being revived rather than staying up, which a bare 'running' would hide."
+    ),
     # Two fragments, because the same caution has two very different warrants.
     # `shoulder_surf` states an observed fact and may only be used when a
     # reading actually detected an unrecognized face. With no reading nothing
@@ -65,11 +136,43 @@ class PresenceReading:
             enrolled-recognized.
         unknown_present: At least one unrecognized person is in view (or unknown,
             when there is no reading — the cautious default).
+        instrument: Why the reading is (un)usable. Never affects how cautious
+            the output is — ``have_reading`` alone still drives every gate — it
+            only determines what the output is allowed to CLAIM about the
+            sensor. Defaulted so existing callers keep working unchanged.
+        age_seconds: Age of the last reading, or ``None`` if there has never
+            been one. Rendered into the instrument banner so staleness is
+            visible in the line rather than inferable only from a file mtime.
+        restarts: Recent supervisor restarts, or ``None`` when unknown. A
+            watcher revived four times an hour is not the same as one that
+            never fell over, and a bare "running" hides the difference.
     """
 
     have_reading: bool
     principal_present: bool
     unknown_present: bool
+    instrument: Instrument = Instrument.UNKNOWN
+    age_seconds: float | None = None
+    restarts: int | None = None
+
+
+def humanize_age(seconds: float | None) -> str:
+    """Render an age as a short human string (``"2d 8h"``, ``"14m"``, ``"9s"``).
+
+    Returns ``"never"`` for ``None``. Deliberately coarse: the reader needs to
+    tell "a moment ago" from "since Friday" at a glance, and false precision in
+    a safety line invites arguing with the number instead of acting on it.
+    """
+    if seconds is None:
+        return "never"
+    s = max(0, int(seconds))
+    if s < 60:
+        return f"{s}s"
+    if s < 3600:
+        return f"{s // 60}m"
+    if s < 86400:
+        return f"{s // 3600}h {(s % 3600) // 60}m"
+    return f"{s // 86400}d {(s % 86400) // 3600}h"
 
 
 def classify(state: PresenceState | None, *, principal: str) -> PresenceReading:
@@ -122,7 +225,28 @@ def render(
             )
         )
     else:
-        parts.append(templates["unknown_banner"])
+        # WITHOUT a reading, say WHY and say HOW OLD. The pre-2026-08-16 code
+        # emitted one fixed sentence here for every no-reading cause, so a dead
+        # watcher and a 31-second-old reading were the same bytes. The caution
+        # is identical across these branches — only the claim differs, which is
+        # the same principle as `shoulder_surf_no_reading` one level down.
+        age = humanize_age(reading.age_seconds)
+        banner = {
+            Instrument.STALE: "instrument_stale",
+            Instrument.DEAD: "instrument_dead",
+            Instrument.NEVER: "instrument_never",
+            Instrument.UNKNOWN: "instrument_unknown_liveness",
+        }.get(reading.instrument)
+        if banner is not None and banner in templates:
+            parts.append(templates[banner].format(age=age, restarts=reading.restarts))
+        else:  # unrecognized instrument state => the original, always-safe line
+            parts.append(templates["unknown_banner"])
+    # Restarts are reported whether or not there is a reading: a watcher that is
+    # being revived repeatedly is worth knowing about even while it is currently
+    # healthy, because "currently fine" is exactly how a flapping process looks
+    # at any given instant.
+    if reading.restarts:
+        parts.append(templates["instrument_restarts"].format(restarts=reading.restarts, age=""))
     if level >= 2 and reading.unknown_present:
         key = "shoulder_surf" if reading.have_reading else "shoulder_surf_no_reading"
         parts.append(templates[key])

@@ -85,7 +85,9 @@ def test_level3_trust_gates_when_principal_not_confirmed() -> None:
 
 def test_no_reading_uses_unknown_banner_and_gates_at_level3() -> None:
     out = _render(None, level=3)
-    assert DEFAULT_TEMPLATES["unknown_banner"] in out
+    # See test_injector.py — the literal banner was retired 2026-08-16. The
+    # gate below is the property this test actually exists to protect.
+    assert "At desk:" not in out
     assert "At desk" not in out  # no facts line when there is no reading
     assert DEFAULT_TEMPLATES["trust_gate"] in out  # uncertainty => cautious
 

@@ -84,7 +84,12 @@ def test_stale_reading_degrades_to_cautious_at_level3(tmp_path: Path) -> None:
         PresenceState(updated_at=1.0, at_desk=True, known=["jeff"], unknown_count=0), p
     )  # ancient
     out = PresenceInjector().execute("SessionStart", {}, {"state_path": str(p), "level": 3})
-    assert DEFAULT_TEMPLATES["unknown_banner"] in out.content
+    # 2026-08-16: the fixed "unknown_banner" literal was RETIRED here — it is
+    # the string that made a dead watcher and a 31-second-old reading identical
+    # for 56 hours. The no-reading branch now names the cause and the age.
+    # What must hold is the INVARIANT, not the wording: no reading => no facts.
+    assert "At desk:" not in out.content
+    assert "no current reading" in out.content.lower()
     assert DEFAULT_TEMPLATES["trust_gate"] in out.content
 
 
@@ -105,7 +110,12 @@ def test_execute_never_raises_on_garbage_params(tmp_path: Path) -> None:
     out = PresenceInjector().execute(
         "SessionStart", {}, {"state_path": str(p), "max_age_seconds": "not-a-number"}
     )
-    assert DEFAULT_TEMPLATES["unknown_banner"] in out.content
+    # 2026-08-16: the fixed "unknown_banner" literal was RETIRED here — it is
+    # the string that made a dead watcher and a 31-second-old reading identical
+    # for 56 hours. The no-reading branch now names the cause and the age.
+    # What must hold is the INVARIANT, not the wording: no reading => no facts.
+    assert "At desk:" not in out.content
+    assert "no current reading" in out.content.lower()
 
 
 def test_level3_error_path_still_trust_gates(tmp_path: Path) -> None:
@@ -119,7 +129,12 @@ def test_level3_error_path_still_trust_gates(tmp_path: Path) -> None:
         # garbage max_age forces the except path; level stays 3
         {"state_path": str(p), "level": 3, "max_age_seconds": object()},
     )
-    assert DEFAULT_TEMPLATES["unknown_banner"] in out.content
+    # 2026-08-16: the fixed "unknown_banner" literal was RETIRED here — it is
+    # the string that made a dead watcher and a 31-second-old reading identical
+    # for 56 hours. The no-reading branch now names the cause and the age.
+    # What must hold is the INVARIANT, not the wording: no reading => no facts.
+    assert "At desk:" not in out.content
+    assert "no current reading" in out.content.lower()
     assert DEFAULT_TEMPLATES["trust_gate"] in out.content  # de-escalation preserved
 
 
