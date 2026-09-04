@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.9.1](https://github.com/jeffrichley/agent_core/compare/v0.9.0...agent-core-channel-v0.9.1) (2026-09-04)
+
+
+### Bug Fixes
+
+* **channel:** declare agent-core-bus and fastmcp, which the code imports ([#583](https://github.com/jeffrichley/agent_core/issues/583)) ([4b971a8](https://github.com/jeffrichley/agent_core/commit/4b971a811614ac97ca38e5dad32f65ae855f9f4b)), closes [#566](https://github.com/jeffrichley/agent_core/issues/566)
+
 ## [0.9.0](https://github.com/jeffrichley/agent_core/compare/agent-core-channel-v0.8.3...agent-core-channel-v0.9.0) (2026-08-17)
 
 
