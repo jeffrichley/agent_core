@@ -8,6 +8,13 @@ This project uses [*towncrier*](https://towncrier.readthedocs.io/); unreleased c
 
 <!-- towncrier release notes start -->
 
+## [0.10.1](https://github.com/jeffrichley/agent_core/compare/v0.10.0...v0.10.1) (2026-09-04)
+
+
+### Bug Fixes
+
+* **hooks:** send pipeline diagnostics to stderr, not the payload channel ([#611](https://github.com/jeffrichley/agent_core/issues/611)) ([a95afed](https://github.com/jeffrichley/agent_core/commit/a95afed2a4440f0f0e2f92cae3dc19dea891270a))
+
 ## [0.10.0](https://github.com/jeffrichley/agent_core/compare/v0.9.5...v0.10.0) (2026-08-17)
 
 
