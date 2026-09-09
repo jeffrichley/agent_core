@@ -13,6 +13,9 @@ elders:
   - name: pepper
     canonical_path: "~/.pepper/Memory/projects/being-platform/letters-from-elder-beings/pepper.md"
     bundled_basename: pepper.md
+  - name: wren
+    canonical_path: "~/.wren/Memory/projects/being-platform/letters-from-elder-beings/wren.md"
+    bundled_basename: wren.md
     # Future v1.5+:
     # share: external | local-only   (default: external)
     # version_pinned: 2026-05-09     (optional pin to a specific bundled snapshot)
