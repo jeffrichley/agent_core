@@ -1,0 +1,26 @@
+{
+  "skill_name": "scheduler",
+  "evals": [
+    {
+      "id": 0,
+      "name": "inventory",
+      "prompt": "I'm an agent named Wren on a Windows machine. What's scheduled to fire to me? Tell me the job names and when they next fire. Be concrete — don't just describe how I'd find out, actually find out.",
+      "expected_output": "List of the 5 wren-* jobs (wren-heartbeat, wren-service_liveness_probe, wren-auth_health_probe, wren-vault_lint, wren-nightly_reflection) with their next_fire_time values, plus a brief explanation of how they were inspected. Should not include jobs targeting other beings.",
+      "files": []
+    },
+    {
+      "id": 1,
+      "name": "verification",
+      "prompt": "Did the apex_weekly_slots schedule fire to Pepper this Thursday (2026-05-28) at 4 PM Eastern? I'm asking from Wren's session and I need to know whether it actually fired AND whether Pepper acted on it. Walk me through how to find out.",
+      "expected_output": "Two-step answer: (1) check the agent-core scheduler DB for last_fire_time on apex_weekly_slots, (2) recognize that DB-only verification doesn't confirm receipt/processing on Pepper's side, and route a cross-being ping to Pepper to confirm. Should explicitly name that DB-only is insufficient.",
+      "files": []
+    },
+    {
+      "id": 2,
+      "name": "mutation",
+      "prompt": "I want to change the prompt on the apex_weekly_slots scheduled job. The current prompt is using a misreadable mnemonic ('PaH/DaH') that caused a near-miss today and I want to rewrite it. How do I do that? I'm Wren and the job targets Pepper.",
+      "expected_output": "Should explain: (1) the MCP scheduler tools are not surfaced in any being's session currently, so there's no clean tool-based path; (2) the right move is to route the change request to Pepper (the owning being) rather than UPDATE the DB directly; (3) if a direct SQLite UPDATE is needed, it requires daemon-admin authorization and a daemon restart to take effect. Should call out the 'don't unilaterally UPDATE another being's domain' anti-pattern.",
+      "files": []
+    }
+  ]
+}
