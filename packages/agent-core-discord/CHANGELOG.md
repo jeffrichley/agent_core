@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.10.1](https://github.com/jeffrichley/agent_core/compare/v0.10.0...agent-core-discord-v0.10.1) (2026-09-14)
+
+
+### Bug Fixes
+
+* **discord:** rebuild attachments per send attempt instead of reusing spent handles ([#613](https://github.com/jeffrichley/agent_core/issues/613)) ([449d46c](https://github.com/jeffrichley/agent_core/commit/449d46cc5f92aa4d103ddf54cb298779d8f3d244)), closes [#594](https://github.com/jeffrichley/agent_core/issues/594)
+
 ## [0.10.0](https://github.com/jeffrichley/agent_core/compare/v0.9.0...agent-core-discord-v0.10.0) (2026-08-17)
 
 
