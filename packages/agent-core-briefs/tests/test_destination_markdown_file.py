@@ -9,6 +9,7 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 from pathlib import Path
+from zoneinfo import ZoneInfo
 
 import pytest
 from agent_core_briefs.destinations.markdown_file import MarkdownFileDestination
@@ -400,3 +401,150 @@ async def test_unicode_error_during_write_returns_failure(tmp_path: Path) -> Non
     assert result.ref is None
     assert result.error is not None
     assert "write failed" in result.error
+
+
+# ---------------------------------------------------------------------------
+# timezone (#619) — a 21:30 America/New_York brief is 01:30 UTC the next day,
+# so every when.* token landed on tomorrow and every evening brief was filed a
+# day forward. Measured: 91 of 93 on disk.
+# ---------------------------------------------------------------------------
+
+EVENING_UTC = datetime(2026, 9, 14, 1, 30, tzinfo=UTC)
+"""21:30 on 2026-09-13 in America/New_York. The exact shape of the defect."""
+
+
+async def test_omitting_timezone_is_byte_identical_to_before(tmp_path: Path) -> None:
+    """The regression guard. Every existing config omits the key.
+
+    If this test ever needs updating, the default changed and every deployed
+    brief path moved with it.
+    """
+    dest = MarkdownFileDestination()
+    result = await dest.deliver(
+        [_section()],
+        playbook=_playbook(tmp_path),
+        scope=None,
+        when=EVENING_UTC,
+        config={"path": str(tmp_path / "{{when.date}}-{{when.year}}{{when.month}}{{when.day}}.md")},
+        bus_handle=_NoopHandle(),
+    )
+    assert result.success, result.error
+    assert Path(result.ref).name == "2026-09-14-20260914.md"
+
+
+async def test_a_zone_moves_the_filing_date_back_to_the_local_day(tmp_path: Path) -> None:
+    dest = MarkdownFileDestination()
+    result = await dest.deliver(
+        [_section()],
+        playbook=_playbook(tmp_path),
+        scope=None,
+        when=EVENING_UTC,
+        config={
+            "path": str(tmp_path / "{{when.date}}-evening.md"),
+            "timezone": "America/New_York",
+        },
+        bus_handle=_NoopHandle(),
+    )
+    assert result.success, result.error
+    assert Path(result.ref).name == "2026-09-13-evening.md"
+
+
+async def test_year_month_and_day_convert_with_the_date(tmp_path: Path) -> None:
+    """A split family is worse than an unconverted one — it files inconsistently."""
+    dest = MarkdownFileDestination()
+    result = await dest.deliver(
+        [_section()],
+        playbook=_playbook(tmp_path),
+        scope=None,
+        when=EVENING_UTC,
+        config={
+            "path": str(tmp_path / "{{when.year}}/{{when.month}}/{{when.day}}.md"),
+            "timezone": "America/New_York",
+        },
+        bus_handle=_NoopHandle(),
+    )
+    assert result.success, result.error
+    assert Path(result.ref).parts[-3:] == ("2026", "09", "13.md")
+
+
+def test_iso_converts_too_and_stays_unambiguous() -> None:
+    """Decision for #619's open question: ``when.iso`` converts.
+
+    An ISO-8601 string carries its offset, so conversion is lossless — the
+    instant is identical either way. Converting therefore costs nothing and
+    buys the thing that does matter: a path cannot contain a date and a
+    timestamp that disagree about which day it is.
+
+    Exercised through ``_resolve_path`` rather than ``deliver`` because an ISO
+    timestamp contains ``:``, which Windows rejects anywhere in a path. That is
+    true with or without this change and is not something #619 introduces — but
+    it does mean ``{{when.iso}}`` is unusable in a *filename* on Windows, and
+    only the substitution itself can be tested here.
+    """
+    resolved = MarkdownFileDestination._resolve_path(  # noqa: SLF001 — static helper
+        "{{when.iso}}",
+        playbook=_playbook(),
+        scope=None,
+        when=EVENING_UTC.astimezone(ZoneInfo("America/New_York")),
+    )
+    assert str(resolved).startswith("2026-09-13T21:30:00")
+    assert "-04:00" in str(resolved), "the offset must survive, or the instant becomes ambiguous"
+
+
+async def test_morning_briefs_are_unaffected(tmp_path: Path) -> None:
+    """07:28 ET is the same UTC date, which is why only evenings were wrong."""
+    dest = MarkdownFileDestination()
+    morning_utc = datetime(2026, 9, 14, 11, 28, tzinfo=UTC)
+    for config_extra in ({}, {"timezone": "America/New_York"}):
+        result = await dest.deliver(
+            [_section()],
+            playbook=_playbook(tmp_path),
+            scope=None,
+            when=morning_utc,
+            config={"path": str(tmp_path / "{{when.date}}-morning.md"), **config_extra},
+            bus_handle=_NoopHandle(),
+        )
+        assert result.success, result.error
+        assert Path(result.ref).name == "2026-09-14-morning.md"
+
+
+async def test_an_unknown_zone_fails_loudly_rather_than_passing_through(
+    tmp_path: Path,
+) -> None:
+    """A silent fallback to UTC here would reinstate the exact defect."""
+    dest = MarkdownFileDestination()
+    result = await dest.deliver(
+        [_section()],
+        playbook=_playbook(tmp_path),
+        scope=None,
+        when=EVENING_UTC,
+        config={
+            "path": str(tmp_path / "{{when.date}}.md"),
+            "timezone": "Mars/Olympus_Mons",
+        },
+        bus_handle=_NoopHandle(),
+    )
+    assert not result.success
+    assert "Mars/Olympus_Mons" in (result.error or "")
+    assert not list(tmp_path.glob("*.md")), "a bad zone must not write a wrongly-dated file"
+
+
+async def test_a_naive_when_is_assumed_utc_not_reinterpreted(tmp_path: Path) -> None:
+    """Nothing in the framework sends a naive datetime, but if one arrives it
+    must be read as the UTC instant it has always been, not silently relabelled
+    as local time — which would shift the instant by the offset.
+    """
+    dest = MarkdownFileDestination()
+    result = await dest.deliver(
+        [_section()],
+        playbook=_playbook(tmp_path),
+        scope=None,
+        when=datetime(2026, 9, 14, 1, 30),  # noqa: DTZ001 — the point of the test
+        config={
+            "path": str(tmp_path / "{{when.date}}.md"),
+            "timezone": "America/New_York",
+        },
+        bus_handle=_NoopHandle(),
+    )
+    assert result.success, result.error
+    assert Path(result.ref).name == "2026-09-13.md"
