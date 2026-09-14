@@ -8,6 +8,15 @@ This project uses [*towncrier*](https://towncrier.readthedocs.io/); unreleased c
 
 <!-- towncrier release notes start -->
 
+## [0.10.1](https://github.com/jeffrichley/agent_core/compare/v0.10.0...v0.10.1) (2026-09-14)
+
+
+### Bug Fixes
+
+* **briefs:** optional timezone on markdown_file, so evening briefs file on the right day ([#620](https://github.com/jeffrichley/agent_core/issues/620)) ([55c13dd](https://github.com/jeffrichley/agent_core/commit/55c13dde17ebd9a364440a9e457ed3516f6fbbdc))
+* **discord:** rebuild attachments per send attempt instead of reusing spent handles ([#613](https://github.com/jeffrichley/agent_core/issues/613)) ([449d46c](https://github.com/jeffrichley/agent_core/commit/449d46cc5f92aa4d103ddf54cb298779d8f3d244)), closes [#594](https://github.com/jeffrichley/agent_core/issues/594)
+* **hooks:** send pipeline diagnostics to stderr, not the payload channel ([#611](https://github.com/jeffrichley/agent_core/issues/611)) ([a95afed](https://github.com/jeffrichley/agent_core/commit/a95afed2a4440f0f0e2f92cae3dc19dea891270a))
+
 ## [0.10.0](https://github.com/jeffrichley/agent_core/compare/v0.9.5...v0.10.0) (2026-08-17)
 
 
