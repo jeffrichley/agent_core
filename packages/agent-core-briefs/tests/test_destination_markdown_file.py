@@ -548,3 +548,32 @@ async def test_a_naive_when_is_assumed_utc_not_reinterpreted(tmp_path: Path) -> 
     )
     assert result.success, result.error
     assert Path(result.ref).name == "2026-09-13.md"
+
+
+@pytest.mark.parametrize(
+    "bad_zone",
+    [123, ["America/New_York"], "", "../../etc/passwd"],
+    ids=["int", "list", "empty", "traversal"],
+)
+async def test_a_malformed_timezone_value_never_escapes_as_an_exception(
+    tmp_path: Path, bad_zone: object
+) -> None:
+    """The module's contract is that config errors become DeliveryResult, not
+    tracebacks. ``ZoneInfo`` raises ``TypeError`` for a non-string and
+    ``ValueError`` for a malformed key, and only the second was caught.
+
+    Found by reading my own diff after opening the PR, which is one PR later
+    than it should have been.
+    """
+    dest = MarkdownFileDestination()
+    result = await dest.deliver(
+        [_section()],
+        playbook=_playbook(tmp_path),
+        scope=None,
+        when=EVENING_UTC,
+        config={"path": str(tmp_path / "{{when.date}}.md"), "timezone": bad_zone},
+        bus_handle=_NoopHandle(),
+    )
+    assert not result.success
+    assert "timezone" in (result.error or "")
+    assert not list(tmp_path.glob("*.md"))

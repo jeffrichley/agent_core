@@ -187,9 +187,13 @@ class MarkdownFileDestination:
             return when
         try:
             return when.astimezone(ZoneInfo(zone_name))
-        except (KeyError, ValueError) as exc:
+        except (KeyError, TypeError, ValueError) as exc:
+            # TypeError covers a non-string value (``timezone: 123`` in YAML),
+            # which ZoneInfo raises rather than ValueError. Without it the
+            # exception escapes deliver() and breaks this module's stated
+            # contract that config errors become a DeliveryResult.
             raise ValueError(
-                f"markdown_file: unknown timezone {zone_name!r} "
+                f"markdown_file: unusable timezone {zone_name!r} "
                 f"(expects an IANA name such as 'America/New_York'): {exc}"
             ) from exc
 
