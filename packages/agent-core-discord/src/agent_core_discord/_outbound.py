@@ -9,6 +9,7 @@ from __future__ import annotations
 import json
 import logging
 import uuid
+from collections.abc import Callable
 from datetime import UTC, datetime
 from typing import Any, Literal
 
@@ -250,9 +251,7 @@ class _OutboundMixin(_EndpointState):
             await self._reply(envelope, f"error: {exc}", urgency="yellow")
         except Exception as exc:
             if is_retryable_discord_send_error(exc):
-                raise EndpointUnavailable(
-                    f"discord '{self.name}': transient error: {exc}"
-                ) from exc
+                raise EndpointUnavailable(f"discord '{self.name}': transient error: {exc}") from exc
             log.exception("discord tool '%s' raised", tool)
             await self._reply(envelope, f"error: {exc}", urgency="yellow")
 
@@ -365,9 +364,7 @@ class _OutboundMixin(_EndpointState):
             return raw
 
         if tool == "discord_send":
-            return await self._send(
-                _v(_DiscordSendArgs, _inject_channel_id(args))
-            )
+            return await self._send(_v(_DiscordSendArgs, _inject_channel_id(args)))
         if tool == "send":
             return await self._send(_v(_SendArgs, _inject_channel_id(args)))
         if tool == "edit":
@@ -434,9 +431,7 @@ class _OutboundMixin(_EndpointState):
 
     async def _send(self, args: _SendArgs) -> dict[str, Any]:
         if args.text is None and not args.embeds and not args.files:
-            raise _ToolError(
-                "send: one of 'text', 'embeds', or 'files' is required"
-            )
+            raise _ToolError("send: one of 'text', 'embeds', or 'files' is required")
         ch = await self._resolve_channel(args.channel_id)
 
         # Build embeds list (validate via discord.Embed.from_dict).
@@ -472,9 +467,15 @@ class _OutboundMixin(_EndpointState):
                 # Fakes don't need a real reference; pass the message itself as a marker.
                 reference = target
 
-        # Holds discord.File objects on the real path or raw path strings on
-        # the fake-client fallback, so the element type is intentionally Any.
-        files: list[Any] | None = None
+        # A FACTORY, not a list. discord.File is single use and the sender
+        # closes it after every attempt — including one that raised — so a retry
+        # reusing attempt 1's objects uploads spent handles: the message posts,
+        # the send reports success, and the attachment silently does not arrive
+        # (agent_core#594). Rebuilding per attempt is the only shape that
+        # survives a retry. Yields discord.File objects on the real path or raw
+        # path strings on the fake-client fallback, so the element type is
+        # intentionally Any.
+        files_factory: Callable[[], list[Any]] | None = None
         if args.files:
             # discord.File accepts a local path or a binary file-like object —
             # not an HTTP URL. Reject URL strings upfront with a clear message
@@ -488,9 +489,27 @@ class _OutboundMixin(_EndpointState):
             try:
                 import discord
 
-                files = [discord.File(f) for f in args.files]
+                make_one: Callable[[Any], Any] = discord.File
             except ImportError:
-                files = list(args.files)
+
+                def make_one(spec: Any) -> Any:
+                    """Without discord installed, fakes receive the raw path."""
+                    return spec
+
+            specs = list(args.files)
+
+            def files_factory() -> list[Any]:
+                """Build fresh file objects for one send attempt."""
+                return [make_one(spec) for spec in specs]
+
+            # Validate eagerly so an unreadable path still surfaces as
+            # _ToolError here rather than mid-retry. Build one throwaway set and
+            # release the handles immediately; each send builds its own.
+            try:
+                for probe in files_factory():
+                    closer = getattr(probe, "close", None)
+                    if callable(closer):
+                        closer()
             except Exception as exc:
                 raise _ToolError(f"send: invalid files: {exc}") from exc
 
@@ -502,11 +521,10 @@ class _OutboundMixin(_EndpointState):
             send_kwargs["embeds"] = embeds
         if reference is not None:
             send_kwargs["reference"] = reference
-        if files is not None:
-            send_kwargs["files"] = files
-
         if args.text is None:
-            new_msg = await channel_send_with_retries(ch, args.text, **send_kwargs)
+            new_msg = await channel_send_with_retries(
+                ch, args.text, files_factory=files_factory, **send_kwargs
+            )
             if args.reply_to:
                 await self._clear_pending_ack(ch, args.reply_to)
             if args.cleanup_inbound_message_id:
@@ -530,10 +548,13 @@ class _OutboundMixin(_EndpointState):
                 send_part["embeds"] = embeds
             if reference is not None and is_first:
                 send_part["reference"] = reference
-            if files is not None and is_first:
-                send_part["files"] = files
             try:
-                new_msg = await channel_send_with_retries(ch, part, **send_part)
+                new_msg = await channel_send_with_retries(
+                    ch,
+                    part,
+                    files_factory=files_factory if is_first else None,
+                    **send_part,
+                )
             except Exception as exc:
                 last_error = exc
                 break
